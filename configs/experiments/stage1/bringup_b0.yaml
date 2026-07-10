@@ -1,0 +1,39 @@
+experiment:
+  name: stage1_bringup_b0
+  seed: 42
+  graph_config: configs/graphs/b0_direct.yaml
+  contracts_dir: configs/contracts
+  output_root: outputs/stage1_experiments/bringup/b0
+benchmark:
+  name: livecodebench
+  release_version: release_v6
+  scenario: codegeneration
+  language: python
+  manifest: configs/manifests/lcb_bringup.json
+  data_dir: /root/data/livecodebench/code_generation_lite
+  repository_path: /root/projects/LiveCodeBench
+runtime:
+  max_parallel_benchmark_tasks: 1
+  max_parallel_nodes_per_task: 4
+  max_parallel_llm_calls: 2
+  max_parallel_sandboxes: 1
+sandbox:
+  backend: lcb_official
+  per_test_timeout_seconds: 6.0
+  worker_grace_seconds: 5.0
+  max_worker_wall_seconds: 60.0
+  num_process_evaluate: 1
+  limits:
+    memory_mb: 2048
+    max_processes: 32
+    max_open_files: 128
+    max_file_size_mb: 16
+  image: python:3.11-slim
+evaluation:
+  max_repair_attempts: 0
+  final_samples_per_task: 1
+logging:
+  save_prompts: true
+  save_raw_responses: true
+  save_artifacts: true
+  redact_environment: true

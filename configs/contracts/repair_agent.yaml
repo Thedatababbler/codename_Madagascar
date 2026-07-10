@@ -10,7 +10,7 @@ user_prompt_template: |
 model: ${REPAIR_MODEL:-gpt-5-mini}
 temperature: 0.1
 max_tokens: 4000
-timeout_seconds: 120
+timeout_seconds: 180
 allowed_tools: []
 input_schema: ArtifactBundle
 output_schema: RepairArtifact

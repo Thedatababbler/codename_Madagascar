@@ -33,11 +33,15 @@ class GraphCompiler:
         harness_ids: set[str],
         transform_ids: set[str],
         selector_ids: set[str],
+        backend_ids: set[str] | None = None,
     ) -> None:
         self.contracts = contracts
         self.harness_ids = harness_ids
         self.transform_ids = transform_ids
         self.selector_ids = selector_ids
+        self.backend_ids = (
+            {"structured_llm"} if backend_ids is None else set(backend_ids)
+        )
 
     def compile(self, graph: OrchestraGraph) -> CompiledGraph:
         node_ids = [node.node_id for node in graph.nodes]
@@ -51,6 +55,12 @@ class GraphCompiler:
         for node in graph.nodes:
             if isinstance(node, AgentNodeSpec) and node.contract_id not in self.contracts:
                 raise GraphCompilationError(f"Missing contract: {node.contract_id}")
+            if isinstance(node, AgentNodeSpec):
+                backend_id = node.resolved_backend().type
+                if backend_id not in self.backend_ids:
+                    raise GraphCompilationError(
+                        f"Unknown agent backend {backend_id!r} on node {node.node_id}"
+                    )
             if isinstance(node, AgentNodeSpec) and node.contract_id in self.contracts:
                 contract = self.contracts[node.contract_id]
                 if contract.output_schema not in node.output_slots.values():

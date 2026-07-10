@@ -74,6 +74,12 @@ edges:
     destination_node: freeze_initial
     destination_input: gate
     condition: {source_field: passed, operator: is_true}
+  - edge_id: initial_no_harness_to_freeze
+    source_node: public_harness_initial
+    source_output: result
+    destination_node: freeze_initial
+    destination_input: gate
+    condition: {source_field: harness_available, operator: is_false}
   - edge_id: coder_to_repair
     source_node: direct_coder
     source_output: code
@@ -84,7 +90,7 @@ edges:
     source_output: result
     destination_node: same_coder_repair
     destination_input: public_result
-    condition: {source_field: passed, operator: is_false}
+    condition: {source_field: repair_eligible, operator: is_true}
   - edge_id: repair_to_conversion
     source_node: same_coder_repair
     source_output: repair

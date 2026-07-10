@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from orchestra.config import SandboxLimits
 from orchestra.sandbox.base import SandboxBackend
 from orchestra.sandbox.lcb_protocol import (
+    FinalEvaluationStatus,
     FinalWorkerResult,
     PrivateFinalWorkerRequest,
     PublicWorkerRequest,
@@ -158,7 +159,12 @@ class OfficialLCBProcessRunner:
                         }
                     )
                 return result_type.model_validate(
-                    {"passed": False, "pass_at_1": 0.0, "worker_metadata": metadata}
+                    {
+                        "passed": False,
+                        "pass_at_1": 0.0,
+                        "status": FinalEvaluationStatus.INFRA_ERROR,
+                        "worker_metadata": metadata,
+                    }
                 )
             if process.returncode != 0 or not result_path.exists():
                 raise OfficialLCBSandboxUnavailable(

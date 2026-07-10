@@ -1,5 +1,6 @@
 import hashlib
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -7,7 +8,22 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 from orchestra.ir.edges import EdgeSpec
-from orchestra.ir.nodes import NodeSpec
+from orchestra.ir.nodes import NodeSpec, normalize_agent_backend_config
+
+logger = logging.getLogger(__name__)
+_WARNED_LEGACY_BACKEND_NODES: set[str] = set()
+
+
+def _strip_default_backends_for_hash(data: dict[str, Any]) -> dict[str, Any]:
+    """Keep content hashes stable for legacy graphs that omit backend."""
+    nodes = []
+    for node in data.get("nodes", []):
+        item = dict(node)
+        backend = item.get("backend")
+        if backend is None or backend == {"type": "structured_llm"}:
+            item.pop("backend", None)
+        nodes.append(item)
+    return {**data, "nodes": nodes}
 
 
 class OrchestraGraph(BaseModel):
@@ -24,8 +40,9 @@ class OrchestraGraph(BaseModel):
         return self.model_copy(deep=True)
 
     def canonical_json(self) -> str:
+        payload = _strip_default_backends_for_hash(self.model_dump(mode="json"))
         return json.dumps(
-            self.model_dump(mode="json"),
+            payload,
             sort_keys=True,
             separators=(",", ":"),
             ensure_ascii=False,
@@ -37,6 +54,21 @@ class OrchestraGraph(BaseModel):
 
 
 def load_graph(path: str | Path) -> OrchestraGraph:
-    return OrchestraGraph.model_validate(
-        yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-    )
+    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    nodes = []
+    for node in raw.get("nodes", []):
+        if (
+            isinstance(node, dict)
+            and node.get("node_kind") == "agent"
+            and node.get("backend") is None
+        ):
+            node_id = str(node.get("node_id"))
+            if node_id not in _WARNED_LEGACY_BACKEND_NODES:
+                logger.warning(
+                    "Agent node %r has no backend; defaulting to structured_llm",
+                    node_id,
+                )
+                _WARNED_LEGACY_BACKEND_NODES.add(node_id)
+        nodes.append(normalize_agent_backend_config(node))
+    raw = {**raw, "nodes": nodes}
+    return OrchestraGraph.model_validate(raw)

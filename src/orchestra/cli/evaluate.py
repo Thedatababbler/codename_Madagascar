@@ -7,7 +7,10 @@ from orchestra.adapters.livecodebench.exporter import (
     build_official_record,
     export_predictions,
 )
-from orchestra.adapters.livecodebench.final_evaluator import FinalLCBEvaluator
+from orchestra.adapters.livecodebench.final_evaluator import (
+    FinalEvaluationStatus,
+    FinalLCBEvaluator,
+)
 from orchestra.adapters.livecodebench.loader import LiveCodeBenchLoader
 from orchestra.config import ExperimentConfig
 from orchestra.runtime.state import RuntimeState
@@ -49,20 +52,33 @@ async def _evaluate(run_dir: Path) -> int:
     events = AppendOnlyEventWriter(run_dir)
     predictions = []
     passed = 0
+    infra_errors = 0
+    incomplete = 0
+    evaluated = 0
     for qid in ids:
-        output_path = run_dir / "tasks" / qid / "final_evaluation.json"
-        result_data = json.loads(
-            (run_dir / "tasks" / qid / "graph_result.json").read_text(encoding="utf-8")
-        )
+        task_dir = run_dir / "tasks" / qid
+        graph_result_path = task_dir / "graph_result.json"
+        if not graph_result_path.exists():
+            incomplete += 1
+            print(f"skip {qid}: missing graph_result.json")
+            continue
+        result_data = json.loads(graph_result_path.read_text(encoding="utf-8"))
         state = RuntimeState.model_validate(result_data["state"])
         if not state.frozen or not state.final_output_artifact_id:
-            raise RuntimeError(f"Task {qid} is not frozen")
+            incomplete += 1
+            print(f"skip {qid}: not frozen")
+            continue
         artifact = await store.get(state.final_output_artifact_id)
         final = FinalCodeArtifact.model_validate(artifact.payload)
         predictions.append(build_official_record(qid, final.code))
+        output_path = task_dir / "final_evaluation.json"
         if output_path.exists():
             evaluation = json.loads(output_path.read_text(encoding="utf-8"))
-            passed += int(evaluation["passed"])
+            evaluated += 1
+            if evaluation.get("status") == FinalEvaluationStatus.PASSED:
+                passed += 1
+            elif evaluation.get("status") == FinalEvaluationStatus.INFRA_ERROR:
+                infra_errors += 1
             continue
         await events.append(
             TelemetryEvent(
@@ -78,19 +94,27 @@ async def _evaluate(run_dir: Path) -> int:
             lcb_problem_ref=qid,
         )
         output_path.write_text(evaluation.model_dump_json(indent=2), encoding="utf-8")
-        passed += int(evaluation.passed)
+        evaluated += 1
+        if evaluation.status is FinalEvaluationStatus.PASSED:
+            passed += 1
+        elif evaluation.status is FinalEvaluationStatus.INFRA_ERROR:
+            infra_errors += 1
         await events.append(
             TelemetryEvent(
                 run_id=state.run_id,
                 task_id=qid,
                 graph_id=graph["graph_id"],
                 event_type="PRIVATE_EVALUATION_COMPLETED",
-                status="passed" if evaluation.passed else "failed",
+                status=evaluation.status.value,
             )
         )
     export_predictions(predictions, run_dir / "predictions.json")
-    print(f"evaluated={len(ids)} pass@1={passed / len(ids) if ids else 0:.4f}")
-    return 0
+    print(
+        f"evaluated={evaluated}/{len(ids)} "
+        f"pass@1={passed / evaluated if evaluated else 0:.4f} "
+        f"infra_errors={infra_errors} incomplete={incomplete}"
+    )
+    return 0 if incomplete == 0 else 1
 
 
 def main() -> int:

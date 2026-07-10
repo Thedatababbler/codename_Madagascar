@@ -10,6 +10,7 @@ from pathlib import Path
 
 from orchestra.config import SandboxLimits
 from orchestra.sandbox.lcb_protocol import (
+    FinalEvaluationStatus,
     FinalWorkerResult,
     PrivateFinalWorkerRequest,
     PublicWorkerRequest,
@@ -112,6 +113,19 @@ def _checker_sample(
     }
 
 
+EXECUTION_DIR_NAME = "execution"
+
+
+def _prepare_execution_workspace(request_path: Path) -> tuple[dict, Path]:
+    workspace_root = request_path.parent
+    raw = json.loads(request_path.read_text(encoding="utf-8"))
+    request_path.unlink()
+    execution_dir = workspace_root / EXECUTION_DIR_NAME
+    execution_dir.mkdir()
+    os.chdir(execution_dir)
+    return raw, execution_dir
+
+
 def evaluate_public(request: PublicWorkerRequest) -> SandboxExecutionResult:
     metadata, check_correctness = _security_setup(request)
     metadata["public_test_count"] = len(request.task.public_test_cases)
@@ -178,20 +192,35 @@ def evaluate_public(request: PublicWorkerRequest) -> SandboxExecutionResult:
     )
 
 
+def _private_final_status(results: list) -> FinalEvaluationStatus:
+    if results and all(value is True or value == 1 for value in results):
+        return FinalEvaluationStatus.PASSED
+    if any(value in {-1, -3} for value in results):
+        return FinalEvaluationStatus.CODE_TIMEOUT
+    return FinalEvaluationStatus.WRONG_ANSWER
+
+
 def evaluate_private_final(request: PrivateFinalWorkerRequest) -> FinalWorkerResult:
     metadata, check_correctness = _security_setup(request)
     if _compile_error(request.code):
-        return FinalWorkerResult(passed=False, pass_at_1=0.0, worker_metadata=metadata)
+        return FinalWorkerResult(
+            passed=False,
+            pass_at_1=0.0,
+            status=FinalEvaluationStatus.WRONG_ANSWER,
+            worker_metadata=metadata,
+        )
     results, _checker_metadata = check_correctness(
         _checker_sample(request.test_cases, request.function_name),
         request.code,
         timeout=max(1, int(request.per_test_timeout_seconds)),
         debug=False,
     )
-    passed = bool(results) and all(value is True or value == 1 for value in results)
+    status = _private_final_status(results)
+    passed = status is FinalEvaluationStatus.PASSED
     return FinalWorkerResult(
         passed=passed,
         pass_at_1=float(passed),
+        status=status,
         worker_metadata=metadata,
     )
 
@@ -202,8 +231,7 @@ def main() -> int:
         return 2
     request_path = Path(sys.argv[1]).resolve()
     result_path = Path(sys.argv[2]).resolve()
-    os.chdir(request_path.parent)
-    raw = json.loads(request_path.read_text(encoding="utf-8"))
+    raw, _execution_dir = _prepare_execution_workspace(request_path)
     mode = WorkerMode(raw["mode"])
     if mode is WorkerMode.PUBLIC:
         result = evaluate_public(PublicWorkerRequest.model_validate(raw))

@@ -1,5 +1,40 @@
 # Changelog
 
+## 2026-07-10 — Milestone 1: AgentBackend abstraction
+
+### Added
+
+- `orchestra.backends` package with `AgentBackend` protocol, capabilities,
+  registry, and `StructuredLLMBackend`.
+- Legacy agent graph nodes without `backend` now default to `structured_llm`.
+- Graph content hashes remain stable for default structured_llm backends.
+
+### Changed
+
+- `AgentNodeExecutor` now delegates through `AgentBackendRegistry` instead of
+  calling the LLM client directly.
+- Graph compiler validates that declared agent backends are registered.
+
+## 2026-07-10 — Private request isolation and evaluation status
+
+### Added
+
+- Worker deletes `request.json` immediately after parsing and runs checker code from
+  an `execution/` subdirectory so generated code cannot read hidden tests.
+- `FinalEvaluationStatus` with `passed`, `wrong_answer`, `code_timeout`, and
+  `infra_error` outcomes.
+- One automatic retry for private-final worker wall timeouts before marking
+  `infra_error`.
+- `repair_eligible` harness field and graph routing so missing public tests skip
+  repair and freeze the initial code.
+- Tests for request deletion, infra-timeout classification, and no-harness repair
+  skipping.
+
+### Changed
+
+- `evaluate` CLI excludes `infra_error` results from pass@1 and reports them
+  separately.
+
 ## 2026-07-10 — Private-final worker and timeout hardening
 
 ### Added

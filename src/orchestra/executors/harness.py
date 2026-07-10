@@ -67,13 +67,17 @@ class HarnessNodeExecutor:
         example = problem.public_examples[failed.index] if failed else None
         total = sandbox_result.total_count
         harness_available = total > 0
-        payload = PublicHarnessResultArtifact(
-            harness_available=harness_available,
-            passed=harness_available
+        passed = (
+            harness_available
             and sandbox_result.compiled
             and sandbox_result.passed_count == total
             and sandbox_result.runtime_errors == 0
-            and sandbox_result.timeouts == 0,
+            and sandbox_result.timeouts == 0
+        )
+        payload = PublicHarnessResultArtifact(
+            harness_available=harness_available,
+            repair_eligible=harness_available and not passed,
+            passed=passed,
             pass_ratio=sandbox_result.passed_count / total if total else 0.0,
             compile_success=sandbox_result.compiled,
             runtime_errors=sandbox_result.runtime_errors,

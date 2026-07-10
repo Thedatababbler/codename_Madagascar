@@ -22,6 +22,14 @@ class OpenAICompatibleAsyncClient(AsyncLLMClient):
     async def _post(
         self, payload: dict[str, Any], timeout_seconds: float
     ) -> httpx.Response:
+        # Separate connect/read budgets so long generations are not cut by a
+        # single short socket timeout while still failing closed eventually.
+        timeout = httpx.Timeout(
+            connect=min(30.0, timeout_seconds),
+            read=timeout_seconds,
+            write=min(30.0, timeout_seconds),
+            pool=min(30.0, timeout_seconds),
+        )
         last_error: Exception | None = None
         for attempt in range(3):
             try:
@@ -29,7 +37,7 @@ class OpenAICompatibleAsyncClient(AsyncLLMClient):
                     f"{self.base_url}/chat/completions",
                     headers={"Authorization": f"Bearer {self.api_key}"},
                     json=payload,
-                    timeout=timeout_seconds,
+                    timeout=timeout,
                 )
                 if response.status_code == 429 or response.status_code >= 500:
                     response.raise_for_status()

@@ -3,15 +3,18 @@ import asyncio
 import hashlib
 import json
 import shutil
+from datetime import UTC, datetime
 from pathlib import Path
 
 from orchestra.adapters.livecodebench.loader import LiveCodeBenchLoader
 from orchestra.adapters.livecodebench.mapper import load_manifest
+from orchestra.backends.factory import build_structured_llm_registry
 from orchestra.cli.validate_graph import build_compiler
 from orchestra.config import load_experiment_config
 from orchestra.executors.agent import AgentNodeExecutor
 from orchestra.executors.harness import HarnessNodeExecutor
 from orchestra.executors.registry import NodeExecutorRegistry
+from orchestra.experiments.metadata import build_run_metadata, finalize_run_metadata
 from orchestra.ir.artifacts import ArtifactBundle, create_artifact
 from orchestra.ir.contracts import load_contracts
 from orchestra.ir.graph import load_graph
@@ -19,7 +22,6 @@ from orchestra.llm.mock_async import MockAsyncLLMClient
 from orchestra.llm.openai_compatible_async import OpenAICompatibleAsyncClient
 from orchestra.runtime.backend import RunContext
 from orchestra.runtime.checkpoint import CheckpointStore
-from orchestra.runtime.errors import GraphDeadlockError
 from orchestra.runtime.limits import RuntimeSemaphores
 from orchestra.runtime.native_async import NativeAsyncRuntime
 from orchestra.sandbox.docker import DockerSandbox, DockerUnavailableError
@@ -78,7 +80,12 @@ def _mock_client() -> MockAsyncLLMClient:
 
 async def _run(args) -> int:
     load_env_file()
+    started_at = datetime.now(UTC)
     config = load_experiment_config(args.config)
+    if args.manifest:
+        config.benchmark.manifest = args.manifest
+    if args.output_root:
+        config.experiment.output_root = args.output_root
     manifest = load_manifest(config.benchmark.manifest)
     contracts = load_contracts(config.experiment.contracts_dir)
     graph = load_graph(config.experiment.graph_config)
@@ -131,6 +138,13 @@ async def _run(args) -> int:
                 "graph": graph.model_dump(mode="json"),
                 "graph_hash": graph.content_hash,
                 "contract_hash": contract_hash,
+                "metadata": build_run_metadata(
+                    config=config,
+                    manifest=manifest,
+                    graph=graph,
+                    contracts_dir=config.experiment.contracts_dir,
+                    started_at=started_at,
+                ),
             },
             indent=2,
         ),
@@ -172,7 +186,9 @@ async def _run(args) -> int:
     checkpoint_store = CheckpointStore(run_dir)
     event_writer = AppendOnlyEventWriter(run_dir)
     executors = NodeExecutorRegistry(
-        agent_executor=AgentNodeExecutor(llm, contracts),
+        agent_executor=AgentNodeExecutor(
+            contracts, build_structured_llm_registry(llm)
+        ),
         harness_executor=HarnessNodeExecutor(
             sandbox, timeout_seconds=config.sandbox.per_test_timeout_seconds
         ),
@@ -223,7 +239,7 @@ async def _run(args) -> int:
                     initial_artifacts=ArtifactBundle(slots={"problem": initial}),
                     context=context,
                 )
-            except GraphDeadlockError as exc:
+            except Exception as exc:
                 failure_path = run_dir / "tasks" / qid / "task_failure.json"
                 failure_path.parent.mkdir(parents=True, exist_ok=True)
                 failure_path.write_text(
@@ -236,7 +252,7 @@ async def _run(args) -> int:
                         graph_id=graph.graph_id,
                         event_type="TASK_FAILED",
                         status="failed",
-                        metadata={"error": str(exc)},
+                        metadata={"error": str(exc), "error_type": type(exc).__name__},
                     )
                 )
                 return qid, None
@@ -271,6 +287,7 @@ async def _run(args) -> int:
             event_type="RUN_COMPLETED",
         )
     )
+    finalize_run_metadata(run_dir, completed_at=datetime.now(UTC))
     print(f"run_dir={run_dir}")
     return 0
 
@@ -278,6 +295,8 @@ async def _run(args) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
+    parser.add_argument("--manifest")
+    parser.add_argument("--output-root")
     parser.add_argument("--task-id")
     parser.add_argument("--limit", type=int)
     parser.add_argument("--mock-llm", action="store_true")

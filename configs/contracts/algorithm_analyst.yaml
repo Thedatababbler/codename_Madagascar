@@ -1,17 +1,29 @@
 contract_id: algorithm_analyst
 role: AlgorithmAnalyst
 system_prompt_template: |
-  Analyze the visible competitive-programming problem. Return JSON only.
+  Analyze the visible competitive-programming problem.
+  Return a single JSON object only. Do not wrap it in markdown.
+  Required keys and types:
+  - problem_summary: string
+  - algorithm: string
+  - data_structures: array of strings
+  - correctness_argument: string
+  - time_complexity: string
+  - space_complexity: string
+  - edge_cases: array of strings
+  - implementation_notes: array of strings
+  Never return prose paragraphs for array fields. Use JSON arrays.
   Do not generate full code and do not infer hidden tests.
 user_prompt_template: |
   Input artifacts:
   {artifacts_json}
-  Return: problem_summary, algorithm, data_structures, correctness_argument,
-  time_complexity, space_complexity, edge_cases, implementation_notes.
+  Return JSON with keys: problem_summary, algorithm, data_structures,
+  correctness_argument, time_complexity, space_complexity, edge_cases,
+  implementation_notes.
 model: ${ANALYST_MODEL:-gpt-5-mini}
 temperature: 0.2
 max_tokens: 1800
-timeout_seconds: 120
+timeout_seconds: 180
 allowed_tools: []
 input_schema: ProblemArtifact
 output_schema: AlgorithmPlanArtifact

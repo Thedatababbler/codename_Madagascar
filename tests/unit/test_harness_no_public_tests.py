@@ -49,6 +49,7 @@ async def test_harness_without_public_tests_does_not_auto_pass(tmp_path):
     )
     payload = next(iter(result.outputs.values())).payload
     assert payload["harness_available"] is False
+    assert payload["repair_eligible"] is False
     assert payload["passed"] is False
     assert payload["pass_ratio"] == 0.0
     assert "No public tests available" in payload["failure_summary"]["errors"]

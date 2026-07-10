@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from orchestra.backends.factory import build_structured_llm_registry
 from orchestra.cli.validate_graph import build_compiler
 from orchestra.executors.agent import AgentNodeExecutor
 from orchestra.executors.harness import HarnessNodeExecutor
@@ -97,7 +98,9 @@ async def _execute(
     store = FileArtifactStore(tmp_path)
     runtime = NativeAsyncRuntime(
         executors=NodeExecutorRegistry(
-            agent_executor=AgentNodeExecutor(client, contracts),
+            agent_executor=AgentNodeExecutor(
+                contracts, build_structured_llm_registry(client)
+            ),
             harness_executor=HarnessNodeExecutor(sandbox),
         ),
         artifact_store=store,
@@ -202,7 +205,7 @@ async def test_resume_after_frozen_checkpoint_does_not_repeat_llm(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_no_public_tests_does_not_auto_pass(tmp_path):
+async def test_no_public_tests_skips_repair_and_freezes_initial_code(tmp_path):
     result, _final, client = await _execute(
         tmp_path,
         "b1_single_harness",
@@ -210,4 +213,5 @@ async def test_no_public_tests_does_not_auto_pass(tmp_path):
         public_examples=[],
     )
     assert result.state.frozen
-    assert client.call_counts["single_agent_repair"] == 1
+    assert client.call_counts["single_agent_repair"] == 0
+    assert result.state.node_status["same_coder_repair"] is NodeStatus.SKIPPED

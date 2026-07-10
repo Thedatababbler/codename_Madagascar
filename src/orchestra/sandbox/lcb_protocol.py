@@ -41,9 +41,17 @@ class PrivateFinalWorkerRequest(BaseWorkerRequest):
     function_name: str | None = None
 
 
+class FinalEvaluationStatus(StrEnum):
+    PASSED = "passed"
+    WRONG_ANSWER = "wrong_answer"
+    CODE_TIMEOUT = "code_timeout"
+    INFRA_ERROR = "infra_error"
+
+
 class FinalWorkerResult(BaseModel):
     passed: bool
     pass_at_1: float
+    status: FinalEvaluationStatus
     worker_metadata: dict
 
 

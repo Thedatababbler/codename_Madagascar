@@ -1,6 +1,8 @@
 import asyncio
 import time
 
+import httpx
+
 from orchestra.executors.agent import AgentNodeExecutor
 from orchestra.executors.harness import HarnessNodeExecutor
 from orchestra.executors.selector import SelectorExecutor
@@ -15,6 +17,15 @@ from orchestra.ir.nodes import (
 )
 from orchestra.runtime.backend import RunContext
 from orchestra.runtime.state import NodeExecutionResult
+
+_NODE_FAILURE_EXCEPTIONS = (
+    ValueError,
+    KeyError,
+    TimeoutError,
+    httpx.TimeoutException,
+    httpx.TransportError,
+    httpx.HTTPStatusError,
+)
 
 
 class NodeExecutorRegistry:
@@ -49,7 +60,7 @@ class NodeExecutorRegistry:
                 if isinstance(node, SelectorNodeSpec):
                     return await self.selector.execute(node, inputs, context)
                 raise TypeError(type(node))
-        except (ValueError, KeyError, TimeoutError) as exc:
+        except _NODE_FAILURE_EXCEPTIONS as exc:
             return NodeExecutionResult.failed(
                 node.node_id, exc, int((time.perf_counter() - started) * 1000)
             )

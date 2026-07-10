@@ -90,7 +90,11 @@ LiveCodeBench `check_correctness` implementation in a separate worker process:
 - per-test timeout and worker wall timeout are configured separately;
 - only public tests are serialized into the public worker request;
 - private-final evaluation uses the same isolated worker model and returns only
-  `passed` / `pass_at_1` after final freeze.
+  `passed` / `pass_at_1` after final freeze;
+- the worker deletes `request.json` before executing generated code and runs checks
+  from an `execution/` subdirectory;
+- infra worker timeouts are retried once and reported as `infra_error`, not model
+  failures.
 
 `docker` remains an optional stronger backend. It is currently unavailable on
 this machine, but Stage 1 development can proceed with `lcb_official`.
@@ -101,6 +105,36 @@ this machine, but Stage 1 development can proceed with `lcb_official`.
 > therefore must remain paired with the independent low-privilege worker,
 > environment redaction, resource limits, and process-group timeout described
 > above. Use Docker for stronger isolation when it becomes available.
+
+## Stage 1 experiments
+
+The protocol in `Stage1_LiveCodeBench_Experiment_Protocol.md` is executed via:
+
+```bash
+# Phase A: executor acceptance (required before real-model runs)
+uv run python -m orchestra.cli.stage1_experiments acceptance \
+  --lcb-repository-path /root/projects/LiveCodeBench
+
+# Generate per-phase baseline configs (bringup/smoke/dev/heldout × b0/b1/b2)
+uv run python -m orchestra.cli.stage1_experiments generate-configs
+
+# Phase B: 3-task bring-up (sequential B0 -> B1 -> B2)
+uv run python -m orchestra.cli.stage1_experiments bringup --force-rerun
+
+# Phase C/D/E
+uv run python -m orchestra.cli.stage1_experiments smoke --force-rerun
+uv run python -m orchestra.cli.stage1_experiments dev --force-rerun
+uv run python -m orchestra.cli.stage1_experiments heldout --force-rerun
+
+# Comparison tables
+uv run python -m orchestra.cli.stage1_experiments report --phase smoke
+```
+
+Outputs land under `outputs/stage1_experiments/<phase>/<baseline>/<run_id>/`.
+Cross-baseline CSV reports are written to `outputs/stage1_experiments/reports/`.
+
+Set `OPENAI_API_KEY` and model env vars in `.env` before non-mock runs.
+Use `--mock-llm` only for pipeline validation.
 
 ## Development
 
