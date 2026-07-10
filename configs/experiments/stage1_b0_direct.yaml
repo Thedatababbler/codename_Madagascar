@@ -11,7 +11,7 @@ benchmark:
   language: python
   manifest: configs/manifests/lcb_smoke.json
   data_dir: ${LCB_DATA_DIR:-/root/data/livecodebench/code_generation_lite}
-  repository_path: ${LCB_REPO_PATH:-/root/projects/LiveCodeBench}
+  repository_path: ${LCB_REPOSITORY_PATH:-/root/projects/LiveCodeBench}
 runtime:
   backend: native_async
   max_parallel_benchmark_tasks: 4
@@ -21,7 +21,9 @@ runtime:
   checkpoint_after_each_wave: true
 sandbox:
   backend: lcb_official
-  timeout_seconds: 10
+  per_test_timeout_seconds: 6
+  worker_grace_seconds: 5
+  max_worker_wall_seconds: 60
   num_process_evaluate: 1
   limits:
     memory_mb: 2048

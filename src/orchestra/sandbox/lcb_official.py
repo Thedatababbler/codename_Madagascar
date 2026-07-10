@@ -6,63 +6,80 @@ import signal
 import sys
 import tempfile
 from pathlib import Path
+from typing import TypeVar
+
+from pydantic import BaseModel
 
 from orchestra.config import SandboxLimits
 from orchestra.sandbox.base import SandboxBackend
-from orchestra.sandbox.lcb_worker import WorkerRequest
+from orchestra.sandbox.lcb_protocol import (
+    FinalWorkerResult,
+    PrivateFinalWorkerRequest,
+    PublicWorkerRequest,
+    WorkerTestCase,
+)
 from orchestra.sandbox.result import SandboxExecutionResult
-from orchestra.schemas.task import AgentVisibleLCBTask
+from orchestra.schemas.task import AgentVisibleLCBTask, PrivateTaskData
+
+T = TypeVar("T", bound=BaseModel)
 
 
 class OfficialLCBSandboxUnavailable(RuntimeError):
     pass
 
 
-class OfficialLCBSandbox(SandboxBackend):
-    """Public-test backend using the pinned checker in an isolated worker process."""
+def compute_worker_wall_timeout(
+    *,
+    per_test_seconds: float,
+    test_count: int,
+    worker_grace_seconds: float,
+    max_worker_wall_seconds: float,
+) -> float:
+    calculated = (per_test_seconds + 1) * max(1, test_count)
+    calculated += worker_grace_seconds
+    return min(max_worker_wall_seconds, calculated)
+
+
+class OfficialLCBProcessRunner:
+    """Launches one sanitized, bounded, low-privilege official-checker worker."""
 
     def __init__(
         self,
         *,
         repository_path: str,
-        limits: SandboxLimits | None = None,
-        num_process_evaluate: int = 1,
+        limits: SandboxLimits,
+        worker_grace_seconds: float,
+        max_worker_wall_seconds: float,
     ) -> None:
         self.repository_path = str(Path(repository_path).resolve())
         if not Path(self.repository_path, "lcb_runner").exists():
             raise OfficialLCBSandboxUnavailable(
                 f"LiveCodeBench checkout unavailable: {self.repository_path}"
             )
-        if num_process_evaluate != 1:
-            raise ValueError("OfficialLCBSandbox only supports num_process_evaluate=1")
-        self.limits = limits or SandboxLimits()
-        self.num_process_evaluate = num_process_evaluate
+        self.limits = limits
+        self.worker_grace_seconds = worker_grace_seconds
+        self.max_worker_wall_seconds = max_worker_wall_seconds
 
-    def build_request(
-        self,
-        *,
-        task: AgentVisibleLCBTask,
-        code: str,
-        timeout_seconds: float,
-    ) -> WorkerRequest:
-        # AgentVisibleLCBTask has extra='forbid' and no private-test field.
-        return WorkerRequest(
-            task=task,
-            code=code,
-            timeout_seconds=timeout_seconds,
-            repository_path=self.repository_path,
-            num_process_evaluate=self.num_process_evaluate,
-            limits=self.limits,
+    def wall_timeout(self, *, per_test_seconds: float, test_count: int) -> float:
+        return compute_worker_wall_timeout(
+            per_test_seconds=per_test_seconds,
+            test_count=test_count,
+            worker_grace_seconds=self.worker_grace_seconds,
+            max_worker_wall_seconds=self.max_worker_wall_seconds,
         )
 
     def _sanitized_environment(self) -> dict[str, str]:
         allowed = ("PATH", "LANG", "LC_ALL", "PYTHONIOENCODING")
         environment = {name: os.environ[name] for name in allowed if name in os.environ}
-        environment["PYTHONDONTWRITEBYTECODE"] = "1"
-        environment["OPENBLAS_NUM_THREADS"] = "1"
-        environment["OMP_NUM_THREADS"] = "1"
-        environment["MKL_NUM_THREADS"] = "1"
-        environment["NUMEXPR_NUM_THREADS"] = "1"
+        environment.update(
+            {
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "OPENBLAS_NUM_THREADS": "1",
+                "OMP_NUM_THREADS": "1",
+                "MKL_NUM_THREADS": "1",
+                "NUMEXPR_NUM_THREADS": "1",
+            }
+        )
         return environment
 
     def _preexec_limits(self) -> None:
@@ -78,15 +95,17 @@ class OfficialLCBSandbox(SandboxBackend):
         set_limit(resource.RLIMIT_NOFILE, self.limits.max_open_files)
         set_limit(resource.RLIMIT_FSIZE, self.limits.max_file_size_mb * 1024 * 1024)
 
-    async def evaluate_public(
+    async def run(
         self,
         *,
-        task: AgentVisibleLCBTask,
-        code: str,
-        timeout_seconds: float,
-    ) -> SandboxExecutionResult:
-        request = self.build_request(
-            task=task, code=code, timeout_seconds=timeout_seconds
+        request: BaseModel,
+        result_type: type[T],
+        test_count: int,
+        per_test_timeout_seconds: float,
+    ) -> T:
+        wall_timeout = self.wall_timeout(
+            per_test_seconds=per_test_timeout_seconds,
+            test_count=test_count,
         )
         with tempfile.TemporaryDirectory(prefix="orchestra-lcb-worker-") as tmp:
             request_path = Path(tmp, "request.json")
@@ -113,7 +132,7 @@ class OfficialLCBSandbox(SandboxBackend):
             )
             try:
                 _stdout, stderr = await asyncio.wait_for(
-                    process.communicate(), timeout=timeout_seconds
+                    process.communicate(), timeout=wall_timeout
                 )
             except TimeoutError:
                 try:
@@ -121,21 +140,140 @@ class OfficialLCBSandbox(SandboxBackend):
                 except ProcessLookupError:
                     pass
                 await process.wait()
-                return SandboxExecutionResult(
-                    compiled=True,
-                    passed_count=0,
-                    total_count=len(task.public_test_cases),
-                    runtime_errors=0,
-                    timeouts=1,
-                    stderr_summary="Official LCB worker wall-clock timeout",
-                    duration_ms=int(timeout_seconds * 1000),
-                    worker_metadata={"worker_wall_timeout": True},
+                metadata = {
+                    "worker_wall_timeout": True,
+                    "worker_wall_timeout_seconds": wall_timeout,
+                }
+                if result_type is SandboxExecutionResult:
+                    return result_type.model_validate(
+                        {
+                            "compiled": True,
+                            "passed_count": 0,
+                            "total_count": test_count,
+                            "runtime_errors": 0,
+                            "timeouts": 1,
+                            "stderr_summary": "Official LCB worker wall-clock timeout",
+                            "duration_ms": int(wall_timeout * 1000),
+                            "worker_metadata": metadata,
+                        }
+                    )
+                return result_type.model_validate(
+                    {"passed": False, "pass_at_1": 0.0, "worker_metadata": metadata}
                 )
             if process.returncode != 0 or not result_path.exists():
                 raise OfficialLCBSandboxUnavailable(
                     "Official LCB worker failed closed: "
                     + stderr.decode(errors="replace")[-1000:]
                 )
-            return SandboxExecutionResult.model_validate_json(
+            return result_type.model_validate_json(
                 result_path.read_text(encoding="utf-8")
             )
+
+
+class OfficialLCBSandbox(SandboxBackend):
+    """Public-test backend. Its request type cannot represent private tests."""
+
+    def __init__(
+        self,
+        *,
+        repository_path: str,
+        limits: SandboxLimits | None = None,
+        num_process_evaluate: int = 1,
+        worker_grace_seconds: float = 5,
+        max_worker_wall_seconds: float = 60,
+    ) -> None:
+        if num_process_evaluate != 1:
+            raise ValueError("OfficialLCBSandbox only supports num_process_evaluate=1")
+        self.limits = limits or SandboxLimits()
+        self.num_process_evaluate = num_process_evaluate
+        self.runner = OfficialLCBProcessRunner(
+            repository_path=repository_path,
+            limits=self.limits,
+            worker_grace_seconds=worker_grace_seconds,
+            max_worker_wall_seconds=max_worker_wall_seconds,
+        )
+
+    def build_request(
+        self,
+        *,
+        task: AgentVisibleLCBTask,
+        code: str,
+        timeout_seconds: float,
+    ) -> PublicWorkerRequest:
+        return PublicWorkerRequest(
+            task=task,
+            code=code,
+            per_test_timeout_seconds=timeout_seconds,
+            repository_path=self.runner.repository_path,
+            num_process_evaluate=self.num_process_evaluate,
+            limits=self.limits,
+        )
+
+    async def evaluate_public(
+        self,
+        *,
+        task: AgentVisibleLCBTask,
+        code: str,
+        timeout_seconds: float,
+    ) -> SandboxExecutionResult:
+        return await self.runner.run(
+            request=self.build_request(
+                task=task, code=code, timeout_seconds=timeout_seconds
+            ),
+            result_type=SandboxExecutionResult,
+            test_count=len(task.public_test_cases),
+            per_test_timeout_seconds=timeout_seconds,
+        )
+
+
+class FinalLCBWorker:
+    """Private-final backend returning pass@1 only; no hidden failure details."""
+
+    def __init__(
+        self,
+        *,
+        repository_path: str,
+        limits: SandboxLimits | None = None,
+        num_process_evaluate: int = 1,
+        worker_grace_seconds: float = 5,
+        max_worker_wall_seconds: float = 60,
+    ) -> None:
+        if num_process_evaluate != 1:
+            raise ValueError("FinalLCBWorker only supports num_process_evaluate=1")
+        self.limits = limits or SandboxLimits()
+        self.num_process_evaluate = num_process_evaluate
+        self.runner = OfficialLCBProcessRunner(
+            repository_path=repository_path,
+            limits=self.limits,
+            worker_grace_seconds=worker_grace_seconds,
+            max_worker_wall_seconds=max_worker_wall_seconds,
+        )
+
+    async def evaluate(
+        self,
+        *,
+        question_id: str,
+        hidden: PrivateTaskData,
+        code: str,
+        per_test_timeout_seconds: float,
+    ) -> FinalWorkerResult:
+        tests = [
+            WorkerTestCase.model_validate(test.model_dump())
+            for test in [*hidden.public_tests, *hidden.private_tests]
+        ]
+        request = PrivateFinalWorkerRequest(
+            question_id=question_id,
+            test_cases=tests,
+            function_name=hidden.function_name,
+            code=code,
+            per_test_timeout_seconds=per_test_timeout_seconds,
+            repository_path=self.runner.repository_path,
+            num_process_evaluate=self.num_process_evaluate,
+            limits=self.limits,
+        )
+        return await self.runner.run(
+            request=request,
+            result_type=FinalWorkerResult,
+            test_count=len(tests),
+            per_test_timeout_seconds=per_test_timeout_seconds,
+        )

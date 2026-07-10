@@ -48,7 +48,9 @@ class SandboxLimits(BaseModel):
 
 class SandboxSection(BaseModel):
     backend: Literal["lcb_official", "docker", "mock"]
-    timeout_seconds: float = 10
+    per_test_timeout_seconds: float = 6
+    worker_grace_seconds: float = 5
+    max_worker_wall_seconds: float = 60
     num_process_evaluate: Literal[1] = 1
     limits: SandboxLimits = Field(default_factory=SandboxLimits)
     image: str = "python:3.11-slim"

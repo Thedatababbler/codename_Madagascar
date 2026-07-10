@@ -11,6 +11,7 @@ from orchestra.adapters.livecodebench.final_evaluator import FinalLCBEvaluator
 from orchestra.adapters.livecodebench.loader import LiveCodeBenchLoader
 from orchestra.config import ExperimentConfig
 from orchestra.runtime.state import RuntimeState
+from orchestra.sandbox.lcb_official import FinalLCBWorker
 from orchestra.schemas.artifacts import FinalCodeArtifact
 from orchestra.settings import load_env_file
 from orchestra.storage.artifacts import FileArtifactStore
@@ -28,11 +29,21 @@ async def _evaluate(run_dir: Path) -> int:
         config.benchmark.data_dir, config.benchmark.release_version
     )
     loader.load(task_ids=set(ids))
-    evaluator = FinalLCBEvaluator(
+    final_worker = FinalLCBWorker(
         repository_path=config.benchmark.repository_path,
+        limits=config.sandbox.limits,
+        num_process_evaluate=config.sandbox.num_process_evaluate,
+        worker_grace_seconds=config.sandbox.worker_grace_seconds,
+        max_worker_wall_seconds=config.sandbox.max_worker_wall_seconds,
+    )
+    evaluator = FinalLCBEvaluator(
         private_repository=loader.private_repository,
         evaluator_commit=manifest["livecodebench_commit"],
-        timeout_seconds=config.sandbox.timeout_seconds,
+        worker=final_worker,
+        sandbox_semaphore=asyncio.Semaphore(
+            config.runtime.max_parallel_sandboxes
+        ),
+        per_test_timeout_seconds=config.sandbox.per_test_timeout_seconds,
     )
     store = FileArtifactStore(run_dir)
     events = AppendOnlyEventWriter(run_dir)

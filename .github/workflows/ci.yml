@@ -5,7 +5,7 @@ on:
   pull_request:
 
 jobs:
-  test:
+  unit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -13,3 +13,18 @@ jobs:
       - run: uv sync
       - run: uv run ruff check .
       - run: uv run pytest -q tests/unit
+
+  integration:
+    runs-on: ubuntu-latest
+    env:
+      LCB_REPOSITORY_PATH: ${{ github.workspace }}/third_party/LiveCodeBench
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: LiveCodeBench/LiveCodeBench
+          ref: 28fef95ea8c9f7a547c8329f2cd3d32b92c1fa24
+          path: third_party/LiveCodeBench
+      - uses: astral-sh/setup-uv@v5
+      - run: uv sync
+      - run: uv run pytest -q tests/integration

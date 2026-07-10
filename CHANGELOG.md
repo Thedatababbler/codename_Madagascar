@@ -1,5 +1,42 @@
 # Changelog
 
+## 2026-07-10 — Private-final worker and timeout hardening
+
+### Added
+
+- `FinalLCBWorker` and `PRIVATE_FINAL` worker mode for freeze-gated private evaluation.
+- Split sandbox timeout configuration:
+  - `per_test_timeout_seconds`
+  - `worker_grace_seconds`
+  - `max_worker_wall_seconds`
+- `compute_worker_wall_timeout()` to align outer process-group timeout with the
+  official checker budget.
+- `function_name` on `AgentVisibleLCBTask` for consistent functional-task routing.
+- `harness_available` on `PublicHarnessResultArtifact`; empty public tests no
+  longer auto-pass.
+- Dedicated CI integration job with pinned LiveCodeBench checkout via
+  `LCB_REPOSITORY_PATH`.
+- Tests for private-final isolation, multi-test wall timeout, compile-only
+  syntax failures (`return`), and no-public-test harness behavior.
+
+### Changed
+
+- `FinalLCBEvaluator` now delegates to `FinalLCBWorker` instead of calling
+  `check_correctness` in the main process.
+- Public and private workers share the same low-privilege process runner:
+  environment redaction, `nobody` drop, RLIMITs, and process-group wall timeout.
+- Syntax checks now use `compile(..., "exec")` instead of `ast.parse()`.
+- Environment redaction now matches sensitive suffixes (`_KEY`, `_TOKEN`,
+  `_SECRET`, `_PASSWORD`) instead of substring matches such as `TOKEN`.
+
+### Security note
+
+The official LiveCodeBench reliability guard is not a complete security
+sandbox. The worker backend is intended for controlled research environments
+and relies on process isolation, privilege dropping, environment redaction,
+resource limits, and timeout termination. Docker should be preferred when
+stronger isolation is required.
+
 ## 2026-07-10 — Official LiveCodeBench worker backend
 
 ### Added

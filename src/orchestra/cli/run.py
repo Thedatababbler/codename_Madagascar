@@ -146,6 +146,8 @@ async def _run(args) -> int:
                 repository_path=config.benchmark.repository_path,
                 limits=config.sandbox.limits,
                 num_process_evaluate=config.sandbox.num_process_evaluate,
+                worker_grace_seconds=config.sandbox.worker_grace_seconds,
+                max_worker_wall_seconds=config.sandbox.max_worker_wall_seconds,
             )
         except OfficialLCBSandboxUnavailable as exc:
             raise RuntimeError(
@@ -155,7 +157,7 @@ async def _run(args) -> int:
         try:
             sandbox = DockerSandbox(
                 image=config.sandbox.image,
-                timeout_seconds=config.sandbox.timeout_seconds,
+                timeout_seconds=config.sandbox.per_test_timeout_seconds,
                 memory_mb=config.sandbox.limits.memory_mb,
             )
         except DockerUnavailableError as exc:
@@ -172,7 +174,7 @@ async def _run(args) -> int:
     executors = NodeExecutorRegistry(
         agent_executor=AgentNodeExecutor(llm, contracts),
         harness_executor=HarnessNodeExecutor(
-            sandbox, timeout_seconds=config.sandbox.timeout_seconds
+            sandbox, timeout_seconds=config.sandbox.per_test_timeout_seconds
         ),
     )
     runtime = NativeAsyncRuntime(

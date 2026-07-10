@@ -1,8 +1,10 @@
+from orchestra.config import SandboxLimits
+from orchestra.sandbox.lcb_protocol import PublicWorkerRequest
 from orchestra.schemas.task import PrivateTaskData, PrivateTestCase
 
 
 def test_public_worker_request_cannot_contain_private_tests(
-    official_sandbox, visible_echo_task
+    visible_echo_task,
 ):
     hidden = PrivateTaskData(
         question_id="echo",
@@ -14,10 +16,12 @@ def test_public_worker_request_cannot_contain_private_tests(
             )
         ],
     )
-    request = official_sandbox.build_request(
+    request = PublicWorkerRequest(
         task=visible_echo_task,
         code="print(input())",
-        timeout_seconds=10,
+        per_test_timeout_seconds=6,
+        repository_path="/pinned/lcb",
+        limits=SandboxLimits(),
     )
     encoded = request.model_dump_json()
     assert hidden.private_tests[0].input not in encoded

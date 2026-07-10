@@ -1,4 +1,3 @@
-import ast
 import time
 
 from orchestra.ir.artifacts import ArtifactEnvelope, create_artifact
@@ -31,7 +30,7 @@ class HarnessNodeExecutor:
         problem = ProblemArtifact.model_validate(inputs["problem"].payload)
         code = CodeArtifact.model_validate(inputs["code"].payload)
         try:
-            ast.parse(code.code)
+            compile(code.code, "<generated>", "exec")
         except SyntaxError as exc:
             sandbox_result = SandboxExecutionResult(
                 compiled=False,
@@ -52,7 +51,8 @@ class HarnessNodeExecutor:
                 starter_code=problem.starter_code,
                 difficulty=problem.difficulty,
                 public_test_cases=problem.public_examples,
-                metadata_public={"func_name": problem.function_name},
+                function_name=problem.function_name,
+                metadata_public={},
             )
             async with context.semaphores.sandbox:
                 sandbox_result = await self.sandbox.evaluate_public(
@@ -66,12 +66,15 @@ class HarnessNodeExecutor:
         )
         example = problem.public_examples[failed.index] if failed else None
         total = sandbox_result.total_count
+        harness_available = total > 0
         payload = PublicHarnessResultArtifact(
-            passed=sandbox_result.compiled
+            harness_available=harness_available,
+            passed=harness_available
+            and sandbox_result.compiled
             and sandbox_result.passed_count == total
             and sandbox_result.runtime_errors == 0
             and sandbox_result.timeouts == 0,
-            pass_ratio=sandbox_result.passed_count / total if total else 1.0,
+            pass_ratio=sandbox_result.passed_count / total if total else 0.0,
             compile_success=sandbox_result.compiled,
             runtime_errors=sandbox_result.runtime_errors,
             timeouts=sandbox_result.timeouts,
@@ -87,7 +90,7 @@ class HarnessNodeExecutor:
                 failed_public_test_index=failed.index if failed else None,
                 errors=[sandbox_result.stderr_summary]
                 if sandbox_result.stderr_summary
-                else [],
+                else (["No public tests available"] if not harness_available else []),
             ),
         )
         output_slot = next(iter(node.output_slots))

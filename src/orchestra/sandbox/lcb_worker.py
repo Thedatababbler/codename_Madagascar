@@ -1,6 +1,5 @@
-"""Isolated worker entry point for the pinned LiveCodeBench checker."""
+"""Low-privilege worker entry point for pinned LiveCodeBench evaluation."""
 
-import ast
 import json
 import os
 import pwd
@@ -9,28 +8,33 @@ import sys
 import time
 from pathlib import Path
 
-from pydantic import BaseModel
-
 from orchestra.config import SandboxLimits
+from orchestra.sandbox.lcb_protocol import (
+    FinalWorkerResult,
+    PrivateFinalWorkerRequest,
+    PublicWorkerRequest,
+    WorkerMode,
+    WorkerTestCase,
+)
 from orchestra.sandbox.result import SandboxExecutionResult, VisibleTestResult
-from orchestra.schemas.task import AgentVisibleLCBTask
 
-SENSITIVE_MARKERS = ("KEY", "TOKEN", "SECRET", "PASSWORD")
+SENSITIVE_SUFFIXES = ("_KEY", "_TOKEN", "_SECRET", "_PASSWORD")
+SENSITIVE_EXACT_NAMES = frozenset(
+    {"API_KEY", "SECRET", "PASSWORD", "TOKEN", "ACCESS_TOKEN", "REFRESH_TOKEN"}
+)
 
 
-class WorkerRequest(BaseModel):
-    task: AgentVisibleLCBTask
-    code: str
-    timeout_seconds: float
-    repository_path: str
-    num_process_evaluate: int = 1
-    limits: SandboxLimits
+def is_sensitive_environment_name(name: str) -> bool:
+    upper = name.upper()
+    if upper in SENSITIVE_EXACT_NAMES:
+        return True
+    return any(upper.endswith(suffix) for suffix in SENSITIVE_SUFFIXES)
 
 
 def redact_environment() -> list[str]:
     redacted = []
     for name in list(os.environ):
-        if any(marker in name.upper() for marker in SENSITIVE_MARKERS):
+        if is_sensitive_environment_name(name):
             redacted.append(name)
             os.environ.pop(name, None)
     return sorted(redacted)
@@ -64,63 +68,74 @@ def drop_privileges() -> dict[str, int]:
     return {"uid": os.geteuid(), "gid": os.getegid()}
 
 
-def _syntax_failure(
-    request: WorkerRequest, exc: SyntaxError, metadata: dict
-) -> SandboxExecutionResult:
-    return SandboxExecutionResult(
-        compiled=False,
-        passed_count=0,
-        total_count=len(request.task.public_test_cases),
-        runtime_errors=0,
-        timeouts=0,
-        stderr_summary=f"{exc.msg} at line {exc.lineno}",
-        duration_ms=0,
-        worker_metadata=metadata,
-    )
-
-
-def evaluate(request: WorkerRequest) -> SandboxExecutionResult:
+def _security_setup(request) -> tuple[dict, object]:
     if request.num_process_evaluate != 1:
         raise ValueError("Official LCB worker requires num_process_evaluate=1")
     redacted = redact_environment()
     observed_limits = apply_resource_limits(request.limits)
-    metadata = {
-        "redacted_environment_names": redacted,
-        "sensitive_env_present": [
-            name
-            for name in os.environ
-            if any(marker in name.upper() for marker in SENSITIVE_MARKERS)
-        ],
-        "resource_limits": observed_limits,
-        "num_process_evaluate": 1,
-        "public_test_count": len(request.task.public_test_cases),
-    }
-    try:
-        ast.parse(request.code)
-    except SyntaxError as exc:
-        return _syntax_failure(request, exc, metadata)
-
     repository = str(Path(request.repository_path).resolve())
     if repository not in sys.path:
         sys.path.insert(0, repository)
     from lcb_runner.evaluation.compute_code_generation_metrics import check_correctness
 
-    metadata["worker_identity"] = drop_privileges()
+    metadata = {
+        "redacted_environment_names": redacted,
+        "sensitive_env_present": [
+            name for name in os.environ if is_sensitive_environment_name(name)
+        ],
+        "resource_limits": observed_limits,
+        "num_process_evaluate": 1,
+        "worker_identity": drop_privileges(),
+    }
+    return metadata, check_correctness
 
-    sample = {
+
+def _compile_error(code: str) -> str | None:
+    try:
+        compile(code, "<generated>", "exec")
+    except SyntaxError as exc:
+        return f"{exc.msg} at line {exc.lineno}"
+    return None
+
+
+def _checker_sample(
+    tests: list[WorkerTestCase], function_name: str | None
+) -> dict[str, str]:
+    return {
         "input_output": json.dumps(
             {
-                "inputs": [test.input for test in request.task.public_test_cases],
-                "outputs": [test.output for test in request.task.public_test_cases],
-                "fn_name": request.task.metadata_public.get("func_name"),
+                "inputs": [test.input for test in tests],
+                "outputs": [test.output for test in tests],
+                "fn_name": function_name,
             }
         )
     }
+
+
+def evaluate_public(request: PublicWorkerRequest) -> SandboxExecutionResult:
+    metadata, check_correctness = _security_setup(request)
+    metadata["public_test_count"] = len(request.task.public_test_cases)
+    compile_error = _compile_error(request.code)
+    if compile_error:
+        return SandboxExecutionResult(
+            compiled=False,
+            passed_count=0,
+            total_count=len(request.task.public_test_cases),
+            runtime_errors=0,
+            timeouts=0,
+            stderr_summary=compile_error,
+            duration_ms=0,
+            worker_metadata=metadata,
+        )
+    tests = [
+        WorkerTestCase.model_validate(test.model_dump())
+        for test in request.task.public_test_cases
+    ]
     started = time.perf_counter()
     results, checker_metadata = check_correctness(
-        sample,
+        _checker_sample(tests, request.task.function_name),
         request.code,
-        timeout=max(1, int(request.timeout_seconds)),
+        timeout=max(1, int(request.per_test_timeout_seconds)),
         debug=False,
     )
     elapsed = int((time.perf_counter() - started) * 1000)
@@ -146,22 +161,37 @@ def evaluate(request: WorkerRequest) -> SandboxExecutionResult:
         )
     metadata["checker_error_code"] = checker_metadata.get("error_code")
     metadata["checker_error_message"] = checker_metadata.get("error_message")
-    passed_count = sum(item.passed for item in visible_results)
-    timeouts = sum(item.timed_out for item in visible_results)
-    runtime_errors = sum(item.runtime_error is not None for item in visible_results)
     return SandboxExecutionResult(
         compiled=True,
-        passed_count=passed_count,
-        total_count=len(request.task.public_test_cases),
-        runtime_errors=runtime_errors,
-        timeouts=timeouts,
+        passed_count=sum(item.passed for item in visible_results),
+        total_count=len(tests),
+        runtime_errors=sum(item.runtime_error is not None for item in visible_results),
+        timeouts=sum(item.timed_out for item in visible_results),
         stderr_summary=(
             str(checker_metadata.get("error") or checker_metadata.get("error_message"))
-            if runtime_errors or timeouts
+            if any(item.runtime_error or item.timed_out for item in visible_results)
             else None
         ),
         per_test_visible_results=visible_results,
         duration_ms=elapsed,
+        worker_metadata=metadata,
+    )
+
+
+def evaluate_private_final(request: PrivateFinalWorkerRequest) -> FinalWorkerResult:
+    metadata, check_correctness = _security_setup(request)
+    if _compile_error(request.code):
+        return FinalWorkerResult(passed=False, pass_at_1=0.0, worker_metadata=metadata)
+    results, _checker_metadata = check_correctness(
+        _checker_sample(request.test_cases, request.function_name),
+        request.code,
+        timeout=max(1, int(request.per_test_timeout_seconds)),
+        debug=False,
+    )
+    passed = bool(results) and all(value is True or value == 1 for value in results)
+    return FinalWorkerResult(
+        passed=passed,
+        pass_at_1=float(passed),
         worker_metadata=metadata,
     )
 
@@ -173,8 +203,12 @@ def main() -> int:
     request_path = Path(sys.argv[1]).resolve()
     result_path = Path(sys.argv[2]).resolve()
     os.chdir(request_path.parent)
-    request = WorkerRequest.model_validate_json(request_path.read_text(encoding="utf-8"))
-    result = evaluate(request)
+    raw = json.loads(request_path.read_text(encoding="utf-8"))
+    mode = WorkerMode(raw["mode"])
+    if mode is WorkerMode.PUBLIC:
+        result = evaluate_public(PublicWorkerRequest.model_validate(raw))
+    else:
+        result = evaluate_private_final(PrivateFinalWorkerRequest.model_validate(raw))
     result_path.write_text(result.model_dump_json(indent=2), encoding="utf-8")
     return 0
 

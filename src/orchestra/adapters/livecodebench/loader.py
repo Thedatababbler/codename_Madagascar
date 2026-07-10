@@ -157,6 +157,7 @@ class LiveCodeBenchLoader:
                 starter_code=task.problem.starter_code,
                 difficulty=task.problem.difficulty,
                 public_test_cases=task.problem.public_examples,
+                function_name=task.problem.function_name,
                 metadata_public=task.metadata,
             )
             for task in tasks

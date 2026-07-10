@@ -74,7 +74,15 @@ def _responses(direct_code="# CORRECT_SOLUTION\nprint(input())"):
     }
 
 
-async def _execute(tmp_path, graph_name, responses, *, delay=0.0, llm_limit=8):
+async def _execute(
+    tmp_path,
+    graph_name,
+    responses,
+    *,
+    delay=0.0,
+    llm_limit=8,
+    public_examples=None,
+):
     contracts = load_contracts(CONTRACTS_DIR)
     graph = load_graph(f"configs/graphs/{graph_name}.yaml")
     compiled = build_compiler(CONTRACTS_DIR).compile(graph)
@@ -102,7 +110,11 @@ async def _execute(tmp_path, graph_name, responses, *, delay=0.0, llm_limit=8):
         statement="Echo one value.",
         difficulty="easy",
         platform="synthetic",
-        public_examples=[PublicExample(input="7\n", output="7\n")],
+        public_examples=(
+            [PublicExample(input="7\n", output="7\n")]
+            if public_examples is None
+            else public_examples
+        ),
     )
     initial = create_artifact(
         problem, producer_node_id="__input__", task_id="echo"
@@ -187,3 +199,15 @@ async def test_resume_after_frozen_checkpoint_does_not_repeat_llm(tmp_path):
     )
     assert resumed.state.frozen
     assert before == 1
+
+
+@pytest.mark.asyncio
+async def test_no_public_tests_does_not_auto_pass(tmp_path):
+    result, _final, client = await _execute(
+        tmp_path,
+        "b1_single_harness",
+        _responses(),
+        public_examples=[],
+    )
+    assert result.state.frozen
+    assert client.call_counts["single_agent_repair"] == 1

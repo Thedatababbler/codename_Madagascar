@@ -23,7 +23,9 @@ def _write_shards(root):
                 "private_test_cases": json.dumps(
                     [{"input": "2", "output": "2", "testtype": "stdin"}]
                 ),
-                "metadata": "{}",
+                "metadata": json.dumps(
+                    {"func_name": "solve"} if index == 0 else {}
+                ),
             }
         )
     (root / "test.jsonl").write_text(
@@ -40,6 +42,8 @@ def test_mapping_and_private_isolation(tmp_path):
     assert "private" not in tasks[0].model_dump_json().lower()
     hidden = loader.private_repository.get_for_final_evaluation("q0")
     assert hidden.private_tests[0].input == "2"
+    visible, _hidden_refs = loader.load_visible(task_ids={"q0"})
+    assert visible[0].function_name == "solve"
 
 
 def test_manifest_sampling_is_deterministic(tmp_path):

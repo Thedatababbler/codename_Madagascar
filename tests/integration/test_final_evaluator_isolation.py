@@ -11,16 +11,22 @@ from orchestra.schemas.artifacts import PublicExample
 from orchestra.schemas.task import PrivateTaskData, PrivateTestCase
 
 
-def _evaluator(lcb_repository_path):
+@pytest.mark.asyncio
+async def test_final_evaluator_does_not_leak_hidden_test_data(lcb_repository_path):
     repository = PrivateTestRepository()
     repository.add(
         PrivateTaskData(
             question_id="echo",
             public_tests=[PublicExample(input="1\n", output="1\n")],
-            private_tests=[PrivateTestCase(input="9\n", output="9\n")],
+            private_tests=[
+                PrivateTestCase(
+                    input="PRIVATE_MARKER_INPUT",
+                    output="PRIVATE_MARKER_OUTPUT",
+                )
+            ],
         )
     )
-    return FinalLCBEvaluator(
+    evaluator = FinalLCBEvaluator(
         private_repository=repository,
         evaluator_commit="test",
         worker=FinalLCBWorker(
@@ -32,36 +38,22 @@ def _evaluator(lcb_repository_path):
         sandbox_semaphore=asyncio.Semaphore(1),
         per_test_timeout_seconds=2,
     )
-
-
-def _state(frozen):
-    return RuntimeState(
+    state = RuntimeState(
         run_id="r",
         task_id="echo",
         graph_id="g",
         graph_hash="h",
         contract_hash="c",
         node_status={"freeze": NodeStatus.SUCCEEDED},
-        final_output_artifact_id="final" if frozen else None,
-        frozen=frozen,
+        final_output_artifact_id="final",
+        frozen=True,
     )
-
-
-@pytest.mark.asyncio
-async def test_final_evaluator_rejects_unfrozen_state(lcb_repository_path):
-    with pytest.raises(RuntimeError, match="FINAL_OUTPUT_FROZEN"):
-        await _evaluator(lcb_repository_path).evaluate_frozen_run(
-            runtime_state=_state(False),
-            final_code="print(input())",
-            lcb_problem_ref="echo",
-        )
-
-
-@pytest.mark.asyncio
-async def test_final_evaluator_runs_only_after_freeze(lcb_repository_path):
-    result = await _evaluator(lcb_repository_path).evaluate_frozen_run(
-        runtime_state=_state(True),
+    result = await evaluator.evaluate_frozen_run(
+        runtime_state=state,
         final_code="print(input())",
         lcb_problem_ref="echo",
     )
-    assert result.passed
+    encoded = result.model_dump_json()
+    assert "PRIVATE_MARKER_INPUT" not in encoded
+    assert "PRIVATE_MARKER_OUTPUT" not in encoded
+    assert "private_test" not in encoded.lower()

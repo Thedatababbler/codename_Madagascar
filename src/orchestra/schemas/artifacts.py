@@ -98,6 +98,7 @@ class RepairArtifact(VersionedArtifact):
 
 
 class PublicHarnessResultArtifact(VersionedArtifact):
+    harness_available: bool
     passed: bool
     pass_ratio: float
     compile_success: bool

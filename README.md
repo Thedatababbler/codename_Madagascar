@@ -81,13 +81,16 @@ The default development backend is `lcb_official`. It runs the pinned
 LiveCodeBench `check_correctness` implementation in a separate worker process:
 
 - no generated code is executed in the Orchestra runtime process;
-- API keys and all environment variables containing `KEY`, `TOKEN`, `SECRET`,
-  or `PASSWORD` are removed;
+- API keys and environment variables ending in `_KEY`, `_TOKEN`, `_SECRET`, or
+  `_PASSWORD` are removed;
 - the worker runs in a temporary directory and drops to the `nobody` UID/GID
   before generated code is evaluated;
 - memory, process, file-descriptor, and file-size limits are applied;
 - a wall timeout kills the complete worker process group;
-- only public tests are serialized into the worker request.
+- per-test timeout and worker wall timeout are configured separately;
+- only public tests are serialized into the public worker request;
+- private-final evaluation uses the same isolated worker model and returns only
+  `passed` / `pass_at_1` after final freeze.
 
 `docker` remains an optional stronger backend. It is currently unavailable on
 this machine, but Stage 1 development can proceed with `lcb_official`.
@@ -102,6 +105,8 @@ this machine, but Stage 1 development can proceed with `lcb_official`.
 ## Development
 
 ```bash
+export LCB_REPOSITORY_PATH=/path/to/LiveCodeBench
 uv run ruff check .
-uv run pytest -q
+uv run pytest -q tests/unit
+uv run pytest -q tests/integration
 ```

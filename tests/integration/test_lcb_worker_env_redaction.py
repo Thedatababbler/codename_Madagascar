@@ -1,5 +1,11 @@
 import pytest
 
+from orchestra.sandbox.lcb_worker import is_sensitive_environment_name
+
+
+def test_tokenizers_parallelism_is_not_sensitive():
+    assert not is_sensitive_environment_name("TOKENIZERS_PARALLELISM")
+
 
 @pytest.mark.asyncio
 async def test_worker_does_not_inherit_api_keys(

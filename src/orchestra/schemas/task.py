@@ -41,6 +41,7 @@ class AgentVisibleLCBTask(BaseModel):
     starter_code: str
     difficulty: str
     public_test_cases: list[PublicExample]
+    function_name: str | None = None
     metadata_public: dict = Field(default_factory=dict)
 
 

@@ -1,4 +1,6 @@
+import os
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -24,9 +26,20 @@ def visible_echo_task():
 
 
 @pytest.fixture
-def official_sandbox():
+def lcb_repository_path():
+    value = os.getenv("LCB_REPOSITORY_PATH")
+    if not value:
+        pytest.skip("LCB_REPOSITORY_PATH is required for official-checker integration tests")
+    path = Path(value)
+    if not (path / "lcb_runner").exists():
+        pytest.fail(f"Invalid LCB_REPOSITORY_PATH: {path}")
+    return str(path)
+
+
+@pytest.fixture
+def official_sandbox(lcb_repository_path):
     return OfficialLCBSandbox(
-        repository_path="/root/projects/LiveCodeBench",
+        repository_path=lcb_repository_path,
         limits=SandboxLimits(
             memory_mb=2048,
             max_processes=32,
@@ -34,4 +47,6 @@ def official_sandbox():
             max_file_size_mb=16,
         ),
         num_process_evaluate=1,
+        worker_grace_seconds=5,
+        max_worker_wall_seconds=60,
     )
