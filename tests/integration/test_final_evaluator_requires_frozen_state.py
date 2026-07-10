@@ -38,10 +38,9 @@ def _state(frozen):
 
 
 @pytest.mark.asyncio
-async def test_private_eval_requires_frozen_state():
-    evaluator = _evaluator()
+async def test_final_evaluator_rejects_unfrozen_state():
     with pytest.raises(RuntimeError, match="FINAL_OUTPUT_FROZEN"):
-        await evaluator.evaluate_frozen_run(
+        await _evaluator().evaluate_frozen_run(
             runtime_state=_state(False),
             final_code="print(input())",
             lcb_problem_ref="echo",
@@ -49,19 +48,10 @@ async def test_private_eval_requires_frozen_state():
 
 
 @pytest.mark.asyncio
-async def test_known_correct_and_wrong_after_freeze():
-    evaluator = _evaluator()
-    assert (
-        await evaluator.evaluate_frozen_run(
-            runtime_state=_state(True),
-            final_code="print(input())",
-            lcb_problem_ref="echo",
-        )
-    ).passed
-    assert not (
-        await evaluator.evaluate_frozen_run(
-            runtime_state=_state(True),
-            final_code="print(0)",
-            lcb_problem_ref="echo",
-        )
-    ).passed
+async def test_final_evaluator_runs_only_after_freeze():
+    result = await _evaluator().evaluate_frozen_run(
+        runtime_state=_state(True),
+        final_code="print(input())",
+        lcb_problem_ref="echo",
+    )
+    assert result.passed

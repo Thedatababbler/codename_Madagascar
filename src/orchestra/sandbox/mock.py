@@ -2,7 +2,7 @@ import asyncio
 
 from orchestra.sandbox.base import CodeSandbox
 from orchestra.sandbox.result import SandboxExecutionResult, VisibleTestResult
-from orchestra.schemas.artifacts import ProblemArtifact
+from orchestra.schemas.task import AgentVisibleLCBTask
 
 
 class MockSandbox(CodeSandbox):
@@ -12,7 +12,11 @@ class MockSandbox(CodeSandbox):
         self.max_active = 0
 
     async def evaluate_public(
-        self, problem: ProblemArtifact, code: str
+        self,
+        *,
+        task: AgentVisibleLCBTask,
+        code: str,
+        timeout_seconds: float,
     ) -> SandboxExecutionResult:
         self.active += 1
         self.max_active = max(self.max_active, self.active)
@@ -26,7 +30,7 @@ class MockSandbox(CodeSandbox):
                     passed=correct,
                     actual_output=example.output if correct else "wrong",
                 )
-                for index, example in enumerate(problem.public_examples)
+                for index, example in enumerate(task.public_test_cases)
             ]
             return SandboxExecutionResult(
                 compiled="SYNTAX_ERROR" not in code,

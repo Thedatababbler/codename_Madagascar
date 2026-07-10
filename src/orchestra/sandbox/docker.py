@@ -6,7 +6,7 @@ from pathlib import Path
 
 from orchestra.sandbox.base import CodeSandbox
 from orchestra.sandbox.result import SandboxExecutionResult, VisibleTestResult
-from orchestra.schemas.artifacts import ProblemArtifact
+from orchestra.schemas.task import AgentVisibleLCBTask
 
 
 class DockerUnavailableError(RuntimeError):
@@ -51,7 +51,9 @@ class DockerSandbox(CodeSandbox):
             *command,
         ]
 
-    async def _run(self, workdir: str, stdin: str, *command: str):
+    async def _run(
+        self, workdir: str, stdin: str, *command: str, timeout_seconds: float
+    ):
         process = await asyncio.create_subprocess_exec(
             *self._command(workdir, *command),
             stdin=asyncio.subprocess.PIPE,
@@ -60,7 +62,7 @@ class DockerSandbox(CodeSandbox):
         )
         try:
             stdout, stderr = await asyncio.wait_for(
-                process.communicate(stdin.encode()), timeout=self.timeout_seconds
+                process.communicate(stdin.encode()), timeout=timeout_seconds
             )
             return process.returncode, stdout.decode(), stderr.decode(), False
         except TimeoutError:
@@ -69,9 +71,13 @@ class DockerSandbox(CodeSandbox):
             return None, "", "timeout", True
 
     async def evaluate_public(
-        self, problem: ProblemArtifact, code: str
+        self,
+        *,
+        task: AgentVisibleLCBTask,
+        code: str,
+        timeout_seconds: float,
     ) -> SandboxExecutionResult:
-        if any(item.testtype == "functional" for item in problem.public_examples):
+        if any(item.testtype == "functional" for item in task.public_test_cases):
             raise NotImplementedError(
                 "Functional-style Docker execution requires the pinned official checker image"
             )
@@ -79,22 +85,32 @@ class DockerSandbox(CodeSandbox):
         with tempfile.TemporaryDirectory(prefix="orchestra-docker-") as tmp:
             Path(tmp, "solution.py").write_text(code, encoding="utf-8")
             rc, _out, err, timed_out = await self._run(
-                tmp, "", "python", "-m", "py_compile", "/work/solution.py"
+                tmp,
+                "",
+                "python",
+                "-m",
+                "py_compile",
+                "/work/solution.py",
+                timeout_seconds=timeout_seconds,
             )
             if rc != 0 or timed_out:
                 return SandboxExecutionResult(
                     compiled=False,
                     passed_count=0,
-                    total_count=len(problem.public_examples),
+                    total_count=len(task.public_test_cases),
                     runtime_errors=1,
                     timeouts=int(timed_out),
                     stderr_summary=err[-1000:],
                     duration_ms=int((time.perf_counter() - started) * 1000),
                 )
             results = []
-            for index, example in enumerate(problem.public_examples):
+            for index, example in enumerate(task.public_test_cases):
                 rc, stdout, stderr, timed_out = await self._run(
-                    tmp, example.input, "python", "/work/solution.py"
+                    tmp,
+                    example.input,
+                    "python",
+                    "/work/solution.py",
+                    timeout_seconds=timeout_seconds,
                 )
                 passed = rc == 0 and stdout.strip() == example.output.strip()
                 results.append(

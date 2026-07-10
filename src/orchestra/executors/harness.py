@@ -13,11 +13,13 @@ from orchestra.schemas.artifacts import (
     PublicHarnessResultArtifact,
     VisibleFailureSummary,
 )
+from orchestra.schemas.task import AgentVisibleLCBTask
 
 
 class HarnessNodeExecutor:
-    def __init__(self, sandbox: CodeSandbox) -> None:
+    def __init__(self, sandbox: CodeSandbox, *, timeout_seconds: float = 10) -> None:
         self.sandbox = sandbox
+        self.timeout_seconds = timeout_seconds
 
     async def execute(
         self,
@@ -41,8 +43,23 @@ class HarnessNodeExecutor:
                 duration_ms=0,
             )
         else:
+            visible_task = AgentVisibleLCBTask(
+                question_id=problem.question_id,
+                question_title=problem.title,
+                question_content=problem.statement,
+                platform=problem.platform,
+                contest_date=problem.contest_date or "1970-01-01T00:00:00",
+                starter_code=problem.starter_code,
+                difficulty=problem.difficulty,
+                public_test_cases=problem.public_examples,
+                metadata_public={"func_name": problem.function_name},
+            )
             async with context.semaphores.sandbox:
-                sandbox_result = await self.sandbox.evaluate_public(problem, code.code)
+                sandbox_result = await self.sandbox.evaluate_public(
+                    task=visible_task,
+                    code=code.code,
+                    timeout_seconds=node.timeout_seconds or self.timeout_seconds,
+                )
         failed = next(
             (item for item in sandbox_result.per_test_visible_results if not item.passed),
             None,

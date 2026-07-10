@@ -18,3 +18,4 @@ class SandboxExecutionResult(BaseModel):
     stderr_summary: str | None = None
     per_test_visible_results: list[VisibleTestResult] = Field(default_factory=list)
     duration_ms: int
+    worker_metadata: dict = Field(default_factory=dict)

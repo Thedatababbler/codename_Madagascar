@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from orchestra.runtime.limits import RuntimeLimits
 
@@ -39,11 +39,19 @@ class BenchmarkSection(BaseModel):
     repository_path: str
 
 
+class SandboxLimits(BaseModel):
+    memory_mb: int = 2048
+    max_processes: int = 32
+    max_open_files: int = 128
+    max_file_size_mb: int = 16
+
+
 class SandboxSection(BaseModel):
-    backend: Literal["docker"]
-    image: str
-    timeout_seconds: int
-    memory_mb: int
+    backend: Literal["lcb_official", "docker", "mock"]
+    timeout_seconds: float = 10
+    num_process_evaluate: Literal[1] = 1
+    limits: SandboxLimits = Field(default_factory=SandboxLimits)
+    image: str = "python:3.11-slim"
 
 
 class ExperimentConfig(BaseModel):

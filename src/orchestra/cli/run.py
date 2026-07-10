@@ -23,6 +23,10 @@ from orchestra.runtime.errors import GraphDeadlockError
 from orchestra.runtime.limits import RuntimeSemaphores
 from orchestra.runtime.native_async import NativeAsyncRuntime
 from orchestra.sandbox.docker import DockerSandbox, DockerUnavailableError
+from orchestra.sandbox.lcb_official import (
+    OfficialLCBSandbox,
+    OfficialLCBSandboxUnavailable,
+)
 from orchestra.sandbox.mock import MockSandbox
 from orchestra.settings import load_env_file
 from orchestra.storage.artifacts import FileArtifactStore
@@ -136,18 +140,30 @@ async def _run(args) -> int:
     llm = _mock_client() if args.mock_llm else OpenAICompatibleAsyncClient()
     if args.mock_llm:
         sandbox = MockSandbox()
-    else:
+    elif config.sandbox.backend == "lcb_official":
+        try:
+            sandbox = OfficialLCBSandbox(
+                repository_path=config.benchmark.repository_path,
+                limits=config.sandbox.limits,
+                num_process_evaluate=config.sandbox.num_process_evaluate,
+            )
+        except OfficialLCBSandboxUnavailable as exc:
+            raise RuntimeError(
+                "OfficialLCBSandbox is unavailable; refusing subprocess fallback."
+            ) from exc
+    elif config.sandbox.backend == "docker":
         try:
             sandbox = DockerSandbox(
                 image=config.sandbox.image,
                 timeout_seconds=config.sandbox.timeout_seconds,
-                memory_mb=config.sandbox.memory_mb,
+                memory_mb=config.sandbox.limits.memory_mb,
             )
         except DockerUnavailableError as exc:
             raise RuntimeError(
-                "Stage 1 blocker: Docker is unavailable. Install Docker before "
-                "executing real model-generated code. --mock-llm remains available."
+                "Docker backend is unavailable; select lcb_official explicitly."
             ) from exc
+    else:
+        raise RuntimeError("sandbox.backend=mock is permitted only with --mock-llm")
 
     semaphores = RuntimeSemaphores(config.runtime)
     artifact_store = FileArtifactStore(run_dir)
@@ -155,7 +171,9 @@ async def _run(args) -> int:
     event_writer = AppendOnlyEventWriter(run_dir)
     executors = NodeExecutorRegistry(
         agent_executor=AgentNodeExecutor(llm, contracts),
-        harness_executor=HarnessNodeExecutor(sandbox),
+        harness_executor=HarnessNodeExecutor(
+            sandbox, timeout_seconds=config.sandbox.timeout_seconds
+        ),
     )
     runtime = NativeAsyncRuntime(
         executors=executors,

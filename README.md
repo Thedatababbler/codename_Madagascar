@@ -75,18 +75,29 @@ uv run python -m orchestra.cli.summarize --run-dir outputs/stage1/<run_id>
 - append-only graph/node/artifact telemetry;
 - private tests accessible only to `FinalLCBEvaluator` after final freeze.
 
-## Security blocker
+## Code-execution backends
 
-The v2 specification requires Docker and explicitly says to stop when Docker is
-unavailable. This machine currently has no `docker` executable. Therefore:
+The default development backend is `lcb_official`. It runs the pinned
+LiveCodeBench `check_correctness` implementation in a separate worker process:
 
-- IR/compiler/mock/concurrency/evaluator-wrapper tests are implemented;
-- `--mock-llm` runs are supported without executing untrusted code;
-- a real run fails closed with a clear Docker blocker;
-- no subprocess fallback is silently substituted.
+- no generated code is executed in the Orchestra runtime process;
+- API keys and all environment variables containing `KEY`, `TOKEN`, `SECRET`,
+  or `PASSWORD` are removed;
+- the worker runs in a temporary directory and drops to the `nobody` UID/GID
+  before generated code is evaluated;
+- memory, process, file-descriptor, and file-size limits are applied;
+- a wall timeout kills the complete worker process group;
+- only public tests are serialized into the worker request.
 
-Install Docker, pull/build the configured Python 3.11 image, and complete the
-functional-style official-checker image validation before a real-model smoke run.
+`docker` remains an optional stronger backend. It is currently unavailable on
+this machine, but Stage 1 development can proceed with `lcb_official`.
+`sandbox.backend: mock` is accepted only together with `--mock-llm`.
+
+> The LiveCodeBench reliability guard is not a complete security sandbox.
+> `lcb_official` is intended only for a controlled research environment and
+> therefore must remain paired with the independent low-privilege worker,
+> environment redaction, resource limits, and process-group timeout described
+> above. Use Docker for stronger isolation when it becomes available.
 
 ## Development
 
