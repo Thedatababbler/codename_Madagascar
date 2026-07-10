@@ -1,0 +1,6 @@
+models:
+  # Fill with provider prices when known. Unknown models intentionally resolve
+  # to null cost rather than silently assuming zero.
+  gpt-5-mini:
+    prompt_per_million_usd: null
+    completion_per_million_usd: null

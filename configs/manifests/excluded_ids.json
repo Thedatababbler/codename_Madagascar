@@ -1,0 +1,5 @@
+{
+  "schema_version": "1.0",
+  "question_ids": [],
+  "reason": "Populate from pinned LiveCodeBench ERRATA before committed benchmark runs."
+}

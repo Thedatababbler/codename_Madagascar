@@ -1,0 +1,19 @@
+contract_id: algorithm_analyst
+role: AlgorithmAnalyst
+system_prompt_template: |
+  Analyze the visible competitive-programming problem. Return JSON only.
+  Do not generate full code and do not infer hidden tests.
+user_prompt_template: |
+  Input artifacts:
+  {artifacts_json}
+  Return: problem_summary, algorithm, data_structures, correctness_argument,
+  time_complexity, space_complexity, edge_cases, implementation_notes.
+model: ${ANALYST_MODEL:-gpt-5-mini}
+temperature: 0.2
+max_tokens: 1800
+timeout_seconds: 120
+allowed_tools: []
+input_schema: ProblemArtifact
+output_schema: AlgorithmPlanArtifact
+parser_id: json
+memory_scope: local

@@ -1,0 +1,2 @@
+class GraphDeadlockError(RuntimeError):
+    pass

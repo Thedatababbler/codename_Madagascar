@@ -1,0 +1,429 @@
+{
+  "schema_version": "1.0",
+  "release_version": "release_v6",
+  "seed": 2027,
+  "entries": [
+    {
+      "question_id": "2998",
+      "title": "count-symmetric-integers",
+      "difficulty": "easy",
+      "platform": "leetcode",
+      "contest_date": "2023-09-03T00:00:00"
+    },
+    {
+      "question_id": "abc397_a",
+      "title": "Thermometer",
+      "difficulty": "easy",
+      "platform": "atcoder",
+      "contest_date": "2025-03-15T00:00:00"
+    },
+    {
+      "question_id": "abc311_a",
+      "title": "First ABC",
+      "difficulty": "easy",
+      "platform": "atcoder",
+      "contest_date": "2023-07-22T00:00:00"
+    },
+    {
+      "question_id": "abc390_a",
+      "title": "12435",
+      "difficulty": "easy",
+      "platform": "atcoder",
+      "contest_date": "2025-01-25T00:00:00"
+    },
+    {
+      "question_id": "3705",
+      "title": "find-the-largest-almost-missing-integer",
+      "difficulty": "easy",
+      "platform": "leetcode",
+      "contest_date": "2025-03-01T18:30:00"
+    },
+    {
+      "question_id": "3612",
+      "title": "adjacent-increasing-subarrays-detection-i",
+      "difficulty": "easy",
+      "platform": "leetcode",
+      "contest_date": "2024-11-09T18:30:00"
+    },
+    {
+      "question_id": "3398",
+      "title": "make-a-square-with-the-same-color",
+      "difficulty": "easy",
+      "platform": "leetcode",
+      "contest_date": "2024-04-27T00:00:00"
+    },
+    {
+      "question_id": "3221",
+      "title": "find-the-peaks",
+      "difficulty": "easy",
+      "platform": "leetcode",
+      "contest_date": "2023-12-02T00:00:00"
+    },
+    {
+      "question_id": "abc336_a",
+      "title": "Long Loong",
+      "difficulty": "easy",
+      "platform": "atcoder",
+      "contest_date": "2024-01-14T00:00:00"
+    },
+    {
+      "question_id": "2824",
+      "title": "check-if-the-number-is-fascinating",
+      "difficulty": "easy",
+      "platform": "leetcode",
+      "contest_date": "2023-06-10T00:00:00"
+    },
+    {
+      "question_id": "1873_A",
+      "title": "A. Short Sort",
+      "difficulty": "easy",
+      "platform": "codeforces",
+      "contest_date": "2023-08-21T00:00:00"
+    },
+    {
+      "question_id": "3408",
+      "title": "count-the-number-of-special-characters-i",
+      "difficulty": "easy",
+      "platform": "leetcode",
+      "contest_date": "2024-04-20T00:00:00"
+    },
+    {
+      "question_id": "3644",
+      "title": "minimum-positive-sum-subarray",
+      "difficulty": "easy",
+      "platform": "leetcode",
+      "contest_date": "2024-11-23T18:30:00"
+    },
+    {
+      "question_id": "abc389_a",
+      "title": "9x9",
+      "difficulty": "easy",
+      "platform": "atcoder",
+      "contest_date": "2025-01-18T00:00:00"
+    },
+    {
+      "question_id": "abc343_a",
+      "title": "Wrong Answer",
+      "difficulty": "easy",
+      "platform": "atcoder",
+      "contest_date": "2024-03-02T00:00:00"
+    },
+    {
+      "question_id": "3617",
+      "title": "find-the-original-typed-string-i",
+      "difficulty": "easy",
+      "platform": "leetcode",
+      "contest_date": "2024-10-26T07:30:00"
+    },
+    {
+      "question_id": "abc364_b",
+      "title": "Grid Walk",
+      "difficulty": "easy",
+      "platform": "atcoder",
+      "contest_date": "2024-07-27T00:00:00"
+    },
+    {
+      "question_id": "3533",
+      "title": "snake-in-matrix",
+      "difficulty": "easy",
+      "platform": "leetcode",
+      "contest_date": "2024-08-10T00:00:00"
+    },
+    {
+      "question_id": "abc324_b",
+      "title": "3",
+      "difficulty": "easy",
+      "platform": "atcoder",
+      "contest_date": "2023-10-14T00:00:00"
+    },
+    {
+      "question_id": "3788",
+      "title": "maximum-unique-subarray-sum-after-deletion",
+      "difficulty": "easy",
+      "platform": "leetcode",
+      "contest_date": "2025-03-15T19:30:00"
+    },
+    {
+      "question_id": "abc365_c",
+      "title": "Transportation Expenses",
+      "difficulty": "medium",
+      "platform": "atcoder",
+      "contest_date": "2024-08-03T00:00:00"
+    },
+    {
+      "question_id": "2868",
+      "title": "continuous-subarrays",
+      "difficulty": "medium",
+      "platform": "leetcode",
+      "contest_date": "2023-07-02T00:00:00"
+    },
+    {
+      "question_id": "3297",
+      "title": "minimum-time-to-revert-word-to-initial-state-i",
+      "difficulty": "medium",
+      "platform": "leetcode",
+      "contest_date": "2024-02-03T00:00:00"
+    },
+    {
+      "question_id": "abc315_c",
+      "title": "Flavors",
+      "difficulty": "medium",
+      "platform": "atcoder",
+      "contest_date": "2023-08-19T00:00:00"
+    },
+    {
+      "question_id": "3267",
+      "title": "find-longest-special-substring-that-occurs-thrice-i",
+      "difficulty": "medium",
+      "platform": "leetcode",
+      "contest_date": "2023-12-30T00:00:00"
+    },
+    {
+      "question_id": "abc374_c",
+      "title": "Separated Lunch",
+      "difficulty": "medium",
+      "platform": "atcoder",
+      "contest_date": "2024-10-05T00:00:00"
+    },
+    {
+      "question_id": "abc391_d",
+      "title": "Gravity",
+      "difficulty": "medium",
+      "platform": "atcoder",
+      "contest_date": "2025-02-01T00:00:00"
+    },
+    {
+      "question_id": "3151",
+      "title": "minimum-processing-time",
+      "difficulty": "medium",
+      "platform": "leetcode",
+      "contest_date": "2023-10-08T00:00:00"
+    },
+    {
+      "question_id": "3720",
+      "title": "minimize-the-maximum-edge-weight-of-graph",
+      "difficulty": "medium",
+      "platform": "leetcode",
+      "contest_date": "2025-01-11T18:30:00"
+    },
+    {
+      "question_id": "3677",
+      "title": "maximum-amount-of-money-robot-can-earn",
+      "difficulty": "medium",
+      "platform": "leetcode",
+      "contest_date": "2025-01-11T18:30:00"
+    },
+    {
+      "question_id": "abc379_c",
+      "title": "Sowing Stones",
+      "difficulty": "medium",
+      "platform": "atcoder",
+      "contest_date": "2024-11-09T00:00:00"
+    },
+    {
+      "question_id": "abc334_c",
+      "title": "Socks 2",
+      "difficulty": "medium",
+      "platform": "atcoder",
+      "contest_date": "2023-12-23T00:00:00"
+    },
+    {
+      "question_id": "abc390_c",
+      "title": "Paint to make a rectangle",
+      "difficulty": "medium",
+      "platform": "atcoder",
+      "contest_date": "2025-01-25T00:00:00"
+    },
+    {
+      "question_id": "abc339_d",
+      "title": "Synchronized Players",
+      "difficulty": "medium",
+      "platform": "atcoder",
+      "contest_date": "2024-02-03T00:00:00"
+    },
+    {
+      "question_id": "3526",
+      "title": "minimum-number-of-flips-to-make-binary-grid-palindromic-i",
+      "difficulty": "medium",
+      "platform": "leetcode",
+      "contest_date": "2024-08-03T00:00:00"
+    },
+    {
+      "question_id": "abc353_d",
+      "title": "Another Sigma Problem",
+      "difficulty": "medium",
+      "platform": "atcoder",
+      "contest_date": "2024-05-11T00:00:00"
+    },
+    {
+      "question_id": "abc357_d",
+      "title": "88888888",
+      "difficulty": "medium",
+      "platform": "atcoder",
+      "contest_date": "2024-06-08T00:00:00"
+    },
+    {
+      "question_id": "3190",
+      "title": "minimum-operations-to-maximize-last-elements-in-arrays",
+      "difficulty": "medium",
+      "platform": "leetcode",
+      "contest_date": "2023-11-12T00:00:00"
+    },
+    {
+      "question_id": "abc302_c",
+      "title": "Almost Equal",
+      "difficulty": "medium",
+      "platform": "atcoder",
+      "contest_date": "2023-05-20T00:00:00"
+    },
+    {
+      "question_id": "abc358_c",
+      "title": "Popcorn",
+      "difficulty": "medium",
+      "platform": "atcoder",
+      "contest_date": "2024-06-15T00:00:00"
+    },
+    {
+      "question_id": "arc181_d",
+      "title": "Prefix Bubble Sort",
+      "difficulty": "hard",
+      "platform": "atcoder",
+      "contest_date": "2024-08-04T00:00:00"
+    },
+    {
+      "question_id": "3674",
+      "title": "count-non-decreasing-subarrays-after-k-operations",
+      "difficulty": "hard",
+      "platform": "leetcode",
+      "contest_date": "2025-01-11T18:30:00"
+    },
+    {
+      "question_id": "abc350_e",
+      "title": "Toward 0",
+      "difficulty": "hard",
+      "platform": "atcoder",
+      "contest_date": "2024-04-20T00:00:00"
+    },
+    {
+      "question_id": "abc372_f",
+      "title": "Teleporting Takahashi 2",
+      "difficulty": "hard",
+      "platform": "atcoder",
+      "contest_date": "2024-09-21T00:00:00"
+    },
+    {
+      "question_id": "abc383_e",
+      "title": "Sum of Max Matching",
+      "difficulty": "hard",
+      "platform": "atcoder",
+      "contest_date": "2024-12-07T00:00:00"
+    },
+    {
+      "question_id": "3091",
+      "title": "count-of-sub-multisets-with-bounded-sum",
+      "difficulty": "hard",
+      "platform": "leetcode",
+      "contest_date": "2023-10-14T00:00:00"
+    },
+    {
+      "question_id": "abc311_e",
+      "title": "Defect",
+      "difficulty": "hard",
+      "platform": "atcoder",
+      "contest_date": "2023-07-22T00:00:00"
+    },
+    {
+      "question_id": "abc378_e",
+      "title": "Mod Sigma Problem",
+      "difficulty": "hard",
+      "platform": "atcoder",
+      "contest_date": "2024-11-02T00:00:00"
+    },
+    {
+      "question_id": "arc191_d",
+      "title": "Moving Pieces on Graph",
+      "difficulty": "hard",
+      "platform": "atcoder",
+      "contest_date": "2025-01-26T00:00:00"
+    },
+    {
+      "question_id": "abc365_e",
+      "title": "Xor Sigma Problem",
+      "difficulty": "hard",
+      "platform": "atcoder",
+      "contest_date": "2024-08-03T00:00:00"
+    },
+    {
+      "question_id": "3224",
+      "title": "count-the-number-of-infection-sequences",
+      "difficulty": "hard",
+      "platform": "leetcode",
+      "contest_date": "2023-12-02T00:00:00"
+    },
+    {
+      "question_id": "arc188_c",
+      "title": "Honest or Liar or Confused",
+      "difficulty": "hard",
+      "platform": "atcoder",
+      "contest_date": "2024-11-23T00:00:00"
+    },
+    {
+      "question_id": "3575",
+      "title": "find-the-maximum-sequence-value-of-array",
+      "difficulty": "hard",
+      "platform": "leetcode",
+      "contest_date": "2024-09-14T07:30:00"
+    },
+    {
+      "question_id": "arc181_b",
+      "title": "Annoying String Problem",
+      "difficulty": "hard",
+      "platform": "atcoder",
+      "contest_date": "2024-08-04T00:00:00"
+    },
+    {
+      "question_id": "3608",
+      "title": "find-the-number-of-subsequences-with-equal-gcd",
+      "difficulty": "hard",
+      "platform": "leetcode",
+      "contest_date": "2024-10-26T19:30:00"
+    },
+    {
+      "question_id": "arc182_c",
+      "title": "Sum of Number of Divisors of Product",
+      "difficulty": "hard",
+      "platform": "atcoder",
+      "contest_date": "2024-08-11T00:00:00"
+    },
+    {
+      "question_id": "abc396_f",
+      "title": "Rotated Inversions",
+      "difficulty": "hard",
+      "platform": "atcoder",
+      "contest_date": "2025-03-08T00:00:00"
+    },
+    {
+      "question_id": "2884",
+      "title": "length-of-the-longest-valid-substring",
+      "difficulty": "hard",
+      "platform": "leetcode",
+      "contest_date": "2023-07-16T00:00:00"
+    },
+    {
+      "question_id": "abc361_d",
+      "title": "Go Stone Puzzle",
+      "difficulty": "hard",
+      "platform": "atcoder",
+      "contest_date": "2024-07-06T00:00:00"
+    },
+    {
+      "question_id": "3466",
+      "title": "number-of-subarrays-with-and-value-of-k",
+      "difficulty": "hard",
+      "platform": "leetcode",
+      "contest_date": "2024-07-06T00:00:00"
+    }
+  ],
+  "livecodebench_commit": "28fef95ea8c9f7a547c8329f2cd3d32b92c1fa24",
+  "manifest_sha256": "7066752888c43ac50425f000f149bdc77283ccbb678e432708c1f26713ffe095"
+}

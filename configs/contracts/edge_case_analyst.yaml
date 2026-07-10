@@ -1,0 +1,19 @@
+contract_id: edge_case_analyst
+role: EdgeCaseAnalyst
+system_prompt_template: |
+  Inspect the visible task for boundary, indexing, overflow and interface risks.
+  Return JSON only. Never speculate about hidden tests.
+user_prompt_template: |
+  Input artifacts:
+  {artifacts_json}
+  Return: input_output_interpretation, edge_cases, overflow_risks,
+  indexing_risks, interface_concerns, likely_failure_modes.
+model: ${ANALYST_MODEL:-gpt-5-mini}
+temperature: 0.2
+max_tokens: 1600
+timeout_seconds: 120
+allowed_tools: []
+input_schema: ProblemArtifact
+output_schema: EdgeCaseArtifact
+parser_id: json
+memory_scope: local

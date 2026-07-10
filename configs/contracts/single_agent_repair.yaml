@@ -1,0 +1,18 @@
+contract_id: single_agent_repair
+role: DirectCoder
+system_prompt_template: |
+  You are the same coding agent revising your own Python 3.11 solution once.
+  Use only the visible public-test failure artifact. Return JSON only with
+  diagnosis, changes, and revised_code. Never infer hidden-test information.
+user_prompt_template: |
+  Repair using these typed artifacts:
+  {artifacts_json}
+model: ${CODER_MODEL:-gpt-5-mini}
+temperature: 0.1
+max_tokens: 4000
+timeout_seconds: 120
+allowed_tools: []
+input_schema: ArtifactBundle
+output_schema: RepairArtifact
+parser_id: json
+memory_scope: task

@@ -1,0 +1,34 @@
+experiment:
+  name: stage1_b0_direct
+  seed: 42
+  graph_config: configs/graphs/b0_direct.yaml
+  contracts_dir: configs/contracts
+  output_root: outputs/stage1
+benchmark:
+  name: livecodebench
+  release_version: release_v6
+  scenario: codegeneration
+  language: python
+  manifest: configs/manifests/lcb_smoke.json
+  data_dir: ${LCB_DATA_DIR:-/root/data/livecodebench/code_generation_lite}
+  repository_path: ${LCB_REPO_PATH:-/root/projects/LiveCodeBench}
+runtime:
+  backend: native_async
+  max_parallel_benchmark_tasks: 4
+  max_parallel_nodes_per_task: 4
+  max_parallel_llm_calls: 8
+  max_parallel_sandboxes: 2
+  checkpoint_after_each_wave: true
+sandbox:
+  backend: docker
+  image: python:3.11-slim
+  timeout_seconds: 10
+  memory_mb: 512
+evaluation:
+  max_repair_attempts: 0
+  final_samples_per_task: 1
+logging:
+  save_prompts: true
+  save_raw_responses: true
+  save_artifacts: true
+  redact_environment: true

@@ -1,0 +1,122 @@
+graph_id: b1_single_harness
+version: "1.0"
+initial_artifact_slots:
+  problem: ProblemArtifact
+final_output_slot: final_code
+metadata:
+  baseline: B1_SINGLE_HARNESS
+nodes:
+  - node_id: direct_coder
+    node_kind: agent
+    contract_id: direct_coder
+    input_slots: {problem: ProblemArtifact}
+    output_slots: {code: CodeArtifact}
+    timeout_seconds: 150
+  - node_id: public_harness_initial
+    node_kind: harness
+    harness_id: public_code_harness
+    visibility: public
+    input_slots: {problem: ProblemArtifact, code: CodeArtifact}
+    output_slots: {result: PublicHarnessResultArtifact}
+  - node_id: freeze_initial
+    node_kind: transform
+    transform_id: freeze_code
+    input_slots: {code: CodeArtifact, gate: PublicHarnessResultArtifact}
+    output_slots: {final_code: FinalCodeArtifact}
+  - node_id: same_coder_repair
+    node_kind: agent
+    contract_id: single_agent_repair
+    input_slots:
+      problem: ProblemArtifact
+      previous_code: CodeArtifact
+      public_result: PublicHarnessResultArtifact
+    output_slots: {repair: RepairArtifact}
+    timeout_seconds: 150
+  - node_id: repair_to_code
+    node_kind: transform
+    transform_id: repair_to_code
+    input_slots: {repair: RepairArtifact}
+    output_slots: {code: CodeArtifact}
+  - node_id: public_harness_repaired
+    node_kind: harness
+    harness_id: public_code_harness
+    visibility: public
+    input_slots: {problem: ProblemArtifact, code: CodeArtifact}
+    output_slots: {result: PublicHarnessResultArtifact}
+  - node_id: selector
+    node_kind: selector
+    selector_id: deterministic_code_selector
+    input_slots:
+      initial_code: CodeArtifact
+      initial_result: PublicHarnessResultArtifact
+      repaired_code: CodeArtifact
+      repaired_result: PublicHarnessResultArtifact
+    output_slots: {code: CodeArtifact}
+  - node_id: freeze_selected
+    node_kind: transform
+    transform_id: freeze_code
+    input_slots: {code: CodeArtifact}
+    output_slots: {final_code: FinalCodeArtifact}
+edges:
+  - edge_id: coder_to_initial_harness
+    source_node: direct_coder
+    source_output: code
+    destination_node: public_harness_initial
+    destination_input: code
+  - edge_id: coder_to_initial_freeze
+    source_node: direct_coder
+    source_output: code
+    destination_node: freeze_initial
+    destination_input: code
+  - edge_id: initial_pass_to_freeze
+    source_node: public_harness_initial
+    source_output: result
+    destination_node: freeze_initial
+    destination_input: gate
+    condition: {source_field: passed, operator: is_true}
+  - edge_id: coder_to_repair
+    source_node: direct_coder
+    source_output: code
+    destination_node: same_coder_repair
+    destination_input: previous_code
+  - edge_id: initial_fail_to_repair
+    source_node: public_harness_initial
+    source_output: result
+    destination_node: same_coder_repair
+    destination_input: public_result
+    condition: {source_field: passed, operator: is_false}
+  - edge_id: repair_to_conversion
+    source_node: same_coder_repair
+    source_output: repair
+    destination_node: repair_to_code
+    destination_input: repair
+  - edge_id: repaired_code_to_harness
+    source_node: repair_to_code
+    source_output: code
+    destination_node: public_harness_repaired
+    destination_input: code
+  - edge_id: initial_code_to_selector
+    source_node: direct_coder
+    source_output: code
+    destination_node: selector
+    destination_input: initial_code
+  - edge_id: initial_result_to_selector
+    source_node: public_harness_initial
+    source_output: result
+    destination_node: selector
+    destination_input: initial_result
+  - edge_id: repaired_code_to_selector
+    source_node: repair_to_code
+    source_output: code
+    destination_node: selector
+    destination_input: repaired_code
+  - edge_id: repaired_result_to_selector
+    source_node: public_harness_repaired
+    source_output: result
+    destination_node: selector
+    destination_input: repaired_result
+  - edge_id: selector_to_freeze
+    source_node: selector
+    source_output: code
+    destination_node: freeze_selected
+    destination_input: code

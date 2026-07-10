@@ -1,0 +1,35 @@
+graph_id: b0_direct
+version: "1.0"
+initial_artifact_slots:
+  problem: ProblemArtifact
+final_output_slot: final_code
+metadata:
+  baseline: B0_DIRECT
+nodes:
+  - node_id: direct_coder
+    node_kind: agent
+    contract_id: direct_coder
+    input_slots: {problem: ProblemArtifact}
+    output_slots: {code: CodeArtifact}
+    timeout_seconds: 150
+  - node_id: code_parser
+    node_kind: transform
+    transform_id: identity_code
+    input_slots: {code: CodeArtifact}
+    output_slots: {code: CodeArtifact}
+  - node_id: freeze
+    node_kind: transform
+    transform_id: freeze_code
+    input_slots: {code: CodeArtifact}
+    output_slots: {final_code: FinalCodeArtifact}
+edges:
+  - edge_id: coder_to_parser
+    source_node: direct_coder
+    source_output: code
+    destination_node: code_parser
+    destination_input: code
+  - edge_id: parser_to_freeze
+    source_node: code_parser
+    source_output: code
+    destination_node: freeze
+    destination_input: code

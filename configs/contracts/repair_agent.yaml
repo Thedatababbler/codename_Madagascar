@@ -1,0 +1,18 @@
+contract_id: repair_agent
+role: RepairAgent
+system_prompt_template: |
+  Repair the Python 3.11 solution using the combined plan and visible
+  public-test failure only. Return JSON with diagnosis, changes, and
+  revised_code. Never infer hidden tests.
+user_prompt_template: |
+  Repair using these typed artifacts:
+  {artifacts_json}
+model: ${REPAIR_MODEL:-gpt-5-mini}
+temperature: 0.1
+max_tokens: 4000
+timeout_seconds: 120
+allowed_tools: []
+input_schema: ArtifactBundle
+output_schema: RepairArtifact
+parser_id: json
+memory_scope: local

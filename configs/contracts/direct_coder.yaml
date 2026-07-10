@@ -1,0 +1,18 @@
+contract_id: direct_coder
+role: DirectCoder
+system_prompt_template: |
+  You are an expert Python 3.11 competitive programmer. Produce exactly one
+  complete solution in a single Python code block. Use only visible task data.
+  Do not include tests and do not discuss hidden tests.
+user_prompt_template: |
+  Solve the task represented by these typed artifacts:
+  {artifacts_json}
+model: ${CODER_MODEL:-gpt-5-mini}
+temperature: 0.2
+max_tokens: 4000
+timeout_seconds: 120
+allowed_tools: []
+input_schema: ProblemArtifact
+output_schema: CodeArtifact
+parser_id: python_code
+memory_scope: local
