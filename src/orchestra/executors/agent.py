@@ -1,4 +1,6 @@
+import json
 import time
+from pathlib import Path
 from uuid import uuid4
 
 from orchestra.backends.base import (
@@ -9,6 +11,7 @@ from orchestra.backends.base import (
     ModelSpec,
     OutputContract,
 )
+from orchestra.backends.errors import BackendCapabilityError
 from orchestra.backends.registry import AgentBackendRegistry
 from orchestra.ir.artifacts import ArtifactEnvelope
 from orchestra.ir.contracts import AgentContract
@@ -36,12 +39,27 @@ class AgentNodeExecutor:
         context: RunContext,
     ) -> AgentRequest:
         contract = self.contracts[node.contract_id]
-        if contract.allowed_tools:
-            raise ValueError("Stage 1 agent contracts may not use arbitrary tools")
         if len(node.output_slots) != 1:
-            raise ValueError("Stage 1 agent nodes must declare exactly one output slot")
+            raise ValueError("Agent nodes must declare exactly one output slot")
         messages = render_contract(contract, inputs)
         backend = node.resolved_backend()
+        max_steps = getattr(backend, "max_steps", 1)
+        tools = list(node.tools) if node.tools else list(contract.allowed_tools)
+        if node.model is not None:
+            model = node.model
+        else:
+            model = ModelSpec(
+                name=contract.model,
+                temperature=contract.temperature,
+                max_tokens=contract.max_tokens,
+            )
+        if node.output_contract is not None:
+            output_contract = node.output_contract
+        else:
+            output_contract = OutputContract(
+                parser_id=contract.parser_id,
+                output_schema=contract.output_schema,
+            )
         return AgentRequest(
             request_id=str(uuid4()),
             task_id=context.task_id,
@@ -57,22 +75,35 @@ class AgentNodeExecutor:
                 for slot, artifact in sorted(inputs.items())
             ],
             rendered_context=messages[-1]["content"] if messages else "",
-            model=ModelSpec(
-                name=contract.model,
-                temperature=contract.temperature,
-                max_tokens=contract.max_tokens,
-            ),
-            tools=list(contract.allowed_tools),
-            max_steps=1,
+            model=model,
+            tools=tools,
+            max_steps=max_steps,
             timeout_seconds=node.timeout_seconds or contract.timeout_seconds,
-            output_contract=OutputContract(
-                parser_id=contract.parser_id,
-                output_schema=contract.output_schema,
-            ),
+            output_contract=output_contract,
             backend_config=backend.model_dump(mode="json"),
             messages=messages,
             contract_id=contract.contract_id,
         )
+
+    def _trace_dir(self, context: RunContext, node_id: str) -> str:
+        path = Path(context.run_dir) / "tasks" / context.task_id / "backend_traces" / node_id
+        path.mkdir(parents=True, exist_ok=True)
+        return str(path)
+
+    def _persist_raw_trace(
+        self, trace_dir: str, request_id: str, result
+    ) -> str | None:
+        if not result.trace_events:
+            return None
+        path = Path(trace_dir) / f"{request_id}.json"
+        path.write_text(
+            json.dumps(
+                [event.model_dump(mode="json") for event in result.trace_events],
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        return str(path)
 
     async def execute(
         self,
@@ -84,10 +115,30 @@ class AgentNodeExecutor:
         request = self._build_request(node, inputs, context)
         self.backends.validate_request(request)
         backend = self.backends.get(str(request.backend_config["type"]))
-        result = await backend.run(
-            request,
-            BackendExecutionContext(run_context=context, input_envelopes=inputs),
+        trace_dir = self._trace_dir(context, node.node_id)
+        backend_context = BackendExecutionContext(
+            run_id=context.run_id,
+            task_id=context.task_id,
+            node_id=node.node_id,
+            artifact_refs=request.input_artifacts,
+            trace_dir=trace_dir,
         )
+        # Semaphores stay in the control plane; backends never see them.
+        async with context.semaphores.llm:
+            result = await backend.run(request, backend_context)
+        raw_trace_path = self._persist_raw_trace(trace_dir, request.request_id, result)
+        metadata = dict(result.backend_metadata)
+        if raw_trace_path:
+            metadata["raw_trace_path"] = raw_trace_path
+            metadata["trace_summary"] = [
+                {
+                    "event_type": event.event_type,
+                    "index": event.index,
+                    "summary": event.summary or event.message,
+                }
+                for event in result.trace_events
+            ]
+        latency_ms = result.latency_ms or int((time.perf_counter() - started) * 1000)
         if result.status is not AgentRunStatus.SUCCESS or not result.output_artifacts:
             message = (
                 result.error.message
@@ -98,9 +149,12 @@ class AgentNodeExecutor:
                 node_id=node.node_id,
                 succeeded=False,
                 error=message,
-                latency_ms=result.latency_ms
-                or int((time.perf_counter() - started) * 1000),
+                latency_ms=latency_ms,
                 usage=result.usage,
+                backend_id=result.backend_id,
+                backend_status=result.status,
+                trace_events=result.trace_events,
+                backend_metadata=metadata,
             )
         output_slot, expected_schema = next(iter(node.output_slots.items()))
         artifact = result.output_artifacts[0]
@@ -112,9 +166,12 @@ class AgentNodeExecutor:
             node_id=node.node_id,
             succeeded=True,
             outputs={output_slot: artifact},
-            latency_ms=result.latency_ms
-            or int((time.perf_counter() - started) * 1000),
+            latency_ms=latency_ms,
             usage=result.usage,
+            backend_id=result.backend_id,
+            backend_status=result.status,
+            trace_events=result.trace_events,
+            backend_metadata=metadata,
         )
 
     async def execute_safely(self, *args, **kwargs) -> NodeExecutionResult:
@@ -122,7 +179,7 @@ class AgentNodeExecutor:
         started = time.perf_counter()
         try:
             return await self.execute(*args, **kwargs)
-        except (ValueError, KeyError, TimeoutError) as exc:
+        except (ValueError, KeyError, TimeoutError, BackendCapabilityError) as exc:
             return NodeExecutionResult.failed(
                 node.node_id, exc, int((time.perf_counter() - started) * 1000)
             )

@@ -169,6 +169,70 @@ class NativeAsyncRuntime(RuntimeBackend):
                 graph=graph.graph, previous_state=state, results=results
             )
             for result in results:
+                if result.backend_id is not None:
+                    await self._event(
+                        context,
+                        graph.graph.graph_id,
+                        "backend_run_started",
+                        wave_id=state.wave_id - 1,
+                        node_id=result.node_id,
+                        metadata={"backend_id": result.backend_id},
+                    )
+                    for event in result.trace_events:
+                        await self._event(
+                            context,
+                            graph.graph.graph_id,
+                            "backend_step",
+                            wave_id=state.wave_id - 1,
+                            node_id=result.node_id,
+                            prompt_tokens=event.token_usage.get("prompt_tokens"),
+                            completion_tokens=event.token_usage.get(
+                                "completion_tokens"
+                            ),
+                            metadata={
+                                "backend_id": result.backend_id,
+                                "event_type": event.event_type,
+                                "index": event.index,
+                                "summary": event.summary or event.message,
+                                "payload_ref": event.payload_ref,
+                                "raw_trace_path": result.backend_metadata.get(
+                                    "raw_trace_path"
+                                ),
+                            },
+                        )
+                    terminal = (
+                        "backend_run_completed"
+                        if result.succeeded
+                        else "backend_run_failed"
+                    )
+                    await self._event(
+                        context,
+                        graph.graph.graph_id,
+                        terminal,
+                        wave_id=state.wave_id - 1,
+                        node_id=result.node_id,
+                        latency_ms=result.latency_ms,
+                        status=(
+                            result.backend_status.value
+                            if result.backend_status is not None
+                            else None
+                        ),
+                        metadata={
+                            "backend_id": result.backend_id,
+                            "backend_status": (
+                                result.backend_status.value
+                                if result.backend_status is not None
+                                else None
+                            ),
+                            "trace_summary": result.backend_metadata.get(
+                                "trace_summary", []
+                            ),
+                            "raw_trace_path": result.backend_metadata.get(
+                                "raw_trace_path"
+                            ),
+                            "error": result.error,
+                        },
+                    )
                 await self._event(
                     context,
                     graph.graph.graph_id,
@@ -183,7 +247,15 @@ class NativeAsyncRuntime(RuntimeBackend):
                     completion_tokens=result.usage.completion_tokens,
                     estimated_cost_usd=result.usage.estimated_cost_usd,
                     status="succeeded" if result.succeeded else "failed",
-                    metadata={"error": result.error} if result.error else {},
+                    metadata={
+                        **({"error": result.error} if result.error else {}),
+                        "backend_id": result.backend_id,
+                        "backend_status": (
+                            result.backend_status.value
+                            if result.backend_status is not None
+                            else None
+                        ),
+                    },
                 )
                 for artifact in result.outputs.values():
                     await self._event(

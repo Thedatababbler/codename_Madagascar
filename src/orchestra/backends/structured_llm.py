@@ -17,6 +17,11 @@ from orchestra.backends.base import (
     BackendHealth,
 )
 from orchestra.backends.capabilities import BackendCapabilities
+from orchestra.backends.errors import (
+    ModelInvocationError,
+    OutputContractValidationError,
+    OutputParseError,
+)
 from orchestra.ir.artifacts import create_artifact
 from orchestra.llm.base_async import AsyncLLMClient
 from orchestra.prompts.parsers import parse_output
@@ -45,6 +50,12 @@ class StructuredLLMBackend:
         )
 
     async def healthcheck(self) -> BackendHealth:
+        if self.client is None:
+            return BackendHealth(
+                healthy=False,
+                backend_id=self.backend_id,
+                detail="LLM client is not configured",
+            )
         return BackendHealth(healthy=True, backend_id=self.backend_id)
 
     async def run(
@@ -53,7 +64,6 @@ class StructuredLLMBackend:
         context: BackendExecutionContext,
     ) -> AgentResult:
         started = time.perf_counter()
-        run_context = context.run_context
         messages = request.messages
         if not messages:
             messages = [
@@ -61,7 +71,7 @@ class StructuredLLMBackend:
                 {"role": "user", "content": request.rendered_context},
             ]
         try:
-            async with run_context.semaphores.llm:
+            try:
                 response = await self.client.generate(
                     messages=messages,
                     model=request.model.name,
@@ -69,21 +79,35 @@ class StructuredLLMBackend:
                     max_tokens=request.model.max_tokens,
                     timeout_seconds=request.timeout_seconds,
                     metadata={
-                        "run_id": run_context.run_id,
+                        "run_id": context.run_id,
                         "task_id": request.task_id,
                         "node_id": request.node_id,
                         "contract_id": request.contract_id or "",
                         "backend_id": self.backend_id,
                     },
                 )
-            parsed = parse_output(
-                request.output_contract.parser_id,
-                response.text,
-                request.output_contract.output_schema,
-                request.node_id,
-            )
+            except (TimeoutError, httpx.TimeoutException) as exc:
+                return self._failure(
+                    request,
+                    AgentRunStatus.TIMEOUT,
+                    exc,
+                    int((time.perf_counter() - started) * 1000),
+                )
+            except httpx.HTTPError as exc:
+                raise ModelInvocationError(str(exc)) from exc
+
+            try:
+                parsed = parse_output(
+                    request.output_contract.parser_id,
+                    response.text,
+                    request.output_contract.output_schema,
+                    request.node_id,
+                )
+            except ValueError as exc:
+                raise OutputParseError(str(exc)) from exc
+
             if type(parsed).__name__ != request.output_contract.output_schema:
-                raise ValueError(
+                raise OutputContractValidationError(
                     f"Parser produced {type(parsed).__name__}, "
                     f"expected {request.output_contract.output_schema}"
                 )
@@ -91,9 +115,7 @@ class StructuredLLMBackend:
                 parsed,
                 producer_node_id=request.node_id,
                 task_id=request.task_id,
-                parent_artifact_ids=[
-                    item.artifact_id for item in context.input_envelopes.values()
-                ],
+                parent_artifact_ids=[ref.artifact_id for ref in context.artifact_refs],
             )
             latency_ms = int((time.perf_counter() - started) * 1000)
             return AgentResult(
@@ -104,31 +126,42 @@ class StructuredLLMBackend:
                 output_artifacts=[artifact],
                 trace_events=[
                     AgentTraceEvent(
-                        event_type="structured_llm_completed",
+                        event_type="model_call",
+                        index=0,
+                        summary="structured_llm_completed",
                         metadata={"provider_request_id": response.provider_request_id},
+                        token_usage={
+                            "prompt_tokens": response.usage.prompt_tokens,
+                            "completion_tokens": response.usage.completion_tokens,
+                        },
                     )
                 ],
                 usage=response.usage,
                 latency_ms=latency_ms,
                 step_count=1,
-                backend_metadata={"contract_id": request.contract_id},
+                backend_metadata={
+                    "contract_id": request.contract_id,
+                    "trace_dir": context.trace_dir,
+                },
             )
-        except (TimeoutError, httpx.TimeoutException) as exc:
+        except ModelInvocationError as exc:
             return self._failure(
                 request,
-                AgentRunStatus.TIMEOUT,
+                AgentRunStatus.MODEL_FAILURE,
                 exc,
                 int((time.perf_counter() - started) * 1000),
             )
-        except ValueError as exc:
-            status = (
-                AgentRunStatus.OUTPUT_CONTRACT_FAILURE
-                if "Parser" in str(exc) or "ValidationError" in str(exc)
-                else AgentRunStatus.MODEL_FAILURE
-            )
+        except OutputParseError as exc:
             return self._failure(
                 request,
-                status,
+                AgentRunStatus.ACTION_PARSE_FAILURE,
+                exc,
+                int((time.perf_counter() - started) * 1000),
+            )
+        except OutputContractValidationError as exc:
+            return self._failure(
+                request,
+                AgentRunStatus.OUTPUT_CONTRACT_FAILURE,
                 exc,
                 int((time.perf_counter() - started) * 1000),
             )

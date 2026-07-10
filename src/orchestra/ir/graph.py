@@ -20,8 +20,17 @@ def _strip_default_backends_for_hash(data: dict[str, Any]) -> dict[str, Any]:
     for node in data.get("nodes", []):
         item = dict(node)
         backend = item.get("backend")
-        if backend is None or backend == {"type": "structured_llm"}:
+        if backend is None or backend in (
+            {"type": "structured_llm"},
+            {"type": "structured_llm", "max_steps": 1},
+        ):
             item.pop("backend", None)
+        if not item.get("tools"):
+            item.pop("tools", None)
+        if item.get("model") is None:
+            item.pop("model", None)
+        if item.get("output_contract") is None:
+            item.pop("output_contract", None)
         nodes.append(item)
     return {**data, "nodes": nodes}
 

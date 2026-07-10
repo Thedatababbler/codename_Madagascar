@@ -9,6 +9,7 @@ from pathlib import Path
 from orchestra.adapters.livecodebench.loader import LiveCodeBenchLoader
 from orchestra.adapters.livecodebench.mapper import load_manifest
 from orchestra.backends.factory import build_structured_llm_registry
+from orchestra.backends.health import healthcheck_used_backends
 from orchestra.cli.validate_graph import build_compiler
 from orchestra.config import load_experiment_config
 from orchestra.executors.agent import AgentNodeExecutor
@@ -185,10 +186,9 @@ async def _run(args) -> int:
     artifact_store = FileArtifactStore(run_dir)
     checkpoint_store = CheckpointStore(run_dir)
     event_writer = AppendOnlyEventWriter(run_dir)
+    backend_registry = build_structured_llm_registry(llm)
     executors = NodeExecutorRegistry(
-        agent_executor=AgentNodeExecutor(
-            contracts, build_structured_llm_registry(llm)
-        ),
+        agent_executor=AgentNodeExecutor(contracts, backend_registry),
         harness_executor=HarnessNodeExecutor(
             sandbox, timeout_seconds=config.sandbox.per_test_timeout_seconds
         ),
@@ -206,6 +206,13 @@ async def _run(args) -> int:
             graph_id=graph.graph_id,
             event_type="RUN_STARTED",
         )
+    )
+    await healthcheck_used_backends(
+        registry=backend_registry,
+        graph=compiled,
+        event_writer=event_writer,
+        run_id=run_id,
+        graph_id=graph.graph_id,
     )
 
     async def run_one(qid: str):

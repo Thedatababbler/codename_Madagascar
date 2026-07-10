@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from orchestra.backends.base import AgentBackend, AgentRequest, BackendCapabilities
+from orchestra.backends.errors import BackendCapabilityError
 
 
 class AgentBackendRegistry:
@@ -34,18 +35,22 @@ class AgentBackendRegistry:
         if not self.has(backend_id):
             raise KeyError(f"Unknown agent backend: {backend_id}")
         backend = self.get(backend_id)
-        capabilities = backend.capabilities
-        self._validate_capabilities(request, capabilities)
+        self.validate_capabilities(request, backend.capabilities)
 
     @staticmethod
-    def _validate_capabilities(
+    def validate_capabilities(
         request: AgentRequest, capabilities: BackendCapabilities
     ) -> None:
         if request.max_steps > 1 and not capabilities.multi_step:
-            raise ValueError(
+            raise BackendCapabilityError(
                 f"Backend does not support multi-step execution (max_steps={request.max_steps})"
             )
         if request.tools and not (
             capabilities.structured_tools or capabilities.code_actions
         ):
-            raise ValueError("Backend does not support tools")
+            raise BackendCapabilityError("Backend does not support tools")
+        if request.backend_config.get("executor_type") not in (None, "local"):
+            if not capabilities.supports_remote_executor:
+                raise BackendCapabilityError(
+                    "Backend does not support remote executors"
+                )

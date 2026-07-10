@@ -1,7 +1,9 @@
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from orchestra.backends.base import AgentRunStatus, AgentTraceEvent
 from orchestra.ir.artifacts import ArtifactEnvelope
 from orchestra.llm.usage import LLMUsage
 
@@ -42,6 +44,10 @@ class NodeExecutionResult(BaseModel):
     error: str | None = None
     latency_ms: int = 0
     usage: LLMUsage = Field(default_factory=LLMUsage)
+    backend_id: str | None = None
+    backend_status: AgentRunStatus | None = None
+    trace_events: list[AgentTraceEvent] = Field(default_factory=list)
+    backend_metadata: dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
     def failed(cls, node_id: str, error: Exception, latency_ms: int = 0):

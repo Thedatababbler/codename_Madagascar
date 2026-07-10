@@ -2,6 +2,10 @@ from collections import defaultdict, deque
 
 from pydantic import BaseModel
 
+from orchestra.backends.capabilities import BackendCapabilities
+from orchestra.backends.catalog import KNOWN_BACKEND_CAPABILITIES
+from orchestra.backends.errors import BackendCapabilityError
+from orchestra.backends.registry import AgentBackendRegistry
 from orchestra.ir.artifacts import PAYLOAD_SCHEMAS
 from orchestra.ir.contracts import AgentContract
 from orchestra.ir.graph import OrchestraGraph
@@ -34,6 +38,7 @@ class GraphCompiler:
         transform_ids: set[str],
         selector_ids: set[str],
         backend_ids: set[str] | None = None,
+        backend_capabilities: dict[str, BackendCapabilities] | None = None,
     ) -> None:
         self.contracts = contracts
         self.harness_ids = harness_ids
@@ -42,6 +47,38 @@ class GraphCompiler:
         self.backend_ids = (
             {"structured_llm"} if backend_ids is None else set(backend_ids)
         )
+        self.backend_capabilities = (
+            dict(KNOWN_BACKEND_CAPABILITIES)
+            if backend_capabilities is None
+            else dict(backend_capabilities)
+        )
+
+    def _validate_agent_backend_capabilities(self, node: AgentNodeSpec) -> None:
+        backend = node.resolved_backend()
+        capabilities = self.backend_capabilities.get(backend.type)
+        if capabilities is None:
+            raise GraphCompilationError(
+                f"Missing capabilities for backend {backend.type!r} on node {node.node_id}"
+            )
+        max_steps = getattr(backend, "max_steps", 1)
+        tools = list(node.tools)
+        if not tools and node.contract_id in self.contracts:
+            tools = list(self.contracts[node.contract_id].allowed_tools)
+        request_like = type(
+            "RequestLike",
+            (),
+            {
+                "max_steps": max_steps,
+                "tools": tools,
+                "backend_config": backend.model_dump(mode="json"),
+            },
+        )()
+        try:
+            AgentBackendRegistry.validate_capabilities(request_like, capabilities)
+        except BackendCapabilityError as exc:
+            raise GraphCompilationError(
+                f"Backend capability check failed on node {node.node_id}: {exc}"
+            ) from exc
 
     def compile(self, graph: OrchestraGraph) -> CompiledGraph:
         node_ids = [node.node_id for node in graph.nodes]
@@ -61,6 +98,7 @@ class GraphCompiler:
                     raise GraphCompilationError(
                         f"Unknown agent backend {backend_id!r} on node {node.node_id}"
                     )
+                self._validate_agent_backend_capabilities(node)
             if isinstance(node, AgentNodeSpec) and node.contract_id in self.contracts:
                 contract = self.contracts[node.contract_id]
                 if contract.output_schema not in node.output_slots.values():

@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from orchestra.backends.capabilities import BackendCapabilities
 from orchestra.ir.artifacts import ArtifactEnvelope
 from orchestra.llm.usage import LLMUsage
-from orchestra.runtime.backend import RunContext
 
 
 class AgentRunStatus(StrEnum):
@@ -48,12 +48,18 @@ class OutputContract(BaseModel):
     parser_id: str
     output_schema: str
     answer_format: str | None = None
+    type: str | None = None
 
 
 class AgentTraceEvent(BaseModel):
     model_config = ConfigDict(extra="forbid")
     event_type: str
+    index: int | None = None
+    timestamp: datetime | None = None
+    summary: str | None = None
     message: str | None = None
+    payload_ref: str | None = None
+    token_usage: dict[str, int] = Field(default_factory=dict)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -87,7 +93,6 @@ class AgentRequest(BaseModel):
     timeout_seconds: float
     output_contract: OutputContract
     backend_config: dict[str, Any] = Field(default_factory=dict)
-    # Compatibility payload for structured LLM: full chat messages.
     messages: list[dict[str, str]] = Field(default_factory=list)
     contract_id: str | None = None
 
@@ -108,9 +113,22 @@ class AgentResult(BaseModel):
 
 
 class BackendExecutionContext(BaseModel):
-    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
-    run_context: RunContext
-    input_envelopes: dict[str, ArtifactEnvelope] = Field(default_factory=dict)
+    """Narrow, immutable execution context visible to backends."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    run_id: str
+    task_id: str
+    subtask_id: str | None = None
+    node_id: str
+    deadline: datetime | None = None
+    workspace_ref: str | None = None
+    artifact_refs: list[ArtifactRef] = Field(default_factory=list)
+    trace_dir: str | None = None
+
+    @field_validator("artifact_refs")
+    @classmethod
+    def _freeze_refs(cls, value: list[ArtifactRef]) -> list[ArtifactRef]:
+        return list(value)
 
 
 @runtime_checkable
