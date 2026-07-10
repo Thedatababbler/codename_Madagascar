@@ -11,6 +11,7 @@ from orchestra.schemas.artifacts import (
     CodeArtifact,
     CombinedPlanArtifact,
     EdgeCaseArtifact,
+    FinalAnswerArtifact,
     FinalCodeArtifact,
     ProblemArtifact,
     PublicHarnessResultArtifact,
@@ -32,6 +33,7 @@ PAYLOAD_SCHEMAS: dict[str, type[BaseModel]] = {
         RepairInputArtifact,
         RepairArtifact,
         FinalCodeArtifact,
+        FinalAnswerArtifact,
     )
 }
 

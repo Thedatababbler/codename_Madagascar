@@ -1,0 +1,35 @@
+graph_id: bbeh_single_codeagent
+version: "1.0"
+initial_artifact_slots:
+  problem: ProblemArtifact
+final_output_slot: final_answer
+metadata:
+  baseline: BBEH_CODEAGENT
+nodes:
+  - node_id: solver
+    node_kind: agent
+    contract_id: bbeh_solver
+    backend:
+      type: smolagents_code
+      max_steps: 8
+      executor_type: local
+      use_structured_outputs_internally: true
+      additional_authorized_imports: []
+    model:
+      provider: openai_compatible
+      name: ${CODEAGENT_MODEL:-gpt-5-mini}
+      temperature: 0.2
+      max_tokens: 4096
+    tools:
+      - python_math
+      - calculator
+      - final_answer
+    output_contract:
+      type: final_answer
+      answer_format: single_line
+      parser_id: final_answer
+      output_schema: FinalAnswerArtifact
+    input_slots: {problem: ProblemArtifact}
+    output_slots: {final_answer: FinalAnswerArtifact}
+    timeout_seconds: 300
+edges: []

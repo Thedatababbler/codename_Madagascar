@@ -63,7 +63,23 @@ class OrchestraGraph(BaseModel):
 
 
 def load_graph(path: str | Path) -> OrchestraGraph:
-    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+    import os
+    import re
+
+    env_pattern = re.compile(r"\$\{([A-Z0-9_]+)(?::-([^}]+))?\}")
+
+    def expand(value: Any) -> Any:
+        if isinstance(value, str):
+            return env_pattern.sub(
+                lambda m: os.getenv(m.group(1), m.group(2) or m.group(0)), value
+            )
+        if isinstance(value, dict):
+            return {key: expand(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [expand(item) for item in value]
+        return value
+
+    raw = expand(yaml.safe_load(Path(path).read_text(encoding="utf-8")))
     nodes = []
     for node in raw.get("nodes", []):
         if (

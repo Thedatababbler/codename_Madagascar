@@ -18,8 +18,13 @@ def load_env_file(path: str | Path = ".env") -> None:
     os.environ.setdefault("ANALYST_MODEL", "gpt-5-mini")
     os.environ.setdefault("CODER_MODEL", "gpt-5-mini")
     os.environ.setdefault("REPAIR_MODEL", "gpt-5-mini")
+    os.environ.setdefault("CODEAGENT_MODEL", "gpt-5-mini")
     os.environ.setdefault("LCB_DATA_DIR", "/root/data/livecodebench/code_generation_lite")
     os.environ.setdefault(
         "LCB_REPOSITORY_PATH",
         os.environ.get("LCB_REPO_PATH", "/root/projects/LiveCodeBench"),
+    )
+    os.environ.setdefault(
+        "BBEH_DATA_DIR",
+        "/root/projects/EvoMAS/dataset/bbeh/benchmark_tasks",
     )

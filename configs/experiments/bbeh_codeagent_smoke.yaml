@@ -1,0 +1,27 @@
+experiment:
+  name: bbeh_codeagent_smoke
+  seed: 42
+  graph_config: configs/graphs/bbeh_single_codeagent.yaml
+  contracts_dir: configs/contracts
+  output_root: outputs/bbeh_codeagent_smoke
+
+benchmark:
+  name: bbeh
+  data_dir: ${BBEH_DATA_DIR:-/root/projects/EvoMAS/dataset/bbeh/benchmark_tasks}
+  task_ids:
+    - bbeh_boolean_expressions:0
+    - bbeh_object_counting:0
+    - bbeh_multistep_arithmetic:0
+  difficulties:
+    - easy
+    - medium
+    - hard
+
+runtime:
+  max_parallel_benchmark_tasks: 1
+  max_parallel_nodes_per_task: 1
+  max_parallel_llm_calls: 2
+  max_parallel_sandboxes: 1
+
+logging:
+  level: INFO

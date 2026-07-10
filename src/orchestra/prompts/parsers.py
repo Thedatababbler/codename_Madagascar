@@ -71,6 +71,17 @@ def parse_output(parser_id: str, text: str, output_schema: str, source_node: str
         blocks = _CODE_BLOCK.findall(text)
         code = blocks[-1].strip() if blocks else text.strip()
         return CodeArtifact(code=code, source_node=source_node)
+    if parser_id == "final_answer":
+        from orchestra.schemas.artifacts import FinalAnswerArtifact
+
+        answer = text.strip().splitlines()[0].strip() if text.strip() else ""
+        status = "ok" if answer else "empty"
+        return FinalAnswerArtifact(
+            answer=answer,
+            raw_output=text,
+            source_node=source_node,
+            extraction_status=status,
+        )
     payload = _normalize_payload(schema, _extract_json_object(text))
     try:
         return schema.model_validate(payload)

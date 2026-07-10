@@ -115,6 +115,13 @@ class FinalCodeArtifact(VersionedArtifact):
     source_artifact_id: str
 
 
+class FinalAnswerArtifact(VersionedArtifact):
+    answer: str
+    raw_output: str | None = None
+    source_node: str = ""
+    extraction_status: Literal["ok", "empty", "malformed"] = "ok"
+
+
 class ArtifactProvenance(VersionedArtifact):
     artifact_name: str
     produced_by: str

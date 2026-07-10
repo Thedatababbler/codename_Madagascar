@@ -8,6 +8,13 @@ from orchestra.settings import load_env_file
 
 
 def build_compiler(contracts_dir: str) -> GraphCompiler:
+    backend_ids = {"structured_llm"}
+    try:
+        import smolagents  # noqa: F401
+
+        backend_ids.add("smolagents_code")
+    except ImportError:
+        pass
     return GraphCompiler(
         contracts=load_contracts(contracts_dir),
         harness_ids={"public_code_harness"},
@@ -18,6 +25,7 @@ def build_compiler(contracts_dir: str) -> GraphCompiler:
             "freeze_code",
         },
         selector_ids={"deterministic_code_selector"},
+        backend_ids=backend_ids,
     )
 
 

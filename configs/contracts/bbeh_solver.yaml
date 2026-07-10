@@ -1,0 +1,20 @@
+contract_id: bbeh_solver
+role: problem_solver
+system_prompt_template: |
+  You are a careful problem-solving agent. Use the available tools when helpful.
+  Put the final answer through the final_answer tool. Do not invent hidden labels.
+user_prompt_template: |
+  Solve the task represented by these typed artifacts:
+  {artifacts_json}
+model: ${CODEAGENT_MODEL:-gpt-5-mini}
+temperature: 0.2
+max_tokens: 4096
+timeout_seconds: 300
+allowed_tools:
+  - python_math
+  - calculator
+  - final_answer
+input_schema: ProblemArtifact
+output_schema: FinalAnswerArtifact
+parser_id: final_answer
+memory_scope: local

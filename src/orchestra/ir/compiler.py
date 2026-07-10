@@ -15,6 +15,9 @@ from orchestra.ir.nodes import (
     SelectorNodeSpec,
     TransformNodeSpec,
 )
+from orchestra.tools.bbeh_tools import BBEH_TOOL_IDS
+
+KNOWN_TOOL_IDS = set(BBEH_TOOL_IDS)
 
 
 class GraphCompilationError(ValueError):
@@ -39,6 +42,7 @@ class GraphCompiler:
         selector_ids: set[str],
         backend_ids: set[str] | None = None,
         backend_capabilities: dict[str, BackendCapabilities] | None = None,
+        known_tool_ids: set[str] | None = None,
     ) -> None:
         self.contracts = contracts
         self.harness_ids = harness_ids
@@ -52,6 +56,9 @@ class GraphCompiler:
             if backend_capabilities is None
             else dict(backend_capabilities)
         )
+        self.known_tool_ids = (
+            set(KNOWN_TOOL_IDS) if known_tool_ids is None else set(known_tool_ids)
+        )
 
     def _validate_agent_backend_capabilities(self, node: AgentNodeSpec) -> None:
         backend = node.resolved_backend()
@@ -64,6 +71,11 @@ class GraphCompiler:
         tools = list(node.tools)
         if not tools and node.contract_id in self.contracts:
             tools = list(self.contracts[node.contract_id].allowed_tools)
+        unknown = [tool_id for tool_id in tools if tool_id not in self.known_tool_ids]
+        if unknown:
+            raise GraphCompilationError(
+                f"Unknown tool id(s) on node {node.node_id}: {unknown}"
+            )
         request_like = type(
             "RequestLike",
             (),

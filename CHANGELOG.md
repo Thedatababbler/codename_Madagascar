@@ -1,5 +1,40 @@
 # Changelog
 
+## 2026-07-10 — Milestone 2: smolagents CodeAgent vertical slice
+
+### Added
+
+- Optional dependency group `smolagents` pinned to `smolagents[openai]==1.26.0`.
+- `SmolagentsCodeBackend` with spawn-isolated worker process, wall timeout, and
+  process-group cleanup.
+- `SmolagentsModelFactory`, ToolRegistry, and first-batch BBEH tools
+  (`python_math`, `calculator`, `final_answer`).
+- `BBEHTaskAdapter` + `orchestra.cli.run_bbeh` smoke path.
+- Graph/experiment configs: `bbeh_single_codeagent`, `bbeh_codeagent_smoke`.
+- `FinalAnswerArtifact` and `final_answer` parser.
+
+### Changed
+
+- Graph compiler validates tool allowlists and includes `smolagents_code` when
+  the optional dependency is installed.
+- `load_graph` expands `${ENV}` placeholders (for CodeAgent model names).
+
+## 2026-07-10 — Milestone 1.1: backend execution boundaries
+
+### Added
+
+- Backend trace propagation into `NodeExecutionResult` and runtime telemetry
+  (`backend_run_started` / `backend_step` / `backend_run_completed|failed`).
+- Narrow `BackendExecutionContext` (no RunContext / stores / semaphores).
+- Capability-based graph compile validation and pre-run backend healthchecks.
+- Typed backend exceptions and `SmolagentsCodeBackendConfig` schema
+  (forbids `managed_agents`).
+
+### Changed
+
+- `AgentNodeExecutor` preserves node `max_steps` and `tools` without hardcoding
+  single-step structured-only behavior.
+
 ## 2026-07-10 — Milestone 1: AgentBackend abstraction
 
 ### Added
