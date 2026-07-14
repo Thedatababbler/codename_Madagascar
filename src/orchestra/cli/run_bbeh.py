@@ -65,6 +65,73 @@ def load_bbeh_experiment_config(path: str | Path) -> BBEHExperimentConfig:
     )
 
 
+def _redact_text(value: str | None, *, limit: int = 80) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    for secret_key in ("OPENAI_API_KEY", "HF_TOKEN", "API_KEY", "TOKEN", "SECRET"):
+        secret = __import__("os").environ.get(secret_key)
+        if secret:
+            text = text.replace(secret, "[REDACTED]")
+    if len(text) > limit:
+        return text[:limit] + "…"
+    return text
+
+
+def build_desensitized_summary(
+    *,
+    run_id: str,
+    evaluations: list[dict[str, Any]],
+    events_path: Path | None = None,
+) -> dict[str, Any]:
+    """Public-safe summary: no secrets, no full prompts, truncated answers."""
+    per_task = []
+    for item in evaluations:
+        per_task.append(
+            {
+                "task_id": item.get("task_id"),
+                "execution_success": item.get("execution_success"),
+                "answer_correct": item.get("answer_correct"),
+                "extracted_answer": _redact_text(item.get("extracted_answer"), limit=64),
+                # Reference answers are omitted from the desensitized summary.
+                "subset": (item.get("details") or {}).get("subset"),
+                "extraction_status": (item.get("details") or {}).get(
+                    "extraction_status"
+                ),
+            }
+        )
+    token_prompt = 0
+    token_completion = 0
+    latency_ms = 0
+    if events_path is not None and events_path.exists():
+        for line in events_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            event = json.loads(line)
+            if event.get("event_type") == "NODE_COMPLETED":
+                token_prompt += int(event.get("prompt_tokens") or 0)
+                token_completion += int(event.get("completion_tokens") or 0)
+                latency_ms += int(event.get("latency_ms") or 0)
+    return {
+        "run_id": run_id,
+        "tasks": len(evaluations),
+        "execution_success": sum(
+            1 for item in evaluations if item.get("execution_success")
+        ),
+        "answer_correct": sum(1 for item in evaluations if item.get("answer_correct")),
+        "usage": {
+            "prompt_tokens": token_prompt,
+            "completion_tokens": token_completion,
+            "latency_ms": latency_ms,
+        },
+        "tasks_summary": per_task,
+        "notes": [
+            "Desensitized summary omits reference answers and full prompts.",
+            "Secrets from the environment are redacted if present in text fields.",
+        ],
+    }
+
+
 async def _run(args: argparse.Namespace) -> int:
     load_env_file()
     config = load_bbeh_experiment_config(args.config)
@@ -216,16 +283,57 @@ async def _run(args: argparse.Namespace) -> int:
     (run_dir / "bbeh_summary.json").write_text(
         json.dumps(summary, indent=2), encoding="utf-8"
     )
+    redacted = build_desensitized_summary(
+        run_id=run_id,
+        evaluations=evaluations,
+        events_path=run_dir / "events.jsonl",
+    )
+    (run_dir / "bbeh_summary_redacted.json").write_text(
+        json.dumps(redacted, indent=2), encoding="utf-8"
+    )
+    (run_dir / "bbeh_summary_redacted.md").write_text(
+        "\n".join(
+            [
+                f"# BBEH CodeAgent smoke (desensitized) — {run_id}",
+                "",
+                f"- tasks: {redacted['tasks']}",
+                f"- execution_success: {redacted['execution_success']}",
+                f"- answer_correct: {redacted['answer_correct']}",
+                (
+                    f"- tokens: prompt={redacted['usage']['prompt_tokens']} "
+                    f"completion={redacted['usage']['completion_tokens']}"
+                ),
+                f"- latency_ms_sum: {redacted['usage']['latency_ms']}",
+                "",
+                "| task_id | exec | correct | answer |",
+                "|---|---|---|---|",
+                *[
+                    (
+                        f"| {row['task_id']} | {row['execution_success']} | "
+                        f"{row['answer_correct']} | {row['extracted_answer']!r} |"
+                    )
+                    for row in redacted["tasks_summary"]
+                ],
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
     await event_writer.append(
         TelemetryEvent(
             run_id=run_id,
             task_id=None,
             graph_id=graph.graph_id,
             event_type="RUN_COMPLETED",
-            metadata=summary,
+            metadata={
+                "tasks": summary["tasks"],
+                "execution_success": summary["execution_success"],
+                "answer_correct": summary["answer_correct"],
+            },
         )
     )
     print(f"run_dir={run_dir}")
+    print(f"redacted_summary={run_dir / 'bbeh_summary_redacted.md'}")
     return 0
 
 

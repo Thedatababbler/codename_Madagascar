@@ -165,6 +165,7 @@ async def test_malformed_final_answer(tmp_path):
         worker_runner=_ok_worker(final_output="   \n")
     ).run(_request(), _context(tmp_path))
     assert result.status is AgentRunStatus.OUTPUT_CONTRACT_FAILURE
+    assert result.final_output == "   \n"
 
 
 @pytest.mark.asyncio

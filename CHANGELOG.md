@@ -1,5 +1,52 @@
 # Changelog
 
+## 2026-07-13 — Milestone 3: Task/Subtask IR
+
+### Added
+
+- `communication/` stubs: `CommunicationPlan`, payload/aggregation schemas.
+- `decomposition/`: `TaskPlan`, `SubtaskSpec`, validator, deterministic
+  single-subtask fallback, `TaskDecomposer` (disabled by default).
+- `control/`: `TaskExecutionState`, `SubtaskStatus`, single-subtask
+  compatibility runner over `NativeAsyncRuntime`.
+- `runtime/task_checkpoint.py` for `task_execution.json` (alongside graph
+  `checkpoint.json`).
+- Opt-in CLI: `python -m orchestra.cli.run_task_plan`.
+- Unit/integration tests covering DAG rejection, fallback, resume skip, and
+  single-subtask parity with direct graph execution.
+
+## 2026-07-13 — LCB B2 Fixed MAS uses CodeAgent backends
+
+### Changed
+
+- `configs/graphs/b2_fixed_mas.yaml` agent nodes now use `smolagents_code`
+  with `final_answer` tools (topology unchanged).
+- Legacy structured-llm B2 graph kept as `b2_fixed_mas_structured.yaml` for
+  mock/integration tests.
+- `orchestra.cli.run` registers `build_default_backend_registry` and injects
+  fixture CodeAgent responses under `--mock-llm`.
+- CodeAgent worker passes contract `instructions` and JSON-serializes dict/list
+  `final_answer` payloads.
+- Stage1 MAS script requires the `smolagents` extra.
+
+## 2026-07-13 — CodeAgent hardening (CI, offline integration, exception map)
+
+### Added
+
+- CI installs `uv sync --extra smolagents`.
+- Deterministic offline CodeAgent integration test that spawns the real worker
+  with a scripted fixture model (no mocked worker result payload).
+- `map_exception_to_status` for smolagents typed exceptions
+  (model / parse / tool / infra / max-steps).
+- Desensitized BBEH summaries: `bbeh_summary_redacted.{json,md}`.
+
+### Changed
+
+- `SmolagentsCodeBackend` keeps the full `final_output` and delegates answer
+  extraction to the OutputContract parser.
+- README clarifies the CodeAgent worker is crash isolation, not a security
+  sandbox.
+
 ## 2026-07-10 — Milestone 2: smolagents CodeAgent vertical slice
 
 ### Added

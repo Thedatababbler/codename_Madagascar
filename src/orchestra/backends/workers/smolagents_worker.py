@@ -146,11 +146,17 @@ def run_codeagent(request: dict[str, Any]) -> dict[str, Any]:
 
     model_spec = ModelSpec.model_validate(request["model"])
     try:
-        model = SmolagentsModelFactory().create(model_spec)
+        model = SmolagentsModelFactory().create(
+            model_spec,
+            fixture_responses=list(request.get("fixture_responses") or []),
+        )
     except Exception as exc:  # noqa: BLE001
+        from orchestra.backends.exception_mapping import map_exception_to_status
+
+        status = map_exception_to_status(exc)
         return {
             "ok": False,
-            "status": "backend_init_failure",
+            "status": status.value,
             "error": f"{type(exc).__name__}: {exc}",
             "trace_events": [],
             "usage": {},
@@ -187,40 +193,35 @@ def run_codeagent(request: dict[str, Any]) -> dict[str, Any]:
         del agent
         trace_buffer.extend(_normalize_steps([memory_step]))
 
+    instructions = request.get("instruction") or None
+    agent_kwargs = {
+        "tools": tools,
+        "model": model,
+        "max_steps": max_steps,
+        "planning_interval": backend_config.get("planning_interval"),
+        "additional_authorized_imports": list(
+            backend_config.get("additional_authorized_imports") or []
+        ),
+        "executor_type": backend_config.get("executor_type") or "local",
+        "use_structured_outputs_internally": bool(
+            backend_config.get("use_structured_outputs_internally", True)
+        ),
+        "return_full_result": True,
+        "step_callbacks": [trace_callback],
+        "instructions": instructions,
+        "managed_agents": None,
+    }
     try:
-        agent = CodeAgent(
-            tools=tools,
-            model=model,
-            max_steps=max_steps,
-            planning_interval=backend_config.get("planning_interval"),
-            additional_authorized_imports=list(
-                backend_config.get("additional_authorized_imports") or []
-            ),
-            executor_type=backend_config.get("executor_type") or "local",
-            use_structured_outputs_internally=bool(
-                backend_config.get("use_structured_outputs_internally", True)
-            ),
-            return_full_result=True,
-            step_callbacks=[trace_callback],
-            managed_agents=None,
-        )
+        agent = CodeAgent(**agent_kwargs)
     except TypeError:
-        # Older/newer kwargs drift: retry without managed_agents kw if rejected.
-        agent = CodeAgent(
-            tools=tools,
-            model=model,
-            max_steps=max_steps,
-            planning_interval=backend_config.get("planning_interval"),
-            additional_authorized_imports=list(
-                backend_config.get("additional_authorized_imports") or []
-            ),
-            executor_type=backend_config.get("executor_type") or "local",
-            use_structured_outputs_internally=bool(
-                backend_config.get("use_structured_outputs_internally", True)
-            ),
-            return_full_result=True,
-            step_callbacks=[trace_callback],
-        )
+        # Older/newer kwargs drift: retry without managed_agents / instructions.
+        fallback = dict(agent_kwargs)
+        fallback.pop("managed_agents", None)
+        try:
+            agent = CodeAgent(**fallback)
+        except TypeError:
+            fallback.pop("instructions", None)
+            agent = CodeAgent(**fallback)
         if getattr(agent, "managed_agents", None):
             return {
                 "ok": False,
@@ -236,9 +237,12 @@ def run_codeagent(request: dict[str, Any]) -> dict[str, Any]:
     try:
         result = agent.run(task, max_steps=max_steps, return_full_result=True)
     except Exception as exc:  # noqa: BLE001 - never crash parent runtime
+        from orchestra.backends.exception_mapping import map_exception_to_status
+
+        status = map_exception_to_status(exc)
         return {
             "ok": False,
-            "status": "infra_error",
+            "status": status.value,
             "error": f"{type(exc).__name__}: {exc}",
             "trace_events": trace_buffer,
             "usage": {},
@@ -260,16 +264,22 @@ def run_codeagent(request: dict[str, Any]) -> dict[str, Any]:
         token_usage = {"prompt_tokens": prompt, "completion_tokens": completion}
     state = getattr(result, "state", "success")
     output = getattr(result, "output", None)
+    # Preserve full final output; OutputContract parsing happens in the backend.
+    # Serialize structured final_answer payloads as JSON so json parsers work.
+    if output is None:
+        final_output = None
+    elif isinstance(output, (dict, list)):
+        final_output = json.dumps(output, ensure_ascii=False)
+    else:
+        final_output = str(output)
     status = "success"
     if state == "max_steps_error":
         status = "max_steps_exceeded"
-    elif output is None or str(output).strip() == "":
-        status = "output_contract_failure"
     return {
         "ok": status == "success",
         "status": status,
         "error": None if status == "success" else f"CodeAgent finished with {status}",
-        "final_output": None if output is None else str(output),
+        "final_output": final_output,
         "trace_events": events,
         "usage": token_usage,
         "step_count": len(steps),

@@ -3,6 +3,8 @@ import asyncio
 import json
 from pathlib import Path
 
+from tqdm import tqdm
+
 from orchestra.adapters.livecodebench.exporter import (
     build_official_record,
     export_predictions,
@@ -55,18 +57,34 @@ async def _evaluate(run_dir: Path) -> int:
     infra_errors = 0
     incomplete = 0
     evaluated = 0
-    for qid in ids:
+    cached = 0
+    progress = tqdm(
+        ids,
+        desc="evaluate",
+        unit="task",
+        total=len(ids),
+        dynamic_ncols=True,
+    )
+    for qid in progress:
+        progress.set_postfix(
+            task=qid,
+            ok=passed,
+            infra=infra_errors,
+            skip=incomplete,
+            cached=cached,
+            refresh=False,
+        )
         task_dir = run_dir / "tasks" / qid
         graph_result_path = task_dir / "graph_result.json"
         if not graph_result_path.exists():
             incomplete += 1
-            print(f"skip {qid}: missing graph_result.json")
+            progress.write(f"skip {qid}: missing graph_result.json")
             continue
         result_data = json.loads(graph_result_path.read_text(encoding="utf-8"))
         state = RuntimeState.model_validate(result_data["state"])
         if not state.frozen or not state.final_output_artifact_id:
             incomplete += 1
-            print(f"skip {qid}: not frozen")
+            progress.write(f"skip {qid}: not frozen")
             continue
         artifact = await store.get(state.final_output_artifact_id)
         final = FinalCodeArtifact.model_validate(artifact.payload)
@@ -75,11 +93,21 @@ async def _evaluate(run_dir: Path) -> int:
         if output_path.exists():
             evaluation = json.loads(output_path.read_text(encoding="utf-8"))
             evaluated += 1
+            cached += 1
             if evaluation.get("status") == FinalEvaluationStatus.PASSED:
                 passed += 1
             elif evaluation.get("status") == FinalEvaluationStatus.INFRA_ERROR:
                 infra_errors += 1
             continue
+        progress.set_postfix(
+            task=qid,
+            status="running",
+            ok=passed,
+            infra=infra_errors,
+            skip=incomplete,
+            cached=cached,
+            refresh=True,
+        )
         await events.append(
             TelemetryEvent(
                 run_id=state.run_id,
@@ -99,6 +127,7 @@ async def _evaluate(run_dir: Path) -> int:
             passed += 1
         elif evaluation.status is FinalEvaluationStatus.INFRA_ERROR:
             infra_errors += 1
+        progress.write(f"{qid}: {evaluation.status.value}")
         await events.append(
             TelemetryEvent(
                 run_id=state.run_id,
@@ -108,11 +137,12 @@ async def _evaluate(run_dir: Path) -> int:
                 status=evaluation.status.value,
             )
         )
+    progress.close()
     export_predictions(predictions, run_dir / "predictions.json")
     print(
         f"evaluated={evaluated}/{len(ids)} "
         f"pass@1={passed / evaluated if evaluated else 0:.4f} "
-        f"infra_errors={infra_errors} incomplete={incomplete}"
+        f"infra_errors={infra_errors} incomplete={incomplete} cached={cached}"
     )
     return 0 if incomplete == 0 else 1
 

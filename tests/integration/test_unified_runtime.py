@@ -174,7 +174,7 @@ async def test_b1_public_failure_repairs_once(tmp_path):
 @pytest.mark.asyncio
 async def test_b2_parallel_analysis_and_join(tmp_path):
     result, _final, client = await _execute(
-        tmp_path, "b2_fixed_mas", _responses(), delay=0.1
+        tmp_path, "b2_fixed_mas_structured", _responses(), delay=0.1
     )
     assert result.state.frozen
     assert client.max_active_calls >= 2
@@ -185,7 +185,7 @@ async def test_b2_parallel_analysis_and_join(tmp_path):
 @pytest.mark.asyncio
 async def test_llm_semaphore_can_force_sequential_analysis(tmp_path):
     _result, _final, client = await _execute(
-        tmp_path, "b2_fixed_mas", _responses(), delay=0.05, llm_limit=1
+        tmp_path, "b2_fixed_mas_structured", _responses(), delay=0.05, llm_limit=1
     )
     assert client.max_active_calls == 1
 

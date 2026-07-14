@@ -11,12 +11,16 @@ runtime executes all three comparable baselines:
 - `B2_FIXED_MAS`: parallel Algorithm/Edge-Case analysts, deterministic merge,
   coder, public harness, and conditional repair.
 
-No smolagents, LangGraph, AutoGen, or hard-coded baseline pipeline is used.
+No LangGraph, AutoGen, or hard-coded baseline pipeline is used as the
+orchestration runtime. Optional `smolagents` is supported only as a pluggable
+**CodeAgent execution backend** behind `AgentBackend` (see Milestone 2).
 
 ## Setup
 
 ```bash
 uv sync
+# Optional CodeAgent / BBEH vertical slice:
+uv sync --extra smolagents
 cp .env.example .env
 ```
 
@@ -106,6 +110,25 @@ this machine, but Stage 1 development can proceed with `lcb_official`.
 > environment redaction, resource limits, and process-group timeout described
 > above. Use Docker for stronger isolation when it becomes available.
 
+## smolagents CodeAgent backend
+
+Install the optional extra, then run the BBEH smoke graph:
+
+```bash
+uv sync --extra smolagents
+uv run python -m orchestra.cli.run_bbeh \
+  --config configs/experiments/bbeh_codeagent_smoke.yaml
+```
+
+The CodeAgent runs in a **spawned worker process**. That worker exists for
+**crash isolation and wall-timeout cleanup** of the top-level Orchestra
+runtime. It is **not** a security sandbox: local `executor_type` still executes
+model-generated Python with the worker process privileges. Do not treat it as
+equivalent to Docker/E2B isolation.
+
+Desensitized smoke summaries are written as `bbeh_summary_redacted.{json,md}`
+under the run directory (reference answers and secrets omitted/redacted).
+
 ## Stage 1 experiments
 
 The protocol in `Stage1_LiveCodeBench_Experiment_Protocol.md` is executed via:
@@ -140,6 +163,7 @@ Use `--mock-llm` only for pipeline validation.
 
 ```bash
 export LCB_REPOSITORY_PATH=/path/to/LiveCodeBench
+uv sync --extra smolagents
 uv run ruff check .
 uv run pytest -q tests/unit
 uv run pytest -q tests/integration

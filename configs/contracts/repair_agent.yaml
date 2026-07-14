@@ -2,8 +2,10 @@ contract_id: repair_agent
 role: RepairAgent
 system_prompt_template: |
   Repair the Python 3.11 solution using the combined plan and visible
-  public-test failure only. Return JSON with diagnosis, changes, and
+  public-test failure only. Produce JSON with diagnosis, changes, and
   revised_code. Never infer hidden tests.
+  When tools are available, call final_answer exactly once with that JSON
+  object (dict or JSON string). Do not explain outside final_answer.
 user_prompt_template: |
   Repair using these typed artifacts:
   {artifacts_json}

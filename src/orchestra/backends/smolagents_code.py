@@ -19,11 +19,15 @@ from orchestra.backends.base import (
     BackendHealth,
 )
 from orchestra.backends.capabilities import BackendCapabilities
-from orchestra.backends.errors import BackendInitializationError
+from orchestra.backends.errors import (
+    BackendInitializationError,
+    OutputContractValidationError,
+    OutputParseError,
+)
 from orchestra.backends.workers.smolagents_worker import run_worker_process
 from orchestra.ir.artifacts import create_artifact
 from orchestra.llm.usage import LLMUsage
-from orchestra.schemas.artifacts import FinalAnswerArtifact
+from orchestra.prompts.parsers import parse_output
 
 WorkerRunner = Callable[[dict[str, Any]], dict[str, Any]]
 
@@ -87,6 +91,7 @@ class SmolagentsCodeBackend:
     def _build_worker_request(
         self, request: AgentRequest, context: BackendExecutionContext
     ) -> dict[str, Any]:
+        fixture_responses = request.backend_config.get("fixture_responses")
         return {
             "run_id": context.run_id,
             "task_id": request.task_id,
@@ -97,7 +102,12 @@ class SmolagentsCodeBackend:
             "model": request.model.model_dump(mode="json"),
             "tools": list(request.tools),
             "max_steps": request.max_steps,
-            "backend_config": dict(request.backend_config),
+            "backend_config": {
+                key: value
+                for key, value in dict(request.backend_config).items()
+                if key != "fixture_responses"
+            },
+            "fixture_responses": list(fixture_responses or []),
             "managed_agents": None,
             "timeout_seconds": request.timeout_seconds,
         }
@@ -126,26 +136,28 @@ class SmolagentsCodeBackend:
             )
         return events
 
-    def _extract_answer(self, final_output: str | None) -> FinalAnswerArtifact:
-        if final_output is None or not str(final_output).strip():
-            return FinalAnswerArtifact(
-                answer="",
-                raw_output=final_output,
-                extraction_status="empty",
+    def _parse_final_output(self, request: AgentRequest, final_output: str | None):
+        text = "" if final_output is None else str(final_output)
+        try:
+            parsed = parse_output(
+                request.output_contract.parser_id,
+                text,
+                request.output_contract.output_schema,
+                request.node_id,
             )
-        text = str(final_output).strip()
-        answer = text.splitlines()[0].strip()
-        if not answer:
-            return FinalAnswerArtifact(
-                answer="",
-                raw_output=text,
-                extraction_status="malformed",
+        except ValueError as exc:
+            raise OutputParseError(str(exc)) from exc
+        if type(parsed).__name__ != request.output_contract.output_schema:
+            raise OutputContractValidationError(
+                f"Parser produced {type(parsed).__name__}, "
+                f"expected {request.output_contract.output_schema}"
             )
-        return FinalAnswerArtifact(
-            answer=answer,
-            raw_output=text,
-            extraction_status="ok",
-        )
+        extraction = getattr(parsed, "extraction_status", None)
+        if extraction in {"empty", "malformed"}:
+            raise OutputContractValidationError(
+                f"Answer extraction failed: {extraction}"
+            )
+        return parsed
 
     async def run(
         self,
@@ -206,12 +218,13 @@ class SmolagentsCodeBackend:
         latency_ms = int((time.perf_counter() - started) * 1000)
         metadata = dict(raw.get("backend_metadata") or {})
         metadata["trace_dir"] = context.trace_dir
+        final_output = raw.get("final_output")
         if status is not AgentRunStatus.SUCCESS:
             return AgentResult(
                 request_id=request.request_id,
                 backend_id=self.backend_id,
                 status=status,
-                final_output=raw.get("final_output"),
+                final_output=final_output,
                 trace_events=trace_events,
                 usage=usage,
                 latency_ms=latency_ms,
@@ -223,53 +236,54 @@ class SmolagentsCodeBackend:
                 backend_metadata=metadata,
             )
 
-        answer = self._extract_answer(raw.get("final_output"))
-        if request.output_contract.output_schema == "FinalAnswerArtifact":
-            if answer.extraction_status != "ok":
-                return AgentResult(
-                    request_id=request.request_id,
-                    backend_id=self.backend_id,
-                    status=AgentRunStatus.OUTPUT_CONTRACT_FAILURE,
-                    final_output=raw.get("final_output"),
-                    trace_events=trace_events,
-                    usage=usage,
-                    latency_ms=latency_ms,
-                    step_count=int(raw.get("step_count") or 0),
-                    error=AgentError(
-                        status=AgentRunStatus.OUTPUT_CONTRACT_FAILURE,
-                        message=f"Answer extraction failed: {answer.extraction_status}",
-                    ),
-                    backend_metadata=metadata,
-                )
-            answer = answer.model_copy(update={"source_node": request.node_id})
-            artifact = create_artifact(
-                answer,
-                producer_node_id=request.node_id,
-                task_id=request.task_id,
-                parent_artifact_ids=[ref.artifact_id for ref in context.artifact_refs],
+        try:
+            parsed = self._parse_final_output(request, final_output)
+        except OutputParseError as exc:
+            return AgentResult(
+                request_id=request.request_id,
+                backend_id=self.backend_id,
+                status=AgentRunStatus.ACTION_PARSE_FAILURE,
+                final_output=final_output,
+                trace_events=trace_events,
+                usage=usage,
+                latency_ms=latency_ms,
+                step_count=int(raw.get("step_count") or 0),
+                error=AgentError(
+                    status=AgentRunStatus.ACTION_PARSE_FAILURE,
+                    message=f"{type(exc).__name__}: {exc}",
+                ),
+                backend_metadata=metadata,
             )
-        else:
+        except OutputContractValidationError as exc:
             return AgentResult(
                 request_id=request.request_id,
                 backend_id=self.backend_id,
                 status=AgentRunStatus.OUTPUT_CONTRACT_FAILURE,
+                final_output=final_output,
+                trace_events=trace_events,
+                usage=usage,
+                latency_ms=latency_ms,
+                step_count=int(raw.get("step_count") or 0),
                 error=AgentError(
                     status=AgentRunStatus.OUTPUT_CONTRACT_FAILURE,
-                    message=(
-                        "smolagents_code currently supports FinalAnswerArtifact only, "
-                        f"got {request.output_contract.output_schema}"
-                    ),
+                    message=f"{type(exc).__name__}: {exc}",
                 ),
-                latency_ms=latency_ms,
-                usage=usage,
-                trace_events=trace_events,
                 backend_metadata=metadata,
             )
+
+        if hasattr(parsed, "source_node"):
+            parsed = parsed.model_copy(update={"source_node": request.node_id})
+        artifact = create_artifact(
+            parsed,
+            producer_node_id=request.node_id,
+            task_id=request.task_id,
+            parent_artifact_ids=[ref.artifact_id for ref in context.artifact_refs],
+        )
         return AgentResult(
             request_id=request.request_id,
             backend_id=self.backend_id,
             status=AgentRunStatus.SUCCESS,
-            final_output=raw.get("final_output"),
+            final_output=final_output,
             output_artifacts=[artifact],
             trace_events=trace_events,
             usage=usage,

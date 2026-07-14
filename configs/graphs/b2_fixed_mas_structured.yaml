@@ -9,47 +9,13 @@ nodes:
   - node_id: algorithm_analyst
     node_kind: agent
     contract_id: algorithm_analyst
-    backend:
-      type: smolagents_code
-      max_steps: 6
-      executor_type: local
-      use_structured_outputs_internally: true
-      additional_authorized_imports: []
-    model:
-      provider: openai_compatible
-      name: ${ANALYST_MODEL:-gpt-5-mini}
-      temperature: 0.2
-      max_tokens: 1800
-    tools:
-      - final_answer
-    output_contract:
-      parser_id: json
-      output_schema: AlgorithmPlanArtifact
     input_slots: {problem: ProblemArtifact}
     output_slots: {plan: AlgorithmPlanArtifact}
-    timeout_seconds: 180
   - node_id: edge_case_analyst
     node_kind: agent
     contract_id: edge_case_analyst
-    backend:
-      type: smolagents_code
-      max_steps: 6
-      executor_type: local
-      use_structured_outputs_internally: true
-      additional_authorized_imports: []
-    model:
-      provider: openai_compatible
-      name: ${ANALYST_MODEL:-gpt-5-mini}
-      temperature: 0.2
-      max_tokens: 1600
-    tools:
-      - final_answer
-    output_contract:
-      parser_id: json
-      output_schema: EdgeCaseArtifact
     input_slots: {problem: ProblemArtifact}
     output_slots: {edge_cases: EdgeCaseArtifact}
-    timeout_seconds: 180
   - node_id: plan_merger
     node_kind: transform
     transform_id: merge_analysis_artifacts
@@ -60,27 +26,10 @@ nodes:
   - node_id: solution_coder
     node_kind: agent
     contract_id: solution_coder
-    backend:
-      type: smolagents_code
-      max_steps: 8
-      executor_type: local
-      use_structured_outputs_internally: true
-      additional_authorized_imports: []
-    model:
-      provider: openai_compatible
-      name: ${CODER_MODEL:-gpt-5-mini}
-      temperature: 0.2
-      max_tokens: 4000
-    tools:
-      - final_answer
-    output_contract:
-      parser_id: python_code
-      output_schema: CodeArtifact
     input_slots:
       problem: ProblemArtifact
       combined_plan: CombinedPlanArtifact
     output_slots: {code: CodeArtifact}
-    timeout_seconds: 300
   - node_id: public_harness_initial
     node_kind: harness
     harness_id: public_code_harness
@@ -95,29 +44,12 @@ nodes:
   - node_id: repair_agent
     node_kind: agent
     contract_id: repair_agent
-    backend:
-      type: smolagents_code
-      max_steps: 8
-      executor_type: local
-      use_structured_outputs_internally: true
-      additional_authorized_imports: []
-    model:
-      provider: openai_compatible
-      name: ${REPAIR_MODEL:-gpt-5-mini}
-      temperature: 0.1
-      max_tokens: 4000
-    tools:
-      - final_answer
-    output_contract:
-      parser_id: json
-      output_schema: RepairArtifact
     input_slots:
       problem: ProblemArtifact
       combined_plan: CombinedPlanArtifact
       previous_code: CodeArtifact
       public_result: PublicHarnessResultArtifact
     output_slots: {repair: RepairArtifact}
-    timeout_seconds: 300
   - node_id: repair_to_code
     node_kind: transform
     transform_id: repair_to_code

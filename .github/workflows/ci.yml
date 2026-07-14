@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv sync
+      - run: uv sync --extra smolagents
       - run: uv run ruff check .
       - run: uv run pytest -q tests/unit
 
@@ -26,5 +26,5 @@ jobs:
           ref: 28fef95ea8c9f7a547c8329f2cd3d32b92c1fa24
           path: third_party/LiveCodeBench
       - uses: astral-sh/setup-uv@v5
-      - run: uv sync
+      - run: uv sync --extra smolagents
       - run: uv run pytest -q tests/integration

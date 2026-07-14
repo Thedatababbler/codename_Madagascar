@@ -8,7 +8,8 @@ from pathlib import Path
 
 from orchestra.adapters.livecodebench.loader import LiveCodeBenchLoader
 from orchestra.adapters.livecodebench.mapper import load_manifest
-from orchestra.backends.factory import build_structured_llm_registry
+from orchestra.backends.base import ModelSpec
+from orchestra.backends.factory import build_default_backend_registry
 from orchestra.backends.health import healthcheck_used_backends
 from orchestra.cli.validate_graph import build_compiler
 from orchestra.config import load_experiment_config
@@ -19,6 +20,7 @@ from orchestra.experiments.metadata import build_run_metadata, finalize_run_meta
 from orchestra.ir.artifacts import ArtifactBundle, create_artifact
 from orchestra.ir.contracts import load_contracts
 from orchestra.ir.graph import load_graph
+from orchestra.ir.nodes import AgentNodeSpec
 from orchestra.llm.mock_async import MockAsyncLLMClient
 from orchestra.llm.openai_compatible_async import OpenAICompatibleAsyncClient
 from orchestra.runtime.backend import RunContext
@@ -36,47 +38,92 @@ from orchestra.storage.artifacts import FileArtifactStore
 from orchestra.storage.events import AppendOnlyEventWriter
 from orchestra.telemetry.events import TelemetryEvent
 
+_MOCK_ALGORITHM = {
+    "problem_summary": "Solve the visible task.",
+    "algorithm": "Process inputs according to the statement.",
+    "data_structures": ["list"],
+    "correctness_argument": "The algorithm directly implements the specification.",
+    "time_complexity": "O(n)",
+    "space_complexity": "O(n)",
+    "edge_cases": ["minimum input"],
+    "implementation_notes": [],
+}
+_MOCK_EDGE_CASES = {
+    "input_output_interpretation": "Use the declared interface.",
+    "edge_cases": ["minimum input"],
+    "overflow_risks": [],
+    "indexing_risks": [],
+    "interface_concerns": [],
+    "likely_failure_modes": [],
+}
+_MOCK_REPAIR = {
+    "diagnosis": "Visible tests failed.",
+    "changes": ["Return the mock-correct solution."],
+    "revised_code": "# CORRECT_SOLUTION\nprint(input())",
+}
+_MOCK_CODE = "```python\n# CORRECT_SOLUTION\nprint(input())\n```"
+
 
 def _mock_client() -> MockAsyncLLMClient:
-    algorithm = json.dumps(
-        {
-            "problem_summary": "Solve the visible task.",
-            "algorithm": "Process inputs according to the statement.",
-            "data_structures": ["list"],
-            "correctness_argument": "The algorithm directly implements the specification.",
-            "time_complexity": "O(n)",
-            "space_complexity": "O(n)",
-            "edge_cases": ["minimum input"],
-            "implementation_notes": [],
-        }
-    )
-    edge_cases = json.dumps(
-        {
-            "input_output_interpretation": "Use the declared interface.",
-            "edge_cases": ["minimum input"],
-            "overflow_risks": [],
-            "indexing_risks": [],
-            "interface_concerns": [],
-            "likely_failure_modes": [],
-        }
-    )
-    repair = json.dumps(
-        {
-            "diagnosis": "Visible tests failed.",
-            "changes": ["Return the mock-correct solution."],
-            "revised_code": "# CORRECT_SOLUTION\nprint(input())",
-        }
-    )
+    algorithm = json.dumps(_MOCK_ALGORITHM)
+    edge_cases = json.dumps(_MOCK_EDGE_CASES)
+    repair = json.dumps(_MOCK_REPAIR)
     return MockAsyncLLMClient(
         {
-            "direct_coder": lambda _: "```python\n# CORRECT_SOLUTION\nprint(input())\n```",
-            "solution_coder": lambda _: "```python\n# CORRECT_SOLUTION\nprint(input())\n```",
+            "direct_coder": lambda _: _MOCK_CODE,
+            "solution_coder": lambda _: _MOCK_CODE,
             "algorithm_analyst": lambda _: algorithm,
             "edge_case_analyst": lambda _: edge_cases,
             "single_agent_repair": lambda _: repair,
             "repair_agent": lambda _: repair,
         }
     )
+
+
+def _codeagent_fixture(final_payload: str | dict | list) -> str:
+    """One structured CodeAgent step that calls final_answer(payload)."""
+    return json.dumps(
+        {
+            "thought": "mock pipeline fixture",
+            "code": f"final_answer({json.dumps(final_payload, ensure_ascii=False)})",
+        }
+    )
+
+
+_CODEAGENT_MOCK_FIXTURES: dict[str, list[str]] = {
+    "algorithm_analyst": [_codeagent_fixture(_MOCK_ALGORITHM)],
+    "edge_case_analyst": [_codeagent_fixture(_MOCK_EDGE_CASES)],
+    "solution_coder": [_codeagent_fixture(_MOCK_CODE)],
+    "repair_agent": [_codeagent_fixture(_MOCK_REPAIR)],
+}
+
+
+class _MockAwareAgentNodeExecutor(AgentNodeExecutor):
+    """Inject fixture CodeAgent responses when --mock-llm is set."""
+
+    def _build_request(self, node: AgentNodeSpec, inputs, context):
+        request = super()._build_request(node, inputs, context)
+        if request.backend_config.get("type") != "smolagents_code":
+            return request
+        fixtures = _CODEAGENT_MOCK_FIXTURES.get(request.contract_id or "")
+        if not fixtures:
+            raise RuntimeError(
+                f"--mock-llm has no CodeAgent fixture for contract "
+                f"{request.contract_id!r}"
+            )
+        backend_config = dict(request.backend_config)
+        backend_config["fixture_responses"] = list(fixtures)
+        return request.model_copy(
+            update={
+                "backend_config": backend_config,
+                "model": ModelSpec(
+                    provider="fixture",
+                    name=f"mock-{request.contract_id}",
+                    temperature=request.model.temperature,
+                    max_tokens=request.model.max_tokens,
+                ),
+            }
+        )
 
 
 async def _run(args) -> int:
@@ -186,9 +233,23 @@ async def _run(args) -> int:
     artifact_store = FileArtifactStore(run_dir)
     checkpoint_store = CheckpointStore(run_dir)
     event_writer = AppendOnlyEventWriter(run_dir)
-    backend_registry = build_structured_llm_registry(llm)
+    backend_registry = build_default_backend_registry(llm, include_smolagents=True)
+    used_backends = {
+        str(node.resolved_backend().type)
+        for node in graph.nodes
+        if getattr(node, "node_kind", None) and node.node_kind.value == "agent"
+    }
+    if "smolagents_code" in used_backends and not backend_registry.has(
+        "smolagents_code"
+    ):
+        raise RuntimeError(
+            "Graph requires smolagents_code; install with: uv sync --extra smolagents"
+        )
+    agent_executor_cls = (
+        _MockAwareAgentNodeExecutor if args.mock_llm else AgentNodeExecutor
+    )
     executors = NodeExecutorRegistry(
-        agent_executor=AgentNodeExecutor(contracts, backend_registry),
+        agent_executor=agent_executor_cls(contracts, backend_registry),
         harness_executor=HarnessNodeExecutor(
             sandbox, timeout_seconds=config.sandbox.per_test_timeout_seconds
         ),
