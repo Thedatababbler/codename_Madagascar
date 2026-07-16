@@ -19,6 +19,9 @@ dependencies = [
 smolagents = [
     "smolagents[openai]==1.26.0",
 ]
+codex = [
+    "openai-codex==0.1.0b3",
+]
 
 [dependency-groups]
 dev = [
@@ -38,6 +41,10 @@ packages = ["src/orchestra"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+
+[tool.uv]
+# openai-codex and its bundled CLI are currently published as prereleases only.
+prerelease = "allow"
 
 [tool.ruff]
 line-length = 100

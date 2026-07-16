@@ -1,5 +1,7 @@
 import time
 
+from orchestra.harness.registry import HarnessExecutorRegistry
+from orchestra.harness.repository_test import RepositoryTestHarnessExecutor
 from orchestra.ir.artifacts import ArtifactEnvelope, create_artifact
 from orchestra.ir.nodes import HarnessNodeSpec
 from orchestra.runtime.backend import RunContext
@@ -15,7 +17,9 @@ from orchestra.schemas.artifacts import (
 from orchestra.schemas.task import AgentVisibleLCBTask
 
 
-class HarnessNodeExecutor:
+class PublicCodeHarnessExecutor:
+    """Existing LiveCodeBench public-test harness."""
+
     def __init__(self, sandbox: CodeSandbox, *, timeout_seconds: float = 10) -> None:
         self.sandbox = sandbox
         self.timeout_seconds = timeout_seconds
@@ -110,3 +114,36 @@ class HarnessNodeExecutor:
             outputs={output_slot: artifact},
             latency_ms=int((time.perf_counter() - started) * 1000),
         )
+
+
+class HarnessNodeExecutor:
+    """Facade over HarnessExecutorRegistry for NativeAsyncRuntime compatibility."""
+
+    def __init__(
+        self,
+        sandbox: CodeSandbox,
+        *,
+        timeout_seconds: float = 10,
+        registry: HarnessExecutorRegistry | None = None,
+    ) -> None:
+        self.sandbox = sandbox
+        self.timeout_seconds = timeout_seconds
+        if registry is None:
+            registry = HarnessExecutorRegistry()
+            registry.register(
+                "public_code_harness",
+                PublicCodeHarnessExecutor(sandbox, timeout_seconds=timeout_seconds),
+            )
+            registry.register(
+                "repository_test_harness",
+                RepositoryTestHarnessExecutor(default_timeout_seconds=60.0),
+            )
+        self.registry = registry
+
+    async def execute(
+        self,
+        node: HarnessNodeSpec,
+        inputs: dict[str, ArtifactEnvelope],
+        context: RunContext,
+    ) -> NodeExecutionResult:
+        return await self.registry.execute(node, inputs, context)

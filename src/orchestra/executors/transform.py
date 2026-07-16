@@ -11,6 +11,8 @@ from orchestra.schemas.artifacts import (
     EdgeCaseArtifact,
     FinalCodeArtifact,
     RepairArtifact,
+    RepositoryChangeArtifact,
+    RepositoryHarnessResultArtifact,
 )
 
 
@@ -57,6 +59,20 @@ class TransformExecutor:
         elif node.transform_id == "repair_to_code":
             repair = RepairArtifact.model_validate(inputs["repair"].payload)
             payload = CodeArtifact(code=repair.revised_code, source_node=node.node_id)
+        elif node.transform_id == "freeze_repository_change":
+            change_envelope = inputs["repository_change"]
+            change = RepositoryChangeArtifact.model_validate(change_envelope.payload)
+            gate = inputs.get("gate")
+            if gate is not None:
+                result = RepositoryHarnessResultArtifact.model_validate(gate.payload)
+                if not result.passed:
+                    return NodeExecutionResult(
+                        node_id=node.node_id,
+                        succeeded=False,
+                        error="repository harness gate failed",
+                        latency_ms=int((time.perf_counter() - started) * 1000),
+                    )
+            payload = change.model_copy(update={"source_node": node.node_id})
         else:
             raise ValueError(f"Unknown transform: {node.transform_id}")
         output_slot = next(iter(node.output_slots))

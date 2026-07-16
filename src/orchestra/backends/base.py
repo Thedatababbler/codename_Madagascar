@@ -28,6 +28,22 @@ class AgentRunStatus(StrEnum):
     INFRA_ERROR = "infra_error"
 
 
+class AgentSessionPolicy(StrEnum):
+    """Backend session lifecycle policy. M3.5 only implements FRESH."""
+
+    FRESH = "fresh"
+    RESUME = "resume"
+    FORK = "fork"
+
+
+class BackendSessionRef(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    backend_id: str
+    session_id: str
+    parent_session_id: str | None = None
+
+
 class ArtifactRef(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     slot: str
@@ -95,6 +111,8 @@ class AgentRequest(BaseModel):
     backend_config: dict[str, Any] = Field(default_factory=dict)
     messages: list[dict[str, str]] = Field(default_factory=list)
     contract_id: str | None = None
+    session_policy: AgentSessionPolicy = AgentSessionPolicy.FRESH
+    session_ref: BackendSessionRef | None = None
 
 
 class AgentResult(BaseModel):
@@ -110,6 +128,7 @@ class AgentResult(BaseModel):
     step_count: int = 0
     error: AgentError | None = None
     backend_metadata: dict[str, Any] = Field(default_factory=dict)
+    session_ref: BackendSessionRef | None = None
 
 
 class BackendExecutionContext(BaseModel):

@@ -17,6 +17,8 @@ from orchestra.schemas.artifacts import (
     PublicHarnessResultArtifact,
     RepairArtifact,
     RepairInputArtifact,
+    RepositoryChangeArtifact,
+    RepositoryHarnessResultArtifact,
     VisibleFailureSummary,
 )
 
@@ -34,6 +36,8 @@ PAYLOAD_SCHEMAS: dict[str, type[BaseModel]] = {
         RepairArtifact,
         FinalCodeArtifact,
         FinalAnswerArtifact,
+        RepositoryChangeArtifact,
+        RepositoryHarnessResultArtifact,
     )
 }
 

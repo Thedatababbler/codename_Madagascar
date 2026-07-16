@@ -1,0 +1,23 @@
+---
+description: Always consult and update EXPERIMENT_LOG.md for experiment history
+alwaysApply: true
+---
+
+# Experiment log discipline
+
+## Source of truth
+
+- Repo file: [`EXPERIMENT_LOG.md`](EXPERIMENT_LOG.md)
+- It records what was run, configs, run dirs, metrics, and interpretation.
+
+## Required behavior
+
+1. **Before** comparing historical performance, ranking baselines, or claiming regression/improvement: **read `EXPERIMENT_LOG.md`** (at least Quick reference + relevant EXP entries). Prefer logged canonical runs over memory or ad-hoc paths.
+2. **After** any completed experiment (Stage1 LCB, BBEH, TaskPlan IR, mock smoke, ablation, etc.): **append a new EXP entry** using the template in that file, and update the Quick reference table if the run is `canonical`.
+3. Record **graph content hash**, **backend type** (`structured_llm` vs `smolagents_code`), config paths, command, and run dir.
+4. Do **not** delete or silently rewrite past entries; mark older ones `superseded` and link the new EXP id.
+5. Do not treat mock/`--mock-llm` or bringup-only numbers as canonical accuracy without labeling them `mock` / `smoke`.
+
+## When the user asks for evaluation
+
+Ground claims in logged metrics first; if a new run is missing from the log, update the log before or as part of the answer.

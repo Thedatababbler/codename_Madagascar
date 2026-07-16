@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv sync --extra smolagents
+      - run: uv sync --extra smolagents --extra codex
       - run: uv run ruff check .
       - run: uv run pytest -q tests/unit
 

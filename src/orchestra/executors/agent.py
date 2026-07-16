@@ -6,6 +6,7 @@ from uuid import uuid4
 from orchestra.backends.base import (
     AgentRequest,
     AgentRunStatus,
+    AgentSessionPolicy,
     ArtifactRef,
     BackendExecutionContext,
     ModelSpec,
@@ -63,6 +64,7 @@ class AgentNodeExecutor:
         return AgentRequest(
             request_id=str(uuid4()),
             task_id=context.task_id,
+            subtask_id=context.subtask_id,
             node_id=node.node_id,
             role=contract.role,
             instruction=contract.system_prompt_template,
@@ -83,6 +85,8 @@ class AgentNodeExecutor:
             backend_config=backend.model_dump(mode="json"),
             messages=messages,
             contract_id=contract.contract_id,
+            session_policy=AgentSessionPolicy.FRESH,
+            session_ref=None,
         )
 
     def _trace_dir(self, context: RunContext, node_id: str) -> str:
@@ -119,15 +123,19 @@ class AgentNodeExecutor:
         backend_context = BackendExecutionContext(
             run_id=context.run_id,
             task_id=context.task_id,
+            subtask_id=context.subtask_id,
             node_id=node.node_id,
             artifact_refs=request.input_artifacts,
             trace_dir=trace_dir,
+            workspace_ref=context.workspace_ref,
         )
         # Semaphores stay in the control plane; backends never see them.
         async with context.semaphores.llm:
             result = await backend.run(request, backend_context)
         raw_trace_path = self._persist_raw_trace(trace_dir, request.request_id, result)
         metadata = dict(result.backend_metadata)
+        if result.session_ref is not None:
+            metadata["session_ref"] = result.session_ref.model_dump(mode="json")
         if raw_trace_path:
             metadata["raw_trace_path"] = raw_trace_path
             metadata["trace_summary"] = [

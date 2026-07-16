@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-07-16 — Milestone 3.5: Codex second-backend vertical slice
+
+### Added
+
+- Optional extra `codex` pinning `openai-codex==0.1.0b3` (bundled CLI
+  `openai-codex-cli-bin==0.137.0a4`).
+- `AgentSessionPolicy` / `BackendSessionRef`; M3.5 implements `FRESH` only.
+- `SharedSubtaskGitWorkspaceManager` and `RunContext.workspace_ref` plumbing.
+- `CodexSDKBackend` + `CodexSDKBackendConfig` (`codex_sdk`).
+- `RepositoryChangeArtifact` / `RepositoryHarnessResultArtifact` and
+  `repository_test_harness` via harness registry.
+- Tiny fixture repo, TaskPlan/graph/experiment configs, and
+  `orchestra.cli.run_codex_smoke`.
+- Design note: `docs/m3_5_codex_backend.md`.
+
 ## 2026-07-13 — Milestone 3: Task/Subtask IR
 
 ### Added

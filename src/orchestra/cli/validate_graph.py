@@ -15,14 +15,21 @@ def build_compiler(contracts_dir: str) -> GraphCompiler:
         backend_ids.add("smolagents_code")
     except ImportError:
         pass
+    try:
+        import openai_codex  # noqa: F401
+
+        backend_ids.add("codex_sdk")
+    except ImportError:
+        pass
     return GraphCompiler(
         contracts=load_contracts(contracts_dir),
-        harness_ids={"public_code_harness"},
+        harness_ids={"public_code_harness", "repository_test_harness"},
         transform_ids={
             "identity_code",
             "merge_analysis_artifacts",
             "repair_to_code",
             "freeze_code",
+            "freeze_repository_change",
         },
         selector_ids={"deterministic_code_selector"},
         backend_ids=backend_ids,

@@ -31,6 +31,9 @@ def _strip_default_backends_for_hash(data: dict[str, Any]) -> dict[str, Any]:
             item.pop("model", None)
         if item.get("output_contract") is None:
             item.pop("output_contract", None)
+        # M3.5 optional harness command; omit when unset so legacy hashes stay stable.
+        if not item.get("command"):
+            item.pop("command", None)
         nodes.append(item)
     return {**data, "nodes": nodes}
 

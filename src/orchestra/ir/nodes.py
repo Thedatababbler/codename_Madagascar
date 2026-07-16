@@ -39,8 +39,47 @@ class SmolagentsCodeBackendConfig(BaseModel):
         return data
 
 
+class CodexSDKBackendConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    type: Literal["codex_sdk"] = "codex_sdk"
+    thread_policy: Literal["fresh"] = "fresh"
+    sandbox: Literal["read_only", "workspace_write"] = "workspace_write"
+    approval_policy: Literal["never"] = "never"
+    require_git_diff: bool = True
+    max_steps: int = 1
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_forbidden_modes(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        forbidden = {
+            "resume",
+            "fork",
+            "steer",
+            "interrupt",
+            "review",
+            "danger-full-access",
+            "full_access",
+            "managed_agents",
+        }
+        bad = [key for key in data if key in forbidden and data.get(key) not in (None, False)]
+        policy = data.get("thread_policy")
+        if policy not in (None, "fresh"):
+            bad.append(f"thread_policy={policy}")
+        sandbox = data.get("sandbox")
+        if sandbox in {"danger-full-access", "full_access"}:
+            bad.append(f"sandbox={sandbox}")
+        if bad:
+            raise ValueError(
+                "CodexSDKBackendConfig forbids resume/fork/steer/interrupt/review/"
+                f"native subagents/danger-full-access; got {bad}"
+            )
+        return data
+
+
 AgentBackendConfig = Annotated[
-    StructuredLLMBackendConfig | SmolagentsCodeBackendConfig,
+    StructuredLLMBackendConfig | SmolagentsCodeBackendConfig | CodexSDKBackendConfig,
     Field(discriminator="type"),
 ]
 
@@ -73,6 +112,7 @@ class HarnessNodeSpec(BaseNodeSpec):
     node_kind: Literal[NodeKind.HARNESS] = NodeKind.HARNESS
     harness_id: str
     visibility: Literal["public"] = "public"
+    command: list[str] | None = None
 
 
 class TransformNodeSpec(BaseNodeSpec):

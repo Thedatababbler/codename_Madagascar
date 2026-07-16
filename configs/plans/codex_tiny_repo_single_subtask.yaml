@@ -1,0 +1,27 @@
+task_id: codex_tiny_repo
+plan_version: 1
+decomposition_rationale: Milestone 3.5 single-subtask Codex vertical slice
+decomposition_status: disabled
+subtasks:
+  - subtask_id: implement_fix
+    title: Fix repository bug
+    objective: Make all repository tests pass
+    dependencies: []
+    keystone_harness_id: repository_test_harness
+    local_graph_template: configs/graphs/codex_single_implementer.yaml
+    budget:
+      max_llm_calls: 1
+      max_steps: 1
+      timeout_seconds: 300
+    input_artifacts:
+      - slot: problem
+        artifact_id: ""
+        artifact_type: ProblemArtifact
+    expected_outputs:
+      - parser_id: repository_change
+        output_schema: RepositoryChangeArtifact
+final_aggregation:
+  strategy: identity
+  terminal_subtask_id: implement_fix
+communication_plan:
+  version: 1

@@ -25,6 +25,15 @@ KNOWN_BACKEND_CAPABILITIES: dict[str, BackendCapabilities] = {
         supports_step_trace=True,
         supports_resume=False,
     ),
+    "codex_sdk": BackendCapabilities(
+        multi_step=True,
+        code_actions=True,
+        structured_tools=False,
+        repository_editing=True,
+        supports_remote_executor=False,
+        supports_step_trace=False,
+        supports_resume=False,
+    ),
 }
 
 

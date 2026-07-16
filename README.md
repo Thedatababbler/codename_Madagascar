@@ -129,6 +129,20 @@ equivalent to Docker/E2B isolation.
 Desensitized smoke summaries are written as `bbeh_summary_redacted.{json,md}`
 under the run directory (reference answers and secrets omitted/redacted).
 
+## Codex SDK backend (Milestone 3.5)
+
+Optional second repository-editing backend. Codex only owns the single-node
+coding loop; AdaMAS still owns TaskPlan, workspace, harness, and checkpoints.
+
+```bash
+uv sync --extra codex
+uv run python -m orchestra.cli.run_codex_smoke \
+  --config configs/experiments/m3_5_codex_smoke.yaml
+```
+
+Pinned: `openai-codex==0.1.0b3` (bundled CLI `0.137.0a4`). Design:
+`docs/m3_5_codex_backend.md`. Experiment history: `EXPERIMENT_LOG.md`.
+
 ## Stage 1 experiments
 
 The protocol in `Stage1_LiveCodeBench_Experiment_Protocol.md` is executed via:

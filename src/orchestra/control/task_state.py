@@ -8,7 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from orchestra.backends.base import ArtifactRef
+from orchestra.backends.base import ArtifactRef, BackendSessionRef
 from orchestra.communication.plan import CommunicationPlan
 from orchestra.decomposition.schemas import SubtaskSpec, TaskPlan
 
@@ -71,6 +71,8 @@ class SubtaskState(BaseModel):
     current_graph_hash: str = ""
     local_revision: int = 0
     final_output_artifact_id: str | None = None
+    workspace_ref: str | None = None
+    backend_sessions: dict[str, BackendSessionRef] = Field(default_factory=dict)
 
 
 class TaskExecutionState(BaseModel):

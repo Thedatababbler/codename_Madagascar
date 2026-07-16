@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from orchestra.backends.base import ArtifactRef
+from orchestra.backends.base import ArtifactRef, BackendSessionRef
 from orchestra.cli.validate_graph import build_compiler
 from orchestra.control.task_state import (
     SubtaskAttempt,
@@ -21,6 +21,7 @@ from orchestra.runtime.native_async import NativeAsyncRuntime
 from orchestra.runtime.state import GraphExecutionResult
 from orchestra.runtime.task_checkpoint import TaskCheckpointStore
 from orchestra.storage.artifacts import ArtifactStore
+from orchestra.workspaces.git_workspace import SharedSubtaskGitWorkspaceManager
 
 
 class SingleSubtaskCompatibilityError(ValueError):
@@ -40,11 +41,15 @@ class SingleSubtaskCompatibilityRunner:
         artifact_store: ArtifactStore,
         task_checkpoint_store: TaskCheckpointStore,
         contracts_dir: str = "configs/contracts",
+        workspace_manager: SharedSubtaskGitWorkspaceManager | None = None,
+        source_repo: str | None = None,
     ) -> None:
         self.runtime = runtime
         self.artifact_store = artifact_store
         self.task_checkpoint_store = task_checkpoint_store
         self.contracts_dir = contracts_dir
+        self.workspace_manager = workspace_manager or SharedSubtaskGitWorkspaceManager()
+        self.source_repo = source_repo
 
     def _require_single(self, plan: TaskPlan) -> str:
         if len(plan.subtasks) != 1:
@@ -60,6 +65,7 @@ class SingleSubtaskCompatibilityRunner:
         initial_artifacts: ArtifactBundle,
         context: RunContext,
         state: TaskExecutionState | None = None,
+        source_repo: str | None = None,
     ) -> tuple[TaskExecutionState, GraphExecutionResult | None]:
         subtask_id = self._require_single(plan)
         if state is None:
@@ -77,6 +83,32 @@ class SingleSubtaskCompatibilityRunner:
         sub = state.subtasks[subtask_id]
         if sub.status is SubtaskStatus.COMMITTED and state.frozen:
             return state, None
+
+        workspace_ref = sub.workspace_ref or context.workspace_ref
+        repo = source_repo or self.source_repo
+        if repo and not workspace_ref:
+            prepared = await self.workspace_manager.prepare(
+                source_repo=repo,
+                run_dir=str(context.run_dir),
+                task_id=plan.task_id,
+                subtask_id=subtask_id,
+            )
+            workspace_ref = prepared.path
+            sub.workspace_ref = workspace_ref
+        elif workspace_ref:
+            sub.workspace_ref = workspace_ref
+
+        run_context = RunContext(
+            run_id=context.run_id,
+            task_id=context.task_id,
+            run_dir=context.run_dir,
+            limits=context.limits,
+            semaphores=context.semaphores,
+            contract_hash=context.contract_hash,
+            allow_config_drift=context.allow_config_drift,
+            subtask_id=subtask_id,
+            workspace_ref=workspace_ref,
+        )
 
         graph = load_graph(sub.spec.local_graph_template)
         compiled = build_compiler(self.contracts_dir).compile(graph)
@@ -98,7 +130,7 @@ class SingleSubtaskCompatibilityRunner:
             result = await self.runtime.execute(
                 graph=compiled,
                 initial_artifacts=initial_artifacts,
-                context=context,
+                context=run_context,
             )
         except Exception as exc:  # noqa: BLE001 - persist failure then re-raise
             sub.status = SubtaskStatus.FAILED
@@ -123,6 +155,16 @@ class SingleSubtaskCompatibilityRunner:
                     artifact_type=final_artifact.artifact_type,
                 )
             ]
+            # Persist Codex/session refs from final repository artifact when present.
+            if final_artifact.artifact_type == "RepositoryChangeArtifact":
+                thread_id = str(final_artifact.payload.get("thread_id") or "")
+                if thread_id:
+                    sub.backend_sessions["codex_sdk"] = BackendSessionRef(
+                        backend_id="codex_sdk",
+                        session_id=thread_id,
+                    )
+                if final_artifact.payload.get("workspace_ref"):
+                    sub.workspace_ref = str(final_artifact.payload["workspace_ref"])
             state.frozen = True
         else:
             sub.status = SubtaskStatus.FAILED
@@ -145,6 +187,11 @@ def summarize_task_state(state: TaskExecutionState) -> dict[str, Any]:
                 "status": sub.status.value,
                 "attempts": len(sub.attempts),
                 "final_output_artifact_id": sub.final_output_artifact_id,
+                "workspace_ref": sub.workspace_ref,
+                "backend_sessions": {
+                    key: ref.model_dump(mode="json")
+                    for key, ref in sub.backend_sessions.items()
+                },
             }
             for sid, sub in state.subtasks.items()
         },

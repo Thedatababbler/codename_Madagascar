@@ -82,6 +82,13 @@ def parse_output(parser_id: str, text: str, output_schema: str, source_node: str
             source_node=source_node,
             extraction_status=status,
         )
+    if parser_id == "repository_change":
+        from orchestra.schemas.artifacts import RepositoryChangeArtifact
+
+        payload = _normalize_payload(
+            RepositoryChangeArtifact, _extract_json_object(text)
+        )
+        return RepositoryChangeArtifact.model_validate(payload)
     payload = _normalize_payload(schema, _extract_json_object(text))
     try:
         return schema.model_validate(payload)

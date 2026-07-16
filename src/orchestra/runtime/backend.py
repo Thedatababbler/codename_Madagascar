@@ -17,6 +17,8 @@ class RunContext:
     semaphores: RuntimeSemaphores
     contract_hash: str
     allow_config_drift: bool = False
+    subtask_id: str | None = None
+    workspace_ref: str | None = None
 
 
 class RuntimeBackend(ABC):

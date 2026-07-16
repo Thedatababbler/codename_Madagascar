@@ -12,7 +12,9 @@ class TaskPlanValidationError(ValueError):
     """Raised when a TaskPlan fails structural or limit checks."""
 
 
-_KNOWN_HARNESS_IDS = frozenset({"public_code_harness", "identity_harness", "none"})
+_KNOWN_HARNESS_IDS = frozenset(
+    {"public_code_harness", "identity_harness", "none", "repository_test_harness"}
+)
 
 
 def _dependency_depth(subtask_ids: set[str], deps: dict[str, list[str]]) -> int:

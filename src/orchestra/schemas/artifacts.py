@@ -122,6 +122,29 @@ class FinalAnswerArtifact(VersionedArtifact):
     extraction_status: Literal["ok", "empty", "malformed"] = "ok"
 
 
+class RepositoryChangeArtifact(VersionedArtifact):
+    """Git-backed repository edit produced by a repository-editing backend."""
+
+    workspace_ref: str
+    thread_id: str
+    base_revision: str | None = None
+    changed_files: list[str] = Field(default_factory=list)
+    patch: str
+    final_response: str
+    source_node: str = ""
+
+
+class RepositoryHarnessResultArtifact(VersionedArtifact):
+    """Independent AdaMAS harness result for repository tests (not model-reported)."""
+
+    passed: bool
+    exit_code: int
+    duration_ms: int
+    stdout_summary: str = ""
+    stderr_summary: str = ""
+    changed_files: list[str] = Field(default_factory=list)
+
+
 class ArtifactProvenance(VersionedArtifact):
     artifact_name: str
     produced_by: str

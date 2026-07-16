@@ -1617,6 +1617,38 @@ existing mock B0/B1/B2 run passes
 -resume 后不重复已 commit subtask；
 -单 subtask plan 与旧任务执行结果一致。
 
+## Milestone 3.5：Codex Second-Backend Vertical Slice
+
+目标：在不实现 M4 fast loop、不实现多 subtask scheduler、不修改 Codex 源码的前提下，
+让单-subtask `TaskPlan` 能调用 Codex Python SDK，在隔离 workspace 中修改真实 Git
+仓库，由 AdaMAS 独立跑 repository harness，并提交 `RepositoryChangeArtifact`。
+
+Codex 只作为单个 Agent node backend；AdaMAS 继续负责 TaskPlan、SubtaskState、
+artifact、checkpoint 与 graph runtime。
+
+实现：
+
+- optional dependency：`openai-codex==0.1.0b3`（bundled CLI `openai-codex-cli-bin==0.137.0a4`）；
+- `AgentSessionPolicy` / `BackendSessionRef`（M3.5 仅 `FRESH`）；
+- `RunContext.workspace_ref` / `subtask_id` 传入 `BackendExecutionContext`；
+- `SharedSubtaskGitWorkspaceManager`（`SHARED_SUBTASK_WORKSPACE`）；
+- `CodexSDKBackend` + `CodexSDKBackendConfig`（禁止 resume/fork/steer/full_access）；
+- `RepositoryChangeArtifact`（patch 来自 `git diff`，禁止从模型文本抽代码）；
+- `repository_test_harness` + harness registry；
+- fixture `tests/fixtures/codex_tiny_repo`；
+- CLI：`python -m orchestra.cli.run_codex_smoke`。
+
+验收：
+
+- Codex 经统一 `AgentBackend` 接口执行，不改 Codex 源码；
+- 无 `workspace_ref` 时 fail closed（`INVALID_REQUEST`），无 cwd fallback；
+- Git diff 写入 `RepositoryChangeArtifact`；空 diff 且 `require_git_diff` → `OUTPUT_CONTRACT_FAILURE`；
+- harness 在 workspace 内独立跑 pytest；
+- `workspace_ref` 与 thread/session 写入 task checkpoint；resume 不重跑 committed subtask；
+- LCB / BBEH / CodeAgent 路径无回归。
+
+详细设计见 `docs/m3_5_codex_backend.md`。
+
 ## Milestone 4：Fast loop
 
 实现：

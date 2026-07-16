@@ -1,5 +1,6 @@
 """Helpers for constructing agent backend registries."""
 
+from orchestra.backends.codex_sdk import CodexSDKBackend
 from orchestra.backends.registry import AgentBackendRegistry
 from orchestra.backends.smolagents_code import SmolagentsCodeBackend
 from orchestra.backends.structured_llm import StructuredLLMBackend
@@ -16,6 +17,7 @@ def build_default_backend_registry(
     client: AsyncLLMClient,
     *,
     include_smolagents: bool = True,
+    include_codex: bool = True,
 ) -> AgentBackendRegistry:
     registry = build_structured_llm_registry(client)
     if include_smolagents:
@@ -23,6 +25,13 @@ def build_default_backend_registry(
             import smolagents  # noqa: F401
 
             registry.register(SmolagentsCodeBackend())
+        except ImportError:
+            pass
+    if include_codex:
+        try:
+            import openai_codex  # noqa: F401
+
+            registry.register(CodexSDKBackend())
         except ImportError:
             pass
     return registry
