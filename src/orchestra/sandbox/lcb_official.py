@@ -84,6 +84,8 @@ class OfficialLCBProcessRunner:
         return environment
 
     def _preexec_limits(self) -> None:
+        from orchestra.sandbox.lcb_worker import effective_nproc_limit
+
         def set_limit(kind: int, requested: int) -> None:
             _soft, hard = resource.getrlimit(kind)
             effective = (
@@ -91,8 +93,15 @@ class OfficialLCBProcessRunner:
             )
             resource.setrlimit(kind, (effective, effective))
 
+        # Child still has the parent UID here; worker may later drop to nobody.
+        will_drop = os.geteuid() == 0
         set_limit(resource.RLIMIT_AS, self.limits.memory_mb * 1024 * 1024)
-        set_limit(resource.RLIMIT_NPROC, self.limits.max_processes)
+        set_limit(
+            resource.RLIMIT_NPROC,
+            effective_nproc_limit(
+                self.limits.max_processes, will_drop_privileges=will_drop
+            ),
+        )
         set_limit(resource.RLIMIT_NOFILE, self.limits.max_open_files)
         set_limit(resource.RLIMIT_FSIZE, self.limits.max_file_size_mb * 1024 * 1024)
 

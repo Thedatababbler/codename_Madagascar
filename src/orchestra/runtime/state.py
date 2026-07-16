@@ -34,6 +34,8 @@ class RuntimeState(BaseModel):
     wave_id: int = 0
     checkpoint_count: int = 0
     node_latencies_ms: dict[str, int] = Field(default_factory=dict)
+    # Per-node backend metadata (session_ref, backend_status, errors, …).
+    node_backend_metadata: dict[str, dict[str, Any]] = Field(default_factory=dict)
 
 
 class NodeExecutionResult(BaseModel):

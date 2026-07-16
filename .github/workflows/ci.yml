@@ -31,5 +31,5 @@ jobs:
       - name: Enlarge /dev/shm for LCB multiprocessing
         run: sudo mount -o remount,size=2G /dev/shm
       - uses: astral-sh/setup-uv@v5
-      - run: uv sync --extra smolagents
+      - run: uv sync --extra smolagents --extra codex
       - run: uv run pytest -q tests/integration

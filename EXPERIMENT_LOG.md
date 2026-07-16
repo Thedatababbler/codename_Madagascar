@@ -10,7 +10,7 @@
 | Status | `canonical` (use for comparisons) / `smoke` / `mock` / `superseded` / `incomplete` |
 | Paths | Repo-relative from AdaMAS root |
 
-**Last updated:** 2026-07-16 (UTC) — M3.5 Codex tiny-repo smoke recorded
+**Last updated:** 2026-07-16 (UTC) — M3.5 final hardening closed (Pre-M4 gate)
 
 ---
 
@@ -54,10 +54,26 @@ Copy the template below after each run (evaluate + summarize when applicable):
 
 ## Entries (newest first)
 
+### EXP-20260716-02 — M3.5 final hardening / Pre-M4 gate (engineering)
+- **Status:** smoke (CI gate; no new real-API accuracy claim)
+- **Date:** 2026-07-16 (UTC)
+- **Branch / commit:** `agnostic` (this hardening commit)
+- **What closed:**
+  - Integration CI root cause: shared-UID `RLIMIT_NPROC=32` starves LCB
+    `multiprocessing.Manager` on GitHub Actions (no root→nobody drop). Fix raises
+    NPROC floor when privileges are not dropped; `/dev/shm` remount kept.
+  - `backend_sessions` → `list[BackendSessionRecord]` (node/attempt scoped)
+  - Subtask failure semantics (`HARNESS_FAILED` / `SubtaskFailureReason`)
+  - Full contract prompt forwarding via `render_agent_request_messages`
+  - Integration tests: harness-failure + session persistence (fake Codex)
+- **CI commands:** `ruff` + `pytest tests/unit` + `pytest tests/integration`
+- **Real Codex smoke:** previously verified as `EXP-20260716-01` (not re-run)
+- **M4:** **not implemented** (no fast loop / fork / resume / multi-subtask)
+
 ### EXP-20260716-01 — M3.5 Codex tiny-repo smoke (real AsyncCodex)
 - **Status:** smoke
 - **Date:** 2026-07-16 (UTC)
-- **Branch / commit:** `agnostic` @ `6cb6537` + local M3.5 CI/smoke follow-ups (pre-push)
+- **Branch / commit:** `agnostic` @ `11a5120` (smoke run dir from earlier local work)
 - **Benchmark:** fixture `tests/fixtures/codex_tiny_repo` (broken `add` → fixed)
 - **Graph / plan / config:**
   - `configs/graphs/codex_single_implementer.yaml` (`codex_sdk`)
@@ -83,7 +99,8 @@ Copy the template below after each run (evaluate + summarize when applicable):
   - `harness_passed=True` (AdaMAS `repository_test_harness` pytest)
   - non-empty git diff; `patch_hash=e75062da8c777a6032b540dfbbeafce340f25bea400696f77e1cbe2ce1255b44`
   - `thread_id=019f6bf7-fa9b-7052-b1ba-e1476c7eb522`
-  - checkpoint `task_execution.json`: `workspace_ref` + `backend_sessions.codex_sdk.session_id`
+  - checkpoint: `workspace_ref` + session id (now stored as
+    `BackendSessionRecord` list after EXP-20260716-02 schema change)
   - tokens: prompt `78259` / completion `263`; wall latency `47624` ms
   - summary: `tasks/codex_tiny_repo/codex_smoke_result.json`
 - **Notes:** Smoke validates control-plane wiring (TaskPlan → AsyncCodex → git

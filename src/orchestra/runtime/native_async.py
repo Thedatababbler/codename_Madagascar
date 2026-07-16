@@ -123,6 +123,20 @@ class NativeAsyncRuntime(RuntimeBackend):
                 if scheduler.can_finalize(state):
                     state.frozen = True
                     break
+                # Exhausted graph without a final output (e.g. harness gate failed
+                # and freeze was skipped). Return unfrozen state for control-plane
+                # classification instead of raising — sessions/metadata stay intact.
+                terminal = {
+                    NodeStatus.SUCCEEDED,
+                    NodeStatus.FAILED,
+                    NodeStatus.SKIPPED,
+                    NodeStatus.CANCELLED,
+                }
+                if state.node_status and all(
+                    status in terminal for status in state.node_status.values()
+                ):
+                    await self.checkpoint_store.save(state)
+                    break
                 report = {
                     node_id: status.value for node_id, status in state.node_status.items()
                 }

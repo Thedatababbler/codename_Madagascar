@@ -30,6 +30,15 @@ class WaveCommitter:
 
         for result in sorted(results, key=lambda item: item.node_id):
             state.node_latencies_ms[result.node_id] = result.latency_ms
+            meta = dict(result.backend_metadata)
+            if result.backend_id is not None:
+                meta.setdefault("backend_id", result.backend_id)
+            if result.backend_status is not None:
+                meta.setdefault("backend_status", result.backend_status.value)
+            if result.error:
+                meta.setdefault("error", result.error)
+            if meta:
+                state.node_backend_metadata[result.node_id] = meta
             if not result.succeeded:
                 state.node_status[result.node_id] = NodeStatus.FAILED
                 continue

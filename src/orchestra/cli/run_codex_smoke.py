@@ -98,9 +98,17 @@ def _enrich_smoke_summary(
     subtasks = state_summary.get("subtasks") or {}
     for sub in subtasks.values():
         workspace_ref = workspace_ref or sub.get("workspace_ref")
-        sessions = sub.get("backend_sessions") or {}
-        codex_session = sessions.get("codex_sdk") or {}
-        thread_id = thread_id or codex_session.get("session_id")
+        sessions = sub.get("backend_sessions") or []
+        if isinstance(sessions, list):
+            for record in sessions:
+                if not isinstance(record, dict):
+                    continue
+                ref = record.get("session_ref") or {}
+                thread_id = thread_id or ref.get("session_id")
+        elif isinstance(sessions, dict):
+            # Legacy summary shape (pre list[BackendSessionRecord]).
+            codex_session = sessions.get("codex_sdk") or {}
+            thread_id = thread_id or codex_session.get("session_id")
 
     # Prefer committed RepositoryChangeArtifact + harness result from disk.
     task_art_dir = run_dir / "tasks" / task_id / "artifacts"

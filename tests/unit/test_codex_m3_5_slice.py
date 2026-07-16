@@ -23,7 +23,7 @@ from orchestra.backends.factory import build_default_backend_registry
 from orchestra.backends.registry import AgentBackendRegistry
 from orchestra.cli.validate_graph import build_compiler
 from orchestra.control.single_subtask import SingleSubtaskCompatibilityRunner
-from orchestra.control.task_state import SubtaskStatus
+from orchestra.control.task_state import BackendSessionRecord, SubtaskStatus
 from orchestra.decomposition.schemas import TaskPlan
 from orchestra.executors.agent import AgentNodeExecutor
 from orchestra.executors.harness import HarnessNodeExecutor
@@ -34,6 +34,7 @@ from orchestra.ir.contracts import load_contracts
 from orchestra.ir.graph import load_graph
 from orchestra.ir.nodes import CodexSDKBackendConfig, HarnessNodeSpec
 from orchestra.llm.mock_async import MockAsyncLLMClient
+from orchestra.prompts.agent_request import render_agent_request_messages
 from orchestra.runtime.backend import RunContext
 from orchestra.runtime.checkpoint import CheckpointStore
 from orchestra.runtime.limits import RuntimeLimits, RuntimeSemaphores
@@ -90,25 +91,31 @@ class _FakeThread:
     id = "thread-fake-1"
     parent = None
 
-    def __init__(self, workspace: str) -> None:
+    def __init__(self, workspace: str, *, break_tests: bool = False) -> None:
         self.workspace = workspace
+        self.break_tests = break_tests
 
     async def run(self, prompt: str, **kwargs):  # noqa: ANN003
-        del prompt
         if self.parent is not None:
             self.parent.last_run_kwargs = dict(kwargs)
+            self.parent.last_prompt = prompt
         assert "approval_mode" in kwargs
         assert "approval_policy" not in kwargs
         path = Path(self.workspace) / "calculator.py"
-        path.write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+        if self.break_tests:
+            path.write_text("def add(a, b):\n    return a * b\n", encoding="utf-8")
+        else:
+            path.write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
         return _FakeTurn()
 
 
 class _FakeCodex:
-    def __init__(self) -> None:
+    def __init__(self, *, break_tests: bool = False) -> None:
         self._cwd: str | None = None
+        self.break_tests = break_tests
         self.last_thread_start_kwargs: dict = {}
         self.last_run_kwargs: dict = {}
+        self.last_prompt: str = ""
 
     async def __aenter__(self):
         return self
@@ -121,7 +128,7 @@ class _FakeCodex:
         assert "approval_mode" in kwargs
         assert "approval_policy" not in kwargs
         self._cwd = kwargs.get("cwd")
-        thread = _FakeThread(self._cwd)
+        thread = _FakeThread(self._cwd, break_tests=self.break_tests)
         thread.parent = self
         return thread
 
@@ -357,8 +364,14 @@ async def test_workspace_and_session_persisted_in_task_checkpoint(tmp_path):
     sub = state.subtasks["implement_fix"]
     assert sub.status is SubtaskStatus.COMMITTED
     assert sub.workspace_ref
-    assert "codex_sdk" in sub.backend_sessions
-    assert isinstance(sub.backend_sessions["codex_sdk"], BackendSessionRef)
+    assert len(sub.backend_sessions) == 1
+    record = sub.backend_sessions[0]
+    assert isinstance(record, BackendSessionRecord)
+    assert record.node_id == "codex_implementer"
+    assert record.backend_id == "codex_sdk"
+    assert record.attempt_id == 1
+    assert record.candidate_id is None
+    assert record.session_ref.session_id == "thread-fake-1"
 
     state2, result2 = await runner.run(
         plan=plan,
@@ -370,7 +383,111 @@ async def test_workspace_and_session_persisted_in_task_checkpoint(tmp_path):
     loaded = await TaskCheckpointStore(tmp_path).load("codex_tiny_repo")
     assert loaded is not None
     assert loaded.subtasks["implement_fix"].workspace_ref
-    assert loaded.subtasks["implement_fix"].backend_sessions["codex_sdk"].session_id
+    assert (
+        loaded.subtasks["implement_fix"].backend_sessions[0].session_ref.session_id
+        == "thread-fake-1"
+    )
+
+
+@pytest.mark.asyncio
+async def test_codex_prompt_includes_full_contract_messages(tmp_path):
+    mgr = SharedSubtaskGitWorkspaceManager()
+    ws = await mgr.prepare(
+        source_repo=str(FIXTURE),
+        run_dir=str(tmp_path),
+        task_id="codex_tiny_repo",
+        subtask_id="implement_fix",
+    )
+    fake = _FakeCodex()
+    backend = CodexSDKBackend(client_factory=lambda: fake)
+    system_a = "SYSTEM_PROMPT_VERSION_A_UNIQUE"
+    request = _request(
+        messages=[
+            {"role": "system", "content": system_a},
+            {"role": "user", "content": "Fix the broken add function."},
+        ],
+        rendered_context="this-last-user-only-should-not-be-the-sole-prompt",
+    )
+    result = await backend.run(
+        request,
+        BackendExecutionContext(
+            run_id="run",
+            task_id="codex_tiny_repo",
+            subtask_id="implement_fix",
+            node_id="codex_implementer",
+            workspace_ref=ws.path,
+        ),
+    )
+    assert result.status is AgentRunStatus.SUCCESS
+    expected = render_agent_request_messages(request)
+    assert fake.last_prompt == expected
+    assert system_a in fake.last_prompt
+    assert "[SYSTEM]" in fake.last_prompt
+    assert "[USER]" in fake.last_prompt
+
+    system_b = "SYSTEM_PROMPT_VERSION_B_UNIQUE"
+    request_b = _request(
+        messages=[
+            {"role": "system", "content": system_b},
+            {"role": "user", "content": "Fix the broken add function."},
+        ]
+    )
+    fake_b = _FakeCodex()
+    backend_b = CodexSDKBackend(client_factory=lambda: fake_b)
+    await backend_b.run(
+        request_b,
+        BackendExecutionContext(
+            run_id="run",
+            task_id="codex_tiny_repo",
+            subtask_id="implement_fix",
+            node_id="codex_implementer",
+            workspace_ref=ws.path,
+        ),
+    )
+    assert system_b in fake_b.last_prompt
+    assert system_a not in fake_b.last_prompt
+
+
+def test_backend_session_records_do_not_overwrite_same_backend():
+    coder = BackendSessionRecord(
+        node_id="codex_coder",
+        backend_id="codex_sdk",
+        attempt_id=1,
+        session_ref=BackendSessionRef(
+            backend_id="codex_sdk", session_id="thread-coder"
+        ),
+        candidate_id=None,
+    )
+    reviewer = BackendSessionRecord(
+        node_id="codex_reviewer",
+        backend_id="codex_sdk",
+        attempt_id=1,
+        session_ref=BackendSessionRef(
+            backend_id="codex_sdk", session_id="thread-reviewer"
+        ),
+        candidate_id=None,
+    )
+    sessions = [coder, reviewer]
+    assert len(sessions) == 2
+    assert {item.node_id for item in sessions} == {"codex_coder", "codex_reviewer"}
+    assert sessions[0].session_ref.session_id != sessions[1].session_ref.session_id
+
+
+def test_legacy_backend_sessions_dict_migrates_explicitly():
+    from orchestra.control.task_state import migrate_backend_sessions
+
+    migrated = migrate_backend_sessions(
+        {
+            "codex_sdk": {
+                "backend_id": "codex_sdk",
+                "session_id": "thread-legacy",
+                "parent_session_id": None,
+            }
+        }
+    )
+    assert len(migrated) == 1
+    assert migrated[0]["backend_id"] == "codex_sdk"
+    assert migrated[0]["attempt_id"] == 1
 
 
 def test_codex_graph_compiles():

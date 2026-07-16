@@ -47,9 +47,54 @@ def _set_limit(kind: int, requested: int) -> None:
     resource.setrlimit(kind, (effective, effective))
 
 
+def _count_uid_threads(uid: int) -> int:
+    """Best-effort count of threads owned by ``uid`` (Linux /proc)."""
+    count = 0
+    proc = Path("/proc")
+    if not proc.exists():
+        return 0
+    for entry in proc.iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            status = (entry / "status").read_text(encoding="utf-8")
+        except OSError:
+            continue
+        real_uid = None
+        for line in status.splitlines():
+            if line.startswith("Uid:"):
+                real_uid = int(line.split()[1])
+                break
+        if real_uid != uid:
+            continue
+        tasks = entry / "task"
+        try:
+            count += len(list(tasks.iterdir())) if tasks.exists() else 1
+        except OSError:
+            count += 1
+    return count
+
+
+def effective_nproc_limit(requested: int, *, will_drop_privileges: bool) -> int:
+    """Compute RLIMIT_NPROC.
+
+    RLIMIT_NPROC is per real UID. After a root→nobody drop the tight requested
+    limit is safe. On shared CI UIDs (GitHub Actions runners) a tight limit
+    starves LiveCodeBench's multiprocessing.Manager forks, so raise the floor.
+    """
+    if will_drop_privileges:
+        return requested
+    current = _count_uid_threads(os.getuid())
+    return max(requested, current + 64, 4096)
+
+
 def apply_resource_limits(limits: SandboxLimits) -> dict[str, int]:
+    will_drop = os.geteuid() == 0
     _set_limit(resource.RLIMIT_AS, limits.memory_mb * 1024 * 1024)
-    _set_limit(resource.RLIMIT_NPROC, limits.max_processes)
+    _set_limit(
+        resource.RLIMIT_NPROC,
+        effective_nproc_limit(limits.max_processes, will_drop_privileges=will_drop),
+    )
     _set_limit(resource.RLIMIT_NOFILE, limits.max_open_files)
     _set_limit(resource.RLIMIT_FSIZE, limits.max_file_size_mb * 1024 * 1024)
     return {

@@ -23,6 +23,7 @@ from orchestra.backends.codex_types import map_approval_policy, map_sandbox
 from orchestra.backends.exception_mapping import map_codex_exception
 from orchestra.ir.artifacts import create_artifact
 from orchestra.llm.usage import LLMUsage
+from orchestra.prompts.agent_request import render_agent_request_messages
 from orchestra.schemas.artifacts import RepositoryChangeArtifact
 from orchestra.workspaces.base import WorkspaceRef
 from orchestra.workspaces.git_workspace import SharedSubtaskGitWorkspaceManager
@@ -204,7 +205,8 @@ class CodexSDKBackend:
         # AdaMAS YAML key is approval_policy; openai-codex 0.1.0b3 kwarg is approval_mode.
         approval_name = str(request.backend_config.get("approval_policy") or "never")
         require_diff = bool(request.backend_config.get("require_git_diff", True))
-        prompt = request.rendered_context or request.instruction
+        # Full contract messages (system + user), not only the last user turn.
+        prompt = render_agent_request_messages(request)
 
         try:
             sandbox = map_sandbox(sandbox_name)

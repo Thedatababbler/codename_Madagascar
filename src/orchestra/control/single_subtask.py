@@ -8,7 +8,9 @@ from typing import Any
 
 from orchestra.backends.base import ArtifactRef, BackendSessionRef
 from orchestra.cli.validate_graph import build_compiler
+from orchestra.control.failure import classify_subtask_outcome
 from orchestra.control.task_state import (
+    BackendSessionRecord,
     SubtaskAttempt,
     SubtaskStatus,
     TaskExecutionState,
@@ -26,6 +28,38 @@ from orchestra.workspaces.git_workspace import SharedSubtaskGitWorkspaceManager
 
 class SingleSubtaskCompatibilityError(ValueError):
     pass
+
+
+def _collect_backend_sessions(
+    *,
+    result: GraphExecutionResult,
+    attempt_id: int,
+) -> list[BackendSessionRecord]:
+    records: list[BackendSessionRecord] = []
+    for node_id, meta in result.state.node_backend_metadata.items():
+        raw = meta.get("session_ref")
+        if not raw:
+            continue
+        session_ref = BackendSessionRef.model_validate(raw)
+        backend_id = str(meta.get("backend_id") or session_ref.backend_id)
+        records.append(
+            BackendSessionRecord(
+                node_id=node_id,
+                backend_id=backend_id,
+                attempt_id=attempt_id,
+                session_ref=session_ref,
+                candidate_id=None,
+            )
+        )
+    return records
+
+
+def _workspace_ref_from_metadata(result: GraphExecutionResult) -> str | None:
+    for meta in result.state.node_backend_metadata.values():
+        workspace = meta.get("workspace_ref")
+        if workspace:
+            return str(workspace)
+    return None
 
 
 class SingleSubtaskCompatibilityRunner:
@@ -115,6 +149,8 @@ class SingleSubtaskCompatibilityRunner:
         attempt_id = len(sub.attempts) + 1
         started = datetime.now(UTC)
         sub.status = SubtaskStatus.RUNNING
+        sub.failure_reason = None
+        sub.failure_message = None
         sub.current_graph_hash = graph.content_hash
         sub.attempts.append(
             SubtaskAttempt(
@@ -133,20 +169,41 @@ class SingleSubtaskCompatibilityRunner:
                 context=run_context,
             )
         except Exception as exc:  # noqa: BLE001 - persist failure then re-raise
-            sub.status = SubtaskStatus.FAILED
-            sub.attempts[-1].status = SubtaskStatus.FAILED
+            status, reason, message = await classify_subtask_outcome(
+                result=None,
+                artifact_store=self.artifact_store,
+                error=exc,
+            )
+            sub.status = status
+            sub.failure_reason = reason
+            sub.failure_message = message
+            sub.attempts[-1].status = status
             sub.attempts[-1].finished_at = datetime.now(UTC)
-            sub.attempts[-1].error = f"{type(exc).__name__}: {exc}"
+            sub.attempts[-1].error = message
+            state.frozen = False
             await self.task_checkpoint_store.save(state)
             raise
 
         finished = datetime.now(UTC)
         sub.attempts[-1].finished_at = finished
-        if result.state.frozen and result.state.final_output_artifact_id:
+        sub.backend_sessions.extend(
+            _collect_backend_sessions(result=result, attempt_id=attempt_id)
+        )
+        ws = _workspace_ref_from_metadata(result)
+        if ws:
+            sub.workspace_ref = ws
+
+        status, reason, message = await classify_subtask_outcome(
+            result=result,
+            artifact_store=self.artifact_store,
+            error=None,
+        )
+        sub.status = status
+        sub.attempts[-1].status = status
+        if status is SubtaskStatus.COMMITTED:
             final_id = result.state.final_output_artifact_id
+            assert final_id is not None
             final_artifact = await self.artifact_store.get(final_id)
-            sub.status = SubtaskStatus.COMMITTED
-            sub.attempts[-1].status = SubtaskStatus.COMMITTED
             sub.final_output_artifact_id = final_id
             sub.committed_artifacts = [
                 ArtifactRef(
@@ -155,21 +212,15 @@ class SingleSubtaskCompatibilityRunner:
                     artifact_type=final_artifact.artifact_type,
                 )
             ]
-            # Persist Codex/session refs from final repository artifact when present.
-            if final_artifact.artifact_type == "RepositoryChangeArtifact":
-                thread_id = str(final_artifact.payload.get("thread_id") or "")
-                if thread_id:
-                    sub.backend_sessions["codex_sdk"] = BackendSessionRef(
-                        backend_id="codex_sdk",
-                        session_id=thread_id,
-                    )
-                if final_artifact.payload.get("workspace_ref"):
-                    sub.workspace_ref = str(final_artifact.payload["workspace_ref"])
+            sub.failure_reason = None
+            sub.failure_message = None
+            sub.attempts[-1].error = None
             state.frozen = True
         else:
-            sub.status = SubtaskStatus.FAILED
-            sub.attempts[-1].status = SubtaskStatus.FAILED
-            sub.attempts[-1].error = "graph execution did not freeze with final output"
+            sub.final_output_artifact_id = None
+            sub.failure_reason = reason
+            sub.failure_message = message
+            sub.attempts[-1].error = message
             state.frozen = False
 
         await self.task_checkpoint_store.save(state)
@@ -188,10 +239,13 @@ def summarize_task_state(state: TaskExecutionState) -> dict[str, Any]:
                 "attempts": len(sub.attempts),
                 "final_output_artifact_id": sub.final_output_artifact_id,
                 "workspace_ref": sub.workspace_ref,
-                "backend_sessions": {
-                    key: ref.model_dump(mode="json")
-                    for key, ref in sub.backend_sessions.items()
-                },
+                "failure_reason": (
+                    sub.failure_reason.value if sub.failure_reason else None
+                ),
+                "failure_message": sub.failure_message,
+                "backend_sessions": [
+                    record.model_dump(mode="json") for record in sub.backend_sessions
+                ],
             }
             for sid, sub in state.subtasks.items()
         },

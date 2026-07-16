@@ -1,4 +1,4 @@
-"""Task and subtask execution state (Milestone 3)."""
+"""Task and subtask execution state (Milestone 3 / 3.5)."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from orchestra.backends.base import ArtifactRef, BackendSessionRef
 from orchestra.communication.plan import CommunicationPlan
@@ -22,6 +22,29 @@ class SubtaskStatus(StrEnum):
     COMMITTED = "committed"
     FAILED = "failed"
     SKIPPED = "skipped"
+
+
+class SubtaskFailureReason(StrEnum):
+    HARNESS = "harness"
+    MODEL = "model"
+    TOOL = "tool"
+    OUTPUT_CONTRACT = "output_contract"
+    TIMEOUT = "timeout"
+    INFRA = "infra"
+    INVALID_CONFIG = "invalid_config"
+    UNKNOWN = "unknown"
+
+
+class BackendSessionRecord(BaseModel):
+    """Node/attempt-scoped backend session (not keyed by backend_id alone)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    node_id: str
+    backend_id: str
+    attempt_id: int
+    session_ref: BackendSessionRef
+    candidate_id: str | None = None
 
 
 class SubtaskAttempt(BaseModel):
@@ -61,6 +84,46 @@ class GlobalUpdateRecord(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+def migrate_backend_sessions(value: Any) -> list[Any]:
+    """Migrate legacy dict[str, BackendSessionRef] or reject unknown shapes.
+
+    Legacy dict keys were backend_id strings. Migrated records use
+    ``node_id=backend_id`` and ``attempt_id=1`` as an explicit best-effort
+    mapping (pre-M3.5-final checkpoints only).
+    """
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, dict):
+        records: list[dict[str, Any]] = []
+        for key, ref in value.items():
+            if isinstance(ref, BackendSessionRef):
+                dumped = ref.model_dump(mode="json")
+            elif isinstance(ref, dict):
+                dumped = ref
+            else:
+                raise ValueError(
+                    f"Cannot migrate backend_sessions entry {key!r}: "
+                    f"unsupported type {type(ref).__name__}"
+                )
+            backend_id = str(dumped.get("backend_id") or key)
+            records.append(
+                {
+                    "node_id": backend_id,
+                    "backend_id": backend_id,
+                    "attempt_id": 1,
+                    "session_ref": dumped,
+                    "candidate_id": None,
+                }
+            )
+        return records
+    raise ValueError(
+        "backend_sessions must be list[BackendSessionRecord] "
+        f"(or legacy dict for explicit migration); got {type(value).__name__}"
+    )
+
+
 class SubtaskState(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -72,7 +135,14 @@ class SubtaskState(BaseModel):
     local_revision: int = 0
     final_output_artifact_id: str | None = None
     workspace_ref: str | None = None
-    backend_sessions: dict[str, BackendSessionRef] = Field(default_factory=dict)
+    backend_sessions: list[BackendSessionRecord] = Field(default_factory=list)
+    failure_reason: SubtaskFailureReason | None = None
+    failure_message: str | None = None
+
+    @field_validator("backend_sessions", mode="before")
+    @classmethod
+    def _migrate_sessions(cls, value: Any) -> Any:
+        return migrate_backend_sessions(value)
 
 
 class TaskExecutionState(BaseModel):
