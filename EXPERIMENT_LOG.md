@@ -10,7 +10,7 @@
 | Status | `canonical` (use for comparisons) / `smoke` / `mock` / `superseded` / `incomplete` |
 | Paths | Repo-relative from AdaMAS root |
 
-**Last updated:** 2026-07-16 (UTC)
+**Last updated:** 2026-07-16 (UTC) — M3.5 Codex tiny-repo smoke recorded
 
 ---
 
@@ -54,22 +54,42 @@ Copy the template below after each run (evaluate + summarize when applicable):
 
 ## Entries (newest first)
 
-### EXP-pending — M3.5 Codex tiny-repo smoke (real AsyncCodex)
-- **Status:** incomplete (code landed; needs authenticated Codex runtime)
-- **Date:** 2026-07-16
-- **Branch / commit:** `agnostic` (local M3.5 work)
-- **Benchmark:** fixture `tests/fixtures/codex_tiny_repo` (broken `add`)
+### EXP-20260716-01 — M3.5 Codex tiny-repo smoke (real AsyncCodex)
+- **Status:** smoke
+- **Date:** 2026-07-16 (UTC)
+- **Branch / commit:** `agnostic` @ `6cb6537` + local M3.5 CI/smoke follow-ups (pre-push)
+- **Benchmark:** fixture `tests/fixtures/codex_tiny_repo` (broken `add` → fixed)
 - **Graph / plan / config:**
   - `configs/graphs/codex_single_implementer.yaml` (`codex_sdk`)
   - `configs/plans/codex_tiny_repo_single_subtask.yaml`
   - `configs/experiments/m3_5_codex_smoke.yaml`
+  - Model: `CODEX_MODEL=gpt-4o-mini` (via graph `${CODEX_MODEL:-gpt-5.4}`)
+  - Auth: `OPENAI_API_KEY` + `login_api_key`; `OPENAI_BASE_URL` → Codex `openai_base_url`
+  - Sandbox: YAML `workspace_write`; runtime `ADAMAS_CODEX_SANDBOX_OVERRIDE=full_access`
+    (host `bwrap`/userns blocked under `workspace_write`)
 - **Command:**
-  `uv run --extra codex python -m orchestra.cli.run_codex_smoke --config configs/experiments/m3_5_codex_smoke.yaml`
-- **Dependency pin:** `openai-codex==0.1.0b3` / CLI `0.137.0a4`
-- **Unit coverage:** `tests/unit/test_codex_m3_5_slice.py` (fake Codex client; git+harness real)
-- **Notes:** Do not treat fake-client unit tests as accuracy claims. After a real
-  smoke succeeds, replace this stub with canonical metrics (frozen, non-empty
-  patch, pytest pass, checkpoint session_id).
+  ```bash
+  ADAMAS_CODEX_SANDBOX_OVERRIDE=full_access CODEX_MODEL=gpt-4o-mini \
+    uv run --extra codex python -m orchestra.cli.run_codex_smoke \
+    --config configs/experiments/m3_5_codex_smoke.yaml \
+    --run-id m3_5_real_smoke_20260716172719
+  ```
+- **Run dir:** `outputs/m3_5_codex_smoke/m3_5_real_smoke_20260716172719`
+- **Dependency pin:** `openai-codex==0.1.0b3` / `openai-codex-cli-bin==0.137.0a4`
+- **SDK kwargs check:** `thread_start` / `run` use **`approval_mode=`** (YAML still
+  `approval_policy: never` → `ApprovalMode.deny_all`)
+- **Results:**
+  - `frozen=True`, `graph_frozen=True`
+  - `harness_passed=True` (AdaMAS `repository_test_harness` pytest)
+  - non-empty git diff; `patch_hash=e75062da8c777a6032b540dfbbeafce340f25bea400696f77e1cbe2ce1255b44`
+  - `thread_id=019f6bf7-fa9b-7052-b1ba-e1476c7eb522`
+  - checkpoint `task_execution.json`: `workspace_ref` + `backend_sessions.codex_sdk.session_id`
+  - tokens: prompt `78259` / completion `263`; wall latency `47624` ms
+  - summary: `tasks/codex_tiny_repo/codex_smoke_result.json`
+- **Notes:** Smoke validates control-plane wiring (TaskPlan → AsyncCodex → git
+  artifact → trusted-fixture harness → freeze). Not an accuracy benchmark.
+  `repository_test_harness` remains trusted-fixture-only (marker
+  `.adamas_trusted_harness`), not a low-privilege worker.
 
 ### EXP-20260713-06 — Stage1 LCB-dev B2 Fixed MAS (structured_llm)
 - **Status:** canonical

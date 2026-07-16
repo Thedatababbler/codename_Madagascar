@@ -23,8 +23,16 @@ uv sync --extra codex
 `pyproject.toml` sets `[tool.uv] prerelease = "allow"` because these packages are
 currently published only as prereleases. Do not depend on Codex `main`.
 
-Approval mapping: AdaMAS `approval_policy: never` → SDK `ApprovalMode.deny_all`
-(which maps to protocol `AskForApproval.never`).
+Approval mapping (verified on `openai-codex==0.1.0b3`):
+
+- AdaMAS YAML/config key: `approval_policy: never`
+- SDK kwargs on `AsyncCodex.thread_start` / `AsyncThread.run`: **`approval_mode=`**
+  (there is no public `approval_policy=` kwarg)
+- Mapped value: `ApprovalMode.deny_all` → protocol `AskForApproval.never`
+
+Auth for real smoke: `OPENAI_API_KEY` via `login_api_key`; optional
+`OPENAI_BASE_URL` is passed as Codex `openai_base_url` config override (proxy /
+OpenAI-compatible Responses endpoints).
 
 ## Control-plane ownership
 
@@ -38,8 +46,13 @@ TaskDecomposer → TaskPlan → TaskExecutionState
   → task_execution.json checkpoint
 ```
 
-Forbidden in M3.5 backend config: resume, fork, steer, interrupt, review,
+Forbidden in M3.5 backend **YAML** config: resume, fork, steer, interrupt, review,
 native subagents, danger-full-access / full_access.
+
+Host note: Codex `workspace_write` uses `bwrap` user namespaces. If the host
+blocks that (common in some containers), set
+`ADAMAS_CODEX_SANDBOX_OVERRIDE=full_access` for local smoke only. This does not
+relax the YAML forbid; it is an explicit runtime escape hatch.
 
 ## Workspace layout
 
@@ -58,6 +71,11 @@ not in TaskPlan content hash.
 - Empty diff with `require_git_diff=true` → `OUTPUT_CONTRACT_FAILURE`.
 - `RepositoryHarnessResultArtifact`: produced only by AdaMAS harness, never by
   trusting Codex self-report.
+- `repository_test_harness` currently supports **trusted fixtures only** (marker
+  file `.adamas_trusted_harness`). It runs pytest as a normal subprocess under
+  the Orchestra process privileges — **not** a low-privilege worker. Do not
+  point it at untrusted repositories; set `ADAMAS_ALLOW_UNTRUSTED_REPO_HARNESS=1`
+  only for explicit local overrides.
 
 ## Configs / CLI
 

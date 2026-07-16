@@ -25,6 +25,11 @@ jobs:
           repository: LiveCodeBench/LiveCodeBench
           ref: 28fef95ea8c9f7a547c8329f2cd3d32b92c1fa24
           path: third_party/LiveCodeBench
+          fetch-depth: 0
+      # LiveCodeBench check_correctness uses multiprocessing.Manager, which needs
+      # more than the default ~64MB /dev/shm on GitHub-hosted runners.
+      - name: Enlarge /dev/shm for LCB multiprocessing
+        run: sudo mount -o remount,size=2G /dev/shm
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --extra smolagents
       - run: uv run pytest -q tests/integration

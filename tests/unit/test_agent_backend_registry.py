@@ -16,9 +16,15 @@ def test_legacy_graphs_default_to_structured_llm_and_keep_hash(caplog):
 
     graph_module._WARNED_LEGACY_BACKEND_NODES.clear()
     expected = {
-        "b0_direct": "3dfdeb18bae7df96af3e70a68960921b05c2e3c94d0af9d17f6d93e5991b8ae5",
-        "b1_single_harness": "b1341b1ec3e4e32ee1e40e409a08fc8bc27ccb83230fd87e0d50d0406bc34613",
-        "b2_fixed_mas_structured": "c7dbe5b24f995d60f5a4ea4401fcccdb5bd687c364a71d26dc5ad668dc1334d4",
+        "b0_direct": (
+            "3dfdeb18bae7df96af3e70a68960921b05c2e3c94d0af9d17f6d93e5991b8ae5"
+        ),
+        "b1_single_harness": (
+            "b1341b1ec3e4e32ee1e40e409a08fc8bc27ccb83230fd87e0d50d0406bc34613"
+        ),
+        "b2_fixed_mas_structured": (
+            "c7dbe5b24f995d60f5a4ea4401fcccdb5bd687c364a71d26dc5ad668dc1334d4"
+        ),
     }
     with caplog.at_level(logging.WARNING):
         for name, digest in expected.items():

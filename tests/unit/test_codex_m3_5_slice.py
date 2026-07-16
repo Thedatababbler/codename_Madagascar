@@ -9,8 +9,6 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-openai_codex = pytest.importorskip("openai_codex")
-
 from orchestra.backends.base import (
     AgentRequest,
     AgentRunStatus,
@@ -46,6 +44,8 @@ from orchestra.schemas.artifacts import ProblemArtifact, RepositoryChangeArtifac
 from orchestra.storage.artifacts import FileArtifactStore
 from orchestra.storage.events import AppendOnlyEventWriter
 from orchestra.workspaces.git_workspace import SharedSubtaskGitWorkspaceManager
+
+pytest.importorskip("openai_codex")
 
 FIXTURE = Path("tests/fixtures/codex_tiny_repo").resolve()
 CONTRACTS = "configs/contracts"
@@ -88,12 +88,17 @@ class _FakeTurn:
 
 class _FakeThread:
     id = "thread-fake-1"
+    parent = None
 
     def __init__(self, workspace: str) -> None:
         self.workspace = workspace
 
     async def run(self, prompt: str, **kwargs):  # noqa: ANN003
-        del prompt, kwargs
+        del prompt
+        if self.parent is not None:
+            self.parent.last_run_kwargs = dict(kwargs)
+        assert "approval_mode" in kwargs
+        assert "approval_policy" not in kwargs
         path = Path(self.workspace) / "calculator.py"
         path.write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
         return _FakeTurn()
@@ -102,6 +107,8 @@ class _FakeThread:
 class _FakeCodex:
     def __init__(self) -> None:
         self._cwd: str | None = None
+        self.last_thread_start_kwargs: dict = {}
+        self.last_run_kwargs: dict = {}
 
     async def __aenter__(self):
         return self
@@ -110,8 +117,13 @@ class _FakeCodex:
         return None
 
     async def thread_start(self, **kwargs):  # noqa: ANN003
+        self.last_thread_start_kwargs = dict(kwargs)
+        assert "approval_mode" in kwargs
+        assert "approval_policy" not in kwargs
         self._cwd = kwargs.get("cwd")
-        return _FakeThread(self._cwd)
+        thread = _FakeThread(self._cwd)
+        thread.parent = self
+        return thread
 
 
 def test_codex_backend_config_forbids_full_access():
@@ -366,3 +378,50 @@ def test_codex_graph_compiles():
         load_graph("configs/graphs/codex_single_implementer.yaml")
     )
     assert compiled.final_producers
+
+
+@pytest.mark.asyncio
+async def test_repository_harness_rejects_untrusted_workspace(tmp_path):
+    repo = tmp_path / "untrusted"
+    repo.mkdir()
+    (repo / "test_ok.py").write_text("def test_ok():\n    assert True\n", encoding="utf-8")
+    change = create_artifact(
+        RepositoryChangeArtifact(
+            workspace_ref=str(repo),
+            thread_id="t1",
+            base_revision=None,
+            changed_files=[],
+            patch="",
+            final_response="ok",
+            source_node="codex_implementer",
+        ),
+        producer_node_id="codex_implementer",
+        task_id="untrusted",
+    )
+    limits = RuntimeLimits(
+        max_parallel_benchmark_tasks=1,
+        max_parallel_nodes_per_task=1,
+        max_parallel_llm_calls=1,
+        max_parallel_sandboxes=1,
+    )
+    result = await RepositoryTestHarnessExecutor().execute(
+        HarnessNodeSpec(
+            node_id="repository_tests",
+            harness_id="repository_test_harness",
+            command=["python", "-m", "pytest", "-q"],
+            input_slots={"repository_change": "RepositoryChangeArtifact"},
+            output_slots={"result": "RepositoryHarnessResultArtifact"},
+        ),
+        {"repository_change": change},
+        RunContext(
+            run_id="run",
+            task_id="untrusted",
+            run_dir=tmp_path,
+            limits=limits,
+            semaphores=RuntimeSemaphores(limits),
+            contract_hash="c",
+            workspace_ref=str(repo),
+        ),
+    )
+    assert not result.succeeded
+    assert "trusted fixtures only" in (result.error or "")

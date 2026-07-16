@@ -1,8 +1,21 @@
-"""Repository test harness — runs pytest (or configured command) in the workspace."""
+"""Repository test harness — runs pytest (or configured command) in the workspace.
+
+Security boundary (M3.5):
+  This harness executes the configured command **in-process relative to the
+  Orchestra parent** (subprocess with inherited privileges). It is **only**
+  approved for **trusted fixtures** that ship an
+  ``.adamas_trusted_harness`` marker (see ``tests/fixtures/codex_tiny_repo``).
+
+  It is **not** a low-privilege isolation worker. Untrusted / attacker-controlled
+  repositories must not be pointed at this harness until a dedicated worker
+  (env redaction + resource limits + optional UID drop, similar to
+  ``orchestra.sandbox.lcb_worker``) exists.
+"""
 
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from pathlib import Path
 
@@ -14,6 +27,17 @@ from orchestra.schemas.artifacts import (
     RepositoryChangeArtifact,
     RepositoryHarnessResultArtifact,
 )
+
+TRUSTED_MARKER = ".adamas_trusted_harness"
+ALLOW_UNTRUSTED_ENV = "ADAMAS_ALLOW_UNTRUSTED_REPO_HARNESS"
+
+
+def workspace_is_trusted(cwd: Path) -> bool:
+    """Return True when the workspace opts into the trusted-fixture harness."""
+    if (cwd / TRUSTED_MARKER).is_file():
+        return True
+    # Copies of fixtures keep the marker; also accept explicit escape hatch.
+    return os.getenv(ALLOW_UNTRUSTED_ENV, "").strip() in {"1", "true", "yes"}
 
 
 class RepositoryTestHarnessExecutor:
@@ -56,6 +80,18 @@ class RepositoryTestHarnessExecutor:
             return NodeExecutionResult.failed(
                 node.node_id,
                 FileNotFoundError(f"workspace missing: {cwd}"),
+                int((time.perf_counter() - started) * 1000),
+            )
+        if not workspace_is_trusted(cwd):
+            return NodeExecutionResult.failed(
+                node.node_id,
+                PermissionError(
+                    "repository_test_harness currently supports trusted fixtures only "
+                    f"(missing {TRUSTED_MARKER} under {cwd}). "
+                    "Do not point it at untrusted repos; a low-privilege worker is "
+                    f"not implemented yet. Set {ALLOW_UNTRUSTED_ENV}=1 only for "
+                    "explicit local overrides."
+                ),
                 int((time.perf_counter() - started) * 1000),
             )
         command = list(node.command or ["python", "-m", "pytest", "-q"])

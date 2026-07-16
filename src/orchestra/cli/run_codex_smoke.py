@@ -6,8 +6,10 @@ import argparse
 import asyncio
 import hashlib
 import json
+import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -49,9 +51,123 @@ def _load_plan(path: str) -> TaskPlan:
     return TaskPlan.model_validate(raw)
 
 
+def _sdk_runtime_versions() -> dict[str, str | None]:
+    sdk_version = None
+    cli_version = None
+    try:
+        import importlib.metadata
+
+        sdk_version = importlib.metadata.version("openai-codex")
+    except Exception:  # noqa: BLE001
+        try:
+            import openai_codex
+
+            sdk_version = getattr(openai_codex, "__version__", None)
+        except ImportError:
+            sdk_version = None
+    try:
+        import importlib.metadata
+
+        cli_version = importlib.metadata.version("openai-codex-cli-bin")
+    except Exception:  # noqa: BLE001
+        cli_version = None
+    return {
+        "openai_codex": sdk_version,
+        "openai_codex_cli_bin": cli_version,
+    }
+
+
+def _enrich_smoke_summary(
+    *,
+    state_summary: dict[str, Any],
+    run_dir: Path,
+    task_id: str,
+    latency_ms: int,
+    graph_frozen: bool | None,
+) -> dict[str, Any]:
+    """Add thread_id / patch hash / harness / usage / versions to smoke summary."""
+    thread_id = None
+    workspace_ref = None
+    changed_files: list[str] = []
+    patch = ""
+    patch_hash = None
+    harness_passed = None
+    prompt_tokens = 0
+    completion_tokens = 0
+
+    subtasks = state_summary.get("subtasks") or {}
+    for sub in subtasks.values():
+        workspace_ref = workspace_ref or sub.get("workspace_ref")
+        sessions = sub.get("backend_sessions") or {}
+        codex_session = sessions.get("codex_sdk") or {}
+        thread_id = thread_id or codex_session.get("session_id")
+
+    # Prefer committed RepositoryChangeArtifact + harness result from disk.
+    task_art_dir = run_dir / "tasks" / task_id / "artifacts"
+    if task_art_dir.exists():
+        for path in sorted(task_art_dir.glob("*.json")):
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            art_type = raw.get("artifact_type")
+            payload = raw.get("payload") or {}
+            if art_type == "RepositoryChangeArtifact":
+                thread_id = thread_id or payload.get("thread_id")
+                workspace_ref = workspace_ref or payload.get("workspace_ref")
+                changed_files = list(payload.get("changed_files") or changed_files)
+                patch = str(payload.get("patch") or patch)
+            elif art_type == "RepositoryHarnessResultArtifact":
+                harness_passed = bool(payload.get("passed"))
+                if payload.get("changed_files"):
+                    changed_files = list(payload.get("changed_files") or [])
+
+    if patch:
+        patch_hash = hashlib.sha256(patch.encode("utf-8")).hexdigest()
+
+    # Token usage from node telemetry events when present.
+    events_path = run_dir / "events.jsonl"
+    if events_path.exists():
+        for line in events_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            prompt_tokens += int(event.get("prompt_tokens") or 0)
+            completion_tokens += int(event.get("completion_tokens") or 0)
+            usage = event.get("usage") or {}
+            if isinstance(usage, dict):
+                prompt_tokens += int(usage.get("prompt_tokens") or 0)
+                completion_tokens += int(usage.get("completion_tokens") or 0)
+
+    versions = _sdk_runtime_versions()
+    summary = dict(state_summary)
+    summary.update(
+        {
+            "graph_frozen": graph_frozen,
+            "thread_id": thread_id,
+            "workspace_ref": workspace_ref,
+            "changed_files": changed_files,
+            "patch_hash": patch_hash,
+            "harness_passed": harness_passed,
+            "token_usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+            },
+            "latency_ms": latency_ms,
+            "sdk_runtime_versions": versions,
+            "task_id": task_id,
+        }
+    )
+    return summary
+
+
 async def _run(args: argparse.Namespace) -> int:
     load_env_file()
     started_at = datetime.now(UTC)
+    wall_started = time.perf_counter()
     config = _load_experiment(args.config)
     experiment = config["experiment"]
     source_repo = args.source_repo or experiment["source_repo"]
@@ -89,6 +205,7 @@ async def _run(args: argparse.Namespace) -> int:
                     "graph": graph_path,
                     "source_repo": source_repo,
                     "started_at": started_at.isoformat(),
+                    "sdk_runtime_versions": _sdk_runtime_versions(),
                 },
                 indent=2,
             )
@@ -181,20 +298,49 @@ async def _run(args: argparse.Namespace) -> int:
             },
         )
     )
-    state, result = await runner.run(
-        plan=plan,
-        initial_artifacts=ArtifactBundle(slots={"problem": initial}),
-        context=context,
-        source_repo=str(Path(source_repo).resolve()),
+    try:
+        state, result = await runner.run(
+            plan=plan,
+            initial_artifacts=ArtifactBundle(slots={"problem": initial}),
+            context=context,
+            source_repo=str(Path(source_repo).resolve()),
+        )
+    except Exception as exc:  # noqa: BLE001
+        latency_ms = int((time.perf_counter() - wall_started) * 1000)
+        summary = {
+            "task_id": plan.task_id,
+            "frozen": False,
+            "error": f"{type(exc).__name__}: {exc}",
+            "latency_ms": latency_ms,
+            "sdk_runtime_versions": _sdk_runtime_versions(),
+            "harness_passed": None,
+            "thread_id": None,
+            "changed_files": [],
+            "patch_hash": None,
+            "token_usage": {"prompt_tokens": 0, "completion_tokens": 0},
+        }
+        out = run_dir / "tasks" / plan.task_id / "codex_smoke_result.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(summary, indent=2), encoding="utf-8")
+        print(json.dumps(summary, indent=2))
+        print(f"run_dir={run_dir}")
+        return 1
+    latency_ms = int((time.perf_counter() - wall_started) * 1000)
+    base_summary = summarize_task_state(state)
+    summary = _enrich_smoke_summary(
+        state_summary=base_summary,
+        run_dir=run_dir,
+        task_id=plan.task_id,
+        latency_ms=latency_ms,
+        graph_frozen=None if result is None else result.state.frozen,
     )
-    summary = summarize_task_state(state)
-    summary["graph_frozen"] = None if result is None else result.state.frozen
     out = run_dir / "tasks" / plan.task_id / "codex_smoke_result.json"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(json.dumps(summary, indent=2))
     print(f"run_dir={run_dir}")
-    return 0 if state.frozen else 1
+    ok = bool(state.frozen and summary.get("harness_passed") and summary.get("thread_id"))
+    return 0 if ok else 1
 
 
 def main() -> int:

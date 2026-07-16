@@ -27,7 +27,15 @@ class CodexClientLike(Protocol):
 
 
 def map_approval_policy(policy: str) -> Any:
-    """Map AdaMAS approval_policy to openai_codex.ApprovalMode."""
+    """Map AdaMAS ``approval_policy`` → openai-codex ``ApprovalMode``.
+
+    Verified against ``openai-codex==0.1.0b3``:
+    - Public SDK kwargs on ``thread_start`` / ``Thread.run`` are named
+      **``approval_mode``** (not ``approval_policy``).
+    - Internally the SDK still serializes protocol field ``approval_policy``.
+    - AdaMAS graph/YAML keeps the stable name ``approval_policy: never``, which
+      maps to ``ApprovalMode.deny_all`` (protocol AskForApproval.never).
+    """
     from openai_codex import ApprovalMode
 
     if policy == "never":
@@ -42,4 +50,8 @@ def map_sandbox(sandbox: str) -> Any:
         return Sandbox.read_only
     if sandbox == "workspace_write":
         return Sandbox.workspace_write
+    if sandbox == "full_access":
+        # Not allowed in CodexSDKBackendConfig YAML; only via explicit runtime
+        # override (e.g. ADAMAS_CODEX_SANDBOX_OVERRIDE) when bwrap/userns is broken.
+        return Sandbox.full_access
     raise ValueError(f"unsupported sandbox: {sandbox}")
