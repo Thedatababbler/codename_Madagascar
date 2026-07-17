@@ -10,7 +10,7 @@
 | Status | `canonical` (use for comparisons) / `smoke` / `mock` / `superseded` / `incomplete` |
 | Paths | Repo-relative from AdaMAS root |
 
-**Last updated:** 2026-07-17 (UTC) — M4 final hardening (correctness close)
+**Last updated:** 2026-07-17 (UTC) — M4 final concurrency / artifact precedence close
 
 ---
 
@@ -53,6 +53,29 @@ Copy the template below after each run (evaluate + summarize when applicable):
 ---
 
 ## Entries (newest first)
+
+### EXP-20260717-02 — M4 final concurrency + artifact precedence
+- **Status:** smoke (CI gate; no new real-API accuracy claim)
+- **Date:** 2026-07-17 (UTC)
+- **Branch / commit:** `agnostic` (M4 concurrency close)
+- **Benchmark / phase:** trusted `codex_tiny_repo` + fake backends
+- **Baseline / graph:** ReadySubtaskScheduler coordinator-owned canonical commits
+- **Config:** staging `commit_staging/`; `WorkspaceCommitRecord`; assembler
+  precedence `explicit > implicit > root`; `persist_checkpoints=False` in
+  scheduler-owned FastLoop
+- **Command:**
+  ```bash
+  uv sync --extra smolagents --extra codex
+  uv run ruff check .
+  uv run pytest -q tests/unit
+  uv run pytest -q tests/integration
+  ```
+- **Run dir:** n/a
+- **Results:** parallel sibling non-conflicting changes both land in canonical;
+  same-line conflicts fail closed without marking COMMITTED; uncommitted
+  candidate artifacts do not propagate; slot conflicts fail closed.
+- **Notes / interpretation:** M4 correctness-complete for concurrency/dataflow.
+  M5/M6 still unimplemented.
 
 ### EXP-20260717-01 — M4 final hardening (correctness close)
 - **Status:** smoke (CI gate; no new real-API accuracy claim)

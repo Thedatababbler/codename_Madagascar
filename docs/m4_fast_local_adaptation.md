@@ -109,38 +109,59 @@ Still: **trusted fixtures only; not a security boundary**.
 
 ### Artifacts
 
-`SubtaskInputAssembler` builds inputs from:
+`SubtaskInputAssembler` builds inputs with **deterministic precedence**
+(low → high):
 
-- root task artifacts
-- direct dependency **committed** artifacts
-- `SubtaskSpec.input_artifacts` selectors (`ArtifactRef`)
+1. Root task default artifacts  
+2. Implicit direct-dependency **committed** artifacts  
+3. Explicit `SubtaskSpec.input_artifacts` selectors  
+
+Equal-priority collisions on the same slot fail closed
+(`SubtaskInputAssemblyError` / `ArtifactSlotConflictPolicy.ERROR`).
+`candidate_artifacts` never propagate; only `committed_artifacts` after a
+successful coordinator canonical commit. Slot lineage is recorded in
+`ArtifactBundle.slot_sources`.
 
 Whole `TaskExecutionState` is never dumped into prompts.
 
 ### Repository revisions
 
-Each task maintains a **canonical task workspace**. After S1 commits, its tree
-is promoted. Downstream S2 forks from the latest canonical revision (not the
-raw source repo). Parallel siblings share the same committed base and cannot
-see each other’s uncommitted candidate edits.
+Each task maintains a **canonical task workspace**. Workers **never** mutate it.
+They return a `WorkspaceChangeSet` + `base_canonical_revision`. The scheduler
+coordinator, under `_state_lock`, runs a **staging transaction**:
 
-Multi-dependency patches apply in TaskPlan dependency order, then `subtask_id`
-tie-break. Conflicts → `FAILED` / `BLOCKED` with
-`SubtaskFailureReason.DEPENDENCY_CONFLICT` (no silent overwrite).
+```text
+canonical HEAD
+  → commit_staging/<subtask>-<attempt>/
+  → apply changeset (strict; controlled reapply on revision drift)
+  → authoritative harness
+  → promote staging → canonical  (else leave canonical untouched)
+  → WorkspaceCommitRecord + COMMITTED
+```
+
+Parallel siblings fork from the same base revision. If S1 commits first
+(R0→R1), S2’s changeset is reapplied onto R1 staging. Content conflicts →
+`CANONICAL_MERGE_CONFLICT` (subtask **not** `COMMITTED`). Harness failure on
+staging → `CANONICAL_VALIDATION_FAILED`. `COMMITTED` means the change is in
+canonical.
 
 ## 8. Concurrent checkpoint strategy
 
-Workers must not mutate the shared `TaskExecutionState` in place.
+Workers must not mutate the shared `TaskExecutionState` or write shared
+checkpoints (`FastLoopController.persist_checkpoints=False` under the
+scheduler).
 
 ```text
-subtask runner → SubtaskExecutionResult (local patch)
-scheduler (_state_lock) → validate expected_state_version
-                       → merge → increment state_version
+subtask runner → SubtaskExecutionResult (local only)
+scheduler (_state_lock) → transactional canonical commit
+                       → merge state → increment state_version
                        → atomic checkpoint (unique tmp + fsync)
 ```
 
-`max_concurrent_subtasks > 1` requires `allow_concurrent_subtasks=True`
-(fail closed otherwise). Default remains serial (`1`).
+`WorkspaceCommitRecord` enables idempotent recovery (already-COMMITTED
+records are not re-applied). `max_concurrent_subtasks > 1` requires
+`allow_concurrent_subtasks=True` (fail closed otherwise). Default remains
+serial (`1`).
 
 ## 9. Failed-node diagnosis
 
@@ -208,6 +229,9 @@ restartable `PENDING`; committed winners are not re-committed.
 
 ## 16. Boundary vs M5 / M6
 
+M4 is **correctness-complete** for Fast Loop + concurrent canonical commit +
+deterministic artifact assembly. Still out of scope:
+
 | In M4 | **Not** in M4 |
 |-------|----------------|
 | Local Fast Loop + hardening above | Slow global update (M5) |
@@ -215,6 +239,7 @@ restartable `PENDING`; committed winners are not re-committed.
 | Deterministic winner + post-apply harness | Pareto archive / GA (M6) |
 | FRESH candidates + model pools | Hidden-test optimization |
 | Deterministic artifact/repo propagation | Cross-subtask smart routing |
+| Serialized canonical commit transactions | Codex stateful FORK/RESUME |
 
 ## 17. Subprocess harness security boundary
 

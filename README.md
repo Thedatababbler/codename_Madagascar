@@ -148,14 +148,14 @@ Pinned: `openai-codex==0.1.0b3` (bundled CLI `0.137.0a4`). Design:
 When a subtask graph fails, AdaMAS runs a **backend-agnostic Fast Loop**:
 diagnose (failed-node targeting) → ≤K local edit candidates → capability /
 budget gates (rejected candidates audited) → isolated workspaces → AdaMAS
-harness → deterministic select → apply `WorkspaceChangeSet` (tracked +
-untracked + delete/rename) → **canonical post-apply harness** → commit or
-rollback. Cost uses a single source of truth (`CandidateRecord.cost`;
-`search_cost` is derived). Downstream subtasks fork from the task canonical
-workspace and receive declared dependency artifacts via
-`SubtaskInputAssembler`. Concurrent subtasks merge through a locked
-`SubtaskExecutionResult` path (`state_version` + atomic checkpoint).
-Alternate models come only from configured `BackendModelPool`s.
+harness → deterministic select → worker returns `WorkspaceChangeSet` (never
+touches canonical) → **scheduler coordinator** staging apply + authoritative
+harness + promote (or conflict/rollback). Cost uses a single source of truth
+(`CandidateRecord.cost`; `search_cost` is derived). Downstream forks from the
+task canonical revision and receives only **committed** dependency artifacts
+with deterministic slot precedence (`explicit > implicit > root`; equal-priority
+conflicts fail closed). Concurrent subtasks serialize canonical commits under
+`_state_lock` with `WorkspaceCommitRecord` idempotency.
 
 CodeAgent and Codex both use `SessionPolicy.FRESH` in M4-A; RESUME/FORK stay
 capability-gated. M5 slow update and M6 Pareto are **not** implemented.
