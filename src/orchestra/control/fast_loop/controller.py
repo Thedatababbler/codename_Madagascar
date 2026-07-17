@@ -72,6 +72,7 @@ class FastLoopController:
         capabilities: Mapping[str, BackendCapabilities] | None = None,
         model_pools: Mapping[str, BackendModelPool] | None = None,
         clock=None,
+        persist_checkpoints: bool = True,
     ) -> None:
         self.runtime = runtime
         self.artifact_store = artifact_store
@@ -87,6 +88,12 @@ class FastLoopController:
         self.budget = budget or FastLoopBudget()
         self.budget_tracker = FastLoopBudgetTracker(self.budget, clock=clock)
         self.capabilities = dict(capabilities or {})
+        # When False, scheduler coordinator owns shared task checkpoints.
+        self.persist_checkpoints = persist_checkpoints
+
+    async def _save_checkpoint(self, state: TaskExecutionState) -> None:
+        if self.persist_checkpoints:
+            await self.task_checkpoint_store.save(state)
 
     def _caps_for_graph(self, graph: OrchestraGraph) -> dict[str, BackendCapabilities]:
         caps = dict(self.capabilities)
@@ -200,14 +207,14 @@ class FastLoopController:
                 base_workspace=base_workspace,
             )
             state.state_version += 1
-            await self.task_checkpoint_store.save(state)
+            await self._save_checkpoint(state)
             return state
 
         if not diagnosis.retryable:
             fl_state.exhausted = True
             sub.status = SubtaskStatus.FAILED
             state.state_version += 1
-            await self.task_checkpoint_store.save(state)
+            await self._save_checkpoint(state)
             return state
 
         if not fl_state.candidates:
@@ -217,7 +224,7 @@ class FastLoopController:
                 sub.status = SubtaskStatus.FAILED
                 sub.failure_message = reason
                 state.state_version += 1
-                await self.task_checkpoint_store.save(state)
+                await self._save_checkpoint(state)
                 return state
             caps = self._caps_for_graph(base_graph)
             generated = self.generator.generate(
@@ -233,13 +240,13 @@ class FastLoopController:
                     )
                 )
             state.state_version += 1
-            await self.task_checkpoint_store.save(state)
+            await self._save_checkpoint(state)
 
         if not fl_state.candidates:
             fl_state.exhausted = True
             sub.status = SubtaskStatus.FAILED
             state.state_version += 1
-            await self.task_checkpoint_store.save(state)
+            await self._save_checkpoint(state)
             return state
 
         base_ws = base_workspace
@@ -271,7 +278,7 @@ class FastLoopController:
                         other.rejection_reason = CandidateRejectionReason.BUDGET_EXCEEDED
                         other.rejection_message = reason
                 state.state_version += 1
-                await self.task_checkpoint_store.save(state)
+                await self._save_checkpoint(state)
                 break
 
             graph_payload = record.metadata.get("graph")
@@ -299,7 +306,7 @@ class FastLoopController:
                 record.rejection_message = compat.reason
                 record.failure_message = compat.reason
                 state.state_version += 1
-                await self.task_checkpoint_store.save(state)
+                await self._save_checkpoint(state)
                 continue
 
             await self._evaluate_candidate(
@@ -312,7 +319,7 @@ class FastLoopController:
                 base_ws=base_ws,
             )
             state.state_version += 1
-            await self.task_checkpoint_store.save(state)
+            await self._save_checkpoint(state)
 
         winner = self.selector.select(fl_state.candidates, self.budget)
         if winner is None:
@@ -323,7 +330,7 @@ class FastLoopController:
                 diagnosis.concise_feedback or "fast loop exhausted without valid winner"
             )
             state.state_version += 1
-            await self.task_checkpoint_store.save(state)
+            await self._save_checkpoint(state)
             return state
 
         ok, reason, code = self.budget_tracker.can_start_candidate(
@@ -340,13 +347,13 @@ class FastLoopController:
                 sub.status = SubtaskStatus.FAILED
                 sub.failure_message = reason2
                 state.state_version += 1
-                await self.task_checkpoint_store.save(state)
+                await self._save_checkpoint(state)
                 return state
 
         if base_ws is None:
             await self._commit_non_repo_winner(state, fl_state, winner, subtask_id)
             state.state_version += 1
-            await self.task_checkpoint_store.save(state)
+            await self._save_checkpoint(state)
             return state
 
         await self._commit_winner(
@@ -358,7 +365,7 @@ class FastLoopController:
             base_graph=base_graph,
         )
         state.state_version += 1
-        await self.task_checkpoint_store.save(state)
+        await self._save_checkpoint(state)
         return state
 
     async def _infra_retry_once(

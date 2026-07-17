@@ -19,6 +19,8 @@ class SubtaskStatus(StrEnum):
     RUNNING = "running"
     HARNESS_FAILED = "harness_failed"
     RETRY_PENDING = "retry_pending"
+    # Local candidate/workspace success; awaiting coordinator canonical commit.
+    AWAITING_CANONICAL_COMMIT = "awaiting_canonical_commit"
     COMMITTED = "committed"
     FAILED = "failed"
     SKIPPED = "skipped"
@@ -33,7 +35,39 @@ class SubtaskFailureReason(StrEnum):
     INFRA = "infra"
     INVALID_CONFIG = "invalid_config"
     DEPENDENCY_CONFLICT = "dependency_conflict"
+    CANONICAL_MERGE_CONFLICT = "canonical_merge_conflict"
+    CANONICAL_VALIDATION_FAILED = "canonical_validation_failed"
     UNKNOWN = "unknown"
+
+
+class WorkspaceCommitStatus(StrEnum):
+    PENDING = "pending"
+    APPLYING = "applying"
+    VALIDATING = "validating"
+    COMMITTED = "committed"
+    CONFLICTED = "conflicted"
+    VALIDATION_FAILED = "validation_failed"
+    FAILED = "failed"
+
+
+class WorkspaceCommitRecord(BaseModel):
+    """Coordinator-owned transactional canonical commit audit record."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    record_id: str
+    task_id: str
+    subtask_id: str
+    attempt_id: int
+    expected_base_revision: str | None = None
+    actual_parent_revision: str | None = None
+    committed_revision: str | None = None
+    change_set_hash: str = ""
+    applied_artifact_ids: list[str] = Field(default_factory=list)
+    status: WorkspaceCommitStatus = WorkspaceCommitStatus.PENDING
+    conflict_files: list[str] = Field(default_factory=list)
+    harness_artifact_id: str | None = None
+    error_message: str | None = None
 
 
 class BackendSessionRecord(BaseModel):
@@ -132,6 +166,8 @@ class SubtaskState(BaseModel):
     status: SubtaskStatus
     attempts: list[SubtaskAttempt] = Field(default_factory=list)
     committed_artifacts: list[ArtifactRef] = Field(default_factory=list)
+    # Candidate-local artifacts (not visible to downstream until canonical commit).
+    candidate_artifacts: list[ArtifactRef] = Field(default_factory=list)
     current_graph_hash: str = ""
     local_revision: int = 0
     final_output_artifact_id: str | None = None
@@ -143,6 +179,7 @@ class SubtaskState(BaseModel):
     base_task_revision: str | None = None
     dependency_revision_ids: list[str] = Field(default_factory=list)
     applied_dependency_artifact_ids: list[str] = Field(default_factory=list)
+    last_commit_record_id: str | None = None
 
     @field_validator("backend_sessions", mode="before")
     @classmethod
@@ -167,6 +204,7 @@ class TaskExecutionState(BaseModel):
     state_version: int = 0
     canonical_workspace_ref: str | None = None
     canonical_revision: str | None = None
+    workspace_commit_records: list[WorkspaceCommitRecord] = Field(default_factory=list)
     frozen: bool = False
     plan_content_hash: str = ""
 

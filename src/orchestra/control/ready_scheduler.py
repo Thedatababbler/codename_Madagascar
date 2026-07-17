@@ -3,19 +3,28 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import uuid
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from orchestra.backends.base import ArtifactRef, BackendSessionRef
 from orchestra.cli.validate_graph import build_compiler
-from orchestra.control.canonical_workspace import CanonicalTaskWorkspaceManager
+from orchestra.control.canonical_workspace import (
+    CanonicalCommitError,
+    CanonicalTaskWorkspaceManager,
+)
 from orchestra.control.failure import classify_subtask_outcome
 from orchestra.control.fast_loop.controller import FastLoopController
-from orchestra.control.fast_loop.schemas import CostRecord, FastLoopBudget
+from orchestra.control.fast_loop.schemas import CostRecord, FastLoopBudget, WorkspaceChangeSet
 from orchestra.control.fast_loop.workspace import GitCandidateWorkspaceManager
-from orchestra.control.input_assembler import SubtaskInputAssembler
+from orchestra.control.input_assembler import (
+    SubtaskInputAssembler,
+    SubtaskInputAssemblyError,
+)
 from orchestra.control.task_state import (
     BackendSessionRecord,
     SubtaskAttempt,
@@ -23,33 +32,49 @@ from orchestra.control.task_state import (
     SubtaskState,
     SubtaskStatus,
     TaskExecutionState,
+    WorkspaceCommitRecord,
+    WorkspaceCommitStatus,
 )
 from orchestra.decomposition.schemas import TaskPlan
-from orchestra.ir.artifacts import ArtifactBundle
-from orchestra.ir.graph import load_graph
+from orchestra.ir.artifacts import ArtifactBundle, ArtifactEnvelope
+from orchestra.ir.graph import OrchestraGraph, load_graph
+from orchestra.ir.nodes import NodeKind
 from orchestra.runtime.backend import RunContext
 from orchestra.runtime.native_async import NativeAsyncRuntime
 from orchestra.runtime.state import GraphExecutionResult
 from orchestra.runtime.task_checkpoint import TaskCheckpointStore
 from orchestra.storage.artifacts import ArtifactStore
+from orchestra.workspaces.base import WorkspaceRef
 
 
-class SubtaskStatePatch(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    subtask: SubtaskState
-    fast_loop_state: Any | None = None
-    fast_loop_history_append: list[Any] = Field(default_factory=list)
-    canonical_revision: str | None = None
-    canonical_workspace_ref: str | None = None
+class SubtaskExecutionStatus(StrEnum):
+    SUCCESS_PENDING_COMMIT = "success_pending_commit"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+    ALREADY_COMMITTED = "already_committed"
 
 
 class SubtaskExecutionResult(BaseModel):
+    """Worker-local result; must not mutate shared TaskExecutionState/canonical."""
+
     model_config = ConfigDict(extra="forbid")
 
     subtask_id: str
     expected_state_version: int
-    state_patch: SubtaskStatePatch
+    base_canonical_revision: str | None = None
+    candidate_workspace_ref: str | None = None
+    workspace_change_set: WorkspaceChangeSet | None = None
+    local_subtask_state: SubtaskState
+    produced_artifacts: list[ArtifactEnvelope] = Field(default_factory=list)
+    backend_sessions: list[BackendSessionRecord] = Field(default_factory=list)
+    candidate_harness_artifact_id: str | None = None
+    candidate_harness_passed: bool = False
+    execution_status: SubtaskExecutionStatus
+    failure_reason: SubtaskFailureReason | None = None
+    failure_message: str | None = None
+    fast_loop_state: Any | None = None
+    fast_loop_history_append: list[Any] = Field(default_factory=list)
+    graph_template: str | None = None
 
 
 def _collect_backend_sessions(
@@ -97,6 +122,37 @@ def _cost_from_graph_result(result: GraphExecutionResult) -> CostRecord:
     )
 
 
+def _harness_command(graph: OrchestraGraph) -> tuple[list[str], float]:
+    for node in graph.nodes:
+        if node.node_kind is NodeKind.HARNESS:
+            command = list(
+                getattr(node, "command", None) or ["python", "-m", "pytest", "-q"]
+            )
+            timeout = float(getattr(node, "timeout_seconds", None) or 60.0)
+            return command, timeout
+    return ["python", "-m", "pytest", "-q"], 60.0
+
+
+def _change_set_hash(cs: WorkspaceChangeSet | None) -> str:
+    if cs is None:
+        return ""
+    return cs.file_manifest_hash or hashlib.sha256(
+        cs.tracked_patch.encode()
+    ).hexdigest()
+
+
+def _change_set_nonempty(cs: WorkspaceChangeSet | None) -> bool:
+    if cs is None:
+        return False
+    return bool(
+        cs.tracked_patch.strip()
+        or cs.modified_files
+        or cs.added_untracked_files
+        or cs.deleted_files
+        or cs.renamed_files
+    )
+
+
 class ReadySubtaskScheduler:
     """Schedule dependency-ready subtasks; invoke FastLoopController on failure."""
 
@@ -114,8 +170,6 @@ class ReadySubtaskScheduler:
         allow_concurrent_subtasks: bool = False,
     ) -> None:
         if max_concurrent_subtasks > 1 and not allow_concurrent_subtasks:
-            # Fail closed: concurrent shared-state mutation is unsafe without
-            # the merge path below. Set allow_concurrent_subtasks=True to enable.
             raise ValueError(
                 "max_concurrent_subtasks > 1 requires allow_concurrent_subtasks=True "
                 "(M4 uses locked merge of SubtaskExecutionResult)"
@@ -136,6 +190,7 @@ class ReadySubtaskScheduler:
             contracts_dir=contracts_dir,
             budget=budget,
             workspace_manager=self._candidate_ws,
+            persist_checkpoints=False,
         )
         self.compiler = build_compiler(contracts_dir)
         self._state_lock = asyncio.Lock()
@@ -192,24 +247,32 @@ class ReadySubtaskScheduler:
             if not ready:
                 break
 
+            # Snapshot for workers (deep copy) so they never mutate shared state.
+            state_snapshot = state.model_copy(deep=True)
             if self.max_concurrent_subtasks <= 1:
                 for sid in ready:
                     result = await self._run_subtask_isolated(
                         task_plan=task_plan,
-                        state=state,
+                        state=state_snapshot,
                         subtask_id=sid,
                         initial_artifacts=initial_artifacts,
                         context=context,
                         source_repo=repo,
+                        expected_state_version=state.state_version,
                     )
-                    await self._merge_result(state, result)
+                    await self._commit_subtask_result(
+                        task_plan=task_plan,
+                        state=state,
+                        result=result,
+                        context=context,
+                    )
             else:
                 expected = state.state_version
                 gathered = await asyncio.gather(
                     *[
                         self._run_subtask_isolated(
                             task_plan=task_plan,
-                            state=state,
+                            state=state_snapshot,
                             subtask_id=sid,
                             initial_artifacts=initial_artifacts,
                             context=context,
@@ -219,8 +282,14 @@ class ReadySubtaskScheduler:
                         for sid in ready
                     ]
                 )
-                for result in gathered:
-                    await self._merge_result(state, result)
+                # Serialize canonical commits under the coordinator lock.
+                for result in sorted(gathered, key=lambda r: r.subtask_id):
+                    await self._commit_subtask_result(
+                        task_plan=task_plan,
+                        state=state,
+                        result=result,
+                        context=context,
+                    )
 
             if not self._ready_ids(state):
                 break
@@ -232,27 +301,225 @@ class ReadySubtaskScheduler:
         await self.task_checkpoint_store.save(state)
         return state
 
-    async def _merge_result(
-        self, state: TaskExecutionState, result: SubtaskExecutionResult
+    async def _commit_subtask_result(
+        self,
+        *,
+        task_plan: TaskPlan,
+        state: TaskExecutionState,
+        result: SubtaskExecutionResult,
+        context: RunContext,
     ) -> None:
         async with self._state_lock:
-            if result.expected_state_version not in {-1, state.state_version}:
-                # Soft accept when sequential (-1) or version advanced only by
-                # other merges in the same wave — still apply patch fields.
-                pass
-            sid = result.subtask_id
-            state.subtasks[sid] = result.state_patch.subtask
-            if result.state_patch.fast_loop_state is not None:
-                state.fast_loop_states[sid] = result.state_patch.fast_loop_state
-            for item in result.state_patch.fast_loop_history_append:
-                state.fast_loop_history.append(item)
-            if result.state_patch.canonical_revision:
-                state.canonical_revision = result.state_patch.canonical_revision
-            if result.state_patch.canonical_workspace_ref:
-                state.canonical_workspace_ref = result.state_patch.canonical_workspace_ref
+            await self._commit_subtask_result_unlocked(
+                task_plan=task_plan,
+                state=state,
+                result=result,
+                context=context,
+            )
+            await self.task_checkpoint_store.save(state)
+
+    async def _commit_subtask_result_unlocked(
+        self,
+        *,
+        task_plan: TaskPlan,
+        state: TaskExecutionState,
+        result: SubtaskExecutionResult,
+        context: RunContext,
+    ) -> None:
+        del task_plan
+        sid = result.subtask_id
+        current = state.subtasks[sid]
+        if current.status is SubtaskStatus.COMMITTED:
+            return
+
+        # Idempotent recovery: prior COMMITTED record for same change_set_hash.
+        cs_hash = _change_set_hash(result.workspace_change_set)
+        for rec in state.workspace_commit_records:
+            if (
+                rec.subtask_id == sid
+                and rec.status is WorkspaceCommitStatus.COMMITTED
+                and rec.change_set_hash == cs_hash
+                and cs_hash
+            ):
+                sub = result.local_subtask_state.model_copy(deep=True)
+                sub.status = SubtaskStatus.COMMITTED
+                sub.failure_reason = None
+                sub.failure_message = None
+                if sub.candidate_artifacts and not sub.committed_artifacts:
+                    sub.committed_artifacts = list(sub.candidate_artifacts)
+                sub.last_commit_record_id = rec.record_id
+                state.subtasks[sid] = sub
+                if rec.committed_revision:
+                    state.canonical_revision = rec.committed_revision
+                self._merge_fast_loop(state, result)
+                state.mark_ready_from_dependencies()
+                state.state_version += 1
+                return
+
+        if result.execution_status is SubtaskExecutionStatus.ALREADY_COMMITTED:
+            state.subtasks[sid] = result.local_subtask_state
+            self._merge_fast_loop(state, result)
             state.mark_ready_from_dependencies()
             state.state_version += 1
-            await self.task_checkpoint_store.save(state)
+            return
+
+        if result.execution_status is SubtaskExecutionStatus.FAILED:
+            state.subtasks[sid] = result.local_subtask_state
+            self._merge_fast_loop(state, result)
+            state.mark_ready_from_dependencies()
+            state.state_version += 1
+            return
+
+        if result.execution_status is SubtaskExecutionStatus.SKIPPED:
+            state.subtasks[sid] = result.local_subtask_state
+            state.mark_ready_from_dependencies()
+            state.state_version += 1
+            return
+
+        # SUCCESS_PENDING_COMMIT
+        sub = result.local_subtask_state.model_copy(deep=True)
+        attempt_id = len(sub.attempts) or 1
+        record = WorkspaceCommitRecord(
+            record_id=f"{state.task_id}:{sid}:{attempt_id}:{uuid.uuid4().hex[:8]}",
+            task_id=state.task_id,
+            subtask_id=sid,
+            attempt_id=attempt_id,
+            expected_base_revision=result.base_canonical_revision,
+            actual_parent_revision=state.canonical_revision,
+            change_set_hash=cs_hash,
+            applied_artifact_ids=[a.artifact_id for a in result.produced_artifacts],
+            status=WorkspaceCommitStatus.PENDING,
+        )
+        state.workspace_commit_records.append(record)
+
+        needs_repo = bool(
+            state.canonical_workspace_ref
+            and result.candidate_workspace_ref
+            and _change_set_nonempty(result.workspace_change_set)
+        )
+
+        if not needs_repo:
+            # Artifact-only / no dirty repo → mark committed without workspace mutate.
+            sub.status = SubtaskStatus.COMMITTED
+            sub.failure_reason = None
+            sub.failure_message = None
+            if sub.candidate_artifacts and not sub.committed_artifacts:
+                sub.committed_artifacts = list(sub.candidate_artifacts)
+            record.status = WorkspaceCommitStatus.COMMITTED
+            record.committed_revision = state.canonical_revision
+            sub.last_commit_record_id = record.record_id
+            state.subtasks[sid] = sub
+            self._merge_fast_loop(state, result)
+            state.mark_ready_from_dependencies()
+            state.state_version += 1
+            return
+
+        assert state.canonical_workspace_ref is not None
+        assert result.candidate_workspace_ref is not None
+        assert result.workspace_change_set is not None
+
+        canonical = WorkspaceRef(
+            workspace_id=f"{state.task_id}/canonical",
+            path=state.canonical_workspace_ref,
+            kind="CANONICAL_TASK_WORKSPACE",
+            task_id=state.task_id,
+            subtask_id="__canonical__",
+            base_revision=state.canonical_revision,
+        )
+        winner = WorkspaceRef(
+            workspace_id=f"{state.task_id}/{sid}/pending",
+            path=result.candidate_workspace_ref,
+            kind="SHARED_SUBTASK_WORKSPACE",
+            task_id=state.task_id,
+            subtask_id=sid,
+            base_revision=result.base_canonical_revision,
+        )
+        graph = load_graph(result.graph_template or sub.spec.local_graph_template)
+        command, timeout = _harness_command(graph)
+
+        record.status = WorkspaceCommitStatus.APPLYING
+        try:
+            record.status = WorkspaceCommitStatus.VALIDATING
+            promoted, new_rev = await self.canonical.transactional_commit(
+                canonical=canonical,
+                winner_workspace=winner,
+                change_set=result.workspace_change_set,
+                run_dir=str(context.run_dir),
+                task_id=state.task_id,
+                subtask_id=sid,
+                attempt_id=attempt_id,
+                commit_message=f"canonical commit {sid}",
+                harness_command=command,
+                harness_timeout=timeout,
+            )
+        except CanonicalCommitError as exc:
+            if exc.conflict:
+                record.status = WorkspaceCommitStatus.CONFLICTED
+                record.conflict_files = list(exc.conflict_files)
+                record.error_message = str(exc)
+                sub.status = SubtaskStatus.FAILED
+                sub.failure_reason = SubtaskFailureReason.CANONICAL_MERGE_CONFLICT
+                sub.failure_message = str(exc)
+                sub.committed_artifacts = []
+            elif exc.validation_failed:
+                record.status = WorkspaceCommitStatus.VALIDATION_FAILED
+                record.error_message = str(exc)
+                sub.status = SubtaskStatus.FAILED
+                sub.failure_reason = SubtaskFailureReason.CANONICAL_VALIDATION_FAILED
+                sub.failure_message = str(exc)
+                sub.committed_artifacts = []
+            else:
+                record.status = WorkspaceCommitStatus.FAILED
+                record.error_message = str(exc)
+                sub.status = SubtaskStatus.FAILED
+                sub.failure_reason = SubtaskFailureReason.INFRA
+                sub.failure_message = str(exc)
+                sub.committed_artifacts = []
+            sub.last_commit_record_id = record.record_id
+            state.subtasks[sid] = sub
+            self._merge_fast_loop(state, result)
+            state.mark_ready_from_dependencies()
+            state.state_version += 1
+            return
+
+        record.status = WorkspaceCommitStatus.COMMITTED
+        record.committed_revision = new_rev or promoted.base_revision
+        record.actual_parent_revision = state.canonical_revision
+        state.canonical_workspace_ref = promoted.path
+        state.canonical_revision = record.committed_revision
+        sub.status = SubtaskStatus.COMMITTED
+        sub.failure_reason = None
+        sub.failure_message = None
+        sub.base_task_revision = state.canonical_revision
+        if sub.candidate_artifacts and not sub.committed_artifacts:
+            sub.committed_artifacts = list(sub.candidate_artifacts)
+        elif not sub.committed_artifacts and sub.final_output_artifact_id:
+            # Preserve prior FastLoop / first-pass artifact refs as committed.
+            pass
+        # Promote candidate artifact refs into committed if worker stashed them.
+        if result.produced_artifacts and not sub.committed_artifacts:
+            art = result.produced_artifacts[0]
+            sub.committed_artifacts = [
+                ArtifactRef(
+                    slot="final",
+                    artifact_id=art.artifact_id,
+                    artifact_type=art.artifact_type,
+                )
+            ]
+            sub.final_output_artifact_id = art.artifact_id
+        sub.last_commit_record_id = record.record_id
+        state.subtasks[sid] = sub
+        self._merge_fast_loop(state, result)
+        state.mark_ready_from_dependencies()
+        state.state_version += 1
+
+    def _merge_fast_loop(
+        self, state: TaskExecutionState, result: SubtaskExecutionResult
+    ) -> None:
+        if result.fast_loop_state is not None:
+            state.fast_loop_states[result.subtask_id] = result.fast_loop_state
+        for item in result.fast_loop_history_append:
+            state.fast_loop_history.append(item)
 
     async def _run_subtask_isolated(
         self,
@@ -265,22 +532,38 @@ class ReadySubtaskScheduler:
         source_repo: str | None,
         expected_state_version: int = -1,
     ) -> SubtaskExecutionResult:
+        """Execute one subtask without mutating shared state or canonical repo."""
         del task_plan
-        # Work on a deep copy of the subtask; do not mutate shared state here.
         sub = state.subtasks[subtask_id].model_copy(deep=True)
         if sub.status is SubtaskStatus.COMMITTED:
             return SubtaskExecutionResult(
                 subtask_id=subtask_id,
                 expected_state_version=expected_state_version,
-                state_patch=SubtaskStatePatch(subtask=sub),
+                local_subtask_state=sub,
+                execution_status=SubtaskExecutionStatus.ALREADY_COMMITTED,
+                candidate_harness_passed=True,
             )
 
-        assembled = await self.input_assembler.assemble(
-            task_plan=state.task_plan,
-            task_state=state,
-            subtask=sub.spec,
-            root_artifacts=initial_artifacts,
-        )
+        try:
+            assembled = await self.input_assembler.assemble(
+                task_plan=state.task_plan,
+                task_state=state,
+                subtask=sub.spec,
+                root_artifacts=initial_artifacts,
+            )
+        except SubtaskInputAssemblyError as exc:
+            sub.status = SubtaskStatus.FAILED
+            sub.failure_reason = SubtaskFailureReason.INVALID_CONFIG
+            sub.failure_message = str(exc)
+            return SubtaskExecutionResult(
+                subtask_id=subtask_id,
+                expected_state_version=expected_state_version,
+                local_subtask_state=sub,
+                execution_status=SubtaskExecutionStatus.FAILED,
+                failure_reason=SubtaskFailureReason.INVALID_CONFIG,
+                failure_message=str(exc),
+            )
+
         sub.applied_dependency_artifact_ids = (
             self.input_assembler.declared_dependency_artifact_ids(
                 task_state=state, subtask=sub.spec
@@ -290,8 +573,6 @@ class ReadySubtaskScheduler:
         workspace_ref = sub.workspace_ref
         base_task_revision = state.canonical_revision
         if source_repo and state.canonical_workspace_ref:
-            from orchestra.workspaces.base import WorkspaceRef
-
             canonical = WorkspaceRef(
                 workspace_id=f"{state.task_id}/canonical",
                 path=state.canonical_workspace_ref,
@@ -376,15 +657,18 @@ class ReadySubtaskScheduler:
                 graph=graph,
                 initial_execution_cost=CostRecord(backend_calls=1),
             )
-            return self._result_from_local(
-                local_state, subtask_id, expected_state_version
+            return await self._finalize_worker_result(
+                local_state=local_state,
+                subtask_id=subtask_id,
+                expected_state_version=expected_state_version,
+                base_canonical_revision=base_task_revision,
+                graph=graph,
             )
 
         finished = datetime.now(UTC)
         sub.attempts[-1].finished_at = finished
-        sub.backend_sessions.extend(
-            _collect_backend_sessions(result=result, attempt_id=attempt_id)
-        )
+        sessions = _collect_backend_sessions(result=result, attempt_id=attempt_id)
+        sub.backend_sessions.extend(sessions)
         status, reason, message = await classify_subtask_outcome(
             result=result,
             artifact_store=self.artifact_store,
@@ -399,27 +683,30 @@ class ReadySubtaskScheduler:
             assert final_id is not None
             final_artifact = await self.artifact_store.get(final_id)
             sub.final_output_artifact_id = final_id
-            sub.committed_artifacts = [
+            # Stash as candidate artifacts; coordinator publishes committed.
+            # Namespace by subtask_id so multi-dep assemblers do not collide
+            # on equal-priority implicit slots.
+            sub.candidate_artifacts = [
                 ArtifactRef(
-                    slot=compiled.graph.final_output_slot,
+                    slot=f"{compiled.graph.final_output_slot}:{subtask_id}",
                     artifact_id=final_id,
                     artifact_type=final_artifact.artifact_type,
                 )
             ]
+            sub.committed_artifacts = []
             sub.failure_reason = None
             sub.failure_message = None
             sub.attempts[-1].error = None
-            # Promote workspace HEAD to task canonical when repo editing succeeded.
-            if state.canonical_workspace_ref and workspace_ref:
-                await self._promote_workspace_to_canonical(
-                    state=local_state,
-                    workspace_path=workspace_ref,
-                    subtask_id=subtask_id,
-                    run_dir=str(context.run_dir),
-                )
             local_state.subtasks[subtask_id] = sub
-            return self._result_from_local(
-                local_state, subtask_id, expected_state_version
+            return await self._finalize_worker_result(
+                local_state=local_state,
+                subtask_id=subtask_id,
+                expected_state_version=expected_state_version,
+                base_canonical_revision=base_task_revision,
+                graph=graph,
+                produced=[final_artifact],
+                sessions=sessions,
+                harness_passed=True,
             )
 
         sub.failure_reason = reason
@@ -432,8 +719,6 @@ class ReadySubtaskScheduler:
         )
         local_state.subtasks[subtask_id] = sub
 
-        # Fast Loop candidates fork from immutable canonical (or source), never
-        # from the dirty failed attempt workspace.
         base_ws = None
         base_source = state.canonical_workspace_ref or source_repo
         if base_source:
@@ -455,128 +740,91 @@ class ReadySubtaskScheduler:
             initial_execution_cost=initial_cost,
             base_workspace=base_ws,
         )
+        return await self._finalize_worker_result(
+            local_state=local_state,
+            subtask_id=subtask_id,
+            expected_state_version=expected_state_version,
+            base_canonical_revision=base_task_revision,
+            graph=graph,
+            sessions=sessions,
+        )
 
-        # If Fast Loop committed, promote winner base to task canonical.
-        sub_after = local_state.subtasks[subtask_id]
-        if (
-            sub_after.status is SubtaskStatus.COMMITTED
-            and local_state.canonical_workspace_ref
-            and sub_after.workspace_ref
-        ):
-            await self._promote_workspace_to_canonical(
-                state=local_state,
-                workspace_path=sub_after.workspace_ref,
-                subtask_id=subtask_id,
-                run_dir=str(context.run_dir),
-            )
-
-        return self._result_from_local(local_state, subtask_id, expected_state_version)
-
-    def _result_from_local(
+    async def _finalize_worker_result(
         self,
+        *,
         local_state: TaskExecutionState,
         subtask_id: str,
         expected_state_version: int,
+        base_canonical_revision: str | None,
+        graph: OrchestraGraph,
+        produced: list[ArtifactEnvelope] | None = None,
+        sessions: list[BackendSessionRecord] | None = None,
+        harness_passed: bool | None = None,
     ) -> SubtaskExecutionResult:
+        sub = local_state.subtasks[subtask_id].model_copy(deep=True)
+        # Never leave worker-owned COMMITTED when a repo coordinate path exists.
+        if sub.status is SubtaskStatus.COMMITTED:
+            if sub.committed_artifacts and not sub.candidate_artifacts:
+                sub.candidate_artifacts = list(sub.committed_artifacts)
+            sub.committed_artifacts = []
+            sub.status = SubtaskStatus.AWAITING_CANONICAL_COMMIT
+            exec_status = SubtaskExecutionStatus.SUCCESS_PENDING_COMMIT
+            passed = True if harness_passed is None else harness_passed
+        elif sub.status in {
+            SubtaskStatus.FAILED,
+            SubtaskStatus.HARNESS_FAILED,
+            SubtaskStatus.SKIPPED,
+        }:
+            exec_status = SubtaskExecutionStatus.FAILED
+            passed = False
+        else:
+            exec_status = SubtaskExecutionStatus.FAILED
+            passed = False
+
+        change_set: WorkspaceChangeSet | None = None
+        workspace_path = sub.workspace_ref
+        if (
+            exec_status is SubtaskExecutionStatus.SUCCESS_PENDING_COMMIT
+            and workspace_path
+            and base_canonical_revision
+        ):
+            winner = WorkspaceRef(
+                workspace_id=f"{local_state.task_id}/{subtask_id}/worker",
+                path=workspace_path,
+                kind="SHARED_SUBTASK_WORKSPACE",
+                task_id=local_state.task_id,
+                subtask_id=subtask_id,
+                base_revision=base_canonical_revision,
+            )
+            # Dirty working tree = first-pass edits; clean tree with commits
+            # since base = FastLoop finalize. Prefer dirty when present so
+            # uncommitted tracked edits are not dropped.
+            dirty = await self._candidate_ws.collect_changeset(winner)
+            if _change_set_nonempty(dirty):
+                change_set = dirty
+            else:
+                try:
+                    change_set = await self._candidate_ws.collect_changeset_since(
+                        winner, base_canonical_revision
+                    )
+                except Exception:  # noqa: BLE001
+                    change_set = dirty
+
+        history = [h for h in local_state.fast_loop_history if h.subtask_id == subtask_id]
         return SubtaskExecutionResult(
             subtask_id=subtask_id,
             expected_state_version=expected_state_version,
-            state_patch=SubtaskStatePatch(
-                subtask=local_state.subtasks[subtask_id],
-                fast_loop_state=local_state.fast_loop_states.get(subtask_id),
-                fast_loop_history_append=[
-                    h
-                    for h in local_state.fast_loop_history
-                    if h.subtask_id == subtask_id
-                ],
-                canonical_revision=local_state.canonical_revision,
-                canonical_workspace_ref=local_state.canonical_workspace_ref,
-            ),
+            base_canonical_revision=base_canonical_revision,
+            candidate_workspace_ref=workspace_path,
+            workspace_change_set=change_set,
+            local_subtask_state=sub,
+            produced_artifacts=list(produced or []),
+            backend_sessions=list(sessions or sub.backend_sessions),
+            candidate_harness_passed=passed,
+            execution_status=exec_status,
+            failure_reason=sub.failure_reason,
+            failure_message=sub.failure_message,
+            fast_loop_state=local_state.fast_loop_states.get(subtask_id),
+            fast_loop_history_append=history,
+            graph_template=sub.spec.local_graph_template,
         )
-
-    async def _promote_workspace_to_canonical(
-        self,
-        *,
-        state: TaskExecutionState,
-        workspace_path: str,
-        subtask_id: str,
-        run_dir: str,
-    ) -> None:
-        if not state.canonical_workspace_ref:
-            return
-        import shutil
-        from pathlib import Path
-
-        from orchestra.workspaces.base import WorkspaceRef
-
-        canonical = WorkspaceRef(
-            workspace_id=f"{state.task_id}/canonical",
-            path=state.canonical_workspace_ref,
-            kind="CANONICAL_TASK_WORKSPACE",
-            task_id=state.task_id,
-            subtask_id="__canonical__",
-            base_revision=state.canonical_revision,
-        )
-        winner = WorkspaceRef(
-            workspace_id=f"{state.task_id}/{subtask_id}/promote",
-            path=workspace_path,
-            kind="SHARED_SUBTASK_WORKSPACE",
-            task_id=state.task_id,
-            subtask_id=subtask_id,
-            base_revision=None,
-        )
-        try:
-            change_set = await self._candidate_ws.collect_changeset(winner)
-            has_dirty = bool(
-                change_set.modified_files
-                or change_set.added_untracked_files
-                or change_set.deleted_files
-                or change_set.renamed_files
-                or change_set.tracked_patch.strip()
-            )
-            if has_dirty:
-                updated = await self.canonical.apply_committed_changeset(
-                    canonical=canonical,
-                    winner_workspace=winner,
-                    change_set=change_set,
-                    expected_revision=state.canonical_revision,
-                    commit_message=f"promote {subtask_id}",
-                )
-                state.canonical_revision = updated.base_revision
-                state.canonical_workspace_ref = updated.path
-            else:
-                # Winner already finalized (clean tree). Replace canonical with
-                # a fresh clone so downstream sees the committed revision.
-                dest = Path(canonical.path)
-                src = Path(winner.path)
-
-                def _resync() -> str | None:
-                    parent = dest.parent
-                    if dest.exists():
-                        shutil.rmtree(dest)
-                    parent.mkdir(parents=True, exist_ok=True)
-                    clone = __import__("subprocess").run(
-                        ["git", "clone", "--local", str(src), str(dest)],
-                        check=False,
-                        capture_output=True,
-                        text=True,
-                    )
-                    if clone.returncode != 0:
-                        shutil.copytree(src, dest, symlinks=False)
-                    rev = self.canonical._rev_parse(dest)
-                    return rev
-
-                new_rev = await asyncio.to_thread(_resync)
-                state.canonical_revision = new_rev
-                state.canonical_workspace_ref = str(dest.resolve())
-            state.subtasks[subtask_id].base_task_revision = state.canonical_revision
-        except Exception:  # noqa: BLE001
-            sub = state.subtasks[subtask_id]
-            if sub.status is SubtaskStatus.COMMITTED:
-                sub.failure_message = (
-                    (sub.failure_message or "")
-                    + " ; canonical promote skipped/conflict"
-                ).strip(" ;")
-            else:
-                sub.status = SubtaskStatus.FAILED
-                sub.failure_reason = SubtaskFailureReason.DEPENDENCY_CONFLICT
