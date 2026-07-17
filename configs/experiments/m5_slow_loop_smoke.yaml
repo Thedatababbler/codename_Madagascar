@@ -1,0 +1,31 @@
+experiment:
+  name: m5_slow_loop_smoke
+  seed: 42
+  output_root: outputs/m5_slow_loop_smoke
+
+slow_loop:
+  enabled: true
+  failure_policy: keep_previous_plan
+  every_n_committed_subtasks: 1
+  context_pressure_ratio: 0.5
+  budget_pressure_ratio: 0.35
+  max_updates_per_task: 4
+  max_candidates_per_update: 3
+  allowed_backend_assignments:
+    coding:
+      - smolagents_code
+      - codex_sdk
+  backend_model_pools:
+    smolagents_code:
+      - model_a
+      - model_b
+    codex_sdk:
+      - model_c
+      - model_d
+
+runtime:
+  backend: native_async
+  max_parallel_benchmark_tasks: 1
+
+logging:
+  level: INFO
