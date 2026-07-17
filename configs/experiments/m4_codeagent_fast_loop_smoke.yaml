@@ -1,0 +1,14 @@
+# Manual M4 CodeAgent smoke pointer. Ordinary CI: no real API.
+# Deterministic Fast Loop path is covered by integration tests with a fake
+# CodeAgent backend. Optional live CodeAgent execution:
+#   uv run --extra smolagents python -m orchestra.cli.run_bbeh \
+#     --config configs/experiments/bbeh_codeagent_smoke.yaml
+experiment:
+  name: m4_codeagent_fast_loop_smoke
+  seed: 42
+  graph_config: configs/graphs/bbeh_single_codeagent.yaml
+  contracts_dir: configs/contracts
+  output_root: outputs/m4_codeagent_fast_loop_smoke
+
+logging:
+  level: INFO

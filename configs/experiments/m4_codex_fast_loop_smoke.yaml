@@ -1,0 +1,24 @@
+# Manual M4 Codex smoke (trusted tiny fixture). Ordinary CI: no real API.
+# Deterministic Fast Loop: pytest tests/integration/test_m4_fast_loop.py
+experiment:
+  name: m4_codex_fast_loop_smoke
+  seed: 42
+  graph_config: configs/graphs/codex_single_implementer.yaml
+  contracts_dir: configs/contracts
+  output_root: outputs/m4_codex_fast_loop_smoke
+  plan_config: configs/plans/codex_tiny_repo_single_subtask.yaml
+  source_repo: tests/fixtures/codex_tiny_repo
+
+benchmark:
+  name: codex_tiny_repo
+  task_id: codex_tiny_repo
+
+runtime:
+  backend: native_async
+  max_parallel_benchmark_tasks: 1
+  max_parallel_nodes_per_task: 2
+  max_parallel_llm_calls: 2
+  max_parallel_sandboxes: 1
+
+logging:
+  level: INFO

@@ -10,7 +10,7 @@
 | Status | `canonical` (use for comparisons) / `smoke` / `mock` / `superseded` / `incomplete` |
 | Paths | Repo-relative from AdaMAS root |
 
-**Last updated:** 2026-07-16 (UTC) — M3.5 final hardening closed (Pre-M4 gate)
+**Last updated:** 2026-07-16 (UTC) — M4 Fast Local Adaptation (M4-A) implemented
 
 ---
 
@@ -53,6 +53,29 @@ Copy the template below after each run (evaluate + summarize when applicable):
 ---
 
 ## Entries (newest first)
+
+### EXP-20260716-03 — M4 Fast Local Adaptation (M4-A engineering gate)
+- **Status:** smoke (CI gate; no new real-API accuracy claim)
+- **Date:** 2026-07-16 (UTC)
+- **Branch / commit:** `agnostic` (M4 implementation)
+- **Benchmark / phase:** trusted `codex_tiny_repo` fixture + fake backends
+- **Baseline / graph:** `configs/graphs/codex_single_implementer.yaml` + FastLoopController
+- **Config:** `FastLoopBudget(max_candidates≤3)`; FRESH-only session policies
+- **Command:**
+  ```bash
+  uv sync --extra smolagents --extra codex
+  uv run ruff check .
+  uv run pytest -q tests/unit
+  uv run pytest -q tests/integration
+  ```
+- **Run dir:** n/a (deterministic tests; optional `run_m4_smoke` is manual)
+- **Results:** unit + integration green with M4 Fast Loop coverage (diagnosis, edits,
+  capability filter, workspace isolation, atomic commit, ReadySubtaskScheduler,
+  CodeAgent/Codex FRESH paths, harness env redaction, checkpoint resume, infra retry)
+- **Notes / interpretation:** AdaMAS retains orchestration/isolation/harness/commit;
+  backends own only per-node inner loops. M4-B Codex RESUME/FORK **not** implemented.
+  M5 slow update and M6 Pareto archive **not** implemented. Docs:
+  `docs/m4_fast_local_adaptation.md`.
 
 ### EXP-20260716-02 — M3.5 final hardening / Pre-M4 gate (engineering)
 - **Status:** smoke (CI gate; no new real-API accuracy claim)

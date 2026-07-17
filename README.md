@@ -143,6 +143,29 @@ uv run python -m orchestra.cli.run_codex_smoke \
 Pinned: `openai-codex==0.1.0b3` (bundled CLI `0.137.0a4`). Design:
 `docs/m3_5_codex_backend.md`. Experiment history: `EXPERIMENT_LOG.md`.
 
+## Fast local adaptation (Milestone 4)
+
+When a subtask graph fails, AdaMAS runs a **backend-agnostic Fast Loop**:
+diagnose → ≤K local edit candidates → isolated workspaces → AdaMAS harness →
+deterministic select → atomic commit. CodeAgent and Codex both use
+`SessionPolicy.FRESH` in M4-A; RESUME/FORK stay capability-gated and unimplemented
+until M4-B proofs land.
+
+Design: `docs/m4_fast_local_adaptation.md`.
+
+```bash
+# CI / local deterministic coverage (no API keys)
+uv sync --extra smolagents --extra codex
+uv run ruff check .
+uv run pytest -q tests/unit
+uv run pytest -q tests/integration
+
+# Optional manual live smoke (not ordinary CI)
+uv run --extra codex python -m orchestra.cli.run_m4_smoke \
+  --backend codex_sdk \
+  --config configs/experiments/m4_codex_fast_loop_smoke.yaml
+```
+
 ## Stage 1 experiments
 
 The protocol in `Stage1_LiveCodeBench_Experiment_Protocol.md` is executed via:
