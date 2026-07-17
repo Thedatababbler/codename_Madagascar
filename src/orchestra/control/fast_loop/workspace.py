@@ -48,7 +48,13 @@ class CandidateWorkspaceManager(Protocol):
         winner: WorkspaceRef,
         change_set: WorkspaceChangeSet,
         expected_base_revision: str | None,
+        allow_content_fallback: bool = True,
+        enforce_base_revision: bool = True,
     ) -> None: ...
+
+    async def collect_changeset_since(
+        self, workspace: WorkspaceRef, base_revision: str
+    ) -> WorkspaceChangeSet: ...
 
     async def rollback_to_revision(
         self, workspace: WorkspaceRef, revision: str
@@ -399,6 +405,59 @@ class GitCandidateWorkspaceManager:
         digest = hashlib.sha256(patch.encode()).hexdigest() if patch else cs.file_manifest_hash
         return patch, changed, digest
 
+    def _build_changeset_since(self, repo: Path, base_revision: str) -> WorkspaceChangeSet:
+        name_status = self._run_git(
+            repo, "diff", "--name-status", "--no-renames", base_revision, "HEAD"
+        )
+        modified: list[str] = []
+        deleted: list[str] = []
+        added: list[str] = []
+        if name_status.returncode == 0:
+            for line in name_status.stdout.splitlines():
+                if not line.strip():
+                    continue
+                parts = line.split("\t")
+                if len(parts) < 2:
+                    continue
+                code, path = parts[0], parts[1]
+                if code.startswith("A"):
+                    added.append(path)
+                elif code.startswith("D"):
+                    deleted.append(path)
+                else:
+                    modified.append(path)
+        tracked = self._run_git(
+            repo, "diff", "--binary", "--no-ext-diff", base_revision, "HEAD"
+        )
+        tracked_patch = tracked.stdout if tracked.returncode == 0 else ""
+        # Untracked relative to current HEAD (should be empty if committed).
+        dirty = self._build_changeset(repo)
+        untracked = list(dirty.added_untracked_files)
+        # Files added between base..HEAD are tracked now; treat as modified/added.
+        for rel in added:
+            if rel not in modified:
+                modified.append(rel)
+        manifest_parts = (
+            [f"M:{p}" for p in sorted(set(modified))]
+            + [f"A:{p}" for p in sorted(set(untracked))]
+            + [f"D:{p}" for p in sorted(set(deleted))]
+        )
+        digest = hashlib.sha256("\n".join(manifest_parts).encode()).hexdigest()
+        return WorkspaceChangeSet(
+            tracked_patch=tracked_patch,
+            modified_files=sorted(set(modified)),
+            added_untracked_files=sorted(set(untracked)),
+            deleted_files=sorted(set(deleted)),
+            renamed_files=[],
+            file_manifest_hash=digest,
+        )
+
+    async def collect_changeset_since(
+        self, workspace: WorkspaceRef, base_revision: str
+    ) -> WorkspaceChangeSet:
+        repo = Path(workspace.path)
+        return await asyncio.to_thread(self._build_changeset_since, repo, base_revision)
+
     def _apply_changeset_sync(
         self,
         *,
@@ -406,9 +465,15 @@ class GitCandidateWorkspaceManager:
         winner_path: Path,
         change_set: WorkspaceChangeSet,
         expected_base_revision: str | None,
+        allow_content_fallback: bool = True,
+        enforce_base_revision: bool = True,
     ) -> None:
         current = self._rev_parse(base_path)
-        if expected_base_revision and current != expected_base_revision:
+        if (
+            enforce_base_revision
+            and expected_base_revision
+            and current != expected_base_revision
+        ):
             raise CandidateWorkspaceError(
                 f"base revision drifted: expected {expected_base_revision}, got {current}"
             )
@@ -428,13 +493,37 @@ class GitCandidateWorkspaceManager:
                 text=True,
             )
             if apply.returncode != 0:
-                # Fallback: copy modified tracked files from winner.
-                for rel in change_set.modified_files:
-                    src = _safe_relpath(winner_path, rel)
-                    dst = _safe_relpath(base_path, rel)
-                    if src.is_file():
-                        dst.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(src, dst)
+                if not allow_content_fallback:
+                    # Controlled reapply after sibling commits:
+                    # - identical content already present → OK (idempotent)
+                    # - missing new file → safe copy from winner
+                    # - existing file with different content → conflict
+                    conflicts: list[str] = []
+                    for rel in (
+                        change_set.modified_files + change_set.added_untracked_files
+                    ):
+                        src = _safe_relpath(winner_path, rel)
+                        dst = _safe_relpath(base_path, rel)
+                        if not src.is_file():
+                            continue
+                        if not dst.is_file():
+                            dst.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(src, dst)
+                        elif src.read_bytes() != dst.read_bytes():
+                            conflicts.append(rel)
+                    if conflicts:
+                        raise CandidateWorkspaceError(
+                            "patch apply conflict on "
+                            f"{conflicts}: {apply.stderr or apply.stdout}"
+                        )
+                else:
+                    # Fallback: copy modified tracked files from winner.
+                    for rel in change_set.modified_files:
+                        src = _safe_relpath(winner_path, rel)
+                        dst = _safe_relpath(base_path, rel)
+                        if src.is_file():
+                            dst.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(src, dst)
 
         for rename in change_set.renamed_files:
             src_old = _safe_relpath(base_path, rename.from_path)
@@ -493,6 +582,8 @@ class GitCandidateWorkspaceManager:
         winner: WorkspaceRef,
         change_set: WorkspaceChangeSet,
         expected_base_revision: str | None,
+        allow_content_fallback: bool = True,
+        enforce_base_revision: bool = True,
     ) -> None:
         await asyncio.to_thread(
             self._apply_changeset_sync,
@@ -500,6 +591,8 @@ class GitCandidateWorkspaceManager:
             winner_path=Path(winner.path),
             change_set=change_set,
             expected_base_revision=expected_base_revision,
+            allow_content_fallback=allow_content_fallback,
+            enforce_base_revision=enforce_base_revision,
         )
 
     async def rollback_to_revision(
