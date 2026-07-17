@@ -1,10 +1,11 @@
-"""Assemble declared subtask inputs from root + dependency artifacts."""
+"""Assemble declared subtask inputs from root + dependency + communication."""
 
 from __future__ import annotations
 
 from enum import StrEnum
 
 from orchestra.backends.base import ArtifactRef
+from orchestra.communication.delivery import CommunicationDeliveryEngine
 from orchestra.control.task_state import SubtaskStatus, TaskExecutionState
 from orchestra.decomposition.schemas import SubtaskSpec, TaskPlan
 from orchestra.ir.artifacts import ArtifactBundle, ArtifactEnvelope, ArtifactSourceRef
@@ -22,16 +23,20 @@ class SubtaskInputAssemblyError(RuntimeError):
 
 
 class SubtaskInputAssembler:
-    """Deterministic M4 input assembly (no whole-state prompt dumping)."""
+    """Deterministic input assembly with M5 communication delivery."""
 
     def __init__(
         self,
         artifact_store: ArtifactStore,
         *,
         conflict_policy: ArtifactSlotConflictPolicy = ArtifactSlotConflictPolicy.ERROR,
+        delivery_engine: CommunicationDeliveryEngine | None = None,
     ) -> None:
         self.artifact_store = artifact_store
         self.conflict_policy = conflict_policy
+        self.delivery_engine = delivery_engine or CommunicationDeliveryEngine(
+            artifact_store
+        )
 
     async def assemble(
         self,
@@ -41,7 +46,6 @@ class SubtaskInputAssembler:
         subtask: SubtaskSpec,
         root_artifacts: ArtifactBundle,
     ) -> ArtifactBundle:
-        del task_plan
         slots: dict[str, ArtifactEnvelope] = dict(root_artifacts.slots)
         sources: dict[str, ArtifactSourceRef] = {
             slot: ArtifactSourceRef(
@@ -52,11 +56,38 @@ class SubtaskInputAssembler:
             for slot, art in root_artifacts.slots.items()
         }
 
+        # 2. Implicit committed dependency artifacts
         implicit = await self._collect_committed_dependency_artifacts(
             task_state=task_state, subtask=subtask
         )
-        self._merge_implicit_dependencies(slots, sources, implicit)
+        self._merge_rows(
+            slots,
+            sources,
+            implicit,
+            source_label="implicit_dependency",
+        )
 
+        # 3. Communication-delivered payloads (committed sources only)
+        delivery = await self.delivery_engine.deliver_for_target(
+            task_plan=task_plan,
+            task_state=task_state,
+            communication_plan=task_state.communication_plan,
+            target_subtask_id=subtask.subtask_id,
+        )
+        if delivery.new_records:
+            task_state.delivery_ledger.extend(delivery.new_records)
+        self._merge_rows(
+            slots,
+            sources,
+            [
+                (slot, "communication", art)
+                for slot, art in sorted(delivery.delivered_slots.items())
+            ],
+            source_label="communication_delivery",
+            allow_equal_priority_overwrite=True,
+        )
+
+        # 4. Explicit SubtaskSpec selectors
         await self._apply_explicit_selectors(
             slots, sources, subtask.input_artifacts, task_state
         )
@@ -68,22 +99,20 @@ class SubtaskInputAssembler:
         task_state: TaskExecutionState,
         subtask: SubtaskSpec,
     ) -> list[tuple[str, str, ArtifactEnvelope]]:
-        """Return (slot, producer_subtask_id, artifact) in deterministic order."""
         rows: list[tuple[str, str, ArtifactEnvelope]] = []
         for dep_id in sorted(subtask.dependencies):
             dep = task_state.subtasks.get(dep_id)
             if dep is None or dep.status is not SubtaskStatus.COMMITTED:
                 continue
-            # Only committed_artifacts — never candidate_artifacts.
-            for ref in sorted(dep.committed_artifacts, key=lambda r: (r.slot, r.artifact_id)):
+            for ref in sorted(
+                dep.committed_artifacts, key=lambda r: (r.slot, r.artifact_id)
+            ):
                 art = await self.artifact_store.get(ref.artifact_id)
                 rows.append((ref.slot, dep_id, art))
             if dep.final_output_artifact_id:
-                # Implicit upstream slot only when not already listed.
                 already = {r.artifact_id for r in dep.committed_artifacts}
                 if dep.final_output_artifact_id not in already:
                     art = await self.artifact_store.get(dep.final_output_artifact_id)
-                    # Multi-dep: namespaced slots avoid equal-priority collisions.
                     slot = (
                         "upstream"
                         if len(subtask.dependencies) == 1
@@ -92,21 +121,22 @@ class SubtaskInputAssembler:
                     rows.append((slot, dep_id, art))
         return rows
 
-    def _merge_implicit_dependencies(
+    def _merge_rows(
         self,
         slots: dict[str, ArtifactEnvelope],
         sources: dict[str, ArtifactSourceRef],
         rows: list[tuple[str, str, ArtifactEnvelope]],
+        *,
+        source_label: str,
+        allow_equal_priority_overwrite: bool = False,
     ) -> None:
-        # Group by slot among equal-priority implicit deps.
         by_slot: dict[str, list[tuple[str, ArtifactEnvelope]]] = {}
         for slot, producer, art in rows:
             by_slot.setdefault(slot, []).append((producer, art))
 
         for slot in sorted(by_slot):
             candidates = by_slot[slot]
-            if len(candidates) > 1:
-                # Distinct artifact IDs at equal priority → conflict.
+            if len(candidates) > 1 and not allow_equal_priority_overwrite:
                 ids = {a.artifact_id for _, a in candidates}
                 if len(ids) > 1:
                     if self.conflict_policy is ArtifactSlotConflictPolicy.ERROR:
@@ -117,15 +147,18 @@ class SubtaskInputAssembler:
                             f"equal-priority artifact slot conflict on {slot!r}: {detail}"
                         )
                     if self.conflict_policy is ArtifactSlotConflictPolicy.FIRST:
-                        candidates = [min(candidates, key=lambda x: (x[0], x[1].artifact_id))]
+                        candidates = [
+                            min(candidates, key=lambda x: (x[0], x[1].artifact_id))
+                        ]
                     else:
-                        candidates = [max(candidates, key=lambda x: (x[0], x[1].artifact_id))]
+                        candidates = [
+                            max(candidates, key=lambda x: (x[0], x[1].artifact_id))
+                        ]
             producer, art = candidates[0]
-            # Implicit dependency overrides root; equal-priority already resolved.
             slots[slot] = art
             sources[slot] = ArtifactSourceRef(
-                source="implicit_dependency",
-                producer_subtask_id=producer,
+                source=source_label,
+                producer_subtask_id=producer if producer != "communication" else None,
                 artifact_id=art.artifact_id,
             )
 
@@ -139,13 +172,13 @@ class SubtaskInputAssembler:
         del task_state
         for ref in selectors:
             if not ref.artifact_id:
-                # Placeholder selector (type-only) — does not override.
                 continue
             try:
                 art = await self.artifact_store.get(ref.artifact_id)
             except KeyError as exc:
                 raise SubtaskInputAssemblyError(
-                    f"explicit selector missing artifact {ref.artifact_id} for slot {ref.slot}"
+                    f"explicit selector missing artifact {ref.artifact_id} "
+                    f"for slot {ref.slot}"
                 ) from exc
             slots[ref.slot] = art
             sources[ref.slot] = ArtifactSourceRef(

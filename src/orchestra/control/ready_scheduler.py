@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from orchestra.backends.base import ArtifactRef, BackendSessionRef
 from orchestra.cli.validate_graph import build_compiler
+from orchestra.communication.ledger import DeliveryRecord
 from orchestra.control.canonical_workspace import (
     CanonicalCommitError,
     CanonicalTaskWorkspaceManager,
@@ -24,6 +25,11 @@ from orchestra.control.fast_loop.workspace import GitCandidateWorkspaceManager
 from orchestra.control.input_assembler import (
     SubtaskInputAssembler,
     SubtaskInputAssemblyError,
+)
+from orchestra.control.slow_loop.controller import SlowLoopController
+from orchestra.control.slow_loop.schemas import (
+    SlowLoopConfig,
+    TaskSchedulingPolicy,
 )
 from orchestra.control.task_state import (
     BackendSessionRecord,
@@ -75,6 +81,7 @@ class SubtaskExecutionResult(BaseModel):
     fast_loop_state: Any | None = None
     fast_loop_history_append: list[Any] = Field(default_factory=list)
     graph_template: str | None = None
+    delivery_records_append: list[DeliveryRecord] = Field(default_factory=list)
 
 
 def _collect_backend_sessions(
@@ -168,6 +175,8 @@ class ReadySubtaskScheduler:
         max_concurrent_subtasks: int = 1,
         budget: FastLoopBudget | None = None,
         allow_concurrent_subtasks: bool = False,
+        slow_loop: SlowLoopController | None = None,
+        slow_loop_config: SlowLoopConfig | None = None,
     ) -> None:
         if max_concurrent_subtasks > 1 and not allow_concurrent_subtasks:
             raise ValueError(
@@ -192,17 +201,58 @@ class ReadySubtaskScheduler:
             workspace_manager=self._candidate_ws,
             persist_checkpoints=False,
         )
+        self.slow_loop = slow_loop or SlowLoopController(config=slow_loop_config)
         self.compiler = build_compiler(contracts_dir)
         self._state_lock = asyncio.Lock()
+
+    def _effective_concurrency(self, state: TaskExecutionState) -> int:
+        policy = state.scheduling_policy
+        if policy is None:
+            return self.max_concurrent_subtasks
+        if not isinstance(policy, TaskSchedulingPolicy):
+            policy = TaskSchedulingPolicy.model_validate(policy)
+        return max(1, min(self.max_concurrent_subtasks, policy.max_concurrent_subtasks))
 
     def _ready_ids(self, state: TaskExecutionState) -> list[str]:
         state.mark_ready_from_dependencies()
         ready = [
             sid
             for sid, sub in state.subtasks.items()
-            if sub.status is SubtaskStatus.READY
+            if sub.status is SubtaskStatus.READY and sub.lease_status != "leased"
         ]
-        return sorted(ready)
+        policy = state.scheduling_policy
+        if isinstance(policy, TaskSchedulingPolicy) or policy is not None:
+            if not isinstance(policy, TaskSchedulingPolicy):
+                policy = TaskSchedulingPolicy.model_validate(policy)
+            # Respect serialization groups: at most one ready member per group.
+            blocked: set[str] = set()
+            for group in policy.serialization_groups:
+                members = [s for s in group if s in ready]
+                if len(members) > 1:
+                    keep = sorted(
+                        members,
+                        key=lambda s: (
+                            -policy.priority_overrides.get(
+                                s, state.subtasks[s].spec.priority
+                            ),
+                            s,
+                        ),
+                    )[0]
+                    for m in members:
+                        if m != keep:
+                            blocked.add(m)
+            ready = [s for s in ready if s not in blocked]
+            ready = sorted(
+                ready,
+                key=lambda s: (
+                    -policy.priority_overrides.get(s, state.subtasks[s].spec.priority),
+                    s,
+                ),
+            )
+        else:
+            ready = sorted(ready)
+        limit = self._effective_concurrency(state)
+        return ready[:limit] if limit else ready
 
     def _deps_failed(self, state: TaskExecutionState, subtask_id: str) -> bool:
         sub = state.subtasks[subtask_id]
@@ -237,6 +287,11 @@ class ReadySubtaskScheduler:
             state.state_version += 1
             await self.task_checkpoint_store.save(state)
 
+        if state.scheduling_policy is None:
+            state.scheduling_policy = TaskSchedulingPolicy(
+                max_concurrent_subtasks=self.max_concurrent_subtasks
+            )
+
         while True:
             for sid, sub in state.subtasks.items():
                 if sub.status is SubtaskStatus.PENDING and self._deps_failed(state, sid):
@@ -247,12 +302,23 @@ class ReadySubtaskScheduler:
             if not ready:
                 break
 
+            # Acquire leases before launching the wave (future plan freeze).
+            leased = set(ready)
+            for sid in leased:
+                sub = state.subtasks[sid]
+                sub.lease_status = "leased"
+                sub.lease_plan_version = state.task_plan.plan_version
+                sub.lease_acquired_state_version = state.state_version
+            state.state_version += 1
+            await self.task_checkpoint_store.save(state)
+
             # Snapshot for workers (deep copy) so they never mutate shared state.
             state_snapshot = state.model_copy(deep=True)
-            if self.max_concurrent_subtasks <= 1:
+            concurrency = self._effective_concurrency(state)
+            if concurrency <= 1:
                 for sid in ready:
                     result = await self._run_subtask_isolated(
-                        task_plan=task_plan,
+                        task_plan=state.task_plan,
                         state=state_snapshot,
                         subtask_id=sid,
                         initial_artifacts=initial_artifacts,
@@ -261,7 +327,7 @@ class ReadySubtaskScheduler:
                         expected_state_version=state.state_version,
                     )
                     await self._commit_subtask_result(
-                        task_plan=task_plan,
+                        task_plan=state.task_plan,
                         state=state,
                         result=result,
                         context=context,
@@ -271,7 +337,7 @@ class ReadySubtaskScheduler:
                 gathered = await asyncio.gather(
                     *[
                         self._run_subtask_isolated(
-                            task_plan=task_plan,
+                            task_plan=state.task_plan,
                             state=state_snapshot,
                             subtask_id=sid,
                             initial_artifacts=initial_artifacts,
@@ -282,14 +348,30 @@ class ReadySubtaskScheduler:
                         for sid in ready
                     ]
                 )
-                # Serialize canonical commits under the coordinator lock.
                 for result in sorted(gathered, key=lambda r: r.subtask_id):
                     await self._commit_subtask_result(
-                        task_plan=task_plan,
+                        task_plan=state.task_plan,
                         state=state,
                         result=result,
                         context=context,
                     )
+
+            # Release leases after wave commits.
+            for sid in leased:
+                sub = state.subtasks[sid]
+                if sub.lease_status == "leased":
+                    sub.lease_status = "released"
+            await self.task_checkpoint_store.save(state)
+
+            # Slow Loop only at safe checkpoint between waves.
+            async with self._state_lock:
+                await self.slow_loop.maybe_update(
+                    task_plan=state.task_plan,
+                    state=state,
+                    context=context,
+                    leased_subtask_ids=set(),
+                )
+                await self.task_checkpoint_store.save(state)
 
             if not self._ready_ids(state):
                 break
@@ -409,6 +491,7 @@ class ReadySubtaskScheduler:
             record.committed_revision = state.canonical_revision
             sub.last_commit_record_id = record.record_id
             state.subtasks[sid] = sub
+            state.committed_subtask_count += 1
             self._merge_fast_loop(state, result)
             state.mark_ready_from_dependencies()
             state.state_version += 1
@@ -488,6 +571,7 @@ class ReadySubtaskScheduler:
         state.canonical_workspace_ref = promoted.path
         state.canonical_revision = record.committed_revision
         sub.status = SubtaskStatus.COMMITTED
+        state.committed_subtask_count += 1
         sub.failure_reason = None
         sub.failure_message = None
         sub.base_task_revision = state.canonical_revision
@@ -520,6 +604,8 @@ class ReadySubtaskScheduler:
             state.fast_loop_states[result.subtask_id] = result.fast_loop_state
         for item in result.fast_loop_history_append:
             state.fast_loop_history.append(item)
+        for rec in result.delivery_records_append:
+            state.delivery_ledger.append(rec)
 
     async def _run_subtask_isolated(
         self,
@@ -544,6 +630,7 @@ class ReadySubtaskScheduler:
                 candidate_harness_passed=True,
             )
 
+        ledger_before = len(state.delivery_ledger)
         try:
             assembled = await self.input_assembler.assemble(
                 task_plan=state.task_plan,
@@ -663,6 +750,7 @@ class ReadySubtaskScheduler:
                 expected_state_version=expected_state_version,
                 base_canonical_revision=base_task_revision,
                 graph=graph,
+                delivery_records=list(state.delivery_ledger[ledger_before:]),
             )
 
         finished = datetime.now(UTC)
@@ -707,6 +795,7 @@ class ReadySubtaskScheduler:
                 produced=[final_artifact],
                 sessions=sessions,
                 harness_passed=True,
+                delivery_records=list(state.delivery_ledger[ledger_before:]),
             )
 
         sub.failure_reason = reason
@@ -747,6 +836,7 @@ class ReadySubtaskScheduler:
             base_canonical_revision=base_task_revision,
             graph=graph,
             sessions=sessions,
+            delivery_records=list(state.delivery_ledger[ledger_before:]),
         )
 
     async def _finalize_worker_result(
@@ -760,6 +850,7 @@ class ReadySubtaskScheduler:
         produced: list[ArtifactEnvelope] | None = None,
         sessions: list[BackendSessionRecord] | None = None,
         harness_passed: bool | None = None,
+        delivery_records: list[DeliveryRecord] | None = None,
     ) -> SubtaskExecutionResult:
         sub = local_state.subtasks[subtask_id].model_copy(deep=True)
         # Never leave worker-owned COMMITTED when a repo coordinate path exists.
@@ -827,4 +918,5 @@ class ReadySubtaskScheduler:
             fast_loop_state=local_state.fast_loop_states.get(subtask_id),
             fast_loop_history_append=history,
             graph_template=sub.spec.local_graph_template,
+            delivery_records_append=list(delivery_records or []),
         )
