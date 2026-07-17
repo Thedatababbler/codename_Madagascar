@@ -32,6 +32,7 @@ class SubtaskFailureReason(StrEnum):
     TIMEOUT = "timeout"
     INFRA = "infra"
     INVALID_CONFIG = "invalid_config"
+    DEPENDENCY_CONFLICT = "dependency_conflict"
     UNKNOWN = "unknown"
 
 
@@ -138,6 +139,10 @@ class SubtaskState(BaseModel):
     backend_sessions: list[BackendSessionRecord] = Field(default_factory=list)
     failure_reason: SubtaskFailureReason | None = None
     failure_message: str | None = None
+    # M4 dataflow lineage (repository propagation).
+    base_task_revision: str | None = None
+    dependency_revision_ids: list[str] = Field(default_factory=list)
+    applied_dependency_artifact_ids: list[str] = Field(default_factory=list)
 
     @field_validator("backend_sessions", mode="before")
     @classmethod
@@ -158,6 +163,10 @@ class TaskExecutionState(BaseModel):
     # M4: per-subtask FastLoopState (typed at runtime; Any avoids circular import).
     fast_loop_states: dict[str, Any] = Field(default_factory=dict)
     global_revision: int = 0
+    # Monotonic task-state version for concurrent checkpoint merge.
+    state_version: int = 0
+    canonical_workspace_ref: str | None = None
+    canonical_revision: str | None = None
     frozen: bool = False
     plan_content_hash: str = ""
 
