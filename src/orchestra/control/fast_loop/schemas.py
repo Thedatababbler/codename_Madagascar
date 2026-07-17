@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from orchestra.backends.base import BackendSessionRef
 from orchestra.backends.capabilities import SessionPolicy
@@ -76,6 +76,8 @@ class FailureDiagnosis(BaseModel):
     reason: SubtaskFailureReason
     retryable: bool
     evidence_artifact_ids: list[str] = Field(default_factory=list)
+    failed_node_ids: list[str] = Field(default_factory=list)
+    primary_failed_node_id: str | None = None
     concise_feedback: str
     recommended_edit_types: list[str] = Field(default_factory=list)
     infrastructure_related: bool = False
@@ -109,6 +111,43 @@ class FastLoopBudget(BaseModel):
     max_attempts_per_subtask: int = 4
 
 
+class BackendModelPool(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    backend_id: str
+    allowed_models: list[str] = Field(default_factory=list)
+    fallback_order: list[str] = Field(default_factory=list)
+
+
+class CandidateRejectionReason(StrEnum):
+    UNSUPPORTED_SESSION_POLICY = "unsupported_session_policy"
+    UNSUPPORTED_MODEL_OVERRIDE = "unsupported_model_override"
+    UNSUPPORTED_TOOL_EDIT = "unsupported_tool_edit"
+    INVALID_GRAPH_EDIT = "invalid_graph_edit"
+    BUDGET_EXCEEDED = "budget_exceeded"
+    WORKSPACE_INCOMPATIBLE = "workspace_incompatible"
+    MISSING_GRAPH = "missing_graph"
+    OTHER = "other"
+
+
+class RenameRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    from_path: str
+    to_path: str
+
+
+class WorkspaceChangeSet(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    tracked_patch: str = ""
+    modified_files: list[str] = Field(default_factory=list)
+    added_untracked_files: list[str] = Field(default_factory=list)
+    deleted_files: list[str] = Field(default_factory=list)
+    renamed_files: list[RenameRecord] = Field(default_factory=list)
+    file_manifest_hash: str = ""
+
+
 class LocalCandidate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -119,7 +158,8 @@ class LocalCandidate(BaseModel):
     session_policy: SessionPolicy = SessionPolicy.FRESH
     generation_reason: str
     compatibility_rejected: bool = False
-    rejection_reason: str | None = None
+    rejection_reason: CandidateRejectionReason | None = None
+    rejection_message: str | None = None
 
 
 class CandidateCompatibilityResult(BaseModel):
@@ -127,6 +167,7 @@ class CandidateCompatibilityResult(BaseModel):
 
     compatible: bool
     reason: str | None = None
+    rejection_reason: CandidateRejectionReason | None = None
 
 
 class CandidateStatus(StrEnum):
@@ -136,6 +177,7 @@ class CandidateStatus(StrEnum):
     HARNESS_FAILED = "harness_failed"
     VALID = "valid"
     REJECTED = "rejected"
+    COMMIT_VALIDATION_FAILED = "commit_validation_failed"
     COMMITTED = "committed"
     DISCARDED = "discarded"
 
@@ -159,11 +201,29 @@ class CandidateRecord(BaseModel):
     latency_ms: int | None = None
     failure_reason: SubtaskFailureReason | None = None
     failure_message: str | None = None
+    rejection_reason: CandidateRejectionReason | None = None
+    rejection_message: str | None = None
     session_policy: SessionPolicy = SessionPolicy.FRESH
     patch: str = ""
     changed_files: list[str] = Field(default_factory=list)
     patch_hash: str | None = None
+    change_set: WorkspaceChangeSet | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+def sum_candidate_costs(candidates: list[CandidateRecord]) -> CostRecord:
+    """Sum execution costs of candidates that actually ran a backend."""
+    total = CostRecord()
+    for cand in candidates:
+        if cand.status is CandidateStatus.REJECTED and cand.cost.backend_calls == 0:
+            continue
+        total = CostRecord(
+            prompt_tokens=total.prompt_tokens + cand.cost.prompt_tokens,
+            completion_tokens=total.completion_tokens + cand.cost.completion_tokens,
+            estimated_cost_usd=total.estimated_cost_usd + cand.cost.estimated_cost_usd,
+            backend_calls=total.backend_calls + cand.cost.backend_calls,
+        )
+    return total
 
 
 class FastLoopState(BaseModel):
@@ -176,6 +236,48 @@ class FastLoopState(BaseModel):
     candidates: list[CandidateRecord] = Field(default_factory=list)
     selected_candidate_id: str | None = None
     exhausted: bool = False
-    search_cost: CostRecord = Field(default_factory=CostRecord)
+    # Control-plane-only cost (e.g. future LLM generators). Deterministic gen = 0.
+    control_plane_cost: CostRecord = Field(default_factory=CostRecord)
+    # Cost of the initial subtask attempt that triggered the Fast Loop.
+    initial_execution_cost: CostRecord = Field(default_factory=CostRecord)
     selected_execution_cost: CostRecord = Field(default_factory=CostRecord)
     infra_retries_used: int = 0
+    started_monotonic: float | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_derived_cost_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            data = dict(data)
+            # Derived fields may appear in older checkpoints; never load as storage.
+            data.pop("search_cost", None)
+            data.pop("total_method_cost", None)
+            # Migrate accidental double-count field into control_plane if needed.
+            if "control_plane_cost" not in data and "search_cost" in data:
+                pass
+        return data
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def search_cost(self) -> CostRecord:
+        """Derived: sum of candidate execution costs (not double-counted)."""
+        return sum_candidate_costs(self.candidates)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def total_method_cost(self) -> CostRecord:
+        base = self.initial_execution_cost
+        search = self.search_cost
+        ctrl = self.control_plane_cost
+        return CostRecord(
+            prompt_tokens=base.prompt_tokens + search.prompt_tokens + ctrl.prompt_tokens,
+            completion_tokens=(
+                base.completion_tokens + search.completion_tokens + ctrl.completion_tokens
+            ),
+            estimated_cost_usd=(
+                base.estimated_cost_usd
+                + search.estimated_cost_usd
+                + ctrl.estimated_cost_usd
+            ),
+            backend_calls=base.backend_calls + search.backend_calls + ctrl.backend_calls,
+        )

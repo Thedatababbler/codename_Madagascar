@@ -4,7 +4,9 @@ from orchestra.control.fast_loop.capability import validate_candidate_against_ca
 from orchestra.control.fast_loop.controller import FastLoopController
 from orchestra.control.fast_loop.diagnosis import diagnose_subtask_failure
 from orchestra.control.fast_loop.schemas import (
+    BackendModelPool,
     CandidateRecord,
+    CandidateRejectionReason,
     CandidateStatus,
     FailureDiagnosis,
     FastLoopBudget,
@@ -12,11 +14,14 @@ from orchestra.control.fast_loop.schemas import (
     LocalCandidate,
     LocalEdit,
     SessionPolicyEdit,
+    WorkspaceChangeSet,
 )
 from orchestra.control.fast_loop.selector import DeterministicCandidateSelector
 
 __all__ = [
+    "BackendModelPool",
     "CandidateRecord",
+    "CandidateRejectionReason",
     "CandidateStatus",
     "DeterministicCandidateSelector",
     "FailureDiagnosis",
@@ -26,6 +31,7 @@ __all__ = [
     "LocalCandidate",
     "LocalEdit",
     "SessionPolicyEdit",
+    "WorkspaceChangeSet",
     "diagnose_subtask_failure",
     "validate_candidate_against_capabilities",
 ]
