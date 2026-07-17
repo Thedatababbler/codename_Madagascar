@@ -8,19 +8,11 @@ from orchestra.settings import load_env_file
 
 
 def build_compiler(contracts_dir: str) -> GraphCompiler:
-    backend_ids = {"structured_llm"}
-    try:
-        import smolagents  # noqa: F401
+    # Always accept catalog backend ids at compile time. Optional packages are
+    # only required when the corresponding backend actually executes.
+    from orchestra.backends.catalog import KNOWN_BACKEND_CAPABILITIES
 
-        backend_ids.add("smolagents_code")
-    except ImportError:
-        pass
-    try:
-        import openai_codex  # noqa: F401
-
-        backend_ids.add("codex_sdk")
-    except ImportError:
-        pass
+    backend_ids = set(KNOWN_BACKEND_CAPABILITIES) | {"structured_llm"}
     return GraphCompiler(
         contracts=load_contracts(contracts_dir),
         harness_ids={"public_code_harness", "repository_test_harness"},
