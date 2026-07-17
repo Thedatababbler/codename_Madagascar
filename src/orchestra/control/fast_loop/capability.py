@@ -8,6 +8,7 @@ from orchestra.backends.capabilities import BackendCapabilities, SessionPolicy
 from orchestra.control.fast_loop.schemas import (
     BudgetAdjustmentEdit,
     CandidateCompatibilityResult,
+    CandidateRejectionReason,
     LocalCandidate,
     LocalEdit,
     ModelOverrideEdit,
@@ -27,40 +28,51 @@ def backend_ids_for_candidate(candidate: LocalCandidate) -> set[str]:
     return ids
 
 
+def _reject(
+    reason: str,
+    code: CandidateRejectionReason,
+) -> CandidateCompatibilityResult:
+    return CandidateCompatibilityResult(
+        compatible=False,
+        reason=reason,
+        rejection_reason=code,
+    )
+
+
 def validate_edit_against_capabilities(
     edit: LocalEdit,
     capabilities: BackendCapabilities,
 ) -> CandidateCompatibilityResult:
     if isinstance(edit, SessionPolicyEdit):
         if not capabilities.supports_policy(edit.policy):
-            return CandidateCompatibilityResult(
-                compatible=False,
-                reason=(
+            return _reject(
+                (
                     f"session policy {edit.policy.value!r} not in "
                     f"supported_session_policies="
                     f"{sorted(p.value for p in capabilities.supported_session_policies)}"
                 ),
+                CandidateRejectionReason.UNSUPPORTED_SESSION_POLICY,
             )
         if edit.policy is not SessionPolicy.FRESH and not capabilities.supports_session_state:
-            return CandidateCompatibilityResult(
-                compatible=False,
-                reason="backend does not support session state for resume/fork",
+            return _reject(
+                "backend does not support session state for resume/fork",
+                CandidateRejectionReason.UNSUPPORTED_SESSION_POLICY,
             )
         return CandidateCompatibilityResult(compatible=True)
 
     if isinstance(edit, ToolPolicyEdit):
         if not capabilities.supports_tool_policy_edit:
-            return CandidateCompatibilityResult(
-                compatible=False,
-                reason="backend does not support tool_policy edits",
+            return _reject(
+                "backend does not support tool_policy edits",
+                CandidateRejectionReason.UNSUPPORTED_TOOL_EDIT,
             )
         return CandidateCompatibilityResult(compatible=True)
 
     if isinstance(edit, ModelOverrideEdit):
         if not capabilities.supports_model_override:
-            return CandidateCompatibilityResult(
-                compatible=False,
-                reason="backend does not support model_override edits",
+            return _reject(
+                "backend does not support model_override edits",
+                CandidateRejectionReason.UNSUPPORTED_MODEL_OVERRIDE,
             )
         return CandidateCompatibilityResult(compatible=True)
 
@@ -82,39 +94,38 @@ def validate_candidate_against_capabilities(
         caps_by_backend = dict(capabilities)
         single = None
 
-    # Candidate-level session policy must be supported by every agent backend.
     backend_ids = backend_ids_for_candidate(candidate)
     if not backend_ids and single is None:
-        return CandidateCompatibilityResult(
-            compatible=False,
-            reason="candidate has no agent backends to negotiate capabilities",
+        return _reject(
+            "candidate has no agent backends to negotiate capabilities",
+            CandidateRejectionReason.OTHER,
         )
 
     for backend_id in sorted(backend_ids):
         caps = single or caps_by_backend.get(backend_id)
         if caps is None:
-            return CandidateCompatibilityResult(
-                compatible=False,
-                reason=f"unknown backend capabilities for {backend_id!r}",
+            return _reject(
+                f"unknown backend capabilities for {backend_id!r}",
+                CandidateRejectionReason.OTHER,
             )
         if not caps.supports_policy(candidate.session_policy):
-            return CandidateCompatibilityResult(
-                compatible=False,
-                reason=(
+            return _reject(
+                (
                     f"backend {backend_id!r} does not support session policy "
                     f"{candidate.session_policy.value!r}; no silent downgrade"
                 ),
+                CandidateRejectionReason.UNSUPPORTED_SESSION_POLICY,
             )
         if (
             candidate.session_policy is not SessionPolicy.FRESH
             and not caps.supports_workspace_rebinding
         ):
-            return CandidateCompatibilityResult(
-                compatible=False,
-                reason=(
+            return _reject(
+                (
                     f"backend {backend_id!r} cannot rebind workspace for "
                     f"{candidate.session_policy.value!r}"
                 ),
+                CandidateRejectionReason.WORKSPACE_INCOMPATIBLE,
             )
         for edit in candidate.edits:
             result = validate_edit_against_capabilities(edit, caps)
@@ -122,17 +133,8 @@ def validate_candidate_against_capabilities(
                 return CandidateCompatibilityResult(
                     compatible=False,
                     reason=f"backend {backend_id!r}: {result.reason}",
-                )
-            # Per-node session overlays on the graph.
-            if isinstance(edit, SessionPolicyEdit) and not caps.supports_policy(
-                edit.policy
-            ):
-                return CandidateCompatibilityResult(
-                    compatible=False,
-                    reason=(
-                        f"backend {backend_id!r} rejects session_policy edit "
-                        f"{edit.policy.value!r}"
-                    ),
+                    rejection_reason=result.rejection_reason
+                    or CandidateRejectionReason.OTHER,
                 )
 
     for node in candidate.graph.nodes:
@@ -145,17 +147,17 @@ def validate_candidate_against_capabilities(
         backend_id = str(node.resolved_backend().type)
         caps = single or caps_by_backend.get(backend_id)
         if caps is None:
-            return CandidateCompatibilityResult(
-                compatible=False,
-                reason=f"unknown backend capabilities for {backend_id!r}",
+            return _reject(
+                f"unknown backend capabilities for {backend_id!r}",
+                CandidateRejectionReason.OTHER,
             )
         if not caps.supports_policy(policy):
-            return CandidateCompatibilityResult(
-                compatible=False,
-                reason=(
+            return _reject(
+                (
                     f"node {node.node_id} session_policy={policy.value!r} "
                     f"unsupported by {backend_id!r}; no silent downgrade"
                 ),
+                CandidateRejectionReason.UNSUPPORTED_SESSION_POLICY,
             )
 
     return CandidateCompatibilityResult(compatible=True)
@@ -177,7 +179,9 @@ def filter_compatible_candidates(
                 candidate.model_copy(
                     update={
                         "compatibility_rejected": True,
-                        "rejection_reason": result.reason,
+                        "rejection_reason": result.rejection_reason
+                        or CandidateRejectionReason.OTHER,
+                        "rejection_message": result.reason,
                     }
                 )
             )

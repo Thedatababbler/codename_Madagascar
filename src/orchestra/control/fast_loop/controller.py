@@ -12,14 +12,16 @@ from orchestra.backends.capabilities import BackendCapabilities
 from orchestra.backends.catalog import capabilities_for
 from orchestra.cli.validate_graph import build_compiler
 from orchestra.control.failure import classify_subtask_outcome
-from orchestra.control.fast_loop.budget import can_launch_candidate, spent_from_state
+from orchestra.control.fast_loop.budget import FastLoopBudgetTracker, spent_from_state
 from orchestra.control.fast_loop.candidate_generator import (
     RuleBasedLocalCandidateGenerator,
 )
 from orchestra.control.fast_loop.capability import validate_candidate_against_capabilities
 from orchestra.control.fast_loop.diagnosis import diagnose_subtask_failure
 from orchestra.control.fast_loop.schemas import (
+    BackendModelPool,
     CandidateRecord,
+    CandidateRejectionReason,
     CandidateStatus,
     CostRecord,
     FastLoopBudget,
@@ -39,8 +41,10 @@ from orchestra.control.task_state import (
     SubtaskStatus,
     TaskExecutionState,
 )
+from orchestra.harness.command_runner import run_authoritative_harness_command
 from orchestra.ir.artifacts import ArtifactBundle
 from orchestra.ir.graph import OrchestraGraph, load_graph
+from orchestra.ir.nodes import NodeKind
 from orchestra.runtime.backend import RunContext
 from orchestra.runtime.native_async import NativeAsyncRuntime
 from orchestra.runtime.state import GraphExecutionResult
@@ -66,6 +70,8 @@ class FastLoopController:
         selector: DeterministicCandidateSelector | None = None,
         budget: FastLoopBudget | None = None,
         capabilities: Mapping[str, BackendCapabilities] | None = None,
+        model_pools: Mapping[str, BackendModelPool] | None = None,
+        clock=None,
     ) -> None:
         self.runtime = runtime
         self.artifact_store = artifact_store
@@ -74,10 +80,12 @@ class FastLoopController:
         self.workspace_manager = workspace_manager or GitCandidateWorkspaceManager()
         self.compiler = build_compiler(contracts_dir)
         self.generator = generator or RuleBasedLocalCandidateGenerator(
-            compiler=self.compiler
+            compiler=self.compiler,
+            model_pools=model_pools,
         )
         self.selector = selector or DeterministicCandidateSelector()
         self.budget = budget or FastLoopBudget()
+        self.budget_tracker = FastLoopBudgetTracker(self.budget, clock=clock)
         self.capabilities = dict(capabilities or {})
 
     def _caps_for_graph(self, graph: OrchestraGraph) -> dict[str, BackendCapabilities]:
@@ -91,6 +99,42 @@ class FastLoopController:
                         caps[backend_id] = known
         return caps
 
+    def _harness_command(self, graph: OrchestraGraph) -> tuple[list[str], float]:
+        for node in graph.nodes:
+            if node.node_kind is NodeKind.HARNESS:
+                command = list(getattr(node, "command", None) or ["python", "-m", "pytest", "-q"])
+                timeout = float(getattr(node, "timeout_seconds", None) or 60.0)
+                return command, timeout
+        return ["python", "-m", "pytest", "-q"], 60.0
+
+    def _record_from_local(
+        self,
+        cand: LocalCandidate,
+        *,
+        attempt_id: int,
+    ) -> CandidateRecord:
+        status = (
+            CandidateStatus.REJECTED
+            if cand.compatibility_rejected
+            else CandidateStatus.PENDING
+        )
+        return CandidateRecord(
+            candidate_id=cand.candidate_id,
+            attempt_id=attempt_id,
+            graph_hash=cand.graph.content_hash,
+            parent_graph_hash=cand.parent_graph_hash,
+            edits=list(cand.edits),
+            status=status,
+            session_policy=cand.session_policy,
+            rejection_reason=cand.rejection_reason,
+            rejection_message=cand.rejection_message,
+            failure_message=cand.rejection_message,
+            metadata={
+                "generation_reason": cand.generation_reason,
+                "graph": cand.graph.model_dump(mode="json"),
+            },
+        )
+
     async def run(
         self,
         *,
@@ -100,15 +144,21 @@ class FastLoopController:
         initial_artifacts: ArtifactBundle,
         source_repo: str | None = None,
         graph: OrchestraGraph | None = None,
+        graph_result: GraphExecutionResult | None = None,
+        initial_execution_cost: CostRecord | None = None,
+        base_workspace: WorkspaceRef | None = None,
     ) -> TaskExecutionState:
         sub = state.subtasks[subtask_id]
         if sub.status is SubtaskStatus.COMMITTED:
             return state
 
         base_graph = graph or load_graph(sub.spec.local_graph_template)
-        diagnosis = diagnose_subtask_failure(subtask_state=sub, graph=base_graph)
+        diagnosis = diagnose_subtask_failure(
+            subtask_state=sub,
+            graph=base_graph,
+            graph_result=graph_result,
+        )
 
-        # Resume existing fast-loop state when present.
         fl_state = state.fast_loop_states.get(subtask_id)
         if fl_state is None:
             fl_state = FastLoopState(
@@ -116,10 +166,10 @@ class FastLoopController:
                 base_attempt_id=len(sub.attempts),
                 base_graph_hash=base_graph.content_hash,
                 diagnosis=diagnosis,
+                initial_execution_cost=initial_execution_cost or CostRecord(),
             )
             state.fast_loop_states[subtask_id] = fl_state
         else:
-            # Crash recovery: running → pending for safe restart.
             for cand in fl_state.candidates:
                 if cand.status is CandidateStatus.RUNNING:
                     cand.status = CandidateStatus.PENDING
@@ -136,6 +186,8 @@ class FastLoopController:
                 if winner and winner.status is CandidateStatus.COMMITTED:
                     return state
 
+        self.budget_tracker.mark_started(fl_state)
+
         if diagnosis.infrastructure_related:
             await self._infra_retry_once(
                 state=state,
@@ -145,17 +197,28 @@ class FastLoopController:
                 context=context,
                 initial_artifacts=initial_artifacts,
                 source_repo=source_repo,
+                base_workspace=base_workspace,
             )
+            state.state_version += 1
             await self.task_checkpoint_store.save(state)
             return state
 
         if not diagnosis.retryable:
             fl_state.exhausted = True
             sub.status = SubtaskStatus.FAILED
+            state.state_version += 1
             await self.task_checkpoint_store.save(state)
             return state
 
         if not fl_state.candidates:
+            ok, reason, code = self.budget_tracker.can_generate_candidate(fl_state)
+            if not ok:
+                fl_state.exhausted = True
+                sub.status = SubtaskStatus.FAILED
+                sub.failure_message = reason
+                state.state_version += 1
+                await self.task_checkpoint_store.save(state)
+                return state
             caps = self._caps_for_graph(base_graph)
             generated = self.generator.generate(
                 graph=base_graph,
@@ -165,31 +228,23 @@ class FastLoopController:
             )
             for cand in generated:
                 fl_state.candidates.append(
-                    CandidateRecord(
-                        candidate_id=cand.candidate_id,
-                        attempt_id=fl_state.base_attempt_id + 1,
-                        graph_hash=cand.graph.content_hash,
-                        parent_graph_hash=cand.parent_graph_hash,
-                        edits=list(cand.edits),
-                        status=CandidateStatus.PENDING,
-                        session_policy=cand.session_policy,
-                        metadata={
-                            "generation_reason": cand.generation_reason,
-                            "graph": cand.graph.model_dump(mode="json"),
-                        },
+                    self._record_from_local(
+                        cand, attempt_id=fl_state.base_attempt_id + 1
                     )
                 )
+            state.state_version += 1
             await self.task_checkpoint_store.save(state)
 
         if not fl_state.candidates:
             fl_state.exhausted = True
             sub.status = SubtaskStatus.FAILED
+            state.state_version += 1
             await self.task_checkpoint_store.save(state)
             return state
 
-        base_ws: WorkspaceRef | None = None
+        base_ws = base_workspace
         repo = source_repo
-        if repo:
+        if base_ws is None and repo:
             base_ws = await self.workspace_manager.prepare_base_snapshot(
                 source_repo=repo,
                 run_dir=str(context.run_dir),
@@ -199,22 +254,31 @@ class FastLoopController:
             sub.workspace_ref = base_ws.path
 
         for record in fl_state.candidates:
-            if record.status not in {
-                CandidateStatus.PENDING,
-            }:
+            if record.status is not CandidateStatus.PENDING:
                 continue
-            ok, reason = can_launch_candidate(self.budget, fl_state)
+
+            ok, reason, code = self.budget_tracker.can_start_candidate(fl_state)
             if not ok:
                 fl_state.exhausted = True
                 record.status = CandidateStatus.REJECTED
+                record.rejection_reason = code or CandidateRejectionReason.BUDGET_EXCEEDED
+                record.rejection_message = reason
                 record.failure_message = reason
+                # Reject remaining pending without launching.
+                for other in fl_state.candidates:
+                    if other.status is CandidateStatus.PENDING and other is not record:
+                        other.status = CandidateStatus.REJECTED
+                        other.rejection_reason = CandidateRejectionReason.BUDGET_EXCEEDED
+                        other.rejection_message = reason
+                state.state_version += 1
                 await self.task_checkpoint_store.save(state)
                 break
 
             graph_payload = record.metadata.get("graph")
             if not graph_payload:
                 record.status = CandidateStatus.REJECTED
-                record.failure_message = "missing candidate graph payload"
+                record.rejection_reason = CandidateRejectionReason.MISSING_GRAPH
+                record.rejection_message = "missing candidate graph payload"
                 continue
             candidate_graph = OrchestraGraph.model_validate(graph_payload)
             local_candidate = LocalCandidate(
@@ -223,16 +287,18 @@ class FastLoopController:
                 edits=list(record.edits),
                 graph=candidate_graph,
                 session_policy=record.session_policy,
-                generation_reason=str(
-                    record.metadata.get("generation_reason") or ""
-                ),
+                generation_reason=str(record.metadata.get("generation_reason") or ""),
             )
             caps = self._caps_for_graph(candidate_graph)
             compat = validate_candidate_against_capabilities(local_candidate, caps)
             if not compat.compatible:
                 record.status = CandidateStatus.REJECTED
+                record.rejection_reason = (
+                    compat.rejection_reason or CandidateRejectionReason.OTHER
+                )
+                record.rejection_message = compat.reason
                 record.failure_message = compat.reason
-                # Compatibility rejects do not count as model failures.
+                state.state_version += 1
                 await self.task_checkpoint_store.save(state)
                 continue
 
@@ -245,6 +311,7 @@ class FastLoopController:
                 initial_artifacts=initial_artifacts,
                 base_ws=base_ws,
             )
+            state.state_version += 1
             await self.task_checkpoint_store.save(state)
 
         winner = self.selector.select(fl_state.candidates, self.budget)
@@ -255,12 +322,30 @@ class FastLoopController:
             sub.failure_message = (
                 diagnosis.concise_feedback or "fast loop exhausted without valid winner"
             )
+            state.state_version += 1
             await self.task_checkpoint_store.save(state)
             return state
 
+        ok, reason, code = self.budget_tracker.can_start_candidate(
+            fl_state, reserved_backend_calls=0
+        )
+        # Wall-time still checked before commit.
+        if fl_state.started_monotonic is not None:
+            ok2, reason2, code2 = self.budget_tracker.can_start_candidate(fl_state)
+            if not ok2 and "wall_time" in (reason2 or ""):
+                fl_state.exhausted = True
+                winner.status = CandidateStatus.REJECTED
+                winner.rejection_reason = code2
+                winner.rejection_message = reason2
+                sub.status = SubtaskStatus.FAILED
+                sub.failure_message = reason2
+                state.state_version += 1
+                await self.task_checkpoint_store.save(state)
+                return state
+
         if base_ws is None:
-            # Non-repo tasks: mark committed from winner artifacts only.
             await self._commit_non_repo_winner(state, fl_state, winner, subtask_id)
+            state.state_version += 1
             await self.task_checkpoint_store.save(state)
             return state
 
@@ -270,7 +355,9 @@ class FastLoopController:
             winner=winner,
             base_ws=base_ws,
             subtask_id=subtask_id,
+            base_graph=base_graph,
         )
+        state.state_version += 1
         await self.task_checkpoint_store.save(state)
         return state
 
@@ -284,40 +371,46 @@ class FastLoopController:
         context: RunContext,
         initial_artifacts: ArtifactBundle,
         source_repo: str | None,
+        base_workspace: WorkspaceRef | None,
     ) -> None:
-        """Allow one infrastructure retry without graph edits."""
         sub = state.subtasks[subtask_id]
         if fl_state.infra_retries_used >= 1:
             fl_state.exhausted = True
             sub.status = SubtaskStatus.FAILED
             return
+        ok, reason, code = self.budget_tracker.can_start_candidate(fl_state)
+        if not ok:
+            fl_state.exhausted = True
+            sub.status = SubtaskStatus.FAILED
+            sub.failure_message = reason
+            return
         fl_state.infra_retries_used += 1
-        fl_state.search_cost = CostRecord(
-            backend_calls=fl_state.search_cost.backend_calls + 1,
-            estimated_cost_usd=fl_state.search_cost.estimated_cost_usd,
+        fl_state.control_plane_cost = CostRecord(
+            backend_calls=fl_state.control_plane_cost.backend_calls
         )
-        # Record incident but do not generate prompt edits.
-        fl_state.candidates.append(
-            CandidateRecord(
-                candidate_id="infra_retry_0",
-                attempt_id=fl_state.base_attempt_id + 1,
-                graph_hash=base_graph.content_hash,
-                parent_graph_hash=base_graph.content_hash,
-                edits=[],
-                status=CandidateStatus.REJECTED,
-                failure_reason=SubtaskFailureReason.INFRA,
-                failure_message="infrastructure retry slot reserved (no graph edit)",
-                stability_incidents=[
-                    StabilityIncident(
-                        kind="infrastructure",
-                        message=sub.failure_message or "infra failure",
-                    )
-                ],
-                metadata={"infrastructure_related": True, "no_graph_edit": True},
-            )
+        infra_record = CandidateRecord(
+            candidate_id="infra_retry_0",
+            attempt_id=fl_state.base_attempt_id + 1,
+            graph_hash=base_graph.content_hash,
+            parent_graph_hash=base_graph.content_hash,
+            edits=[],
+            status=CandidateStatus.RUNNING,
+            failure_reason=SubtaskFailureReason.INFRA,
+            stability_incidents=[
+                StabilityIncident(
+                    kind="infrastructure",
+                    message=sub.failure_message or "infra failure",
+                )
+            ],
+            metadata={"infrastructure_related": True, "no_graph_edit": True},
         )
-        # Re-run base graph once in base/canonical workspace if available.
-        workspace_ref = sub.workspace_ref or context.workspace_ref
+        fl_state.candidates.append(infra_record)
+
+        workspace_ref = (
+            (base_workspace.path if base_workspace else None)
+            or sub.workspace_ref
+            or context.workspace_ref
+        )
         if source_repo and not workspace_ref:
             base = await self.workspace_manager.prepare_base_snapshot(
                 source_repo=source_repo,
@@ -346,11 +439,15 @@ class FastLoopController:
                 context=run_context,
             )
         except Exception as exc:  # noqa: BLE001
+            infra_record.status = CandidateStatus.BACKEND_FAILED
+            infra_record.cost = CostRecord(backend_calls=1)
+            infra_record.failure_message = f"{type(exc).__name__}: {exc}"
             sub.status = SubtaskStatus.FAILED
             sub.failure_reason = SubtaskFailureReason.INFRA
-            sub.failure_message = f"{type(exc).__name__}: {exc}"
+            sub.failure_message = infra_record.failure_message
             fl_state.exhausted = True
             return
+        infra_record.cost = _cost_from_result(result)
         status, reason, message = await classify_subtask_outcome(
             result=result,
             artifact_store=self.artifact_store,
@@ -366,11 +463,12 @@ class FastLoopController:
                 s.status is SubtaskStatus.COMMITTED for s in state.subtasks.values()
             )
             fl_state.selected_candidate_id = "infra_retry_0"
-            for cand in fl_state.candidates:
-                if cand.candidate_id == "infra_retry_0":
-                    cand.status = CandidateStatus.COMMITTED
+            fl_state.selected_execution_cost = infra_record.cost
+            infra_record.status = CandidateStatus.COMMITTED
             state.mark_ready_from_dependencies()
         else:
+            infra_record.status = CandidateStatus.BACKEND_FAILED
+            infra_record.failure_message = message
             sub.status = status
             sub.failure_reason = reason
             sub.failure_message = message
@@ -401,8 +499,6 @@ class FastLoopController:
             )
             record.workspace_ref = cand_ws
 
-        # Isolate graph checkpoints per candidate so edited graph hashes do not
-        # collide with the base attempt checkpoint (CheckpointDriftError).
         run_context = RunContext(
             run_id=f"{context.run_id}:{record.candidate_id}",
             task_id=f"{context.task_id}__candidate__{record.candidate_id}",
@@ -438,20 +534,12 @@ class FastLoopController:
             attempt_id=record.attempt_id,
             candidate_id=record.candidate_id,
         )
-        usage_cost = _cost_from_result(result)
-        record.cost = usage_cost
-        fl_state.search_cost = CostRecord(
-            prompt_tokens=fl_state.search_cost.prompt_tokens + usage_cost.prompt_tokens,
-            completion_tokens=(
-                fl_state.search_cost.completion_tokens + usage_cost.completion_tokens
-            ),
-            estimated_cost_usd=(
-                fl_state.search_cost.estimated_cost_usd + usage_cost.estimated_cost_usd
-            ),
-            backend_calls=fl_state.search_cost.backend_calls + usage_cost.backend_calls,
-        )
+        # Single source of truth: CandidateRecord.cost only (search_cost is derived).
+        record.cost = _cost_from_result(result)
 
         if cand_ws is not None:
+            change_set = await self.workspace_manager.collect_changeset(cand_ws)
+            record.change_set = change_set
             patch, changed, digest = await self.workspace_manager.collect_patch(cand_ws)
             record.patch = patch
             record.changed_files = changed
@@ -480,13 +568,9 @@ class FastLoopController:
             record.failure_reason = reason
             record.failure_message = message
 
-        # Persist telemetry-friendly summary under candidate dir.
         if cand_ws is not None:
             summary_path = Path(cand_ws.path).parent / "candidate_result.json"
-            summary_path.write_text(
-                record.model_dump_json(indent=2),
-                encoding="utf-8",
-            )
+            summary_path.write_text(record.model_dump_json(indent=2), encoding="utf-8")
 
     async def _commit_winner(
         self,
@@ -496,20 +580,72 @@ class FastLoopController:
         winner: CandidateRecord,
         base_ws: WorkspaceRef,
         subtask_id: str,
+        base_graph: OrchestraGraph,
     ) -> None:
         if winner.status is CandidateStatus.COMMITTED:
-            return  # idempotent
+            return
         if winner.workspace_ref is None:
             raise CandidateWorkspaceError("winner missing workspace_ref")
-        # Re-validate winner harness result already recorded as VALID.
         if winner.status is not CandidateStatus.VALID:
             raise CandidateWorkspaceError("refusing to commit non-valid winner")
 
-        committed = await self.workspace_manager.commit_winner(
-            base=base_ws,
-            winner=winner.workspace_ref,
-            expected_base_revision=base_ws.base_revision,
+        expected_rev = base_ws.base_revision
+        change_set = winner.change_set or await self.workspace_manager.collect_changeset(
+            winner.workspace_ref
         )
+
+        # PREPARE: apply without finalize, then re-run authoritative harness.
+        try:
+            await self.workspace_manager.apply_changeset(
+                base=base_ws,
+                winner=winner.workspace_ref,
+                change_set=change_set,
+                expected_base_revision=expected_rev,
+            )
+        except CandidateWorkspaceError as exc:
+            winner.status = CandidateStatus.COMMIT_VALIDATION_FAILED
+            winner.failure_message = str(exc)
+            sub = state.subtasks[subtask_id]
+            sub.status = SubtaskStatus.FAILED
+            sub.failure_reason = SubtaskFailureReason.INFRA
+            sub.failure_message = str(exc)
+            fl_state.exhausted = True
+            return
+
+        command, timeout = self._harness_command(base_graph)
+        passed, code, stdout, stderr = await run_authoritative_harness_command(
+            cwd=base_ws.path,
+            command=command,
+            timeout_seconds=timeout,
+        )
+        if not passed:
+            if expected_rev:
+                await self.workspace_manager.rollback_to_revision(base_ws, expected_rev)
+            winner.status = CandidateStatus.COMMIT_VALIDATION_FAILED
+            winner.failure_message = (
+                f"post-apply canonical harness failed exit={code}: "
+                f"{(stderr or stdout)[-500:]}"
+            )
+            sub = state.subtasks[subtask_id]
+            sub.status = SubtaskStatus.FAILED
+            sub.failure_reason = SubtaskFailureReason.HARNESS
+            sub.failure_message = winner.failure_message
+            fl_state.exhausted = True
+            return
+
+        # COMMIT: finalize git commit on canonical/base.
+        new_rev = await self.workspace_manager.finalize_git_commit(
+            base_ws, f"commit winner from {winner.candidate_id}"
+        )
+        committed = WorkspaceRef(
+            workspace_id=base_ws.workspace_id,
+            path=base_ws.path,
+            kind=base_ws.kind,
+            task_id=base_ws.task_id,
+            subtask_id=base_ws.subtask_id,
+            base_revision=new_rev,
+        )
+
         sub = state.subtasks[subtask_id]
         sub.status = SubtaskStatus.COMMITTED
         sub.failure_reason = None
@@ -534,7 +670,10 @@ class FastLoopController:
         for cand in fl_state.candidates:
             if cand.candidate_id == winner.candidate_id:
                 continue
-            if cand.status is not CandidateStatus.REJECTED:
+            if cand.status not in {
+                CandidateStatus.REJECTED,
+                CandidateStatus.COMMIT_VALIDATION_FAILED,
+            }:
                 cand.status = CandidateStatus.DISCARDED
             if cand.workspace_ref is not None:
                 await self.workspace_manager.discard_candidate(cand.workspace_ref)
@@ -548,13 +687,17 @@ class FastLoopController:
                 metadata={
                     "parent_graph_hash": winner.parent_graph_hash,
                     "graph_hash": winner.graph_hash,
-                    "search_cost": spent_from_state(fl_state).model_dump(mode="json"),
+                    "candidate_search_cost": fl_state.search_cost.model_dump(mode="json"),
                     "selected_execution_cost": winner.cost.model_dump(mode="json"),
+                    "initial_execution_cost": fl_state.initial_execution_cost.model_dump(
+                        mode="json"
+                    ),
+                    "total_method_cost": fl_state.total_method_cost.model_dump(mode="json"),
                     "edit_types": [e.type for e in winner.edits],
+                    "spent_check": spent_from_state(fl_state).model_dump(mode="json"),
                 },
             )
         )
-        # Task frozen only when all subtasks committed.
         state.frozen = all(
             s.status is SubtaskStatus.COMMITTED for s in state.subtasks.values()
         )
@@ -588,7 +731,10 @@ class FastLoopController:
         fl_state.selected_execution_cost = winner.cost
         winner.status = CandidateStatus.COMMITTED
         for cand in fl_state.candidates:
-            if cand.candidate_id != winner.candidate_id:
+            if (
+                cand.candidate_id != winner.candidate_id
+                and cand.status is not CandidateStatus.REJECTED
+            ):
                 cand.status = CandidateStatus.DISCARDED
         state.frozen = all(
             s.status is SubtaskStatus.COMMITTED for s in state.subtasks.values()
@@ -636,7 +782,6 @@ def _cost_from_result(result: GraphExecutionResult) -> CostRecord:
             calls += 1
     if calls == 0:
         calls = 1
-    # Rough default pricing placeholder for telemetry only.
     estimated = (prompt * 0.15 + completion * 0.60) / 1_000_000
     return CostRecord(
         prompt_tokens=prompt,

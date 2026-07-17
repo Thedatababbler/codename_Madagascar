@@ -9,7 +9,10 @@ from orchestra.backends.capabilities import BackendCapabilities, SessionPolicy
 from orchestra.control.fast_loop.capability import filter_compatible_candidates
 from orchestra.control.fast_loop.edit_engine import LocalEditError, apply_local_edits
 from orchestra.control.fast_loop.schemas import (
+    AddVerifierNodeEdit,
+    BackendModelPool,
     BudgetAdjustmentEdit,
+    CandidateRejectionReason,
     FailureDiagnosis,
     FastLoopBudget,
     LocalCandidate,
@@ -34,26 +37,43 @@ class LocalCandidateGenerator(Protocol):
     ) -> list[LocalCandidate]: ...
 
 
-def _primary_agent_id(graph: OrchestraGraph) -> str | None:
-    for node in graph.nodes:
-        if node.node_kind is NodeKind.AGENT:
+def _target_agent_id(graph: OrchestraGraph, diagnosis: FailureDiagnosis) -> str | None:
+    """Edit the primary failed agent node; never silently pick the first agent."""
+    if diagnosis.primary_failed_node_id:
+        node = next(
+            (n for n in graph.nodes if n.node_id == diagnosis.primary_failed_node_id),
+            None,
+        )
+        if node is not None and node.node_kind is NodeKind.AGENT:
+            return node.node_id
+        # Harness primary: walk failed_node_ids for an agent.
+    for node_id in diagnosis.failed_node_ids:
+        node = next((n for n in graph.nodes if n.node_id == node_id), None)
+        if node is not None and node.node_kind is NodeKind.AGENT:
             return node.node_id
     return None
 
 
-def _alternate_model(graph: OrchestraGraph, node_id: str) -> str | None:
+def _alternate_from_pool(
+    graph: OrchestraGraph,
+    node_id: str,
+    pools: Mapping[str, BackendModelPool],
+) -> str | None:
     node = next(n for n in graph.nodes if n.node_id == node_id)
     assert isinstance(node, AgentNodeSpec)
-    if node.model is None:
+    backend_id = str(node.resolved_backend().type)
+    pool = pools.get(backend_id)
+    if pool is None or not pool.allowed_models:
         return None
-    name = node.model.name
-    # Deterministic tiny alternate mapping for local experiments.
-    aliases = {
-        "gpt-4o-mini": "gpt-4o",
-        "gpt-4o": "gpt-4o-mini",
-        "gpt-5.4": "gpt-4o-mini",
-    }
-    return aliases.get(name)
+    current = node.model.name if node.model else None
+    order = list(pool.fallback_order) or list(pool.allowed_models)
+    for name in order:
+        if name != current and name in pool.allowed_models:
+            return name
+    for name in pool.allowed_models:
+        if name != current:
+            return name
+    return None
 
 
 class RuleBasedLocalCandidateGenerator:
@@ -63,11 +83,11 @@ class RuleBasedLocalCandidateGenerator:
         self,
         *,
         compiler: GraphCompiler | None = None,
-        alternate_models: Mapping[str, str] | None = None,
+        model_pools: Mapping[str, BackendModelPool] | None = None,
         allow_verifier: bool = False,
     ) -> None:
         self.compiler = compiler
-        self.alternate_models = dict(alternate_models or {})
+        self.model_pools = dict(model_pools or {})
         self.allow_verifier = allow_verifier
 
     def generate(
@@ -78,20 +98,20 @@ class RuleBasedLocalCandidateGenerator:
         budget: FastLoopBudget,
         capabilities: Mapping[str, BackendCapabilities],
     ) -> list[LocalCandidate]:
+        """Return accepted + capability-rejected candidates (all audited)."""
         if diagnosis.infrastructure_related or not diagnosis.retryable:
             return []
 
-        agent_id = _primary_agent_id(graph)
+        agent_id = _target_agent_id(graph, diagnosis)
         if agent_id is None:
+            # No node-specific edits without a clear failed agent.
             return []
 
         parent_hash = graph.content_hash
         k = max(0, min(budget.max_candidates, 3))
         drafts: list[tuple[str, str, list[LocalEdit], SessionPolicy]] = []
-
         recommended = set(diagnosis.recommended_edit_types)
 
-        # Candidate 0: feedback retry (always first when prompt_feedback recommended).
         if "prompt_feedback" in recommended or "fresh_retry" in recommended:
             drafts.append(
                 (
@@ -111,7 +131,6 @@ class RuleBasedLocalCandidateGenerator:
                 )
             )
 
-        # Candidate 1: bounded budget adjustment.
         if "budget_adjustment" in recommended and len(drafts) < k:
             drafts.append(
                 (
@@ -136,16 +155,13 @@ class RuleBasedLocalCandidateGenerator:
                 )
             )
 
-        # Candidate 2: alternate model (preferred) or optional verifier.
         if len(drafts) < k and "model_override" in recommended:
-            alt = self.alternate_models.get(agent_id) or _alternate_model(
-                graph, agent_id
-            )
+            alt = _alternate_from_pool(graph, agent_id, self.model_pools)
             if alt:
                 drafts.append(
                     (
                         "cand_model",
-                        f"alternate model override to {alt}",
+                        f"alternate model override to {alt} from configured pool",
                         [
                             ModelOverrideEdit(node_id=agent_id, model_name=alt),
                             PromptFeedbackEdit(
@@ -174,13 +190,11 @@ class RuleBasedLocalCandidateGenerator:
                             node_id=agent_id,
                             feedback=diagnosis.concise_feedback,
                         ),
-                        # Applied via edit engine; may raise and be skipped.
                     ],
                     SessionPolicy.FRESH,
                 )
             )
 
-        # Ensure at least a fresh feedback candidate when retryable but empty drafts.
         if not drafts and diagnosis.retryable:
             drafts.append(
                 (
@@ -200,13 +214,11 @@ class RuleBasedLocalCandidateGenerator:
                 )
             )
 
-        candidates: list[LocalCandidate] = []
+        built: list[LocalCandidate] = []
         for candidate_id, reason, edits, policy in drafts[:k]:
             try:
                 final_edits = list(edits)
                 if candidate_id == "cand_verifier":
-                    from orchestra.control.fast_loop.schemas import AddVerifierNodeEdit
-
                     final_edits.append(
                         AddVerifierNodeEdit(
                             target_node_id=agent_id,
@@ -220,9 +232,22 @@ class RuleBasedLocalCandidateGenerator:
                     max_timeout_seconds=float(budget.max_wall_time_seconds),
                     max_steps_cap=64,
                 )
-            except LocalEditError:
+            except LocalEditError as exc:
+                built.append(
+                    LocalCandidate(
+                        candidate_id=candidate_id,
+                        parent_graph_hash=parent_hash,
+                        edits=list(edits),
+                        graph=graph.clone(),
+                        session_policy=policy,
+                        generation_reason=reason,
+                        compatibility_rejected=True,
+                        rejection_reason=CandidateRejectionReason.INVALID_GRAPH_EDIT,
+                        rejection_message=str(exc),
+                    )
+                )
                 continue
-            candidates.append(
+            built.append(
                 LocalCandidate(
                     candidate_id=candidate_id,
                     parent_graph_hash=parent_hash,
@@ -233,5 +258,6 @@ class RuleBasedLocalCandidateGenerator:
                 )
             )
 
-        accepted, _rejected = filter_compatible_candidates(candidates, capabilities)
-        return accepted
+        accepted, rejected = filter_compatible_candidates(built, capabilities)
+        # Preserve generation order: accepted first then rejected for audit.
+        return [*accepted, *rejected]
