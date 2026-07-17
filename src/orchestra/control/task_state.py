@@ -9,6 +9,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from orchestra.backends.base import ArtifactRef, BackendSessionRef
+from orchestra.communication.ledger import DeliveryRecord
 from orchestra.communication.plan import CommunicationPlan
 from orchestra.decomposition.schemas import SubtaskSpec, TaskPlan
 
@@ -180,6 +181,10 @@ class SubtaskState(BaseModel):
     dependency_revision_ids: list[str] = Field(default_factory=list)
     applied_dependency_artifact_ids: list[str] = Field(default_factory=list)
     last_commit_record_id: str | None = None
+    # M5: coordinator-owned lease (Slow Loop may not edit LEASED subtasks).
+    lease_status: str = "unleased"  # SubtaskLeaseStatus value
+    lease_plan_version: int | None = None
+    lease_acquired_state_version: int | None = None
 
     @field_validator("backend_sessions", mode="before")
     @classmethod
@@ -207,20 +212,49 @@ class TaskExecutionState(BaseModel):
     workspace_commit_records: list[WorkspaceCommitRecord] = Field(default_factory=list)
     frozen: bool = False
     plan_content_hash: str = ""
+    # M5 Slow Loop / communication.
+    delivery_ledger: list[DeliveryRecord] = Field(default_factory=list)
+    active_plan_revision_id: str | None = None
+    plan_revision_history: list[Any] = Field(default_factory=list)
+    slow_loop_state: Any | None = None
+    scheduling_policy: Any | None = None
+    committed_subtask_count: int = 0
 
     @model_validator(mode="after")
     def _coerce_fast_loop_states(self) -> TaskExecutionState:
-        if not self.fast_loop_states:
-            return self
-        from orchestra.control.fast_loop.schemas import FastLoopState
+        if self.fast_loop_states:
+            from orchestra.control.fast_loop.schemas import FastLoopState
 
-        coerced: dict[str, Any] = {}
-        for key, value in self.fast_loop_states.items():
-            if isinstance(value, FastLoopState):
-                coerced[key] = value
-            else:
-                coerced[key] = FastLoopState.model_validate(value)
-        self.fast_loop_states = coerced
+            coerced: dict[str, Any] = {}
+            for key, value in self.fast_loop_states.items():
+                if isinstance(value, FastLoopState):
+                    coerced[key] = value
+                else:
+                    coerced[key] = FastLoopState.model_validate(value)
+            self.fast_loop_states = coerced
+        if self.plan_revision_history:
+            from orchestra.control.slow_loop.schemas import GlobalPlanRevision
+
+            self.plan_revision_history = [
+                v
+                if isinstance(v, GlobalPlanRevision)
+                else GlobalPlanRevision.model_validate(v)
+                for v in self.plan_revision_history
+            ]
+        if self.slow_loop_state is not None and not hasattr(
+            self.slow_loop_state, "updates_applied"
+        ):
+            from orchestra.control.slow_loop.schemas import SlowLoopState
+
+            self.slow_loop_state = SlowLoopState.model_validate(self.slow_loop_state)
+        if self.scheduling_policy is not None and not hasattr(
+            self.scheduling_policy, "max_concurrent_subtasks"
+        ):
+            from orchestra.control.slow_loop.schemas import TaskSchedulingPolicy
+
+            self.scheduling_policy = TaskSchedulingPolicy.model_validate(
+                self.scheduling_policy
+            )
         return self
 
     @classmethod
