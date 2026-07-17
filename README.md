@@ -158,9 +158,20 @@ conflicts fail closed). Concurrent subtasks serialize canonical commits under
 `_state_lock` with `WorkspaceCommitRecord` idempotency.
 
 CodeAgent and Codex both use `SessionPolicy.FRESH` in M4-A; RESUME/FORK stay
-capability-gated. M5 slow update and M6 Pareto are **not** implemented.
+capability-gated. M6 Pareto is **not** implemented.
 
 Design: `docs/m4_fast_local_adaptation.md`.
+
+## Slow global adaptation (Milestone 5)
+
+After a committed wave, AdaMAS may run a **rule-based Slow Loop** that updates
+only **future unleased** subtasks: CommunicationPlan delivery/context budgets,
+scheduling policy, and pending graph/backend assignments (allowlisted). Workers
+never touch canonical; Slow Loop never rewrites the past. Communication delivery
+projects committed artifacts with deterministic truncation and an idempotent
+ledger.
+
+Design: `docs/m5_slow_global_adaptation.md`.
 
 ```bash
 # CI / local deterministic coverage (no API keys)
@@ -173,6 +184,10 @@ uv run pytest -q tests/integration
 uv run --extra codex python -m orchestra.cli.run_m4_smoke \
   --backend codex_sdk \
   --config configs/experiments/m4_codex_fast_loop_smoke.yaml
+
+# Deterministic M5 smoke (no API keys)
+uv run python -m orchestra.cli.run_m5_smoke \
+  --config configs/experiments/m5_slow_loop_smoke.yaml
 ```
 
 ## Stage 1 experiments

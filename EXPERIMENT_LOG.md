@@ -10,7 +10,7 @@
 | Status | `canonical` (use for comparisons) / `smoke` / `mock` / `superseded` / `incomplete` |
 | Paths | Repo-relative from AdaMAS root |
 
-**Last updated:** 2026-07-17 (UTC) — M4 final concurrency / artifact precedence close
+**Last updated:** 2026-07-17 (UTC) — M5 Slow Global Adaptation (rule-based)
 
 ---
 
@@ -53,6 +53,29 @@ Copy the template below after each run (evaluate + summarize when applicable):
 ---
 
 ## Entries (newest first)
+
+### EXP-20260717-03 — M5 Slow Global Adaptation (engineering gate)
+- **Status:** smoke (CI gate; no new real-API accuracy claim)
+- **Date:** 2026-07-17 (UTC)
+- **Branch / commit:** `agnostic` (M5)
+- **Benchmark / phase:** deterministic Slow Loop + communication delivery
+- **Baseline / graph:** future-only plan revision; FRESH backends unchanged
+- **Config:** `SlowLoopConfig(enabled=…)` default off for M4 paths; smoke enables
+  context-pressure update; `configs/experiments/m5_slow_loop_smoke.yaml`
+- **Command:**
+  ```bash
+  uv sync --extra smolagents --extra codex
+  uv run ruff check .
+  uv run pytest -q tests/unit
+  uv run pytest -q tests/integration
+  uv run python -m orchestra.cli.run_m5_smoke
+  ```
+- **Run dir:** `outputs/m5_slow_loop_smoke` (smoke)
+- **Results:** CommunicationPlan executed with projection/budget/ledger; Slow Loop
+  updates only pending/unleased subtasks; leased/committed immutable; invalid
+  revisions fail closed; M4 suite green with Slow Loop default-disabled.
+- **Notes / interpretation:** M6 Pareto / re-decomposition / committed rollback
+  not implemented. Docs: `docs/m5_slow_global_adaptation.md`.
 
 ### EXP-20260717-02 — M4 final concurrency + artifact precedence
 - **Status:** smoke (CI gate; no new real-API accuracy claim)
