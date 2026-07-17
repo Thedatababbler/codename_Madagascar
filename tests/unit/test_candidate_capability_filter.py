@@ -80,4 +80,5 @@ def test_filter_keeps_rejection_reason():
     )
     assert accepted == []
     assert rejected[0].compatibility_rejected is True
-    assert rejected[0].rejection_reason
+    assert rejected[0].rejection_reason is not None
+    assert rejected[0].rejection_message
