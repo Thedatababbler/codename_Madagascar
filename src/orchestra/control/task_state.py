@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from orchestra.backends.base import ArtifactRef, BackendSessionRef
 from orchestra.communication.plan import CommunicationPlan
@@ -155,9 +155,26 @@ class TaskExecutionState(BaseModel):
     communication_plan: CommunicationPlan = Field(default_factory=CommunicationPlan)
     fast_loop_history: list[LocalUpdateRecord] = Field(default_factory=list)
     slow_loop_history: list[GlobalUpdateRecord] = Field(default_factory=list)
+    # M4: per-subtask FastLoopState (typed at runtime; Any avoids circular import).
+    fast_loop_states: dict[str, Any] = Field(default_factory=dict)
     global_revision: int = 0
     frozen: bool = False
     plan_content_hash: str = ""
+
+    @model_validator(mode="after")
+    def _coerce_fast_loop_states(self) -> TaskExecutionState:
+        if not self.fast_loop_states:
+            return self
+        from orchestra.control.fast_loop.schemas import FastLoopState
+
+        coerced: dict[str, Any] = {}
+        for key, value in self.fast_loop_states.items():
+            if isinstance(value, FastLoopState):
+                coerced[key] = value
+            else:
+                coerced[key] = FastLoopState.model_validate(value)
+        self.fast_loop_states = coerced
+        return self
 
     @classmethod
     def from_plan(
