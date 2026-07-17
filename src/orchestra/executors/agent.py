@@ -42,7 +42,19 @@ class AgentNodeExecutor:
         contract = self.contracts[node.contract_id]
         if len(node.output_slots) != 1:
             raise ValueError("Agent nodes must declare exactly one output slot")
-        messages = render_contract(contract, inputs)
+        messages = list(render_contract(contract, inputs))
+        if node.prompt_feedback:
+            feedback = str(node.prompt_feedback).strip()
+            if feedback:
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "Previous attempt failed. Apply this feedback carefully "
+                            f"and fix the repository:\n{feedback}"
+                        ),
+                    }
+                )
         backend = node.resolved_backend()
         max_steps = getattr(backend, "max_steps", 1)
         tools = list(node.tools) if node.tools else list(contract.allowed_tools)
@@ -61,6 +73,10 @@ class AgentNodeExecutor:
                 parser_id=contract.parser_id,
                 output_schema=contract.output_schema,
             )
+        if node.session_policy:
+            session_policy = AgentSessionPolicy(node.session_policy)
+        else:
+            session_policy = AgentSessionPolicy.FRESH
         return AgentRequest(
             request_id=str(uuid4()),
             task_id=context.task_id,
@@ -85,7 +101,7 @@ class AgentNodeExecutor:
             backend_config=backend.model_dump(mode="json"),
             messages=messages,
             contract_id=contract.contract_id,
-            session_policy=AgentSessionPolicy.FRESH,
+            session_policy=session_policy,
             session_ref=None,
         )
 

@@ -18,7 +18,7 @@ from orchestra.backends.base import (
     BackendHealth,
     BackendSessionRef,
 )
-from orchestra.backends.capabilities import BackendCapabilities
+from orchestra.backends.capabilities import BackendCapabilities, SessionPolicy
 from orchestra.backends.codex_types import map_approval_policy, map_sandbox
 from orchestra.backends.exception_mapping import map_codex_exception
 from orchestra.ir.artifacts import create_artifact
@@ -74,6 +74,12 @@ class CodexSDKBackend:
             supports_remote_executor=False,
             supports_step_trace=False,
             supports_resume=False,
+            supports_session_state=True,
+            supported_session_policies=frozenset({SessionPolicy.FRESH}),
+            supports_tool_policy_edit=False,
+            supports_model_override=True,
+            supports_workspace_rebinding=True,
+            supports_parallel_instances=True,
         )
 
     async def healthcheck(self) -> BackendHealth:

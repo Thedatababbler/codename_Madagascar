@@ -100,6 +100,9 @@ class AgentNodeSpec(BaseNodeSpec):
     tools: list[str] = Field(default_factory=list)
     model: ModelSpec | None = None
     output_contract: OutputContract | None = None
+    # Fast-loop overlays (optional; omitted from content hash when unset).
+    prompt_feedback: str | None = None
+    session_policy: Literal["fresh", "resume", "fork"] | None = None
 
     def resolved_backend(self) -> AgentBackendConfig:
         """Old graphs without backend default to structured_llm."""

@@ -34,6 +34,11 @@ def _strip_default_backends_for_hash(data: dict[str, Any]) -> dict[str, Any]:
         # M3.5 optional harness command; omit when unset so legacy hashes stay stable.
         if not item.get("command"):
             item.pop("command", None)
+        # M4 optional fast-loop overlays; omit defaults so legacy hashes stay stable.
+        if not item.get("prompt_feedback"):
+            item.pop("prompt_feedback", None)
+        if item.get("session_policy") in (None, "fresh"):
+            item.pop("session_policy", None)
         nodes.append(item)
     return {**data, "nodes": nodes}
 

@@ -4,7 +4,7 @@ Capabilities are keyed by backend type string. Validation uses
 BackendCapabilities fields only — never backend-id special cases.
 """
 
-from orchestra.backends.capabilities import BackendCapabilities
+from orchestra.backends.capabilities import BackendCapabilities, SessionPolicy
 
 KNOWN_BACKEND_CAPABILITIES: dict[str, BackendCapabilities] = {
     "structured_llm": BackendCapabilities(
@@ -15,6 +15,12 @@ KNOWN_BACKEND_CAPABILITIES: dict[str, BackendCapabilities] = {
         supports_remote_executor=False,
         supports_step_trace=True,
         supports_resume=False,
+        supports_session_state=False,
+        supported_session_policies=frozenset({SessionPolicy.FRESH}),
+        supports_tool_policy_edit=False,
+        supports_model_override=True,
+        supports_workspace_rebinding=True,
+        supports_parallel_instances=True,
     ),
     "smolagents_code": BackendCapabilities(
         multi_step=True,
@@ -24,6 +30,12 @@ KNOWN_BACKEND_CAPABILITIES: dict[str, BackendCapabilities] = {
         supports_remote_executor=True,
         supports_step_trace=True,
         supports_resume=False,
+        supports_session_state=False,
+        supported_session_policies=frozenset({SessionPolicy.FRESH}),
+        supports_tool_policy_edit=True,
+        supports_model_override=True,
+        supports_workspace_rebinding=True,
+        supports_parallel_instances=True,
     ),
     "codex_sdk": BackendCapabilities(
         multi_step=True,
@@ -33,6 +45,12 @@ KNOWN_BACKEND_CAPABILITIES: dict[str, BackendCapabilities] = {
         supports_remote_executor=False,
         supports_step_trace=False,
         supports_resume=False,
+        supports_session_state=True,
+        supported_session_policies=frozenset({SessionPolicy.FRESH}),
+        supports_tool_policy_edit=False,
+        supports_model_override=True,
+        supports_workspace_rebinding=True,
+        supports_parallel_instances=True,
     ),
 }
 

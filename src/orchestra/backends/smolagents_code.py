@@ -18,7 +18,7 @@ from orchestra.backends.base import (
     BackendExecutionContext,
     BackendHealth,
 )
-from orchestra.backends.capabilities import BackendCapabilities
+from orchestra.backends.capabilities import BackendCapabilities, SessionPolicy
 from orchestra.backends.errors import (
     BackendInitializationError,
     OutputContractValidationError,
@@ -71,6 +71,12 @@ class SmolagentsCodeBackend:
             supports_remote_executor=True,
             supports_step_trace=True,
             supports_resume=False,
+            supports_session_state=False,
+            supported_session_policies=frozenset({SessionPolicy.FRESH}),
+            supports_tool_policy_edit=True,
+            supports_model_override=True,
+            supports_workspace_rebinding=True,
+            supports_parallel_instances=True,
         )
 
     async def healthcheck(self) -> BackendHealth:
