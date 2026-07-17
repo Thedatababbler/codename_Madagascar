@@ -10,7 +10,7 @@
 | Status | `canonical` (use for comparisons) / `smoke` / `mock` / `superseded` / `incomplete` |
 | Paths | Repo-relative from AdaMAS root |
 
-**Last updated:** 2026-07-16 (UTC) — M4 Fast Local Adaptation (M4-A) implemented
+**Last updated:** 2026-07-17 (UTC) — M4 final hardening (correctness close)
 
 ---
 
@@ -53,6 +53,30 @@ Copy the template below after each run (evaluate + summarize when applicable):
 ---
 
 ## Entries (newest first)
+
+### EXP-20260717-01 — M4 final hardening (correctness close)
+- **Status:** smoke (CI gate; no new real-API accuracy claim)
+- **Date:** 2026-07-17 (UTC)
+- **Branch / commit:** `agnostic` (M4 hardening)
+- **Benchmark / phase:** trusted `codex_tiny_repo` fixture + fake backends
+- **Baseline / graph:** FastLoopController + ReadySubtaskScheduler correctness fixes
+- **Config:** derived `search_cost`; `WorkspaceChangeSet`; post-apply harness;
+  canonical task workspace; `SubtaskInputAssembler`; locked concurrent merge;
+  `BackendModelPool`; `FastLoopBudgetTracker`
+- **Command:**
+  ```bash
+  uv sync --extra smolagents --extra codex
+  uv run ruff check .
+  uv run pytest -q tests/unit
+  uv run pytest -q tests/integration
+  ```
+- **Run dir:** n/a (deterministic tests)
+- **Results:** closes M4 correctness gaps — no cost double-count; tracked+untracked
+  winner commit; canonical harness + rollback; upstream artifact/repo propagation;
+  parallel checkpoint safety; failed-node targeting; REJECTED audit; budget gates;
+  model pools only. M5/M6 still unimplemented.
+- **Notes / interpretation:** See `docs/m4_fast_local_adaptation.md`. Real API smoke
+  not required for this engineering gate; prior M3.5/M4 fixture paths retained.
 
 ### EXP-20260716-03 — M4 Fast Local Adaptation (M4-A engineering gate)
 - **Status:** smoke (CI gate; no new real-API accuracy claim)
