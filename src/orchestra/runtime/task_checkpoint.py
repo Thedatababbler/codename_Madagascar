@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
+import os
+import uuid
 from pathlib import Path
 
 from orchestra.control.task_state import TaskExecutionState
@@ -14,16 +17,32 @@ class TaskCheckpointDriftError(RuntimeError):
 class TaskCheckpointStore:
     def __init__(self, run_dir: str | Path) -> None:
         self.root = Path(run_dir) / "tasks"
+        self._lock = asyncio.Lock()
 
     def path(self, task_id: str) -> Path:
         return self.root / task_id / "task_execution.json"
 
     async def save(self, state: TaskExecutionState) -> None:
-        path = self.path(state.task_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".json.tmp")
-        tmp.write_text(state.model_dump_json(indent=2), encoding="utf-8")
-        tmp.replace(path)
+        """Atomically persist task state under an asyncio lock."""
+        async with self._lock:
+            path = self.path(state.task_id)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_name(f"task_execution.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+            payload = state.model_dump_json(indent=2)
+            with tmp.open("w", encoding="utf-8") as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(tmp, path)
+            # Best-effort fsync of directory entry.
+            try:
+                dir_fd = os.open(str(path.parent), os.O_RDONLY)
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
+            except OSError:
+                pass
 
     async def load(
         self,
