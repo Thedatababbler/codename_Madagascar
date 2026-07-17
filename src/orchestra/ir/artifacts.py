@@ -70,9 +70,20 @@ class ArtifactEnvelope(BaseModel):
         return parsed
 
 
+class ArtifactSourceRef(BaseModel):
+    """Lineage for how a slot was filled during SubtaskInputAssembler."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    source: str  # root | implicit_dependency | explicit_selector
+    producer_subtask_id: str | None = None
+    artifact_id: str
+
+
 class ArtifactBundle(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     slots: dict[str, ArtifactEnvelope] = Field(default_factory=dict)
+    slot_sources: dict[str, ArtifactSourceRef] = Field(default_factory=dict)
 
 
 def create_artifact(
