@@ -13,7 +13,11 @@ from orchestra.backends.registry import AgentBackendRegistry
 from orchestra.control.fast_loop.schemas import FastLoopBudget, WorkspaceChangeSet
 from orchestra.control.fast_loop.workspace import GitCandidateWorkspaceManager
 from orchestra.control.ready_scheduler import ReadySubtaskScheduler
-from orchestra.control.task_state import SubtaskStatus, TaskExecutionState
+from orchestra.control.task_state import (
+    SubtaskFailureReason,
+    SubtaskStatus,
+    TaskExecutionState,
+)
 from orchestra.decomposition.schemas import TaskPlan
 from orchestra.executors.agent import AgentNodeExecutor
 from orchestra.executors.harness import HarnessNodeExecutor
@@ -566,3 +570,390 @@ async def test_winner_commit_is_idempotent(tmp_path):
     )
     assert Path(c2.path, "calculator.py").exists()
     assert "return a + b" in Path(c2.path, "calculator.py").read_text(encoding="utf-8")
+
+
+class _SiblingFileThread:
+    """Each sibling writes calculator fix + a unique file named by prompt tag."""
+
+    def __init__(self, workspace: str, tid: str, tag: str) -> None:
+        self.workspace = workspace
+        self.id = tid
+        self.tag = tag
+
+    async def run(self, prompt: str, **kwargs):  # noqa: ANN003
+        del prompt, kwargs
+        Path(self.workspace, "calculator.py").write_text(
+            "def add(a, b):\n    return a + b\n", encoding="utf-8"
+        )
+        Path(self.workspace, f"file_{self.tag}.py").write_text(
+            f"{self.tag} = 1\n", encoding="utf-8"
+        )
+        return _FakeTurn()
+
+
+class _SiblingCodex:
+    def __init__(self) -> None:
+        self._n = 0
+        self._tags = ["a", "b"]
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):  # noqa: ANN002
+        return None
+
+    async def thread_start(self, **kwargs):  # noqa: ANN003
+        tag = self._tags[min(self._n, len(self._tags) - 1)]
+        self._n += 1
+        return _SiblingFileThread(kwargs["cwd"], f"t-{self._n}", tag)
+
+
+class _ConflictThread:
+    def __init__(self, workspace: str, tid: str, value: int) -> None:
+        self.workspace = workspace
+        self.id = tid
+        self.value = value
+
+    async def run(self, prompt: str, **kwargs):  # noqa: ANN003
+        del prompt, kwargs
+        Path(self.workspace, "calculator.py").write_text(
+            f"def add(a, b):\n    return {self.value}\n", encoding="utf-8"
+        )
+        return _FakeTurn()
+
+
+class _ConflictCodex:
+    """Alternating conflict writers: first +5 (pass), second 999 (different edit)."""
+
+    def __init__(self) -> None:
+        self._n = 0
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):  # noqa: ANN002
+        return None
+
+    async def thread_start(self, **kwargs):  # noqa: ANN003
+        self._n += 1
+        # First returns 5 (passes tests); second returns 999 (conflicts after first commit).
+        value = 5 if self._n == 1 else 999
+        return _ConflictThread(kwargs["cwd"], f"t-{self._n}", value)
+
+
+def _parallel_plan(task_id: str = "sib") -> TaskPlan:
+    return TaskPlan.model_validate(
+        {
+            "task_id": task_id,
+            "plan_version": 1,
+            "decomposition_rationale": "siblings",
+            "decomposition_status": "disabled",
+            "subtasks": [
+                {
+                    "subtask_id": "s1",
+                    "title": "s1",
+                    "objective": "add file_a",
+                    "dependencies": [],
+                    "keystone_harness_id": "repository_test_harness",
+                    "local_graph_template": "configs/graphs/codex_single_implementer.yaml",
+                    "budget": {
+                        "max_llm_calls": 2,
+                        "max_steps": 2,
+                        "timeout_seconds": 120,
+                    },
+                    "input_artifacts": [
+                        {
+                            "slot": "problem",
+                            "artifact_id": "",
+                            "artifact_type": "ProblemArtifact",
+                        }
+                    ],
+                    "expected_outputs": [
+                        {
+                            "parser_id": "repository_change",
+                            "output_schema": "RepositoryChangeArtifact",
+                        }
+                    ],
+                },
+                {
+                    "subtask_id": "s2",
+                    "title": "s2",
+                    "objective": "add file_b",
+                    "dependencies": [],
+                    "keystone_harness_id": "repository_test_harness",
+                    "local_graph_template": "configs/graphs/codex_single_implementer.yaml",
+                    "budget": {
+                        "max_llm_calls": 2,
+                        "max_steps": 2,
+                        "timeout_seconds": 120,
+                    },
+                    "input_artifacts": [
+                        {
+                            "slot": "problem",
+                            "artifact_id": "",
+                            "artifact_type": "ProblemArtifact",
+                        }
+                    ],
+                    "expected_outputs": [
+                        {
+                            "parser_id": "repository_change",
+                            "output_schema": "RepositoryChangeArtifact",
+                        }
+                    ],
+                },
+                {
+                    "subtask_id": "s3",
+                    "title": "s3",
+                    "objective": "see both",
+                    "dependencies": ["s1", "s2"],
+                    "keystone_harness_id": "repository_test_harness",
+                    "local_graph_template": "configs/graphs/codex_single_implementer.yaml",
+                    "budget": {
+                        "max_llm_calls": 2,
+                        "max_steps": 2,
+                        "timeout_seconds": 120,
+                    },
+                    "input_artifacts": [
+                        {
+                            "slot": "problem",
+                            "artifact_id": "",
+                            "artifact_type": "ProblemArtifact",
+                        }
+                    ],
+                    "expected_outputs": [
+                        {
+                            "parser_id": "repository_change",
+                            "output_schema": "RepositoryChangeArtifact",
+                        }
+                    ],
+                },
+            ],
+            "final_aggregation": {
+                "strategy": "identity",
+                "terminal_subtask_id": "s3",
+            },
+            "communication_plan": {"version": 1},
+        }
+    )
+
+
+@pytest.mark.asyncio
+async def test_parallel_sibling_repository_commits_preserve_both_changes(tmp_path):
+    pytest.importorskip("openai_codex")
+    client = _SiblingCodex()
+    registry = AgentBackendRegistry()
+    registry.register(CodexSDKBackend(client_factory=lambda: client))
+    runtime = _runtime(tmp_path, registry)
+    plan = _parallel_plan("sib_files")
+    store = TaskCheckpointStore(tmp_path)
+    scheduler = ReadySubtaskScheduler(
+        runtime=runtime,
+        artifact_store=runtime.artifact_store,
+        task_checkpoint_store=store,
+        contracts_dir=CONTRACTS,
+        source_repo=str(FIXTURE),
+        max_concurrent_subtasks=2,
+        allow_concurrent_subtasks=True,
+        budget=FastLoopBudget(max_candidates=1, max_total_backend_calls=12),
+    )
+    state = TaskExecutionState.from_plan(plan)
+    state = await scheduler.run_task(
+        plan,
+        state,
+        initial_artifacts=_bundle("sib_files"),
+        context=_ctx(tmp_path, "sib", task_id="sib_files"),
+        source_repo=str(FIXTURE),
+    )
+    assert state.subtasks["s1"].status is SubtaskStatus.COMMITTED
+    assert state.subtasks["s2"].status is SubtaskStatus.COMMITTED
+    assert state.canonical_workspace_ref
+    assert Path(state.canonical_workspace_ref, "file_a.py").is_file()
+    assert Path(state.canonical_workspace_ref, "file_b.py").is_file()
+    committed = [
+        r
+        for r in state.workspace_commit_records
+        if r.status.value == "committed"
+    ]
+    assert len(committed) >= 2
+    # Downstream S3 workspace sees both files via canonical fork.
+    assert state.subtasks["s3"].status is SubtaskStatus.COMMITTED
+    assert state.subtasks["s3"].base_task_revision
+
+
+@pytest.mark.asyncio
+async def test_parallel_sibling_same_line_conflict_fail_closed(tmp_path):
+    """Direct coordinator-path conflict: one commit wins, other conflicts."""
+    from orchestra.control.canonical_workspace import (
+        CanonicalCommitError,
+        CanonicalTaskWorkspaceManager,
+    )
+
+    mgr = GitCandidateWorkspaceManager()
+    canonical_mgr = CanonicalTaskWorkspaceManager(mgr)
+    can = await canonical_mgr.prepare(
+        source_repo=str(FIXTURE), run_dir=str(tmp_path), task_id="cline"
+    )
+    w1 = await canonical_mgr.fork_subtask_workspace(
+        canonical=can, run_dir=str(tmp_path), task_id="cline", subtask_id="s1"
+    )
+    w2 = await canonical_mgr.fork_subtask_workspace(
+        canonical=can, run_dir=str(tmp_path), task_id="cline", subtask_id="s2"
+    )
+    Path(w1.path, "calculator.py").write_text(
+        "def add(a, b):\n    return a + b\n", encoding="utf-8"
+    )
+    Path(w2.path, "calculator.py").write_text(
+        "def add(a, b):\n    return a + b + 0\n", encoding="utf-8"
+    )
+    cs1 = await mgr.collect_changeset(w1)
+    cs2 = await mgr.collect_changeset(w2)
+    can, _ = await canonical_mgr.transactional_commit(
+        canonical=can,
+        winner_workspace=w1,
+        change_set=cs1,
+        run_dir=str(tmp_path),
+        task_id="cline",
+        subtask_id="s1",
+        attempt_id=1,
+        commit_message="s1",
+        harness_command=["python", "-m", "pytest", "-q"],
+        harness_timeout=30,
+    )
+    with pytest.raises(CanonicalCommitError) as exc:
+        await canonical_mgr.transactional_commit(
+            canonical=can,
+            winner_workspace=w2,
+            change_set=cs2,
+            run_dir=str(tmp_path),
+            task_id="cline",
+            subtask_id="s2",
+            attempt_id=1,
+            commit_message="s2",
+            harness_command=["python", "-m", "pytest", "-q"],
+            harness_timeout=30,
+        )
+    assert exc.value.conflict is True
+    text = Path(can.path, "calculator.py").read_text(encoding="utf-8")
+    assert "return a + b\n" in text
+    assert "a + b + 0" not in text
+
+
+@pytest.mark.asyncio
+async def test_uncommitted_candidate_artifacts_do_not_propagate(tmp_path):
+    from orchestra.backends.base import ArtifactRef
+    from orchestra.control.input_assembler import SubtaskInputAssembler
+    from orchestra.schemas.artifacts import RepositoryChangeArtifact
+
+    store = FileArtifactStore(tmp_path)
+    assembler = SubtaskInputAssembler(store)
+    problem = create_artifact(
+        ProblemArtifact(
+            question_id="u",
+            title="u",
+            statement="u",
+            difficulty="easy",
+            platform="fixture",
+        ),
+        producer_node_id="__input__",
+        task_id="u",
+    )
+    cand = create_artifact(
+        RepositoryChangeArtifact(
+            workspace_ref="ws",
+            thread_id="t",
+            changed_files=["x.py"],
+            patch="x",
+            final_response="cand",
+            source_node="s1",
+        ),
+        producer_node_id="s1",
+        task_id="u",
+    )
+    await store.put(problem)
+    await store.put(cand)
+    plan = TaskPlan.model_validate(
+        {
+            "task_id": "u",
+            "plan_version": 1,
+            "decomposition_rationale": "x",
+            "decomposition_status": "disabled",
+            "subtasks": [
+                {
+                    "subtask_id": "s1",
+                    "title": "s1",
+                    "objective": "s1",
+                    "dependencies": [],
+                    "keystone_harness_id": "repository_test_harness",
+                    "local_graph_template": "configs/graphs/codex_single_implementer.yaml",
+                    "budget": {
+                        "max_llm_calls": 2,
+                        "max_steps": 2,
+                        "timeout_seconds": 120,
+                    },
+                    "input_artifacts": [
+                        {
+                            "slot": "problem",
+                            "artifact_id": "",
+                            "artifact_type": "ProblemArtifact",
+                        }
+                    ],
+                    "expected_outputs": [
+                        {
+                            "parser_id": "repository_change",
+                            "output_schema": "RepositoryChangeArtifact",
+                        }
+                    ],
+                },
+                {
+                    "subtask_id": "s2",
+                    "title": "s2",
+                    "objective": "s2",
+                    "dependencies": ["s1"],
+                    "keystone_harness_id": "repository_test_harness",
+                    "local_graph_template": "configs/graphs/codex_single_implementer.yaml",
+                    "budget": {
+                        "max_llm_calls": 2,
+                        "max_steps": 2,
+                        "timeout_seconds": 120,
+                    },
+                    "input_artifacts": [
+                        {
+                            "slot": "problem",
+                            "artifact_id": "",
+                            "artifact_type": "ProblemArtifact",
+                        }
+                    ],
+                    "expected_outputs": [
+                        {
+                            "parser_id": "repository_change",
+                            "output_schema": "RepositoryChangeArtifact",
+                        }
+                    ],
+                },
+            ],
+            "final_aggregation": {
+                "strategy": "identity",
+                "terminal_subtask_id": "s2",
+            },
+            "communication_plan": {"version": 1},
+        }
+    )
+    state = TaskExecutionState.from_plan(plan)
+    state.subtasks["s1"].status = SubtaskStatus.FAILED
+    state.subtasks["s1"].failure_reason = SubtaskFailureReason.CANONICAL_MERGE_CONFLICT
+    state.subtasks["s1"].candidate_artifacts = [
+        ArtifactRef(
+            slot="plan",
+            artifact_id=cand.artifact_id,
+            artifact_type="RepositoryChangeArtifact",
+        )
+    ]
+    assembled = await assembler.assemble(
+        task_plan=plan,
+        task_state=state,
+        subtask=plan.subtasks[1],
+        root_artifacts=ArtifactBundle(slots={"problem": problem}),
+    )
+    assert "plan" not in assembled.slots
+    # S2 stays PENDING because S1 never COMMITTED.
+    assert state.subtasks["s2"].status is SubtaskStatus.PENDING
