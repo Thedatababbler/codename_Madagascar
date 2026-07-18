@@ -29,6 +29,7 @@ from orchestra.control.input_assembler import (
 )
 from orchestra.control.slow_loop.controller import SlowLoopController
 from orchestra.control.slow_loop.graph_materializer import FutureGraphMaterializer
+from orchestra.control.slow_loop.revision import PlanRevisionCorruption
 from orchestra.control.slow_loop.schemas import (
     SlowLoopConfig,
     TaskSchedulingPolicy,
@@ -216,7 +217,53 @@ class ReadySubtaskScheduler:
             policy = TaskSchedulingPolicy.model_validate(policy)
         return max(1, min(self.max_concurrent_subtasks, policy.max_concurrent_subtasks))
 
-    def _ready_ids(self, state: TaskExecutionState) -> list[str]:
+    async def _deliverable_ready_ids(
+        self,
+        *,
+        state: TaskExecutionState,
+        task_plan: TaskPlan,
+        initial_artifacts: ArtifactBundle,
+    ) -> list[str]:
+        """Preflight communication; only deliverable targets may acquire leases.
+
+        Preflight runs over *all* dependency-ready candidates (no concurrency
+        cap). Concurrency is applied only after blocked targets are filtered
+        out, so a communication-blocked head-of-queue cannot starve others.
+        """
+        del initial_artifacts
+        candidates = self._ordered_ready_candidates(state, apply_limit=False)
+        deliverable: list[str] = []
+        for sid in candidates:
+            sub = state.subtasks[sid]
+            preflight = await self.input_assembler.delivery_engine.preflight_for_target(
+                task_plan=task_plan,
+                task_state=state,
+                communication_plan=state.communication_plan,
+                target_subtask_id=sid,
+                persist_projection=True,
+            )
+            if preflight.batch and preflight.batch.audit_records:
+                state.delivery_ledger.extend(preflight.batch.audit_records)
+            if preflight.batch and preflight.batch.new_records:
+                state.delivery_ledger.extend(preflight.batch.new_records)
+            if preflight.blocked:
+                sub.communication_block_reason = (
+                    preflight.block_reason.value
+                    if preflight.block_reason is not None
+                    else "delivery_blocked"
+                )
+                continue
+            sub.communication_block_reason = None
+            deliverable.append(sid)
+        limit = self._effective_concurrency(state)
+        return deliverable[:limit] if limit else deliverable
+
+    def _ordered_ready_candidates(
+        self,
+        state: TaskExecutionState,
+        *,
+        apply_limit: bool = True,
+    ) -> list[str]:
         state.mark_ready_from_dependencies()
         ready = [
             sid
@@ -256,8 +303,13 @@ class ReadySubtaskScheduler:
             )
         else:
             ready = sorted(ready)
+        if not apply_limit:
+            return ready
         limit = self._effective_concurrency(state)
         return ready[:limit] if limit else ready
+
+    def _ready_ids(self, state: TaskExecutionState) -> list[str]:
+        return self._ordered_ready_candidates(state, apply_limit=True)
 
     def _deps_failed(self, state: TaskExecutionState, subtask_id: str) -> bool:
         sub = state.subtasks[subtask_id]
@@ -303,12 +355,24 @@ class ReadySubtaskScheduler:
                     sub.status = SubtaskStatus.SKIPPED
                     sub.failure_message = "blocked by failed dependency"
 
-            ready = self._ready_ids(state)
-            if not ready:
+            ready_candidates = self._ordered_ready_candidates(
+                state, apply_limit=False
+            )
+            if not ready_candidates:
                 break
 
-            # Acquire leases before launching the wave (future plan freeze).
-            leased = set(ready)
+            # Communication preflight before lease (required delivery fail-closed).
+            deliverable = await self._deliverable_ready_ids(
+                state=state,
+                task_plan=state.task_plan,
+                initial_artifacts=initial_artifacts,
+            )
+            if not deliverable:
+                # Every dependency-ready target is communication-blocked.
+                break
+
+            # Acquire leases only for deliverable targets (future plan freeze).
+            leased = set(deliverable)
             for sid in leased:
                 sub = state.subtasks[sid]
                 sub.lease_status = "leased"
@@ -320,6 +384,7 @@ class ReadySubtaskScheduler:
             # Snapshot for workers (deep copy) so they never mutate shared state.
             state_snapshot = state.model_copy(deep=True)
             concurrency = self._effective_concurrency(state)
+            ready = deliverable
             if concurrency <= 1:
                 for sid in ready:
                     result = await self._run_subtask_isolated(
@@ -715,13 +780,35 @@ class ReadySubtaskScheduler:
                 if state.subtasks[d].status is SubtaskStatus.COMMITTED
             ]
 
+        exec_cfg = dict(sub.spec.metadata.get("execution_config") or {})
         graph_path = str(
-            sub.spec.metadata.get("materialized_graph_path")
+            exec_cfg.get("graph_path")
+            or sub.spec.metadata.get("materialized_graph_path")
             or sub.spec.local_graph_template
         )
-        # Materialize pending backend/model assignment into an executable graph.
-        if sub.spec.metadata.get("backend_assignment") or sub.spec.metadata.get(
-            "model_assignment"
+        if ".staging-" in graph_path.replace("\\", "/"):
+            raise PlanRevisionCorruption(
+                "PLAN_REVISION_GRAPH_PATH_INVALID: staging path in active plan"
+            )
+        from pathlib import Path as _Path
+
+        path_obj = _Path(graph_path)
+        materialized = bool(
+            exec_cfg.get("graph_path")
+            or sub.spec.metadata.get("materialized_graph_path")
+            or "plan_revisions" in graph_path
+        )
+        if materialized and not path_obj.exists():
+            raise PlanRevisionCorruption(
+                f"PLAN_REVISION_GRAPH_MISSING: {graph_path}"
+            )
+        # Live-materialize only when assignment metadata exists and no snapshot yet.
+        if (
+            not materialized
+            and (
+                sub.spec.metadata.get("backend_assignment")
+                or sub.spec.metadata.get("model_assignment")
+            )
         ):
             mat = FutureGraphMaterializer(compiler=self.compiler).materialize(
                 subtask=sub.spec,
@@ -731,6 +818,12 @@ class ReadySubtaskScheduler:
             graph_path = mat.graph_path or graph_path
         else:
             graph = load_graph(graph_path)
+            expected_hash = str(exec_cfg.get("graph_hash") or "")
+            if expected_hash and graph.content_hash != expected_hash:
+                raise PlanRevisionCorruption(
+                    "PLAN_REVISION_GRAPH_HASH_MISMATCH: "
+                    f"{graph_path} hash {graph.content_hash} != {expected_hash}"
+                )
         compiled = self.compiler.compile(graph)
         attempt_id = len(sub.attempts) + 1
         started = datetime.now(UTC)
