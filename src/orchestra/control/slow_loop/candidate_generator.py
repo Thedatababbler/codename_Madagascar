@@ -61,7 +61,7 @@ class RuleBasedGlobalCandidateGenerator:
                 for contract in communication_plan.payload_contracts:
                     if contract.target_subtask_id != sid:
                         continue
-                    if contract.metadata.get("required"):
+                    if contract.is_required():
                         continue
                     # Shrink optional payload max_tokens.
                     new_c = PayloadContract(
@@ -69,6 +69,7 @@ class RuleBasedGlobalCandidateGenerator:
                         source_subtask_id=contract.source_subtask_id,
                         target_subtask_id=contract.target_subtask_id,
                         artifact_type=contract.artifact_type,
+                        required=False,
                         required_fields=list(contract.required_fields),
                         max_tokens=max(64, contract.max_tokens // 2),
                         metadata={**dict(contract.metadata), "shrunk": True},
@@ -92,6 +93,7 @@ class RuleBasedGlobalCandidateGenerator:
                             source_subtask_id=src,
                             target_subtask_id=sid,
                             artifact_type="FinalAnswerArtifact",
+                            required=True,
                             required_fields=[],
                             max_tokens=1024,
                             metadata={

@@ -23,10 +23,12 @@ from orchestra.control.fast_loop.controller import FastLoopController
 from orchestra.control.fast_loop.schemas import CostRecord, FastLoopBudget, WorkspaceChangeSet
 from orchestra.control.fast_loop.workspace import GitCandidateWorkspaceManager
 from orchestra.control.input_assembler import (
+    CommunicationDeliveryBlocked,
     SubtaskInputAssembler,
     SubtaskInputAssemblyError,
 )
 from orchestra.control.slow_loop.controller import SlowLoopController
+from orchestra.control.slow_loop.graph_materializer import FutureGraphMaterializer
 from orchestra.control.slow_loop.schemas import (
     SlowLoopConfig,
     TaskSchedulingPolicy,
@@ -58,6 +60,7 @@ class SubtaskExecutionStatus(StrEnum):
     FAILED = "failed"
     SKIPPED = "skipped"
     ALREADY_COMMITTED = "already_committed"
+    DELIVERY_BLOCKED = "delivery_blocked"
 
 
 class SubtaskExecutionResult(BaseModel):
@@ -218,7 +221,9 @@ class ReadySubtaskScheduler:
         ready = [
             sid
             for sid, sub in state.subtasks.items()
-            if sub.status is SubtaskStatus.READY and sub.lease_status != "leased"
+            if sub.status is SubtaskStatus.READY
+            and sub.lease_status != "leased"
+            and not sub.communication_block_reason
         ]
         policy = state.scheduling_policy
         if isinstance(policy, TaskSchedulingPolicy) or policy is not None:
@@ -445,6 +450,16 @@ class ReadySubtaskScheduler:
             state.state_version += 1
             return
 
+        if result.execution_status is SubtaskExecutionStatus.DELIVERY_BLOCKED:
+            sub = result.local_subtask_state.model_copy(deep=True)
+            sub.status = SubtaskStatus.READY
+            sub.lease_status = "released"
+            sub.failure_reason = None
+            state.subtasks[sid] = sub
+            self._merge_fast_loop(state, result)
+            state.state_version += 1
+            return
+
         if result.execution_status is SubtaskExecutionStatus.FAILED:
             state.subtasks[sid] = result.local_subtask_state
             self._merge_fast_loop(state, result)
@@ -493,6 +508,7 @@ class ReadySubtaskScheduler:
             state.subtasks[sid] = sub
             state.committed_subtask_count += 1
             self._merge_fast_loop(state, result)
+            state.clear_communication_blocks()
             state.mark_ready_from_dependencies()
             state.state_version += 1
             return
@@ -594,6 +610,7 @@ class ReadySubtaskScheduler:
         sub.last_commit_record_id = record.record_id
         state.subtasks[sid] = sub
         self._merge_fast_loop(state, result)
+        state.clear_communication_blocks()
         state.mark_ready_from_dependencies()
         state.state_version += 1
 
@@ -637,6 +654,20 @@ class ReadySubtaskScheduler:
                 task_state=state,
                 subtask=sub.spec,
                 root_artifacts=initial_artifacts,
+            )
+        except CommunicationDeliveryBlocked as exc:
+            # Fail-closed for required payloads: do not lease/execute backend.
+            sub.status = SubtaskStatus.READY
+            sub.failure_reason = None
+            sub.communication_block_reason = exc.reason
+            sub.failure_message = str(exc)
+            return SubtaskExecutionResult(
+                subtask_id=subtask_id,
+                expected_state_version=expected_state_version,
+                local_subtask_state=sub,
+                execution_status=SubtaskExecutionStatus.DELIVERY_BLOCKED,
+                failure_message=str(exc),
+                delivery_records_append=list(state.delivery_ledger[ledger_before:]),
             )
         except SubtaskInputAssemblyError as exc:
             sub.status = SubtaskStatus.FAILED
@@ -684,13 +715,29 @@ class ReadySubtaskScheduler:
                 if state.subtasks[d].status is SubtaskStatus.COMMITTED
             ]
 
-        graph = load_graph(sub.spec.local_graph_template)
+        graph_path = str(
+            sub.spec.metadata.get("materialized_graph_path")
+            or sub.spec.local_graph_template
+        )
+        # Materialize pending backend/model assignment into an executable graph.
+        if sub.spec.metadata.get("backend_assignment") or sub.spec.metadata.get(
+            "model_assignment"
+        ):
+            mat = FutureGraphMaterializer(compiler=self.compiler).materialize(
+                subtask=sub.spec,
+                revision_id=state.active_plan_revision_id or "live",
+            )
+            graph = mat.graph
+            graph_path = mat.graph_path or graph_path
+        else:
+            graph = load_graph(graph_path)
         compiled = self.compiler.compile(graph)
         attempt_id = len(sub.attempts) + 1
         started = datetime.now(UTC)
         sub.status = SubtaskStatus.RUNNING
         sub.failure_reason = None
         sub.failure_message = None
+        sub.communication_block_reason = None
         sub.current_graph_hash = graph.content_hash
         sub.attempts.append(
             SubtaskAttempt(
