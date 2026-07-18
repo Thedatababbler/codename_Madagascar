@@ -185,6 +185,8 @@ class SubtaskState(BaseModel):
     lease_status: str = "unleased"  # SubtaskLeaseStatus value
     lease_plan_version: int | None = None
     lease_acquired_state_version: int | None = None
+    # M5: required communication not satisfiable; target stays unleased.
+    communication_block_reason: str | None = None
 
     @field_validator("backend_sessions", mode="before")
     @classmethod
@@ -215,6 +217,8 @@ class TaskExecutionState(BaseModel):
     # M5 Slow Loop / communication.
     delivery_ledger: list[DeliveryRecord] = Field(default_factory=list)
     active_plan_revision_id: str | None = None
+    active_plan_hash: str | None = None
+    active_communication_hash: str | None = None
     plan_revision_history: list[Any] = Field(default_factory=list)
     slow_loop_state: Any | None = None
     scheduling_policy: Any | None = None
@@ -293,3 +297,9 @@ class TaskExecutionState(BaseModel):
             deps = state.spec.dependencies
             if all(dep in committed for dep in deps):
                 state.status = SubtaskStatus.READY
+
+    def clear_communication_blocks(self) -> None:
+        """Call after a commit so blocked targets can be re-attempted."""
+        for state in self.subtasks.values():
+            if state.communication_block_reason:
+                state.communication_block_reason = None

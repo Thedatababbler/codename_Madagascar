@@ -31,8 +31,8 @@ class ContextBudgetResult(BaseModel):
 
 
 def _payload_priority(contract: PayloadContract) -> tuple[int, int, str]:
-    """Lower tuple sorts first. Required (metadata) before optional."""
-    required = 0 if bool(contract.metadata.get("required")) else 1
+    """Lower tuple sorts first. Required before optional."""
+    required = 0 if contract.is_required() else 1
     priority = int(contract.metadata.get("priority", 100))
     return (required, priority, contract.payload_id)
 
@@ -58,7 +58,7 @@ def pack_context_budget(
         proj = by_id.get(contract.payload_id)
         if proj is None:
             continue
-        required = bool(contract.metadata.get("required"))
+        required = contract.is_required()
         if used + proj.estimated_tokens <= max_tokens:
             included.append(contract.payload_id)
             used += proj.estimated_tokens

@@ -1,23 +1,40 @@
 """Communication plan and delivery engine (Milestone 5)."""
 
-from orchestra.communication.aggregation import AggregationRule, AggregationSpec
+from orchestra.communication.aggregation import (
+    AggregationRule,
+    AggregationSpec,
+    AggregationStrategy,
+)
 from orchestra.communication.compiler import (
     CommunicationPlanCompiler,
     CompiledCommunicationPlan,
 )
-from orchestra.communication.ledger import DeliveryRecord, DeliveryStatus
-from orchestra.communication.payload import DeliveryRule, PayloadContract
+from orchestra.communication.ledger import (
+    DeliveryFailureReason,
+    DeliveryRecord,
+    DeliveryStatus,
+)
+from orchestra.communication.payload import (
+    DeliveryCondition,
+    DeliveryRule,
+    DeliveryTrigger,
+    PayloadContract,
+)
 from orchestra.communication.plan import CommunicationPlan
 
 __all__ = [
     "AggregationRule",
     "AggregationSpec",
+    "AggregationStrategy",
     "CompiledCommunicationPlan",
     "CommunicationPlan",
     "CommunicationPlanCompiler",
+    "DeliveryCondition",
+    "DeliveryFailureReason",
     "DeliveryRecord",
     "DeliveryRule",
     "DeliveryStatus",
+    "DeliveryTrigger",
     "PayloadContract",
 ]
 

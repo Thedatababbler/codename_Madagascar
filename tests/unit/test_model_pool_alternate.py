@@ -60,11 +60,15 @@ def test_alternate_model_comes_only_from_configured_pool():
 
 def test_no_model_candidate_when_pool_has_no_alternative():
     graph, diagnosis = _diag()
-    # Only current model in pool → no alternate.
+    # Pool contains only the graph's current model → no alternate.
+    from orchestra.ir.nodes import AgentNodeSpec
+
+    agent = next(n for n in graph.nodes if isinstance(n, AgentNodeSpec))
+    current = agent.model.name if agent.model else "gpt-4o-mini"
     pools = {
         "codex_sdk": BackendModelPool(
             backend_id="codex_sdk",
-            allowed_models=["gpt-4o-mini"],
+            allowed_models=[current],
         )
     }
     gen = RuleBasedLocalCandidateGenerator(model_pools=pools)

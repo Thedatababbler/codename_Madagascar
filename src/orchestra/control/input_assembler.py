@@ -22,6 +22,14 @@ class SubtaskInputAssemblyError(RuntimeError):
     """Fail-closed input assembly (missing required / equal-priority conflict)."""
 
 
+class CommunicationDeliveryBlocked(SubtaskInputAssemblyError):
+    """Required communication payload cannot be delivered; target must not start."""
+
+    def __init__(self, message: str, *, reason: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
 class SubtaskInputAssembler:
     """Deterministic input assembly with M5 communication delivery."""
 
@@ -67,13 +75,25 @@ class SubtaskInputAssembler:
             source_label="implicit_dependency",
         )
 
-        # 3. Communication-delivered payloads (committed sources only)
+        # 3. Communication-delivered payloads (rule-driven; required fail-closed)
         delivery = await self.delivery_engine.deliver_for_target(
             task_plan=task_plan,
             task_state=task_state,
             communication_plan=task_state.communication_plan,
             target_subtask_id=subtask.subtask_id,
         )
+        if delivery.audit_records:
+            task_state.delivery_ledger.extend(delivery.audit_records)
+        if delivery.blocked:
+            reason = (
+                delivery.block_reason.value
+                if delivery.block_reason is not None
+                else "required_delivery_blocked"
+            )
+            raise CommunicationDeliveryBlocked(
+                f"communication delivery blocked for {subtask.subtask_id}: {reason}",
+                reason=reason,
+            )
         if delivery.new_records:
             task_state.delivery_ledger.extend(delivery.new_records)
         self._merge_rows(
