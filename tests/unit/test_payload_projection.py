@@ -45,4 +45,6 @@ def test_projection_truncates_when_over_budget():
     )
     result = project_payload(contract=contract, source=source, task_id="t")
     assert result.truncated is True
+    assert result.final_estimated_tokens <= contract.max_tokens
+    assert result.estimated_tokens <= contract.max_tokens
     assert result.estimated_tokens <= estimate_tokens({"answer": "x" * 5000})
