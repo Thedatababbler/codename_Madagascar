@@ -167,9 +167,13 @@ Design: `docs/m4_fast_local_adaptation.md`.
 After a committed wave, AdaMAS may run a **rule-based Slow Loop** that updates
 only **future unleased** subtasks: CommunicationPlan delivery/context budgets,
 scheduling policy, and pending graph/backend assignments (allowlisted). Workers
-never touch canonical; Slow Loop never rewrites the past. Communication delivery
-projects committed artifacts with deterministic truncation and an idempotent
-ledger.
+never touch canonical; Slow Loop never rewrites the past.
+
+Delivery is **rule-driven** (`DeliveryRule` required), with replayable ledger
+resume, required-payload fail-closed blocking, strict recursive token
+projection, deterministic aggregation, communication cycle checks, future graph
+materialization (immutable YAML snapshots), declared-delta validation, and
+atomic revision/checkpoint transactions. M6 is **not** implemented.
 
 Design: `docs/m5_slow_global_adaptation.md`.
 

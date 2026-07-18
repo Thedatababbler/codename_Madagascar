@@ -10,7 +10,7 @@
 | Status | `canonical` (use for comparisons) / `smoke` / `mock` / `superseded` / `incomplete` |
 | Paths | Repo-relative from AdaMAS root |
 
-**Last updated:** 2026-07-17 (UTC) — M5 Slow Global Adaptation (rule-based)
+**Last updated:** 2026-07-18 (UTC) — M5 Final Hardening (correctness close)
 
 ---
 
@@ -53,6 +53,33 @@ Copy the template below after each run (evaluate + summarize when applicable):
 ---
 
 ## Entries (newest first)
+
+### EXP-20260718-01 — M5 Final Hardening (correctness close)
+- **Status:** smoke (CI gate; no new real-API accuracy claim)
+- **Date:** 2026-07-18 (UTC)
+- **Branch / commit:** `agnostic` (M5 Final Hardening)
+- **Benchmark / phase:** DeliveryRule enforcement, ledger replay, required
+  fail-closed, strict projection/aggregation, cycle validation, future graph
+  materialization, declared-delta validation, atomic revision/checkpoint
+- **Baseline / graph:** closes M5 correctness gaps; FRESH backends unchanged
+- **Config:** `SlowLoopConfig(enabled=False)` default preserved for M4 paths
+- **Command:**
+  ```bash
+  uv sync --extra smolagents --extra codex
+  uv run ruff check .
+  uv run pytest -q tests/unit
+  uv run pytest -q tests/integration
+  uv run python -m orchestra.cli.run_m5_smoke
+  ```
+- **Run dir:** `outputs/m5_slow_loop_smoke` (smoke)
+- **Results:** DeliveryRule gates delivery; ledger resume reloads projected
+  artifacts; required payloads/fields block targets; projection asserts
+  `final_estimated_tokens <= max_tokens`; aggregation executed; cycles rejected;
+  backend/model assignments materialize real graph snapshots; undeclared plan
+  deltas rejected; revision/checkpoint commit is atomic with rollback on
+  checkpoint failure; M4 suite green; M6 not implemented.
+- **Notes / interpretation:** M5 correctness-complete. Docs:
+  `docs/m5_slow_global_adaptation.md`.
 
 ### EXP-20260717-03 — M5 Slow Global Adaptation (engineering gate)
 - **Status:** smoke (CI gate; no new real-API accuracy claim)
