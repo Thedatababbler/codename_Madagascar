@@ -164,24 +164,32 @@ def aggregate_payloads(
     else:
         raise AggregationConflictError(f"unsupported aggregation strategy {strategy}")
 
-    tokens = estimate_tokens(aggregated_value)
+    def _answer_blob(value: Any) -> dict[str, Any]:
+        return {
+            "aggregation_rule_id": rule.rule_id,
+            "strategy": str(strategy),
+            "value": value,
+            "source_artifact_ids": source_ids,
+        }
+
+    tokens = estimate_tokens(_answer_blob(aggregated_value))
     if tokens > rule.max_tokens:
-        # Deterministic truncation for concat/list only; dict merge cannot truncate safely.
-        if strategy is AggregationStrategy.CONCAT_TEXT and isinstance(
+        if strategy == AggregationStrategy.CONCAT_TEXT and isinstance(
             aggregated_value, str
         ):
-            while estimate_tokens(aggregated_value) > rule.max_tokens and len(
-                aggregated_value
-            ) > 16:
-                aggregated_value = aggregated_value[: len(aggregated_value) // 2] + "…"
-            tokens = estimate_tokens(aggregated_value)
-        elif strategy is AggregationStrategy.LIST and isinstance(aggregated_value, list):
             while (
-                estimate_tokens(aggregated_value) > rule.max_tokens
+                estimate_tokens(_answer_blob(aggregated_value)) > rule.max_tokens
+                and len(aggregated_value) > 16
+            ):
+                aggregated_value = aggregated_value[: len(aggregated_value) // 2] + "…"
+            tokens = estimate_tokens(_answer_blob(aggregated_value))
+        elif strategy == AggregationStrategy.LIST and isinstance(aggregated_value, list):
+            while (
+                estimate_tokens(_answer_blob(aggregated_value)) > rule.max_tokens
                 and len(aggregated_value) > 1
             ):
                 aggregated_value = aggregated_value[:-1]
-            tokens = estimate_tokens(aggregated_value)
+            tokens = estimate_tokens(_answer_blob(aggregated_value))
         if tokens > rule.max_tokens:
             raise AggregationConflictError(
                 f"AGGREGATION_CONFLICT: aggregated payload exceeds max_tokens "
@@ -190,12 +198,7 @@ def aggregate_payloads(
 
     answer = FinalAnswerArtifact(
         answer=json.dumps(
-            {
-                "aggregation_rule_id": rule.rule_id,
-                "strategy": str(strategy),
-                "value": aggregated_value,
-                "source_artifact_ids": source_ids,
-            },
+            _answer_blob(aggregated_value),
             sort_keys=True,
             ensure_ascii=False,
         ),
@@ -209,6 +212,13 @@ def aggregate_payloads(
         task_id=task_id,
         parent_artifact_ids=source_ids,
     )
+    # Token estimate must match the artifact payload actually injected into slots.
+    tokens = estimate_tokens(art.payload)
+    if tokens > rule.max_tokens:
+        raise AggregationConflictError(
+            f"AGGREGATION_CONFLICT: final artifact exceeds max_tokens "
+            f"{rule.max_tokens}"
+        )
     slot = rule.target_slot or str(
         rule.metadata.get("slot") or f"agg:{rule.rule_id}"
     )

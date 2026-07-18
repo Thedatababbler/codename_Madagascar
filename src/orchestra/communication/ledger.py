@@ -24,11 +24,13 @@ class DeliveryFailureReason(StrEnum):
     REQUIRED_ARTIFACT_MISSING = "required_artifact_missing"
     REQUIRED_FIELD_MISSING = "required_field_missing"
     REQUIRED_RULE_MISSING = "required_rule_missing"
+    REQUIRED_CONDITION_UNSATISFIED = "required_condition_unsatisfied"
     CONTEXT_BUDGET_INFEASIBLE = "context_budget_infeasible"
     PROJECTION_INFEASIBLE = "projection_infeasible"
     LEDGER_CORRUPTION = "ledger_corruption"
     AGGREGATION_CONFLICT = "aggregation_conflict"
     AGGREGATION_RULE_MISSING = "aggregation_rule_missing"
+    AGGREGATION_REQUIRED_INPUT_MISSING = "aggregation_required_input_missing"
     UNSUPPORTED_TRIGGER = "unsupported_trigger"
 
 
