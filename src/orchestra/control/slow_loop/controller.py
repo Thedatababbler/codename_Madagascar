@@ -1,4 +1,4 @@
-"""SlowLoopController: observe → diagnose → generate ≤K → validate → select → apply."""
+"""SlowLoopController: observe → diagnose → generate ≤K → validate → select → prepare."""
 
 from __future__ import annotations
 
@@ -12,9 +12,9 @@ from orchestra.control.slow_loop.candidate_generator import (
 from orchestra.control.slow_loop.diagnosis import detect_triggers, diagnose
 from orchestra.control.slow_loop.observation import build_global_observation
 from orchestra.control.slow_loop.revision import (
-    apply_revision_to_state,
     build_revision,
-    write_plan_revision_snapshot,
+    commit_prepared_revision,
+    prepare_revision_staging,
 )
 from orchestra.control.slow_loop.schemas import (
     GlobalCandidateValidationStatus,
@@ -30,6 +30,7 @@ from orchestra.control.slow_loop.validation import FuturePlanValidator
 from orchestra.control.task_state import GlobalUpdateRecord, TaskExecutionState
 from orchestra.decomposition.schemas import TaskPlan
 from orchestra.runtime.backend import RunContext
+from orchestra.runtime.task_checkpoint import TaskCheckpointStore
 
 logger = logging.getLogger(__name__)
 
@@ -42,11 +43,13 @@ class SlowLoopController:
         generator: RuleBasedGlobalCandidateGenerator | None = None,
         selector: DeterministicGlobalCandidateSelector | None = None,
         validator: FuturePlanValidator | None = None,
+        checkpoint_store: TaskCheckpointStore | None = None,
     ) -> None:
         self.config = config or SlowLoopConfig()
         self.generator = generator or RuleBasedGlobalCandidateGenerator(self.config)
         self.selector = selector or DeterministicGlobalCandidateSelector()
         self.validator = validator or FuturePlanValidator(self.config)
+        self.checkpoint_store = checkpoint_store
 
     async def maybe_update(
         self,
@@ -56,7 +59,9 @@ class SlowLoopController:
         context: RunContext,
         leased_subtask_ids: set[str],
         task_budget: TaskBudgetRemaining | None = None,
+        commit: bool = True,
     ) -> SlowLoopUpdateResult:
+        del task_plan  # always use state.task_plan as source of truth
         if not self.config.enabled:
             return SlowLoopUpdateResult(updated=False, message="slow_loop disabled")
 
@@ -90,7 +95,7 @@ class SlowLoopController:
 
         diagnosis = diagnose(
             observation=observation,
-            task_plan=task_plan,
+            task_plan=state.task_plan,
             task_state=state,
             communication_plan=state.communication_plan,
             triggers=triggers,
@@ -122,7 +127,6 @@ class SlowLoopController:
             diagnosis=diagnosis,
             eligible=eligible,
         )
-        # Future-only validate each candidate.
         validated = []
         for cand in candidates:
             result = self.validator.validate(
@@ -130,6 +134,8 @@ class SlowLoopController:
                 proposed_plan=cand.proposed_task_plan,
                 edits=list(cand.edits),
                 leased_subtask_ids=set(leased_subtask_ids),
+                proposed_scheduling_policy=cand.proposed_scheduling_policy,
+                proposed_communication_plan=cand.proposed_communication_plan,
             )
             if not result.ok:
                 cand.validation_status = GlobalCandidateValidationStatus.INVALID
@@ -179,7 +185,6 @@ class SlowLoopController:
         )
         revision.status = GlobalPlanRevisionStatus.VALIDATED
 
-        # Wall-time budget for control plane.
         if time.monotonic() - started > self.config.budget.max_wall_time_seconds:
             revision.status = GlobalPlanRevisionStatus.FAILED
             state.plan_revision_history.append(revision)
@@ -192,27 +197,31 @@ class SlowLoopController:
             )
 
         try:
-            write_plan_revision_snapshot(
+            prepared = prepare_revision_staging(
                 run_dir=context.run_dir,
                 revision=revision,
                 new_plan=selected.proposed_task_plan,
-            )
-            apply_revision_to_state(
-                state=state,
-                revision=revision,
-                new_plan=selected.proposed_task_plan,
+                new_communication=selected.proposed_communication_plan,
                 scheduling_policy=selected.proposed_scheduling_policy,
+                state=state,
+                allowed_backend_pools=self.config.allowed_backend_assignments,
+                backend_model_pools=self.config.backend_model_pools,
             )
-            slow.updates_applied += 1
-            slow.last_update_state_version = state.state_version
-            slow.last_update_revision_id = revision.revision_id
-            slow.commits_at_last_update = state.committed_subtask_count or len(
+            # Stamp slow-loop counters onto projected state before commit.
+            proj_slow = prepared.projected_state.slow_loop_state
+            if not isinstance(proj_slow, SlowLoopState):
+                proj_slow = SlowLoopState.model_validate(proj_slow or {})
+            proj_slow.updates_applied = slow.updates_applied + 1
+            proj_slow.last_update_state_version = state.state_version + 1
+            proj_slow.last_update_revision_id = prepared.revision.revision_id
+            proj_slow.commits_at_last_update = state.committed_subtask_count or len(
                 observation.committed_subtasks
             )
-            state.slow_loop_history.append(
+            prepared.projected_state.slow_loop_state = proj_slow
+            prepared.projected_state.slow_loop_history = list(state.slow_loop_history) + [
                 GlobalUpdateRecord(
-                    record_id=revision.revision_id,
-                    revision=state.global_revision,
+                    record_id=prepared.revision.revision_id,
+                    revision=state.global_revision + 1,
                     summary=diagnosis.concise_explanation,
                     metadata={
                         "candidate_id": selected.candidate_id,
@@ -221,16 +230,49 @@ class SlowLoopController:
                         "eligible": sorted(eligible),
                     },
                 )
+            ]
+
+            if not commit:
+                return SlowLoopUpdateResult(
+                    updated=False,
+                    revision=prepared.revision,
+                    prepared=prepared,
+                    trigger_reasons=triggers,
+                    diagnosis=diagnosis,
+                    message="prepared",
+                )
+
+            store = self.checkpoint_store or TaskCheckpointStore(context.run_dir)
+            await commit_prepared_revision(
+                state=state,
+                prepared=prepared,
+                checkpoint_store=store,
+                run_dir=context.run_dir,
             )
+            # Mirror slow counters onto live state after swap.
+            if isinstance(state.slow_loop_state, SlowLoopState):
+                state.slow_loop_state.updates_applied = proj_slow.updates_applied
+                state.slow_loop_state.last_update_state_version = (
+                    proj_slow.last_update_state_version
+                )
+                state.slow_loop_state.last_update_revision_id = (
+                    proj_slow.last_update_revision_id
+                )
+                state.slow_loop_state.commits_at_last_update = (
+                    proj_slow.commits_at_last_update
+                )
             logger.info(
                 "slow_loop applied revision=%s triggers=%s edits=%s",
-                revision.revision_id,
+                prepared.revision.revision_id,
                 [t.value for t in triggers],
                 [e.type for e in selected.edits],
             )
             return SlowLoopUpdateResult(
                 updated=True,
-                revision=revision,
+                revision=prepared.revision.model_copy(
+                    update={"status": GlobalPlanRevisionStatus.APPLIED}
+                ),
+                prepared=prepared,
                 trigger_reasons=triggers,
                 diagnosis=diagnosis,
                 message="applied",

@@ -307,6 +307,7 @@ class SlowLoopUpdateResult(BaseModel):
 
     updated: bool
     revision: GlobalPlanRevision | None = None
+    prepared: Any | None = None  # PreparedSlowLoopRevision (avoid circular import)
     trigger_reasons: list[SlowLoopTriggerReason] = Field(default_factory=list)
     diagnosis: GlobalDiagnosis = Field(default_factory=GlobalDiagnosis)
     message: str = ""
