@@ -10,7 +10,7 @@
 | Status | `canonical` (use for comparisons) / `smoke` / `mock` / `superseded` / `incomplete` |
 | Paths | Repo-relative from AdaMAS root |
 
-**Last updated:** 2026-07-18 (UTC) — M5 Final Hardening (correctness close)
+**Last updated:** 2026-07-18 (UTC) — M5.1 Final Correctness Fix
 
 ---
 
@@ -53,6 +53,28 @@ Copy the template below after each run (evaluate + summarize when applicable):
 ---
 
 ## Entries (newest first)
+
+### EXP-20260718-02 — M5.1 Final Correctness Fix
+- **Status:** smoke (CI gate; no new real-API accuracy claim)
+- **Date:** 2026-07-18 (UTC)
+- **Branch / commit:** `agnostic` (M5.1)
+- **Benchmark / phase:** final graph paths, crash-safe revision activation,
+  FinalDeliveryUnit aggregation budget, required condition=false blocking,
+  preflight-before-lease
+- **Baseline / graph:** closes remaining M5 correctness gaps; FRESH unchanged
+- **Command:**
+  ```bash
+  uv sync --extra smolagents --extra codex
+  uv run ruff check .
+  uv run pytest -q tests/unit
+  uv run pytest -q tests/integration
+  uv run python -m orchestra.cli.run_m5_smoke
+  ```
+- **Results:** Active plans store final (non-staging) graph paths; revision
+  promote precedes checkpoint activation; orphan revisions are non-active;
+  aggregation budgets use final artifact tokens; required condition=false
+  blocks targets; delivery preflight runs before lease; M6 not implemented.
+- **Notes / interpretation:** Docs: `docs/m5_slow_global_adaptation.md`.
 
 ### EXP-20260718-01 — M5 Final Hardening (correctness close)
 - **Status:** smoke (CI gate; no new real-API accuracy claim)

@@ -67,10 +67,19 @@ target → contracts → enabled DeliveryRule → evaluate trigger/condition
 
 Supported triggers: `ON_SOURCE_COMMIT`, `BEFORE_TARGET_START`.
 `MANUAL` is unsupported (fail closed). Disabled rules and
-`condition.kind=never` do not deliver; condition failures are audited as
-`SKIPPED_CONDITION_FALSE` (not model failures).
+`condition.kind=never` does not deliver. Semantics:
+
+- optional + condition false → audit `SKIPPED_CONDITION_FALSE`; target may continue
+- required + condition false → `REQUIRED_CONDITION_UNSATISFIED`; target blocked
+
+Multiple enabled rules are evaluated by `priority desc, rule_id asc`; the first
+satisfied rule delivers (fallback). If none satisfy and the contract is
+required → block.
 
 Required payload with no enabled rule → `REQUIRED_RULE_MISSING` (target blocked).
+
+`required=True` means the target must possess the payload before start; it is
+not “conditionally required”.
 
 ## 8. Delivery ledger resume / replay
 
@@ -112,11 +121,16 @@ final_estimated_tokens <= contract.max_tokens
 Otherwise `PayloadProjectionInfeasible`. Optional fields may be omitted;
 required fields cannot be silently dropped.
 
-## 11. Deterministic aggregation
+## 11. Deterministic aggregation + FinalDeliveryUnit budget
 
 Strategies: `LIST`, `MERGE_DICT_FAIL_ON_CONFLICT`, `CONCAT_TEXT`.
 No LLM summarization. Same target slot with multiple payloads and no
 `AggregationRule` → fail closed. Dict key conflicts → `AGGREGATION_CONFLICT`.
+
+Context budget packs **FinalDeliveryUnit**s (single projection or one
+aggregated artifact). Token estimates are for the final injected artifact
+payload. An aggregate that exceeds the target budget is omitted/blocked and
+never written to `delivered_slots`.
 
 ## 12. Communication dependency + cycle validation
 
@@ -124,19 +138,19 @@ Required payloads require source to be a DAG ancestor of target.
 Combined graph of task dependencies + required communication edges must be
 acyclic.
 
-## 13. Future graph materialization
+## 13. Future graph materialization (final logical paths)
 
-`FutureGraphMaterializer` loads the immutable base graph, applies pending
-graph/backend/model assignments via capability + allowlist pools, validates
-with the graph compiler, and writes a run-scoped YAML snapshot:
+`FutureGraphMaterializer` writes physically to staging, but stores **final**
+logical paths in the TaskPlan / execution config:
 
 ```text
-<run_dir>/plan_revisions/<revision_id>/graphs/<subtask_id>.yaml
+physical write:  plan_revisions/.staging-rev-…/graphs/s2.yaml
+stored path:     plan_revisions/rev-…/graphs/s2.yaml
 ```
 
-Scheduler executes the materialized snapshot (or live materialization from
-`backend_assignment` metadata). Original repo YAML is never modified.
-CodeAgent/Codex remain FRESH-only; unsupported capabilities reject the revision.
+Active checkpoints never contain `.staging-` paths. Missing or hash-mismatched
+active snapshots → `PLAN_REVISION_GRAPH_*` fail-closed (no silent fallback to
+the original repo YAML).
 
 ## 14. Declared future delta validation
 
@@ -147,24 +161,31 @@ candidate proposed state to match. Extra mutations
 
 ## 15. Atomic revision + checkpoint transaction
 
-Controller prepares `PreparedSlowLoopRevision` (staging, VALIDATED).
-Coordinator commit:
+Crash-safe order (active pointer never references a missing revision):
 
 ```text
-stage revision files → write APPLIED revision.json → save checkpoint
-→ atomic rename revision dir → swap in-memory state
+1. prepare staging (+ fsync)
+2. atomic rename staging → final revision (PROMOTED / orphan-safe)
+3. fsync plan_revisions parent
+4. save checkpoint (activates pointer)
+5. swap live in-memory state
 ```
 
-Checkpoint failure keeps the previous plan active; staging is not promoted.
-Checkpoint stores `active_plan_revision_id`, `active_plan_hash`,
-`active_communication_hash`. Mismatch on recovery →
-`PLAN_REVISION_CORRUPTION`.
+Checkpoint is the sole source of truth for which revision is active.
+Promote-then-crash leaves an **orphan** final revision; old checkpoint stays
+active. Hash-identical retry is idempotent; hash collision →
+`PLAN_REVISION_ID_COLLISION`.
 
 ## 16. Scheduler next-wave consumption
 
-Next wave uses active scheduling policy, CommunicationPlan, delivery engine,
-and materialized graphs. Required delivery blocks prevent lease/execution.
-Leased/current wave specs are frozen during revision.
+```text
+mark dependency-ready → communication preflight (persist projections)
+→ blocked targets keep READY + communication_block_reason (no lease)
+→ only deliverable targets acquire leases → execute
+```
+
+Blocked targets do not consume concurrency slots. Upstream commit clears
+blocks so the next iteration can re-preflight.
 
 ## 17. Hidden evaluator isolation
 

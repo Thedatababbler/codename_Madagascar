@@ -171,9 +171,10 @@ never touch canonical; Slow Loop never rewrites the past.
 
 Delivery is **rule-driven** (`DeliveryRule` required), with replayable ledger
 resume, required-payload fail-closed blocking, strict recursive token
-projection, deterministic aggregation, communication cycle checks, future graph
-materialization (immutable YAML snapshots), declared-delta validation, and
-atomic revision/checkpoint transactions. M6 is **not** implemented.
+projection, FinalDeliveryUnit aggregation budgets, communication cycle checks,
+future graph materialization with **final** (non-staging) snapshot paths,
+declared-delta validation, crash-safe revision promote-before-checkpoint, and
+communication preflight before lease. M6 is **not** implemented.
 
 Design: `docs/m5_slow_global_adaptation.md`.
 
