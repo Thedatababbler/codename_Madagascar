@@ -48,16 +48,25 @@ class FutureSubtaskExecutionConfig(BaseModel):
     parent_graph_hash: str = ""
 
 
+class MaterializedGraphPaths(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    staging_path: str
+    final_path: str
+
+
 class MaterializedGraphResult(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     subtask_id: str
     graph: OrchestraGraph
     graph_hash: str
-    graph_path: str
+    graph_path: str  # always the logical final path
+    staging_path: str = ""
     parent_graph_hash: str
     node_assignments: list[PendingNodeAssignment] = Field(default_factory=list)
     execution_config: FutureSubtaskExecutionConfig
+    paths: MaterializedGraphPaths | None = None
 
 
 class GraphMaterializationError(RuntimeError):
@@ -89,9 +98,14 @@ class FutureGraphMaterializer:
         allowed_backend_pools: dict[str, list[str]] | None = None,
         backend_model_pools: dict[str, list[str]] | None = None,
         revision_graphs_dir: str | Path | None = None,
+        staging_graphs_dir: str | Path | None = None,
+        final_graphs_dir: str | Path | None = None,
         revision_id: str = "adhoc",
     ) -> MaterializedGraphResult:
         template = subtask.local_graph_template
+        # Prefer explicit staging/final dirs; revision_graphs_dir is legacy alias.
+        staging_dir = staging_graphs_dir or revision_graphs_dir
+        final_dir = final_graphs_dir or staging_dir
         graph = base_graph or load_graph(template)
         parent_hash = graph.content_hash
         assignments: list[PendingNodeAssignment] = []
@@ -203,25 +217,41 @@ class FutureGraphMaterializer:
                     f"non-FRESH session policy forbidden on {node.node_id}"
                 )
 
+        staging_path = ""
+        final_path = template
+        paths: MaterializedGraphPaths | None = None
         graph_hash = graph.content_hash
-        out_path = ""
-        if revision_graphs_dir is not None:
-            out_dir = Path(revision_graphs_dir)
-            out_dir.mkdir(parents=True, exist_ok=True)
-            out_path = str(out_dir / f"{subtask.subtask_id}.yaml")
+        if staging_dir is not None:
+            s_dir = Path(staging_dir)
+            f_dir = Path(final_dir) if final_dir is not None else s_dir
+            s_dir.mkdir(parents=True, exist_ok=True)
+            staging_path = str(s_dir / f"{subtask.subtask_id}.yaml")
+            final_path = str(f_dir / f"{subtask.subtask_id}.yaml")
+            # Embed stable revision metadata (no graph_hash field — it would
+            # change content_hash and create a chicken-and-egg).
             self._write_graph_snapshot(
-                path=out_path,
+                path=staging_path,
                 graph=graph,
                 revision_id=revision_id,
                 parent_graph_hash=parent_hash,
-                graph_hash=graph_hash,
+                graph_hash=None,
             )
+            graph = load_graph(staging_path)
+            graph_hash = graph.content_hash
+            paths = MaterializedGraphPaths(
+                staging_path=staging_path, final_path=final_path
+            )
+            if ".staging-" in final_path.replace("\\", "/"):
+                raise GraphMaterializationError(
+                    "PLAN_REVISION_GRAPH_PATH_INVALID: final path must not "
+                    f"contain staging segment: {final_path}"
+                )
 
         exec_cfg = FutureSubtaskExecutionConfig(
             subtask_id=subtask.subtask_id,
             graph_revision_id=revision_id,
             graph_hash=graph_hash,
-            graph_path=out_path or template,
+            graph_path=final_path,
             node_assignments=assignments,
             parent_graph_hash=parent_hash,
         )
@@ -229,10 +259,12 @@ class FutureGraphMaterializer:
             subtask_id=subtask.subtask_id,
             graph=graph,
             graph_hash=graph_hash,
-            graph_path=exec_cfg.graph_path,
+            graph_path=final_path,
+            staging_path=staging_path,
             parent_graph_hash=parent_hash,
             node_assignments=assignments,
             execution_config=exec_cfg,
+            paths=paths,
         )
 
     def _node_backend_id(self, graph: OrchestraGraph, node_id: str) -> str:
@@ -344,15 +376,17 @@ class FutureGraphMaterializer:
         graph: OrchestraGraph,
         revision_id: str,
         parent_graph_hash: str,
-        graph_hash: str,
+        graph_hash: str | None,
     ) -> None:
         payload = graph.model_dump(mode="json")
-        payload["metadata"] = {
+        meta = {
             **dict(payload.get("metadata") or {}),
             "plan_revision_id": revision_id,
             "parent_graph_hash": parent_graph_hash,
-            "graph_hash": graph_hash,
         }
+        if graph_hash is not None:
+            meta["graph_hash"] = graph_hash
+        payload["metadata"] = meta
         path_obj = Path(path)
         path_obj.parent.mkdir(parents=True, exist_ok=True)
         tmp = path_obj.with_suffix(path_obj.suffix + f".{os.getpid()}.tmp")

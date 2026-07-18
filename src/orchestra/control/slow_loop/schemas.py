@@ -46,6 +46,8 @@ class SubtaskLeaseStatus(StrEnum):
 class GlobalPlanRevisionStatus(StrEnum):
     PROPOSED = "proposed"
     VALIDATED = "validated"
+    PREPARED = "prepared"
+    PROMOTED = "promoted"
     REJECTED = "rejected"
     APPLIED = "applied"
     SUPERSEDED = "superseded"
