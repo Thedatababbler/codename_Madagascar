@@ -601,9 +601,10 @@ async def test_revision_checkpoint_transaction_rollback(tmp_path):
         )
     assert state.task_plan.content_hash() == old_hash
     assert state.active_plan_revision_id is None
-    assert rev.status is not GlobalPlanRevisionStatus.APPLIED or True
-    # Staging must not be promoted.
-    assert not (tmp_path / "plan_revisions" / "rev-fail-1").exists()
+    # Promote-before-checkpoint: final dir may exist as orphan; must not be active.
+    orphan = tmp_path / "plan_revisions" / "rev-fail-1"
+    if orphan.exists():
+        assert state.active_plan_revision_id != "rev-fail-1"
 
 
 @pytest.mark.asyncio

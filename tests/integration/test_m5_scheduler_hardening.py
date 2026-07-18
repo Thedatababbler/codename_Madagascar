@@ -557,7 +557,11 @@ async def test_i_plan_revision_atomic_failure_keeps_old_plan(tmp_path):
             run_dir=tmp_path,
         )
     assert state.task_plan.content_hash() == old
-    assert not (tmp_path / "plan_revisions" / "rev-atomic-fail").exists()
+    assert state.active_plan_revision_id is None
+    # Orphan final revision is allowed; it must not become active.
+    orphan = tmp_path / "plan_revisions" / "rev-atomic-fail"
+    if orphan.exists():
+        assert state.active_plan_revision_id != "rev-atomic-fail"
 
 
 @pytest.mark.asyncio

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import shutil
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -23,6 +24,7 @@ from orchestra.control.slow_loop.schemas import (
 )
 from orchestra.control.task_state import SubtaskStatus, TaskExecutionState
 from orchestra.decomposition.schemas import TaskPlan
+from orchestra.ir.graph import load_graph
 from orchestra.runtime.task_checkpoint import TaskCheckpointStore
 
 
@@ -36,10 +38,26 @@ class PreparedSlowLoopRevision(BaseModel):
     future_graph_revisions: list[FutureGraphRevision] = Field(default_factory=list)
     projected_state: TaskExecutionState
     staging_directory: str
+    final_directory: str = ""
 
 
 class PlanRevisionCorruption(RuntimeError):
     pass
+
+
+class PlanRevisionIdCollision(PlanRevisionCorruption):
+    pass
+
+
+class RevisionTransactionHooks(BaseModel):
+    """Test-only crash injection points. Production leaves all None."""
+
+    model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
+
+    after_staging_fsync: Callable[[], None] | None = None
+    after_revision_promote: Callable[[], None] | None = None
+    before_checkpoint_save: Callable[[], None] | None = None
+    after_checkpoint_save: Callable[[], None] | None = None
 
 
 def build_revision(
@@ -74,6 +92,22 @@ def build_revision(
     )
 
 
+def _fsync_tree(root: Path) -> None:
+    for path in root.rglob("*"):
+        if path.is_file():
+            with path.open("a", encoding="utf-8") as handle:
+                handle.flush()
+                os.fsync(handle.fileno())
+    try:
+        dir_fd = os.open(str(root), os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except OSError:
+        pass
+
+
 def prepare_revision_staging(
     *,
     run_dir: str | Path,
@@ -85,37 +119,34 @@ def prepare_revision_staging(
     allowed_backend_pools: dict[str, list[str]] | None = None,
     backend_model_pools: dict[str, list[str]] | None = None,
 ) -> PreparedSlowLoopRevision:
-    """Write VALIDATED revision files to a staging directory (not active yet)."""
+    """Write PREPARED revision files to staging; plan stores final graph paths."""
     root = Path(run_dir) / "plan_revisions"
     root.mkdir(parents=True, exist_ok=True)
     staging = root / f".staging-{revision.revision_id}-{os.getpid()}"
+    final = root / revision.revision_id
     if staging.exists():
         shutil.rmtree(staging)
     staging.mkdir(parents=True)
 
     rev = revision.model_copy(deep=True)
-    rev.status = GlobalPlanRevisionStatus.VALIDATED
+    rev.status = GlobalPlanRevisionStatus.PREPARED
+    materialized_plan = new_plan.model_copy(deep=True)
 
-    (staging / "task_plan.json").write_text(
-        new_plan.model_dump_json(indent=2), encoding="utf-8"
-    )
     (staging / "communication_plan.json").write_text(
         new_communication.model_dump_json(indent=2), encoding="utf-8"
     )
     (staging / "scheduling_policy.json").write_text(
         scheduling_policy.model_dump_json(indent=2), encoding="utf-8"
     )
-    (staging / "revision.json").write_text(
-        rev.model_dump_json(indent=2), encoding="utf-8"
-    )
 
-    graphs_dir = staging / "graphs"
-    graphs_dir.mkdir()
+    graphs_staging = staging / "graphs"
+    graphs_staging.mkdir()
+    graphs_final = final / "graphs"
     materializer = FutureGraphMaterializer()
     future_graph_revisions: list[FutureGraphRevision] = []
     projected = state.model_copy(deep=True)
     eligible = set(rev.eligible_subtask_ids)
-    by_spec = {s.subtask_id: s for s in new_plan.subtasks}
+    by_spec = {s.subtask_id: s for s in materialized_plan.subtasks}
 
     for sid in sorted(eligible):
         sub = projected.subtasks.get(sid)
@@ -140,7 +171,7 @@ def prepare_revision_staging(
             )
         )
         if not needs_materialize:
-            marker = graphs_dir / f"{sid}.txt"
+            marker = graphs_staging / f"{sid}.txt"
             marker.write_text(spec.local_graph_template + "\n", encoding="utf-8")
             future_graph_revisions.append(
                 FutureGraphRevision(
@@ -157,23 +188,31 @@ def prepare_revision_staging(
             active_plan_revision=rev,
             allowed_backend_pools=allowed_backend_pools,
             backend_model_pools=backend_model_pools,
-            revision_graphs_dir=graphs_dir,
+            staging_graphs_dir=graphs_staging,
+            final_graphs_dir=graphs_final,
             revision_id=rev.revision_id,
         )
+        logical_path = mat.graph_path
+        if ".staging-" in logical_path.replace("\\", "/"):
+            raise PlanRevisionCorruption(
+                "PLAN_REVISION_GRAPH_PATH_INVALID: stored path is staging"
+            )
         new_meta = dict(spec.metadata)
         new_meta["execution_config"] = mat.execution_config.model_dump(mode="json")
-        new_meta["materialized_graph_path"] = mat.graph_path
+        new_meta["materialized_graph_path"] = logical_path
         updated_spec = spec.model_copy(
             update={
-                "local_graph_template": mat.graph_path,
+                "local_graph_template": logical_path,
                 "metadata": new_meta,
             }
         )
-        for i, s in enumerate(new_plan.subtasks):
+        for i, s in enumerate(materialized_plan.subtasks):
             if s.subtask_id == sid:
-                subs = list(new_plan.subtasks)
+                subs = list(materialized_plan.subtasks)
                 subs[i] = updated_spec
-                new_plan = new_plan.model_copy(update={"subtasks": subs})
+                materialized_plan = materialized_plan.model_copy(
+                    update={"subtasks": subs}
+                )
                 by_spec[sid] = updated_spec
                 break
         sub.spec = updated_spec
@@ -182,7 +221,7 @@ def prepare_revision_staging(
                 subtask_id=sid,
                 parent_graph_hash=mat.parent_graph_hash,
                 graph_hash=mat.graph_hash,
-                graph_path=mat.graph_path,
+                graph_path=logical_path,
                 edits=[
                     e
                     for e in rev.edits
@@ -191,35 +230,34 @@ def prepare_revision_staging(
             )
         )
 
-    # Rewrite task plan after materialization path updates.
-    (staging / "task_plan.json").write_text(
-        new_plan.model_dump_json(indent=2), encoding="utf-8"
+    rev = rev.model_copy(
+        update={
+            "new_plan_hash": materialized_plan.content_hash(),
+            "new_communication_hash": communication_plan_hash(new_communication),
+        }
     )
-    rev = rev.model_copy(update={"new_plan_hash": new_plan.content_hash()})
+    (staging / "task_plan.json").write_text(
+        materialized_plan.model_dump_json(indent=2), encoding="utf-8"
+    )
     (staging / "revision.json").write_text(
         rev.model_dump_json(indent=2), encoding="utf-8"
     )
+    _fsync_tree(staging)
 
-    for path in staging.rglob("*"):
-        if path.is_file():
-            with path.open("a", encoding="utf-8") as handle:
-                handle.flush()
-                os.fsync(handle.fileno())
-
-    projected.task_plan = new_plan
+    projected.task_plan = materialized_plan
     projected.communication_plan = new_communication.model_copy(deep=True)
-    projected.plan_content_hash = new_plan.content_hash()
+    projected.plan_content_hash = materialized_plan.content_hash()
     projected.scheduling_policy = scheduling_policy
     projected.active_plan_revision_id = rev.revision_id
-    # Do not mark APPLIED yet — commit step does.
     return PreparedSlowLoopRevision(
         revision=rev,
-        proposed_task_plan=new_plan,
+        proposed_task_plan=materialized_plan,
         proposed_communication_plan=new_communication,
         proposed_scheduling_policy=scheduling_policy,
         future_graph_revisions=future_graph_revisions,
         projected_state=projected,
         staging_directory=str(staging),
+        final_directory=str(final),
     )
 
 
@@ -239,13 +277,22 @@ def write_plan_revision_snapshot(
         scheduling_policy=policy,
         state=TaskExecutionState.from_plan(new_plan),
     )
-    final = Path(run_dir) / "plan_revisions" / revision.revision_id
+    final = Path(prepared.final_directory)
+    staging = Path(prepared.staging_directory)
     if final.exists():
-        shutil.rmtree(final)
-    os.replace(prepared.staging_directory, final)
-    # Mark applied on disk snapshot for legacy callers.
-    rev = revision.model_copy(deep=True)
-    rev.status = GlobalPlanRevisionStatus.APPLIED
+        disk = GlobalPlanRevision.model_validate_json(
+            (final / "revision.json").read_text(encoding="utf-8")
+        )
+        if disk.new_plan_hash == prepared.revision.new_plan_hash:
+            shutil.rmtree(staging, ignore_errors=True)
+            return final
+        raise PlanRevisionIdCollision(
+            "PLAN_REVISION_ID_COLLISION: final revision exists with different hash"
+        )
+    os.replace(staging, final)
+    rev = prepared.revision.model_copy(
+        update={"status": GlobalPlanRevisionStatus.APPLIED}
+    )
     (final / "revision.json").write_text(
         rev.model_dump_json(indent=2), encoding="utf-8"
     )
@@ -293,29 +340,87 @@ def apply_revision_to_state(
     return state
 
 
+def _promote_staging(
+    *,
+    staging: Path,
+    final: Path,
+    prepared: PreparedSlowLoopRevision,
+) -> GlobalPlanRevision:
+    """Promote staging → final. Active pointer remains old checkpoint until save."""
+    if not staging.exists():
+        raise PlanRevisionCorruption(
+            f"PLAN_REVISION_CORRUPTION: missing staging {staging}"
+        )
+    rev = prepared.revision.model_copy(deep=True)
+    rev.status = GlobalPlanRevisionStatus.PROMOTED
+    (staging / "revision.json").write_text(
+        rev.model_dump_json(indent=2), encoding="utf-8"
+    )
+    _fsync_tree(staging)
+
+    if final.exists():
+        disk = GlobalPlanRevision.model_validate_json(
+            (final / "revision.json").read_text(encoding="utf-8")
+        )
+        if disk.new_plan_hash == rev.new_plan_hash:
+            # Idempotent recovery: reuse existing final.
+            shutil.rmtree(staging, ignore_errors=True)
+            return disk
+        raise PlanRevisionIdCollision(
+            "PLAN_REVISION_ID_COLLISION: final revision exists with different hash"
+        )
+
+    parent = final.parent
+    os.replace(staging, final)
+    try:
+        dir_fd = os.open(str(parent), os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except OSError:
+        pass
+    return rev
+
+
 async def commit_prepared_revision(
     *,
     state: TaskExecutionState,
     prepared: PreparedSlowLoopRevision,
     checkpoint_store: TaskCheckpointStore,
     run_dir: str | Path,
+    hooks: RevisionTransactionHooks | None = None,
 ) -> TaskExecutionState:
     """
-    Coordinator-owned atomic commit:
+    Crash-safe commit order:
 
-    staging revision files → staged checkpoint → atomic rename revision
-    → atomic replace checkpoint → swap in-memory state.
+    1. staging fsync (done in prepare)
+    2. atomic rename staging → final revision
+    3. fsync plan_revisions parent
+    4. save projected checkpoint (activates pointer)
+    5. swap live in-memory state
+
+    Active checkpoint never points at a missing revision directory.
     """
+    hooks = hooks or RevisionTransactionHooks()
     staging = Path(prepared.staging_directory)
-    final = Path(run_dir) / "plan_revisions" / prepared.revision.revision_id
-    if not staging.exists():
-        raise PlanRevisionCorruption(
-            f"PLAN_REVISION_CORRUPTION: missing staging {staging}"
-        )
+    final = Path(prepared.final_directory or (
+        Path(run_dir) / "plan_revisions" / prepared.revision.revision_id
+    ))
 
-    # Projected state already holds new plan; mark revision APPLIED for checkpoint.
+    if hooks.after_staging_fsync is not None:
+        hooks.after_staging_fsync()
+
+    promoted_rev = _promote_staging(
+        staging=staging, final=final, prepared=prepared
+    )
+
+    if hooks.after_revision_promote is not None:
+        hooks.after_revision_promote()
+
+    # Build projected state that will become active only after checkpoint save.
     projected = prepared.projected_state.model_copy(deep=True)
-    rev = prepared.revision.model_copy(deep=True)
+    rev = promoted_rev.model_copy(deep=True)
     rev.status = GlobalPlanRevisionStatus.APPLIED
     rev.applied_at_state_version = state.state_version + 1
     for old in projected.plan_revision_history:
@@ -324,7 +429,6 @@ async def commit_prepared_revision(
             and old.revision_id != rev.revision_id
         ):
             old.status = GlobalPlanRevisionStatus.SUPERSEDED
-    # Avoid duplicate append if prepare already mirrored.
     projected.plan_revision_history = [
         r
         for r in projected.plan_revision_history
@@ -338,7 +442,6 @@ async def commit_prepared_revision(
     )
     projected.global_revision = state.global_revision + 1
     projected.state_version = state.state_version + 1
-    # Preserve live delivery ledger / committed history from current state.
     projected.delivery_ledger = list(state.delivery_ledger)
     projected.workspace_commit_records = list(state.workspace_commit_records)
     projected.fast_loop_history = list(state.fast_loop_history)
@@ -347,40 +450,30 @@ async def commit_prepared_revision(
     projected.canonical_workspace_ref = state.canonical_workspace_ref
     projected.canonical_revision = state.canonical_revision
     projected.committed_subtask_count = state.committed_subtask_count
-    # Frozen statuses must keep their specs from live state.
     for sid, live_sub in state.subtasks.items():
         if live_sub.status not in {SubtaskStatus.PENDING, SubtaskStatus.READY}:
             projected.subtasks[sid] = live_sub.model_copy(deep=True)
         elif live_sub.lease_status == "leased":
             projected.subtasks[sid] = live_sub.model_copy(deep=True)
 
-    # Write APPLIED revision.json into staging before promote.
-    (staging / "revision.json").write_text(
+    # Persist APPLIED status on promoted revision before activating checkpoint.
+    (final / "revision.json").write_text(
         rev.model_dump_json(indent=2), encoding="utf-8"
     )
-    with (staging / "revision.json").open("a", encoding="utf-8") as handle:
+    with (final / "revision.json").open("a", encoding="utf-8") as handle:
         handle.flush()
         os.fsync(handle.fileno())
 
-    # Save checkpoint for projected state first (tmp→replace inside store).
-    # If this fails, staging remains non-active and live state untouched.
+    if hooks.before_checkpoint_save is not None:
+        hooks.before_checkpoint_save()
+
+    # Checkpoint activation is the sole active pointer.
     await checkpoint_store.save(projected)
 
-    # Atomic promote of revision directory.
-    if final.exists():
-        shutil.rmtree(final)
-    os.replace(staging, final)
+    if hooks.after_checkpoint_save is not None:
+        hooks.after_checkpoint_save()
 
-    # Verify revision/checkpoint agreement.
-    if projected.active_plan_revision_id != rev.revision_id:
-        raise PlanRevisionCorruption("PLAN_REVISION_CORRUPTION: revision id mismatch")
-    disk_rev = GlobalPlanRevision.model_validate_json(
-        (final / "revision.json").read_text(encoding="utf-8")
-    )
-    if disk_rev.status is not GlobalPlanRevisionStatus.APPLIED:
-        raise PlanRevisionCorruption(
-            "PLAN_REVISION_CORRUPTION: disk revision not APPLIED"
-        )
+    verify_checkpoint_revision_consistency(state=projected, run_dir=run_dir)
 
     # Swap in-memory fields from projected onto live state object.
     state.task_plan = projected.task_plan
@@ -410,19 +503,24 @@ def verify_checkpoint_revision_consistency(
     state: TaskExecutionState,
     run_dir: str | Path,
 ) -> None:
+    """Active pointer is the sole source of truth for applied revisions."""
     if not state.active_plan_revision_id:
         return
-    rev_path = (
-        Path(run_dir) / "plan_revisions" / state.active_plan_revision_id / "revision.json"
-    )
+    rev_dir = Path(run_dir) / "plan_revisions" / state.active_plan_revision_id
+    rev_path = rev_dir / "revision.json"
     if not rev_path.exists():
         raise PlanRevisionCorruption(
             "PLAN_REVISION_CORRUPTION: active revision directory missing"
         )
     disk = GlobalPlanRevision.model_validate_json(rev_path.read_text(encoding="utf-8"))
-    if disk.status is not GlobalPlanRevisionStatus.APPLIED:
+    # Active is defined by checkpoint pointer; disk status should be APPLIED
+    # after a successful commit (PROMOTED is only pre-activation).
+    if disk.status not in {
+        GlobalPlanRevisionStatus.APPLIED,
+        GlobalPlanRevisionStatus.PROMOTED,
+    }:
         raise PlanRevisionCorruption(
-            "PLAN_REVISION_CORRUPTION: active revision not APPLIED on disk"
+            f"PLAN_REVISION_CORRUPTION: unexpected revision status {disk.status}"
         )
     if state.active_plan_hash and disk.new_plan_hash != state.active_plan_hash:
         raise PlanRevisionCorruption(
@@ -435,3 +533,48 @@ def verify_checkpoint_revision_consistency(
         raise PlanRevisionCorruption(
             "PLAN_REVISION_CORRUPTION: communication hash mismatch vs revision"
         )
+
+    for spec in state.task_plan.subtasks:
+        meta = dict(spec.metadata or {})
+        exec_cfg = meta.get("execution_config") or {}
+        graph_path = str(
+            exec_cfg.get("graph_path")
+            or meta.get("materialized_graph_path")
+            or ""
+        )
+        if not graph_path:
+            continue
+        if ".staging-" in graph_path.replace("\\", "/"):
+            raise PlanRevisionCorruption(
+                "PLAN_REVISION_GRAPH_PATH_INVALID: staging path in active plan"
+            )
+        path = Path(graph_path)
+        if not path.is_absolute():
+            # Paths may be relative to run_dir or cwd; try both.
+            candidates = [path, Path(run_dir) / path, Path.cwd() / path]
+        else:
+            candidates = [path]
+        existing = next((p for p in candidates if p.exists()), None)
+        if existing is None:
+            # Only required when this is a materialized revision snapshot.
+            if str(rev_dir) in graph_path or "plan_revisions" in graph_path:
+                raise PlanRevisionCorruption(
+                    f"PLAN_REVISION_GRAPH_MISSING: {graph_path}"
+                )
+            continue
+        expected_hash = str(exec_cfg.get("graph_hash") or "")
+        if expected_hash:
+            loaded = load_graph(existing)
+            if loaded.content_hash != expected_hash:
+                raise PlanRevisionCorruption(
+                    "PLAN_REVISION_GRAPH_HASH_MISMATCH: "
+                    f"{graph_path} hash {loaded.content_hash} != {expected_hash}"
+                )
+            meta_g = dict(loaded.metadata or {})
+            if meta_g.get("plan_revision_id") not in {
+                None,
+                state.active_plan_revision_id,
+            }:
+                raise PlanRevisionCorruption(
+                    "PLAN_REVISION_CORRUPTION: graph revision id mismatch"
+                )
