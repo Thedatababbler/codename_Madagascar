@@ -7,9 +7,14 @@ from pydantic import BaseModel, ConfigDict, Field
 from orchestra.communication.compiler import communication_plan_hash
 from orchestra.communication.validation import (
     CommunicationPlanValidationError,
+    CommunicationValidationMode,
     validate_communication_plan,
 )
 from orchestra.control.slow_loop.edits import apply_global_edits
+from orchestra.control.slow_loop.graph_materializer import (
+    FutureGraphMaterializer,
+    GraphMaterializationError,
+)
 from orchestra.control.slow_loop.schemas import (
     GlobalEdit,
     PendingBackendAssignmentEdit,
@@ -159,24 +164,31 @@ class FuturePlanValidator:
             validate_communication_plan(
                 task_plan=proposed_plan,
                 communication_plan=proposed_comm,
-                completed_subtask_ids={
-                    sid
-                    for sid, sub in current_state.subtasks.items()
-                    if sub.status
-                    in {
-                        SubtaskStatus.COMMITTED,
-                        SubtaskStatus.FAILED,
-                        SubtaskStatus.SKIPPED,
-                    }
-                },
+                mode=CommunicationValidationMode.PROPOSED_REVISION,
+                current_state=current_state,
+                parent_communication_plan=current_state.communication_plan,
             )
         except CommunicationPlanValidationError as exc:
             errors.append(str(exc))
+
+        # Required payload upper-bound feasibility against proposed budgets.
+        for target, budget in proposed_comm.context_budgets.items():
+            needed = sum(
+                c.max_tokens
+                for c in proposed_comm.payload_contracts
+                if c.target_subtask_id == target and c.is_required()
+            )
+            if budget > 0 and needed > budget:
+                errors.append(
+                    f"CONTEXT_BUDGET_INFEASIBLE: required payloads need {needed} "
+                    f"> budget {budget} for {target}"
+                )
 
         pools = self.config.backend_model_pools
         allowed_backends = {
             b for group in self.config.allowed_backend_assignments.values() for b in group
         }
+        materializer = FutureGraphMaterializer()
         for edit in edits:
             if isinstance(edit, PendingBackendAssignmentEdit):
                 if allowed_backends and edit.backend_id not in allowed_backends:
@@ -189,6 +201,22 @@ class FuturePlanValidator:
                         errors.append(
                             f"model {edit.model_name} not in pool for {edit.backend_id}"
                         )
+                if edit.node_id == "__future_agent__":
+                    errors.append(
+                        f"invalid placeholder node_id __future_agent__ on "
+                        f"{edit.subtask_id}"
+                    )
+                sub = proposed_by_id.get(edit.subtask_id)
+                if sub is not None and edit.node_id != "__future_agent__":
+                    try:
+                        materializer.materialize(
+                            subtask=sub,
+                            revision_id="preview",
+                            allowed_backend_pools=self.config.allowed_backend_assignments,
+                            backend_model_pools=self.config.backend_model_pools,
+                        )
+                    except GraphMaterializationError as exc:
+                        errors.append(f"materialization_preview_failed:{exc}")
             if isinstance(edit, PendingGraphTemplateEdit):
                 if edit.subtask_id in leased_subtask_ids:
                     errors.append(
