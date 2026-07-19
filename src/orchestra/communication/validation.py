@@ -1,13 +1,18 @@
-"""CommunicationPlan structural validation (M5)."""
+"""CommunicationPlan validation modes (M5.2)."""
 
 from __future__ import annotations
 
 from collections import defaultdict, deque
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any
 
 from orchestra.communication.payload import DeliveryTrigger
 from orchestra.communication.plan import CommunicationPlan
 from orchestra.decomposition.schemas import TaskPlan
 from orchestra.ir.artifacts import PAYLOAD_SCHEMAS
+
+if TYPE_CHECKING:
+    from orchestra.control.task_state import TaskExecutionState
 
 PRIVATE_ARTIFACT_MARKERS = (
     "Private",
@@ -20,6 +25,12 @@ PRIVATE_ARTIFACT_MARKERS = (
 
 class CommunicationPlanValidationError(ValueError):
     pass
+
+
+class CommunicationValidationMode(StrEnum):
+    STRUCTURAL = "structural"
+    PROPOSED_REVISION = "proposed_revision"
+    ACTIVE_EXECUTION = "active_execution"
 
 
 def _ancestors(task_plan: TaskPlan) -> dict[str, set[str]]:
@@ -59,13 +70,38 @@ def _has_cycle(edges: dict[str, set[str]], nodes: set[str]) -> bool:
     return seen != len(nodes)
 
 
-def validate_communication_plan(
+def _past_or_active_targets(state: Any) -> set[str]:
+    """Targets that must not receive *new* proposed communication."""
+    from orchestra.control.task_state import SubtaskStatus
+
+    blocked: set[str] = set()
+    for sid, sub in state.subtasks.items():
+        if sub.lease_status == "leased":
+            blocked.add(sid)
+            continue
+        if sub.status in {
+            SubtaskStatus.COMMITTED,
+            SubtaskStatus.RUNNING,
+            SubtaskStatus.AWAITING_CANONICAL_COMMIT,
+            SubtaskStatus.RETRY_PENDING,
+            SubtaskStatus.FAILED,
+            SubtaskStatus.SKIPPED,
+            SubtaskStatus.HARNESS_FAILED,
+        }:
+            blocked.add(sid)
+    return blocked
+
+
+def _contract_fingerprint(contract) -> dict:
+    return contract.model_dump(mode="json")
+
+
+def validate_communication_structure(
     *,
     task_plan: TaskPlan,
     communication_plan: CommunicationPlan,
-    completed_subtask_ids: set[str] | None = None,
 ) -> None:
-    completed = completed_subtask_ids or set()
+    """Structural checks independent of runtime subtask status."""
     subtask_ids = {s.subtask_id for s in task_plan.subtasks}
     payload_ids: set[str] = set()
     ancestors = _ancestors(task_plan)
@@ -88,11 +124,6 @@ def validate_communication_plan(
             raise CommunicationPlanValidationError(
                 f"payload {contract.payload_id}: source equals target"
             )
-        if contract.target_subtask_id in completed:
-            raise CommunicationPlanValidationError(
-                f"payload {contract.payload_id}: delivery targets completed "
-                f"subtask {contract.target_subtask_id}"
-            )
         if contract.max_tokens <= 0:
             raise CommunicationPlanValidationError(
                 f"payload {contract.payload_id}: max_tokens must be > 0"
@@ -108,7 +139,6 @@ def validate_communication_plan(
             raise CommunicationPlanValidationError(
                 f"payload {contract.payload_id}: illegal artifact_type {contract.artifact_type}"
             )
-        # Required communication must have executable precedence.
         if contract.is_required():
             src = contract.source_subtask_id
             tgt = contract.target_subtask_id
@@ -154,7 +184,6 @@ def validate_communication_plan(
                     f"aggregation {agg.rule_id}: unknown payload {pid}"
                 )
 
-    # Combined dependency graph: task deps + required communication edges.
     edges: dict[str, set[str]] = defaultdict(set)
     for spec in task_plan.subtasks:
         for dep in spec.dependencies:
@@ -166,3 +195,99 @@ def validate_communication_plan(
         raise CommunicationPlanValidationError(
             "required communication + task dependencies form a cycle"
         )
+
+
+def validate_proposed_communication_revision(
+    *,
+    task_plan: TaskPlan,
+    communication_plan: CommunicationPlan,
+    current_state: TaskExecutionState | Any,
+    parent_communication_plan: CommunicationPlan | None = None,
+    changed_payload_ids: set[str] | None = None,
+) -> None:
+    """Reject new/changed contracts that target past or leased subtasks."""
+    validate_communication_structure(
+        task_plan=task_plan, communication_plan=communication_plan
+    )
+    blocked = _past_or_active_targets(current_state)
+    parent = parent_communication_plan or current_state.communication_plan
+    parent_by_id = {c.payload_id: c for c in parent.payload_contracts}
+    changed = changed_payload_ids
+    if changed is None:
+        changed = set()
+        for contract in communication_plan.payload_contracts:
+            prev = parent_by_id.get(contract.payload_id)
+            if prev is None or _contract_fingerprint(prev) != _contract_fingerprint(
+                contract
+            ):
+                changed.add(contract.payload_id)
+        for pid in parent_by_id:
+            if pid not in {c.payload_id for c in communication_plan.payload_contracts}:
+                # Deletion of historical contract targeting blocked is allowed;
+                # addition/change is what we gate.
+                pass
+
+    for contract in communication_plan.payload_contracts:
+        if contract.payload_id not in changed:
+            continue
+        if contract.target_subtask_id in blocked:
+            raise CommunicationPlanValidationError(
+                f"payload {contract.payload_id}: proposed revision cannot target "
+                f"past/leased subtask {contract.target_subtask_id}"
+            )
+
+
+def validate_active_communication_plan(
+    *,
+    task_plan: TaskPlan,
+    communication_plan: CommunicationPlan,
+) -> None:
+    """Active runtime: structure only; historical completed targets remain valid."""
+    validate_communication_structure(
+        task_plan=task_plan, communication_plan=communication_plan
+    )
+
+
+def validate_communication_plan(
+    *,
+    task_plan: TaskPlan,
+    communication_plan: CommunicationPlan,
+    mode: CommunicationValidationMode | str = CommunicationValidationMode.STRUCTURAL,
+    current_state: TaskExecutionState | Any | None = None,
+    parent_communication_plan: CommunicationPlan | None = None,
+    changed_payload_ids: set[str] | None = None,
+    completed_subtask_ids: set[str] | None = None,
+) -> None:
+    """
+    Unified entrypoint.
+
+    ``completed_subtask_ids`` is deprecated. When provided with no explicit mode
+    other than the default, PROPOSED_REVISION semantics are applied for backward
+    compatibility with older call sites that passed completed targets.
+    """
+    del completed_subtask_ids  # no longer used to reject historical contracts
+    mode_v = CommunicationValidationMode(mode)
+    if mode_v is CommunicationValidationMode.STRUCTURAL:
+        validate_communication_structure(
+            task_plan=task_plan, communication_plan=communication_plan
+        )
+        return
+    if mode_v is CommunicationValidationMode.ACTIVE_EXECUTION:
+        validate_active_communication_plan(
+            task_plan=task_plan, communication_plan=communication_plan
+        )
+        return
+    if mode_v is CommunicationValidationMode.PROPOSED_REVISION:
+        if current_state is None:
+            raise CommunicationPlanValidationError(
+                "PROPOSED_REVISION validation requires current_state"
+            )
+        validate_proposed_communication_revision(
+            task_plan=task_plan,
+            communication_plan=communication_plan,
+            current_state=current_state,
+            parent_communication_plan=parent_communication_plan,
+            changed_payload_ids=changed_payload_ids,
+        )
+        return
+    raise CommunicationPlanValidationError(f"unknown validation mode: {mode}")
