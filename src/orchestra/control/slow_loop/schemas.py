@@ -35,6 +35,9 @@ class GlobalDiagnosisReason(StrEnum):
     SCHEDULING_CONTENTION = "scheduling_contention"
     CANONICAL_CONFLICT_RISK = "canonical_conflict_risk"
     AGGREGATION_RISK = "aggregation_risk"
+    HARNESS_INSTABILITY = "harness_instability"
+    DELIVERY_FAILURE = "delivery_failure"
+    NO_SAFE_FUTURE_EDIT = "no_safe_future_edit"
 
 
 class SubtaskLeaseStatus(StrEnum):
@@ -68,6 +71,7 @@ class TaskBudgetRemaining(BaseModel):
     max_cost_usd: float | None = None
     remaining_cost_usd: float | None = None
     ratio: float = 1.0
+    budget_configured: bool = False
 
 
 class DeliveryStatistics(BaseModel):
@@ -77,6 +81,9 @@ class DeliveryStatistics(BaseModel):
     skipped_count: int = 0
     failed_count: int = 0
     unique_payloads: int = 0
+    delivery_failure_counts: dict[str, int] = Field(default_factory=dict)
+    aggregation_failure_counts: dict[str, int] = Field(default_factory=dict)
+    required_delivery_block_count: int = 0
 
 
 class TaskSchedulingPolicy(BaseModel):

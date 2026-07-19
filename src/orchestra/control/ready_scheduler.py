@@ -34,6 +34,7 @@ from orchestra.control.slow_loop.schemas import (
     SlowLoopConfig,
     TaskSchedulingPolicy,
 )
+from orchestra.control.slow_loop.task_budget import TaskBudgetTracker
 from orchestra.control.task_state import (
     BackendSessionRecord,
     SubtaskAttempt,
@@ -181,6 +182,7 @@ class ReadySubtaskScheduler:
         allow_concurrent_subtasks: bool = False,
         slow_loop: SlowLoopController | None = None,
         slow_loop_config: SlowLoopConfig | None = None,
+        task_budget_tracker: TaskBudgetTracker | None = None,
     ) -> None:
         if max_concurrent_subtasks > 1 and not allow_concurrent_subtasks:
             raise ValueError(
@@ -205,7 +207,11 @@ class ReadySubtaskScheduler:
             workspace_manager=self._candidate_ws,
             persist_checkpoints=False,
         )
-        self.slow_loop = slow_loop or SlowLoopController(config=slow_loop_config)
+        self.slow_loop = slow_loop or SlowLoopController(
+            config=slow_loop_config,
+            checkpoint_store=task_checkpoint_store,
+        )
+        self.task_budget_tracker = task_budget_tracker or TaskBudgetTracker()
         self.compiler = build_compiler(contracts_dir)
         self._state_lock = asyncio.Lock()
 
@@ -435,11 +441,16 @@ class ReadySubtaskScheduler:
 
             # Slow Loop only at safe checkpoint between waves.
             async with self._state_lock:
+                task_budget = self.task_budget_tracker.snapshot(
+                    task_plan=state.task_plan,
+                    task_state=state,
+                )
                 await self.slow_loop.maybe_update(
                     task_plan=state.task_plan,
                     state=state,
                     context=context,
                     leased_subtask_ids=set(),
+                    task_budget=task_budget,
                 )
                 await self.task_checkpoint_store.save(state)
 

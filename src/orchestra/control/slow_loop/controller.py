@@ -102,11 +102,17 @@ class SlowLoopController:
             budget=self.config.budget,
         )
         if not diagnosis.update_required:
+            msg = "diagnosis NO_CHANGE"
+            if any(
+                r.value == "no_safe_future_edit"
+                for r in (diagnosis.reasons or [])
+            ):
+                msg = "NO_SAFE_FUTURE_EDIT"
             return SlowLoopUpdateResult(
                 updated=False,
                 trigger_reasons=triggers,
                 diagnosis=diagnosis,
-                message="diagnosis NO_CHANGE",
+                message=msg,
             )
 
         eligible = eligible_future_subtask_ids(state) - set(leased_subtask_ids)
@@ -170,7 +176,7 @@ class SlowLoopController:
                 revision=rev,
                 trigger_reasons=triggers,
                 diagnosis=diagnosis,
-                message="no valid candidate",
+                message="NO_SAFE_FUTURE_EDIT",
             )
 
         revision = build_revision(
