@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from orchestra.communication.ledger import DeliveryStatus
+from orchestra.communication.ledger import DeliveryFailureReason, DeliveryStatus
 from orchestra.communication.projection import estimate_tokens
 from orchestra.control.fast_loop.budget import add_costs
 from orchestra.control.fast_loop.schemas import CostRecord, sum_candidate_costs
@@ -19,6 +19,32 @@ from orchestra.control.task_state import (
     TaskExecutionState,
     WorkspaceCommitStatus,
 )
+
+_SKIPPED_STATUSES = {
+    DeliveryStatus.SKIPPED,
+    DeliveryStatus.SKIPPED_CONDITION_FALSE,
+    DeliveryStatus.SKIPPED_RULE_DISABLED,
+    DeliveryStatus.SKIPPED_NO_RULE,
+}
+
+_AGGREGATION_REASONS = {
+    DeliveryFailureReason.AGGREGATION_CONFLICT.value,
+    DeliveryFailureReason.AGGREGATION_RULE_MISSING.value,
+    DeliveryFailureReason.AMBIGUOUS_AGGREGATION_RULE.value,
+    DeliveryFailureReason.AGGREGATION_INPUT_SET_MISMATCH.value,
+    DeliveryFailureReason.AGGREGATION_REQUIRED_INPUT_MISSING.value,
+}
+
+_REQUIRED_BLOCK_REASONS = {
+    DeliveryFailureReason.REQUIRED_SOURCE_NOT_COMMITTED.value,
+    DeliveryFailureReason.REQUIRED_ARTIFACT_MISSING.value,
+    DeliveryFailureReason.REQUIRED_FIELD_MISSING.value,
+    DeliveryFailureReason.REQUIRED_RULE_MISSING.value,
+    DeliveryFailureReason.REQUIRED_CONDITION_UNSATISFIED.value,
+    DeliveryFailureReason.CONTEXT_BUDGET_INFEASIBLE.value,
+    DeliveryFailureReason.PROJECTION_INFEASIBLE.value,
+    DeliveryFailureReason.LEDGER_CORRUPTION.value,
+}
 
 
 def build_global_observation(
@@ -116,15 +142,48 @@ def build_global_observation(
     delivered = [
         d for d in state.delivery_ledger if d.status is DeliveryStatus.DELIVERED
     ]
+    delivery_failure_counts: dict[str, int] = {}
+    aggregation_failure_counts: dict[str, int] = {}
+    required_blocks = 0
+    for d in state.delivery_ledger:
+        reason = getattr(d, "failure_reason", None)
+        reason_s = (
+            reason.value
+            if isinstance(reason, DeliveryFailureReason)
+            else (str(reason) if reason else "")
+        )
+        if d.status is DeliveryStatus.FAILED or reason_s:
+            if reason_s:
+                delivery_failure_counts[reason_s] = (
+                    delivery_failure_counts.get(reason_s, 0) + 1
+                )
+            if reason_s in _AGGREGATION_REASONS:
+                aggregation_failure_counts[reason_s] = (
+                    aggregation_failure_counts.get(reason_s, 0) + 1
+                )
+            if reason_s in _REQUIRED_BLOCK_REASONS:
+                required_blocks += 1
+    for sub in state.subtasks.values():
+        br = sub.communication_block_reason
+        if not br:
+            continue
+        delivery_failure_counts[br] = delivery_failure_counts.get(br, 0) + 1
+        if br in _AGGREGATION_REASONS:
+            aggregation_failure_counts[br] = aggregation_failure_counts.get(br, 0) + 1
+        if br in _REQUIRED_BLOCK_REASONS:
+            required_blocks += 1
     stats = DeliveryStatistics(
         delivered_count=len(delivered),
         skipped_count=sum(
-            1 for d in state.delivery_ledger if d.status is DeliveryStatus.SKIPPED
+            1 for d in state.delivery_ledger if d.status in _SKIPPED_STATUSES
         ),
         failed_count=sum(
             1 for d in state.delivery_ledger if d.status is DeliveryStatus.FAILED
         ),
         unique_payloads=len({d.payload_id for d in delivered}),
+        delivery_failure_counts=delivery_failure_counts,
+        aggregation_failure_counts=aggregation_failure_counts,
+        required_delivery_block_count=required_blocks,
     )
 
     slow: SlowLoopState | None = state.slow_loop_state

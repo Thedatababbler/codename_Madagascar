@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from orchestra.communication.ledger import DeliveryFailureReason
 from orchestra.communication.plan import CommunicationPlan
 from orchestra.control.slow_loop.schemas import (
     GlobalDiagnosis,
@@ -12,6 +13,25 @@ from orchestra.control.slow_loop.schemas import (
 )
 from orchestra.control.task_state import SubtaskStatus, TaskExecutionState
 from orchestra.decomposition.schemas import TaskPlan
+
+AGGREGATION_FAILURE_REASONS = {
+    DeliveryFailureReason.AGGREGATION_CONFLICT.value,
+    DeliveryFailureReason.AGGREGATION_RULE_MISSING.value,
+    DeliveryFailureReason.AMBIGUOUS_AGGREGATION_RULE.value,
+    DeliveryFailureReason.AGGREGATION_INPUT_SET_MISMATCH.value,
+    DeliveryFailureReason.AGGREGATION_REQUIRED_INPUT_MISSING.value,
+}
+
+REQUIRED_BLOCK_REASONS = {
+    DeliveryFailureReason.REQUIRED_SOURCE_NOT_COMMITTED.value,
+    DeliveryFailureReason.REQUIRED_ARTIFACT_MISSING.value,
+    DeliveryFailureReason.REQUIRED_FIELD_MISSING.value,
+    DeliveryFailureReason.REQUIRED_RULE_MISSING.value,
+    DeliveryFailureReason.REQUIRED_CONDITION_UNSATISFIED.value,
+    DeliveryFailureReason.CONTEXT_BUDGET_INFEASIBLE.value,
+    DeliveryFailureReason.PROJECTION_INFEASIBLE.value,
+    DeliveryFailureReason.LEDGER_CORRUPTION.value,
+}
 
 
 def detect_triggers(
@@ -26,7 +46,13 @@ def detect_triggers(
         if ratio >= budget.context_pressure_ratio:
             reasons.append(SlowLoopTriggerReason.CONTEXT_PRESSURE)
             break
-    if observation.remaining_task_budget.ratio < budget.budget_pressure_ratio:
+    rem = observation.remaining_task_budget
+    budget_signal = (
+        rem.budget_configured
+        or rem.max_backend_calls is not None
+        or rem.max_cost_usd is not None
+    )
+    if budget_signal and rem.ratio < budget.budget_pressure_ratio:
         reasons.append(SlowLoopTriggerReason.BUDGET_PRESSURE)
     if (
         observation.backend_failure_counts
@@ -38,6 +64,17 @@ def detect_triggers(
         reasons.append(SlowLoopTriggerReason.REPEATED_HARNESS_FAILURE)
     if observation.canonical_merge_conflicts > 0:
         reasons.append(SlowLoopTriggerReason.CANONICAL_CONFLICT)
+
+    stats = observation.delivery_statistics
+    delivery_fail = (
+        stats.failed_count > 0
+        or stats.required_delivery_block_count > 0
+        or any(stats.delivery_failure_counts.values())
+    )
+    if delivery_fail:
+        reasons.append(SlowLoopTriggerReason.DELIVERY_FAILURE)
+    if any(stats.aggregation_failure_counts.values()):
+        reasons.append(SlowLoopTriggerReason.AGGREGATION_RISK)
     return reasons
 
 
@@ -70,13 +107,13 @@ def diagnose(
                 affected.append(target)
         if not affected:
             affected.extend(future_ids)
-        edit_types.extend(["context_budget", "upsert_payload_contract"])
+        edit_types.extend(["upsert_payload_contract"])
 
     if SlowLoopTriggerReason.BUDGET_PRESSURE in triggers:
         reasons.append(GlobalDiagnosisReason.BUDGET_PRESSURE)
         affected.extend(future_ids)
         edit_types.extend(
-            ["pending_backend_assignment", "context_budget", "scheduling_concurrency"]
+            ["pending_backend_assignment", "scheduling_concurrency"]
         )
 
     if SlowLoopTriggerReason.REPEATED_BACKEND_FAILURE in triggers:
@@ -84,10 +121,45 @@ def diagnose(
         affected.extend(future_ids)
         edit_types.append("pending_backend_assignment")
 
+    if SlowLoopTriggerReason.REPEATED_HARNESS_FAILURE in triggers:
+        reasons.append(GlobalDiagnosisReason.HARNESS_INSTABILITY)
+        reasons.append(GlobalDiagnosisReason.SCHEDULING_CONTENTION)
+        affected.extend(future_ids)
+        edit_types.extend(
+            [
+                "scheduling_concurrency",
+                "serialization_group",
+                "pending_backend_assignment",
+            ]
+        )
+
     if SlowLoopTriggerReason.CANONICAL_CONFLICT in triggers:
         reasons.append(GlobalDiagnosisReason.CANONICAL_CONFLICT_RISK)
         affected.extend(future_ids)
         edit_types.extend(["serialization_group", "scheduling_concurrency"])
+
+    if SlowLoopTriggerReason.DELIVERY_FAILURE in triggers:
+        reasons.append(GlobalDiagnosisReason.DELIVERY_FAILURE)
+        stats = observation.delivery_statistics
+        fail_keys = set(stats.delivery_failure_counts)
+        if fail_keys & {
+            DeliveryFailureReason.CONTEXT_BUDGET_INFEASIBLE.value,
+        }:
+            reasons.append(GlobalDiagnosisReason.CONTEXT_PRESSURE)
+            edit_types.append("upsert_payload_contract")
+        if fail_keys & {
+            DeliveryFailureReason.REQUIRED_RULE_MISSING.value,
+            DeliveryFailureReason.REQUIRED_ARTIFACT_MISSING.value,
+            DeliveryFailureReason.REQUIRED_SOURCE_NOT_COMMITTED.value,
+        }:
+            reasons.append(GlobalDiagnosisReason.MISSING_PAYLOAD)
+            edit_types.extend(["upsert_payload_contract", "upsert_delivery_rule"])
+        affected.extend(future_ids)
+
+    if SlowLoopTriggerReason.AGGREGATION_RISK in triggers:
+        reasons.append(GlobalDiagnosisReason.AGGREGATION_RISK)
+        affected.extend(future_ids)
+        edit_types.extend(["upsert_payload_contract", "context_budget"])
 
     # Missing payload: future subtask with empty input selectors and no covering contract.
     covered_targets = {
@@ -101,25 +173,46 @@ def diagnose(
             affected.append(sid)
             edit_types.extend(["upsert_payload_contract", "upsert_delivery_rule"])
 
+    # Communication block reasons on ready future targets.
+    for sid in future_ids:
+        sub = task_state.subtasks[sid]
+        reason = sub.communication_block_reason
+        if not reason:
+            continue
+        if reason in AGGREGATION_FAILURE_REASONS:
+            reasons.append(GlobalDiagnosisReason.AGGREGATION_RISK)
+            affected.append(sid)
+        elif reason in REQUIRED_BLOCK_REASONS:
+            reasons.append(GlobalDiagnosisReason.DELIVERY_FAILURE)
+            if reason == DeliveryFailureReason.CONTEXT_BUDGET_INFEASIBLE.value:
+                reasons.append(GlobalDiagnosisReason.CONTEXT_PRESSURE)
+            else:
+                reasons.append(GlobalDiagnosisReason.MISSING_PAYLOAD)
+            affected.append(sid)
+
     affected = sorted(set(affected))
     edit_types = sorted(set(edit_types))
+    reasons = list(dict.fromkeys(reasons))
     if not reasons:
         reasons = [GlobalDiagnosisReason.NO_CHANGE]
 
     update_required = GlobalDiagnosisReason.NO_CHANGE not in reasons or len(reasons) > 1
     if reasons == [GlobalDiagnosisReason.NO_CHANGE]:
         update_required = False
-    # Periodic checkpoint alone without other pressure → no update.
     if triggers == [SlowLoopTriggerReason.PERIODIC_COMMIT_CHECKPOINT] and reasons == [
         GlobalDiagnosisReason.NO_CHANGE
     ]:
         update_required = False
 
-    # If we only have periodic + no diagnosis pressure, skip.
     pressure_triggers = set(triggers) - {SlowLoopTriggerReason.PERIODIC_COMMIT_CHECKPOINT}
     if not pressure_triggers and GlobalDiagnosisReason.MISSING_PAYLOAD not in reasons:
         update_required = False
         reasons = [GlobalDiagnosisReason.NO_CHANGE]
+
+    # Trigger present but no actionable diagnosis → keep trigger visibility.
+    if pressure_triggers and reasons == [GlobalDiagnosisReason.NO_CHANGE]:
+        reasons = [GlobalDiagnosisReason.NO_SAFE_FUTURE_EDIT]
+        update_required = True
 
     explanation = (
         "no slow-loop update required"
