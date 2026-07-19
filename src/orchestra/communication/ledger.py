@@ -31,6 +31,8 @@ class DeliveryFailureReason(StrEnum):
     AGGREGATION_CONFLICT = "aggregation_conflict"
     AGGREGATION_RULE_MISSING = "aggregation_rule_missing"
     AGGREGATION_REQUIRED_INPUT_MISSING = "aggregation_required_input_missing"
+    AMBIGUOUS_AGGREGATION_RULE = "ambiguous_aggregation_rule"
+    AGGREGATION_INPUT_SET_MISMATCH = "aggregation_input_set_mismatch"
     UNSUPPORTED_TRIGGER = "unsupported_trigger"
 
 
