@@ -156,7 +156,9 @@ async def test_slow_loop_budget_pressure_uses_allowlist(tmp_path):
         state=state,
         context=_ctx(tmp_path),
         leased_subtask_ids=set(),
-        task_budget=TaskBudgetRemaining(ratio=0.1),
+        task_budget=TaskBudgetRemaining(
+            ratio=0.1, max_backend_calls=10, remaining_backend_calls=1, budget_configured=True
+        ),
     )
     # May update via scheduling/backend candidate.
     assert result.diagnosis.update_required in {True, False} or result.updated in {
