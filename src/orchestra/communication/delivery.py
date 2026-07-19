@@ -39,6 +39,7 @@ from orchestra.communication.rule_evaluator import (
     DeliveryRuleDecision,
     DeliveryRuleEvaluator,
 )
+from orchestra.communication.validation import CommunicationValidationMode
 from orchestra.control.task_state import SubtaskStatus, TaskExecutionState
 from orchestra.decomposition.schemas import TaskPlan
 from orchestra.ir.artifacts import ArtifactEnvelope
@@ -163,21 +164,14 @@ class CommunicationDeliveryEngine:
         task_plan: TaskPlan,
         communication_plan: CommunicationPlan,
         task_state: TaskExecutionState,
+        target_subtask_id: str | None = None,
     ) -> CompiledCommunicationPlan:
-        completed = {
-            sid
-            for sid, sub in task_state.subtasks.items()
-            if sub.status
-            in {
-                SubtaskStatus.COMMITTED,
-                SubtaskStatus.FAILED,
-                SubtaskStatus.SKIPPED,
-            }
-        }
+        del task_state
         return self.compiler.compile(
             task_plan=task_plan,
             communication_plan=communication_plan,
-            completed_subtask_ids=completed,
+            target_subtask_id=target_subtask_id,
+            validation_mode=CommunicationValidationMode.ACTIVE_EXECUTION,
         )
 
     async def _resolve_source_artifact(
@@ -295,35 +289,71 @@ class CommunicationDeliveryEngine:
         payload_ids: list[str],
         source_subtask_ids: set[str],
     ):
+        """Exact-set aggregation matching (no partial intersection).
+
+        Returns the unique exact match, or None. Raises DeliveryEngineError on
+        ambiguous exact matches.
+        """
+        actual_payloads = set(payload_ids)
+        actual_sources = set(source_subtask_ids)
         candidates = []
         for rules in compiled.aggregation_rules_by_target.values():
             candidates.extend(rules)
-        matched = []
-        for rule in candidates:
-            target_meta = str(rule.metadata.get("target_subtask_id") or "")
+        # Deduplicate by rule_id (same rule may appear under multiple keys).
+        by_id = {r.rule_id: r for r in candidates}
+        exact = []
+        slot_target_hits = []
+        for rule in by_id.values():
+            rule_target = str(rule.metadata.get("target_subtask_id") or "")
             rule_slot = rule.target_slot or str(rule.metadata.get("slot") or "")
-            targets_here = (
-                target_meta == target_subtask_id
-                or rule_slot == slot
-                or (
-                    target_subtask_id in compiled.aggregation_rules_by_target
-                    and rule
-                    in compiled.aggregation_rules_by_target.get(target_subtask_id, [])
-                )
-            )
-            if not targets_here and target_meta and target_meta != target_subtask_id:
+            if rule_target and rule_target != target_subtask_id:
                 continue
+            if rule_slot and rule_slot != slot:
+                continue
+            if not rule_target and not rule_slot:
+                # Infer target from compiled payload index when possible.
+                if target_subtask_id not in compiled.aggregation_rules_by_target:
+                    if rule not in compiled.aggregation_rules_by_target.get(
+                        target_subtask_id, []
+                    ):
+                        # Still allow exact payload/source set match without meta.
+                        pass
+            slot_target_hits.append(rule)
+            payload_ok = True
+            source_ok = True
             if rule.source_payload_ids:
-                if set(rule.source_payload_ids) & set(payload_ids):
-                    matched.append(rule)
+                payload_ok = set(rule.source_payload_ids) == actual_payloads
+            if rule.source_subtask_ids:
+                source_ok = set(rule.source_subtask_ids) == actual_sources
+            if not rule.source_payload_ids and not rule.source_subtask_ids:
+                continue
+            if rule.source_payload_ids and rule.source_subtask_ids:
+                if payload_ok and source_ok:
+                    exact.append(rule)
+            elif rule.source_payload_ids:
+                if payload_ok:
+                    exact.append(rule)
             elif rule.source_subtask_ids:
-                if set(rule.source_subtask_ids) & source_subtask_ids:
-                    matched.append(rule)
-            elif targets_here:
-                matched.append(rule)
-        if not matched:
+                if source_ok:
+                    exact.append(rule)
+        if len(exact) > 1:
+            raise DeliveryEngineError(
+                "AMBIGUOUS_AGGREGATION_RULE: multiple exact matches "
+                f"for target={target_subtask_id} slot={slot}: "
+                + ",".join(sorted(r.rule_id for r in exact)),
+                reason=DeliveryFailureReason.AMBIGUOUS_AGGREGATION_RULE,
+                target_subtask_id=target_subtask_id,
+            )
+        if len(exact) == 1:
+            return exact[0]
+        if slot_target_hits and any(
+            (r.source_payload_ids or r.source_subtask_ids) for r in slot_target_hits
+        ):
+            # Target/slot had candidate rules but input sets mismatched.
+            # Callers map None → AGGREGATION_RULE_MISSING; expose mismatch via
+            # optional attribute for diagnosis.
             return None
-        return sorted(matched, key=lambda r: r.rule_id)[0]
+        return None
 
     async def deliver_for_target(
         self,
@@ -338,6 +368,7 @@ class CommunicationDeliveryEngine:
             task_plan=task_plan,
             communication_plan=communication_plan,
             task_state=task_state,
+            target_subtask_id=target_subtask_id,
         )
         contracts = compiled.payloads_by_target.get(target_subtask_id, [])
         projections: list[PayloadProjectionResult] = []
@@ -519,13 +550,22 @@ class CommunicationDeliveryEngine:
             payload_ids = [c.payload_id for c, _, _ in rows]
             source_ids = {c.source_subtask_id for c, _, _ in rows}
             required_any = any(c.is_required() for c, _, _ in rows)
-            agg_rule = self._find_aggregation_rule(
-                compiled,
-                target_subtask_id=target_subtask_id,
-                slot=slot,
-                payload_ids=payload_ids,
-                source_subtask_ids=source_ids,
-            )
+            try:
+                agg_rule = self._find_aggregation_rule(
+                    compiled,
+                    target_subtask_id=target_subtask_id,
+                    slot=slot,
+                    payload_ids=payload_ids,
+                    source_subtask_ids=source_ids,
+                )
+            except DeliveryEngineError as exc:
+                return DeliveryBatchResult(
+                    target_subtask_id=target_subtask_id,
+                    projections=projections,
+                    audit_records=audit_records,
+                    blocked=True,
+                    block_reason=exc.reason,
+                )
             if agg_rule is None:
                 return DeliveryBatchResult(
                     target_subtask_id=target_subtask_id,
