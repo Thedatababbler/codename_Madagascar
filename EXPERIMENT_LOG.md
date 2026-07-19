@@ -10,7 +10,7 @@
 | Status | `canonical` (use for comparisons) / `smoke` / `mock` / `superseded` / `incomplete` |
 | Paths | Repo-relative from AdaMAS root |
 
-**Last updated:** 2026-07-18 (UTC) — M5.1 Final Correctness Fix
+**Last updated:** 2026-07-19 (UTC) — M5.2 Runtime Closure
 
 ---
 
@@ -53,6 +53,27 @@ Copy the template below after each run (evaluate + summarize when applicable):
 ---
 
 ## Entries (newest first)
+
+### EXP-20260719-01 — M5.2 Runtime Closure
+- **Status:** smoke (CI gate; no new real-API accuracy claim)
+- **Date:** 2026-07-19 (UTC)
+- **Branch / commit:** `agnostic` (M5.2)
+- **Benchmark / phase:** historical communication validation, exact aggregation,
+  real agent-node backend adaptation, task budget tracker, complete trigger wiring
+- **Baseline / graph:** closes remaining M5 runtime gaps; FRESH unchanged
+- **Command:**
+  ```bash
+  uv sync --extra smolagents --extra codex
+  uv run ruff check .
+  uv run pytest -q tests/unit
+  uv run pytest -q tests/integration
+  uv run python -m orchestra.cli.run_m5_smoke
+  ```
+- **Results:** Active plans keep historical contracts; runtime compile scopes to
+  current target; aggregation uses exact-set matching; backend candidates resolve
+  real nodes; scheduler passes TaskBudgetTracker snapshots; Slow Loop shares
+  authoritative checkpoint store; M6 not implemented.
+- **Notes / interpretation:** Docs: `docs/m5_slow_global_adaptation.md`.
 
 ### EXP-20260718-02 — M5.1 Final Correctness Fix
 - **Status:** smoke (CI gate; no new real-API accuracy claim)

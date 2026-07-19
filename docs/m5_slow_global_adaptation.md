@@ -24,8 +24,11 @@ commit wave → checkpoint → release leases
 → materialize future graphs → acquire leases → execute next wave
 ```
 
-Triggers include context pressure, budget pressure, repeated failures,
-canonical conflicts, missing payloads, and periodic commit checkpoints.
+Triggers include context pressure, budget pressure, repeated backend/harness
+failures, delivery failures, aggregation risk, canonical conflicts, missing
+payloads, and periodic commit checkpoints. Every public trigger maps to a
+diagnosis and either a safe future candidate or an audited
+`NO_SAFE_FUTURE_EDIT`.
 
 ## 3. Future-only + subtask lease
 
@@ -47,7 +50,8 @@ harness results, and costs. Never from private/hidden evaluators.
 ## 5. GlobalDiagnosis (rule-based)
 
 Deterministic reasons: context/budget pressure, missing/redundant payload,
-backend instability, scheduling contention, canonical conflict risk.
+backend/harness instability, scheduling contention, delivery failure,
+aggregation risk, canonical conflict risk.
 
 ## 6. GlobalEdit types
 
@@ -127,10 +131,27 @@ Strategies: `LIST`, `MERGE_DICT_FAIL_ON_CONFLICT`, `CONCAT_TEXT`.
 No LLM summarization. Same target slot with multiple payloads and no
 `AggregationRule` → fail closed. Dict key conflicts → `AGGREGATION_CONFLICT`.
 
+Aggregation rule matching is **exact-set** (target + slot +
+`source_payload_ids` / `source_subtask_ids`). Partial intersection never
+selects a rule. Multiple exact matches → `AMBIGUOUS_AGGREGATION_RULE`.
+
 Context budget packs **FinalDeliveryUnit**s (single projection or one
 aggregated artifact). Token estimates are for the final injected artifact
 payload. An aggregate that exceeds the target budget is omitted/blocked and
 never written to `delivered_slots`.
+
+## 11b. Communication validation modes + target-scoped compile
+
+```text
+STRUCTURAL          — IDs, cycles, private types, budgets (no status gates)
+PROPOSED_REVISION   — new/changed contracts cannot target past/leased subtasks
+ACTIVE_EXECUTION    — historical contracts to completed targets remain valid
+```
+
+Runtime delivery compiles with `ACTIVE_EXECUTION` and
+`target_subtask_id=<current>`, so only the current target's contracts/rules
+participate. Full CommunicationPlan hash/version is preserved for audit;
+historical contracts are never deleted to "fix" validation.
 
 ## 12. Communication dependency + cycle validation
 
@@ -139,6 +160,10 @@ Combined graph of task dependencies + required communication edges must be
 acyclic.
 
 ## 13. Future graph materialization (final logical paths)
+
+`FutureAgentNodeResolver` selects a real agent node (`codex_implementer`,
+`solver`, …) — never `__future_agent__`. Backend candidates preview
+materialization before becoming VALID.
 
 `FutureGraphMaterializer` writes physically to staging, but stores **final**
 logical paths in the TaskPlan / execution config:
@@ -182,10 +207,20 @@ active. Hash-identical retry is idempotent; hash collision →
 mark dependency-ready → communication preflight (persist projections)
 → blocked targets keep READY + communication_block_reason (no lease)
 → only deliverable targets acquire leases → execute
+→ wave end: TaskBudgetTracker.snapshot → SlowLoopController.maybe_update
 ```
 
 Blocked targets do not consume concurrency slots. Upstream commit clears
 blocks so the next iteration can re-preflight.
+
+`TaskBudgetTracker` supplies real remaining ratios (or
+`budget_configured=false`, ratio=1.0 when unset). Scheduler injects its
+`task_checkpoint_store` into `SlowLoopController` so revision activation and
+wave checkpoints share one authoritative store.
+
+Context-pressure candidates shrink **optional** payload `max_tokens` only;
+they do not blindly cut target context budgets in ways that make required
+payloads infeasible.
 
 ## 17. Hidden evaluator isolation
 
@@ -200,4 +235,4 @@ arbitrary TaskPlans, subtask add/delete, re-decomposition, dependency
 rewiring, committed rollback, Codex native subagents, CodeAgent
 `managed_agents`, or Codex RESUME/FORK.
 
-**M5 correctness-complete; M6 not started.**
+**M5 runtime-correct and closed; M6 not started.**
