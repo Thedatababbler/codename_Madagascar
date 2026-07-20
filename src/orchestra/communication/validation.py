@@ -70,32 +70,6 @@ def _has_cycle(edges: dict[str, set[str]], nodes: set[str]) -> bool:
     return seen != len(nodes)
 
 
-def _past_or_active_targets(state: Any) -> set[str]:
-    """Targets that must not receive *new* proposed communication."""
-    from orchestra.control.task_state import SubtaskStatus
-
-    blocked: set[str] = set()
-    for sid, sub in state.subtasks.items():
-        if sub.lease_status == "leased":
-            blocked.add(sid)
-            continue
-        if sub.status in {
-            SubtaskStatus.COMMITTED,
-            SubtaskStatus.RUNNING,
-            SubtaskStatus.AWAITING_CANONICAL_COMMIT,
-            SubtaskStatus.RETRY_PENDING,
-            SubtaskStatus.FAILED,
-            SubtaskStatus.SKIPPED,
-            SubtaskStatus.HARNESS_FAILED,
-        }:
-            blocked.add(sid)
-    return blocked
-
-
-def _contract_fingerprint(contract) -> dict:
-    return contract.model_dump(mode="json")
-
-
 def validate_communication_structure(
     *,
     task_plan: TaskPlan,
@@ -197,6 +171,27 @@ def validate_communication_structure(
         )
 
 
+def _target_status_label(state: Any, target_id: str) -> tuple[str, str]:
+    sub = state.subtasks.get(target_id)
+    if sub is None:
+        return ("missing", "missing")
+    return (str(sub.status.value), str(sub.lease_status))
+
+
+def _reject_immutable(
+    *,
+    entity_type: str,
+    entity_id: str,
+    target_id: str,
+    state: Any,
+) -> None:
+    status, lease = _target_status_label(state, target_id)
+    raise CommunicationPlanValidationError(
+        f"IMMUTABLE_COMMUNICATION_HISTORY: {entity_type} {entity_id} "
+        f"targets {status} subtask {target_id} (lease={lease})"
+    )
+
+
 def validate_proposed_communication_revision(
     *,
     task_plan: TaskPlan,
@@ -205,35 +200,98 @@ def validate_proposed_communication_revision(
     parent_communication_plan: CommunicationPlan | None = None,
     changed_payload_ids: set[str] | None = None,
 ) -> None:
-    """Reject new/changed contracts that target past or leased subtasks."""
+    """Reject any communication delta that touches frozen targets."""
+    from orchestra.communication.delta import (
+        AggregationTargetAmbiguous,
+        CommunicationTargetResolver,
+        diff_communication_plans,
+        immutable_communication_targets,
+    )
+
+    del changed_payload_ids  # superseded by full CommunicationPlanDelta
     validate_communication_structure(
         task_plan=task_plan, communication_plan=communication_plan
     )
-    blocked = _past_or_active_targets(current_state)
     parent = parent_communication_plan or current_state.communication_plan
-    parent_by_id = {c.payload_id: c for c in parent.payload_contracts}
-    changed = changed_payload_ids
-    if changed is None:
-        changed = set()
-        for contract in communication_plan.payload_contracts:
-            prev = parent_by_id.get(contract.payload_id)
-            if prev is None or _contract_fingerprint(prev) != _contract_fingerprint(
-                contract
-            ):
-                changed.add(contract.payload_id)
-        for pid in parent_by_id:
-            if pid not in {c.payload_id for c in communication_plan.payload_contracts}:
-                # Deletion of historical contract targeting blocked is allowed;
-                # addition/change is what we gate.
-                pass
+    delta = diff_communication_plans(parent, communication_plan)
+    frozen = immutable_communication_targets(current_state)
+    resolver = CommunicationTargetResolver()
 
-    for contract in communication_plan.payload_contracts:
-        if contract.payload_id not in changed:
-            continue
-        if contract.target_subtask_id in blocked:
-            raise CommunicationPlanValidationError(
-                f"payload {contract.payload_id}: proposed revision cannot target "
-                f"past/leased subtask {contract.target_subtask_id}"
+    def _check_payload(pid: str, plan: CommunicationPlan) -> None:
+        tgt = resolver.payload_target(pid, plan)
+        if tgt is not None and tgt in frozen:
+            _reject_immutable(
+                entity_type="payload_contract",
+                entity_id=pid,
+                target_id=tgt,
+                state=current_state,
+            )
+
+    def _check_rule(rid: str, plan: CommunicationPlan) -> None:
+        tgt = resolver.delivery_rule_target(rid, plan)
+        if tgt is not None and tgt in frozen:
+            _reject_immutable(
+                entity_type="delivery_rule",
+                entity_id=rid,
+                target_id=tgt,
+                state=current_state,
+            )
+
+    def _check_agg(rid: str, plan: CommunicationPlan) -> None:
+        try:
+            targets = resolver.aggregation_rule_targets(
+                rid, plan, require_unique=True
+            )
+        except AggregationTargetAmbiguous as exc:
+            raise CommunicationPlanValidationError(str(exc)) from exc
+        for tgt in targets:
+            if tgt in frozen:
+                _reject_immutable(
+                    entity_type="aggregation_rule",
+                    entity_id=rid,
+                    target_id=tgt,
+                    state=current_state,
+                )
+
+    for pid in (
+        delta.added_payload_ids
+        | delta.changed_payload_ids
+        | delta.removed_payload_ids
+    ):
+        plan = (
+            parent
+            if pid in delta.removed_payload_ids
+            else communication_plan
+        )
+        _check_payload(pid, plan)
+
+    for rid in delta.added_rule_ids | delta.changed_rule_ids | delta.removed_rule_ids:
+        plan = parent if rid in delta.removed_rule_ids else communication_plan
+        # Removals resolve against parent; additions/changes against proposed.
+        if rid in delta.removed_rule_ids:
+            _check_rule(rid, parent)
+        else:
+            _check_rule(rid, communication_plan)
+
+    for rid in (
+        delta.added_aggregation_rule_ids
+        | delta.changed_aggregation_rule_ids
+        | delta.removed_aggregation_rule_ids
+    ):
+        plan = (
+            parent
+            if rid in delta.removed_aggregation_rule_ids
+            else communication_plan
+        )
+        _check_agg(rid, plan)
+
+    for tgt in delta.changed_context_budget_targets:
+        if tgt in frozen:
+            _reject_immutable(
+                entity_type="context_budget",
+                entity_id=tgt,
+                target_id=tgt,
+                state=current_state,
             )
 
 
