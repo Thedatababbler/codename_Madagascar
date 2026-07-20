@@ -1,0 +1,17 @@
+enabled: true
+max_candidates: 8
+max_estimated_archive_size: 64
+max_realized_archive_size: 64
+objectives:
+  quality: maximize
+  cost: minimize
+  latency: minimize
+  risk: minimize
+  communication_overhead: minimize
+risk_coefficients:
+  backend_failures: 1.0
+  harness_failures: 1.0
+  delivery_failures: 1.0
+  aggregation_failures: 1.0
+  canonical_conflicts: 1.0
+  timeouts: 1.0

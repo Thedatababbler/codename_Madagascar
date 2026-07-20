@@ -1,0 +1,12 @@
+profiles:
+  quality_first:
+    objective_weights: {quality: 10.0, cost: 1.0, latency: 1.0, risk: 1.0}
+  cost_capped_quality:
+    objective_weights: {quality: 5.0, cost: 1.0}
+  latency_capped_quality:
+    objective_weights: {quality: 5.0, latency: 1.0}
+  robustness_first:
+    objective_weights: {risk: 5.0, quality: 2.0}
+  balanced_knee: {}
+  data_collection:
+    objective_weights: {communication_overhead: 1.0}
