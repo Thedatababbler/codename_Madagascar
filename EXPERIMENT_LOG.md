@@ -10,7 +10,7 @@
 | Status | `canonical` (use for comparisons) / `smoke` / `mock` / `superseded` / `incomplete` |
 | Paths | Repo-relative from AdaMAS root |
 
-**Last updated:** 2026-07-19 (UTC) — M5.2 Runtime Closure
+**Last updated:** 2026-07-20 (UTC) — M5.3 Immutable History Closure
 
 ---
 
@@ -53,6 +53,31 @@ Copy the template below after each run (evaluate + summarize when applicable):
 ---
 
 ## Entries (newest first)
+
+### EXP-20260720-01 — M5.3 Immutable History and Observation Watermark Closure
+- **Status:** smoke (CI gate; no new real-API accuracy claim)
+- **Date:** 2026-07-20 (UTC)
+- **Branch / commit:** `agnostic` (M5.3)
+- **Benchmark / phase:** CommunicationPlanDelta, historical communication
+  immutability, delivery target eligibility, Slow Loop observation watermarks,
+  lifetime vs recent telemetry, evidence dedupe
+- **Baseline / graph:** closes M5 immutable-history gaps; FRESH unchanged; M6
+  not implemented
+- **Command:**
+  ```bash
+  uv sync --extra smolagents --extra codex
+  uv run ruff check .
+  uv run pytest -q tests/unit
+  uv run pytest -q tests/integration
+  uv run python -m orchestra.cli.run_m5_smoke
+  ```
+- **Results:** Frozen targets cannot have payload/rule/aggregation/budget
+  rewritten; completed/in-flight targets cannot be redelivered; historical
+  ledger retained; Slow Loop triggers use recent/active evidence and
+  watermarks; `NO_SAFE_FUTURE_EDIT` consumed once; task budget
+  `accounting_quality` declared; M6 not implemented.
+- **Notes / interpretation:** Docs: `docs/m5_slow_global_adaptation.md`
+  §§11c–11e. M5 correctness-complete for immutable history.
 
 ### EXP-20260719-01 — M5.2 Runtime Closure
 - **Status:** smoke (CI gate; no new real-API accuracy claim)

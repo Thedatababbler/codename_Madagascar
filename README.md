@@ -176,7 +176,11 @@ matching), historical vs proposed communication validation modes,
 target-scoped active compile, real agent-node backend adaptation,
 TaskBudgetTracker → Slow Loop wiring, crash-safe revision
 promote-before-checkpoint, and communication preflight before lease.
-M6 is **not** implemented.
+M5.3 freezes communication semantics after target lease, rejects
+redelivery to completed/in-flight targets, and scopes Slow Loop triggers to
+watermarked recent/active evidence (`lifetime_*` vs `recent_*`, handled
+evidence keys, `NO_SAFE_FUTURE_EDIT` consumption). Task budget reports
+`accounting_quality` (`approximate` | `exact`). M6 is **not** implemented.
 
 Design: `docs/m5_slow_global_adaptation.md`.
 

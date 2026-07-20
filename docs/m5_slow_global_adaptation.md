@@ -144,7 +144,7 @@ never written to `delivered_slots`.
 
 ```text
 STRUCTURAL          — IDs, cycles, private types, budgets (no status gates)
-PROPOSED_REVISION   — new/changed contracts cannot target past/leased subtasks
+PROPOSED_REVISION   — full CommunicationPlanDelta; no edits to frozen targets
 ACTIVE_EXECUTION    — historical contracts to completed targets remain valid
 ```
 
@@ -152,6 +152,68 @@ Runtime delivery compiles with `ACTIVE_EXECUTION` and
 `target_subtask_id=<current>`, so only the current target's contracts/rules
 participate. Full CommunicationPlan hash/version is preserved for audit;
 historical contracts are never deleted to "fix" validation.
+
+## 11c. CommunicationPlanDelta + historical immutability (M5.3)
+
+`diff_communication_plans(parent, proposed)` produces a stable
+`CommunicationPlanDelta` over payloads, delivery rules, aggregation rules,
+and context-budget keys (model dump / hash equality, not object identity).
+
+`CommunicationTargetResolver` maps each entity to its target subtask(s).
+Aggregation rules that cannot uniquely resolve a target fail closed
+(`AGGREGATION_TARGET_AMBIGUOUS`).
+
+Once a target is leased or in any non-future status
+(`LEASED` / `RUNNING` / `RETRY_PENDING` / `AWAITING_CANONICAL_COMMIT` /
+`COMMITTED` / `FAILED` / `SKIPPED` / `HARNESS_FAILED`), its communication
+semantics freeze. Proposed revisions may not add, change, or remove that
+target's contracts, rules, aggregation, or context budget
+(`IMMUTABLE_COMMUNICATION_HISTORY`). Edit application and proposed-revision
+validation both fail closed.
+
+## 11d. Delivery target eligibility (M5.3)
+
+`deliver_for_target` / `preflight_for_target` reject terminal and in-flight
+statuses (`COMMITTED`, `FAILED`, `SKIPPED`, `HARNESS_FAILED`, `RUNNING`,
+`RETRY_PENDING`, `AWAITING_CANONICAL_COMMIT`) with
+`TARGET_NOT_DELIVERABLE` (audit `SKIPPED_TARGET_NOT_DELIVERABLE` only —
+not counted as model/delivery/aggregation failure). No projection artifact
+and no new `DELIVERED` ledger row.
+
+`PENDING` / `READY` remain deliverable, including `READY` + `leased` for
+post-preflight worker assembly (scheduler leases before assemble; assembly
+replays the preflight ledger). Historical audit must come from delivery
+that occurred before the target left the deliverable window.
+
+## 11e. Observation watermark + lifetime vs recent (M5.3)
+
+`SlowLoopState` tracks:
+
+```text
+last_observed_state_version
+last_observed_delivery_index
+last_observed_commit_record_index
+last_observed_fast_loop_history_index
+handled_evidence_keys
+```
+
+`GlobalObservation` exposes both `lifetime_*` and `recent_*` delivery,
+harness, canonical-conflict, and backend-failure statistics. Slow Loop
+triggers use **recent** evidence only. Recent delivery stats further filter
+to the active `communication_plan.version` and ledger index ≥ watermark;
+old-revision ledger failures alone do not retrigger. An active
+`communication_block_reason` remains unresolved current evidence.
+
+Stable evidence keys (`delivery:…`, `harness:…`, `backend:…`, `canonical:…`)
+enter `handled_evidence_keys` after an applied revision or an audited
+`NO_SAFE_FUTURE_EDIT` / no-op diagnosis so the same evidence is not
+re-consumed every wave. Context pressure is computed only for
+`PENDING|READY` + `UNLEASED` targets; pressure with no eligible affected
+target yields `NO_SAFE_FUTURE_EDIT` (no fallback to all future subtasks).
+
+`TaskBudgetRemaining.accounting_quality` is `exact` when backend session
+usage records are available, otherwise `approximate`. Approximate cost is
+not M6 Pareto truth; M6 must use a telemetry ledger for exact objectives.
 
 ## 12. Communication dependency + cycle validation
 
@@ -235,4 +297,5 @@ arbitrary TaskPlans, subtask add/delete, re-decomposition, dependency
 rewiring, committed rollback, Codex native subagents, CodeAgent
 `managed_agents`, or Codex RESUME/FORK.
 
-**M5 runtime-correct and closed; M6 not started.**
+**M5 is immutable-history-safe and runtime-correct (M5.3 closure). M6 is
+not implemented.**
