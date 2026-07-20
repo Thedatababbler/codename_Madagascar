@@ -86,7 +86,11 @@ def validate_candidate_against_capabilities(
     candidate: LocalCandidate,
     capabilities: BackendCapabilities | Mapping[str, BackendCapabilities],
 ) -> CandidateCompatibilityResult:
-    """Reject unsupported candidates before execution; never silent-downgrade."""
+    """Reject unsupported candidates before execution; never silent-downgrade.
+
+    When ``session_directives`` are present, validate each node directive against
+    that node's backend only (mixed policies allowed).
+    """
     if isinstance(capabilities, BackendCapabilities):
         caps_by_backend = {"*": capabilities}
         single = capabilities
@@ -101,6 +105,82 @@ def validate_candidate_against_capabilities(
             CandidateRejectionReason.OTHER,
         )
 
+    directives = dict(candidate.session_directives or {})
+
+    if directives:
+        for node_id, directive in sorted(directives.items()):
+            caps = single or caps_by_backend.get(directive.backend_id)
+            if caps is None:
+                return _reject(
+                    f"unknown backend capabilities for {directive.backend_id!r}",
+                    CandidateRejectionReason.OTHER,
+                )
+            if not caps.supports_policy(directive.policy):
+                return _reject(
+                    (
+                        f"node {node_id} policy={directive.policy.value!r} unsupported "
+                        f"by {directive.backend_id!r}; no silent downgrade"
+                    ),
+                    CandidateRejectionReason.UNSUPPORTED_SESSION_POLICY,
+                )
+            if directive.policy is SessionPolicy.RESUME and not caps.supports_resume:
+                return _reject(
+                    f"backend {directive.backend_id!r} supports_resume=false",
+                    CandidateRejectionReason.UNSUPPORTED_SESSION_POLICY,
+                )
+            if directive.policy is SessionPolicy.FORK and not caps.supports_fork:
+                return _reject(
+                    f"backend {directive.backend_id!r} supports_fork=false",
+                    CandidateRejectionReason.UNSUPPORTED_SESSION_POLICY,
+                )
+            if directive.policy is not SessionPolicy.FRESH:
+                if not caps.supports_workspace_rebinding:
+                    return _reject(
+                        (
+                            f"backend {directive.backend_id!r} cannot rebind workspace "
+                            f"for {directive.policy.value!r}"
+                        ),
+                        CandidateRejectionReason.WORKSPACE_INCOMPATIBLE,
+                    )
+                if (
+                    directive.policy is SessionPolicy.RESUME
+                    and not caps.supports_cross_workspace_resume
+                ):
+                    return _reject(
+                        f"backend {directive.backend_id!r} lacks cross_workspace_resume",
+                        CandidateRejectionReason.WORKSPACE_INCOMPATIBLE,
+                    )
+                if (
+                    directive.policy is SessionPolicy.FORK
+                    and not caps.supports_cross_workspace_fork
+                ):
+                    return _reject(
+                        f"backend {directive.backend_id!r} lacks cross_workspace_fork",
+                        CandidateRejectionReason.WORKSPACE_INCOMPATIBLE,
+                    )
+                if directive.require_parent_session and directive.source_session_ref is None:
+                    return _reject(
+                        f"node {node_id} {directive.policy.value} missing parent session",
+                        CandidateRejectionReason.UNSUPPORTED_SESSION_POLICY,
+                    )
+            # Validate edits only against the backend they target when possible.
+            for edit in candidate.edits:
+                target = getattr(edit, "node_id", None) or getattr(
+                    edit, "target_node_id", None
+                )
+                if target is not None and target != node_id:
+                    continue
+                result = validate_edit_against_capabilities(edit, caps)
+                if not result.compatible:
+                    return CandidateCompatibilityResult(
+                        compatible=False,
+                        reason=f"backend {directive.backend_id!r}: {result.reason}",
+                        rejection_reason=result.rejection_reason
+                        or CandidateRejectionReason.OTHER,
+                    )
+        return CandidateCompatibilityResult(compatible=True)
+
+    # Legacy path: candidate-level session_policy applied per backend.
     for backend_id in sorted(backend_ids):
         caps = single or caps_by_backend.get(backend_id)
         if caps is None:
