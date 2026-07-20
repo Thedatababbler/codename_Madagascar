@@ -185,6 +185,17 @@ existence alone is not exact cost). M6 is **not** implemented.
 
 Design: `docs/m5_slow_global_adaptation.md`.
 
+## Pareto-guided orchestra search (Milestone 6)
+
+M6 adds a backend-agnostic multi-objective search layer on top of M5:
+context-local estimated/realized Pareto archives, bounded deterministic
+candidate generation, preference-conditioned selection, and decision-horizon
+realized accounting. M5 validation and revision transactions remain
+authoritative. M6 does **not** train a learned generator; it exports search
+traces for future training.
+
+Design: `docs/m6_pareto_orchestra_search.md`.
+
 ```bash
 # CI / local deterministic coverage (no API keys)
 uv sync --extra smolagents --extra codex
@@ -200,6 +211,10 @@ uv run --extra codex python -m orchestra.cli.run_m4_smoke \
 # Deterministic M5 smoke (no API keys)
 uv run python -m orchestra.cli.run_m5_smoke \
   --config configs/experiments/m5_slow_loop_smoke.yaml
+
+# Deterministic M6 smoke (no API keys)
+uv run python -m orchestra.cli.run_m6_smoke \
+  --config configs/experiments/m6_pareto_smoke.yaml
 ```
 
 ## Stage 1 experiments

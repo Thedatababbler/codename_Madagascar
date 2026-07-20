@@ -10,7 +10,7 @@
 | Status | `canonical` (use for comparisons) / `smoke` / `mock` / `superseded` / `incomplete` |
 | Paths | Repo-relative from AdaMAS root |
 
-**Last updated:** 2026-07-20 (UTC) — M5.4 Final Evidence Closure
+**Last updated:** 2026-07-20 (UTC) — M6 Pareto Orchestra Search
 
 ---
 
@@ -53,6 +53,29 @@ Copy the template below after each run (evaluate + summarize when applicable):
 ---
 
 ## Entries (newest first)
+
+### EXP-20260720-03 — M6 Pareto-Guided Orchestra Search
+- **Status:** smoke (CI gate; no new real-API accuracy claim)
+- **Date:** 2026-07-20 (UTC)
+- **Branch / commit:** `agnostic` (M6)
+- **Benchmark / phase:** node usage persistence, pricing registry, Pareto
+  dominance/archives, preference selection, Slow Loop policy integration
+- **Baseline / graph:** builds on M5.4; FRESH unchanged; no learned generator
+- **Command:**
+  ```bash
+  uv sync --extra smolagents --extra codex
+  uv run ruff check .
+  uv run pytest -q tests/unit
+  uv run pytest -q tests/integration
+  uv run python -m orchestra.cli.run_m5_smoke
+  uv run python -m orchestra.cli.run_m6_smoke
+  ```
+- **Results:** WaveCommitter persists NodeUsageSnapshot; missing tokens stay
+  None; cost exact/derived/unavailable via pricing registry; estimated vs
+  realized archives context-local; preference profiles deterministic; M5
+  transaction path remains authoritative; search traces exportable; no GA /
+  generator training.
+- **Notes / interpretation:** Docs: `docs/m6_pareto_orchestra_search.md`.
 
 ### EXP-20260720-02 — M5.4 Final Closure (evidence identity + usage)
 - **Status:** smoke (CI gate; no new real-API accuracy claim)
