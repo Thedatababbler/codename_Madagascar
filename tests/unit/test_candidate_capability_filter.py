@@ -46,10 +46,23 @@ def test_codeagent_rejects_resume_and_fork():
         assert "no silent downgrade" in (result.reason or "")
 
 
-def test_codex_fresh_only_rejects_fork():
+def test_codex_catalog_accepts_fork_at_capability_layer():
+    """Production catalog declares FORK; Hybrid mode may generate it with parents."""
     caps = capabilities_for("codex_sdk")
     assert caps is not None
-    assert SessionPolicy.FORK not in caps.supported_session_policies
+    assert SessionPolicy.FORK in caps.supported_session_policies
+    result = validate_candidate_against_capabilities(_candidate(SessionPolicy.FORK), caps)
+    assert result.compatible is True
+
+
+def test_codex_fresh_only_caps_still_reject_fork():
+    caps = BackendCapabilities(
+        multi_step=True,
+        repository_editing=True,
+        supports_session_state=True,
+        supported_session_policies=frozenset({SessionPolicy.FRESH}),
+        supports_parallel_instances=True,
+    )
     result = validate_candidate_against_capabilities(_candidate(SessionPolicy.FORK), caps)
     assert result.compatible is False
 
