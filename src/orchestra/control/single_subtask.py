@@ -198,6 +198,21 @@ class SingleSubtaskCompatibilityRunner:
             artifact_store=self.artifact_store,
             error=None,
         )
+        from orchestra.control.backend_usage import collect_usage_from_graph_result
+
+        state.backend_usage_records.extend(
+            collect_usage_from_graph_result(
+                task_id=state.task_id,
+                subtask_id=subtask_id,
+                attempt_id=attempt_id,
+                result=result,
+                candidate_id=None,
+                started_at=started,
+                finished_at=finished,
+                status=status.value,
+                accounting_source="single_subtask",
+            )
+        )
         sub.status = status
         sub.attempts[-1].status = status
         if status is SubtaskStatus.COMMITTED:

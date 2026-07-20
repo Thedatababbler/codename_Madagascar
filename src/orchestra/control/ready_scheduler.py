@@ -14,6 +14,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from orchestra.backends.base import ArtifactRef, BackendSessionRef
 from orchestra.cli.validate_graph import build_compiler
 from orchestra.communication.ledger import DeliveryRecord
+from orchestra.control.backend_usage import (
+    BackendUsageRecord,
+    collect_usage_from_graph_result,
+)
 from orchestra.control.canonical_workspace import (
     CanonicalCommitError,
     CanonicalTaskWorkspaceManager,
@@ -87,6 +91,7 @@ class SubtaskExecutionResult(BaseModel):
     fast_loop_history_append: list[Any] = Field(default_factory=list)
     graph_template: str | None = None
     delivery_records_append: list[DeliveryRecord] = Field(default_factory=list)
+    backend_usage_append: list[BackendUsageRecord] = Field(default_factory=list)
 
 
 def _collect_backend_sessions(
@@ -699,6 +704,11 @@ class ReadySubtaskScheduler:
             state.fast_loop_history.append(item)
         for rec in result.delivery_records_append:
             state.delivery_ledger.append(rec)
+        existing_usage = {r.usage_id for r in (state.backend_usage_records or [])}
+        for rec in result.backend_usage_append:
+            if rec.usage_id not in existing_usage:
+                state.backend_usage_records.append(rec)
+                existing_usage.add(rec.usage_id)
 
     async def _run_subtask_isolated(
         self,
@@ -724,6 +734,7 @@ class ReadySubtaskScheduler:
             )
 
         ledger_before = len(state.delivery_ledger)
+        usage_before = len(state.backend_usage_records or [])
         try:
             assembled = await self.input_assembler.assemble(
                 task_plan=state.task_plan,
@@ -902,12 +913,25 @@ class ReadySubtaskScheduler:
                 base_canonical_revision=base_task_revision,
                 graph=graph,
                 delivery_records=list(state.delivery_ledger[ledger_before:]),
+                usage_before=usage_before,
             )
 
         finished = datetime.now(UTC)
         sub.attempts[-1].finished_at = finished
         sessions = _collect_backend_sessions(result=result, attempt_id=attempt_id)
         sub.backend_sessions.extend(sessions)
+        usage_records = collect_usage_from_graph_result(
+            task_id=local_state.task_id,
+            subtask_id=subtask_id,
+            attempt_id=attempt_id,
+            result=result,
+            candidate_id=None,
+            started_at=started,
+            finished_at=finished,
+            status="executed",
+            accounting_source="ready_scheduler",
+        )
+        local_state.backend_usage_records.extend(usage_records)
         status, reason, message = await classify_subtask_outcome(
             result=result,
             artifact_store=self.artifact_store,
@@ -947,6 +971,7 @@ class ReadySubtaskScheduler:
                 sessions=sessions,
                 harness_passed=True,
                 delivery_records=list(state.delivery_ledger[ledger_before:]),
+                usage_before=usage_before,
             )
 
         sub.failure_reason = reason
@@ -988,6 +1013,7 @@ class ReadySubtaskScheduler:
             graph=graph,
             sessions=sessions,
             delivery_records=list(state.delivery_ledger[ledger_before:]),
+            usage_before=usage_before,
         )
 
     async def _finalize_worker_result(
@@ -1002,6 +1028,7 @@ class ReadySubtaskScheduler:
         sessions: list[BackendSessionRecord] | None = None,
         harness_passed: bool | None = None,
         delivery_records: list[DeliveryRecord] | None = None,
+        usage_before: int = 0,
     ) -> SubtaskExecutionResult:
         sub = local_state.subtasks[subtask_id].model_copy(deep=True)
         # Never leave worker-owned COMMITTED when a repo coordinate path exists.
@@ -1053,6 +1080,7 @@ class ReadySubtaskScheduler:
                     change_set = dirty
 
         history = [h for h in local_state.fast_loop_history if h.subtask_id == subtask_id]
+        usage_append = list(local_state.backend_usage_records or [])[usage_before:]
         return SubtaskExecutionResult(
             subtask_id=subtask_id,
             expected_state_version=expected_state_version,
@@ -1070,4 +1098,5 @@ class ReadySubtaskScheduler:
             fast_loop_history_append=history,
             graph_template=sub.spec.local_graph_template,
             delivery_records_append=list(delivery_records or []),
+            backend_usage_append=usage_append,
         )

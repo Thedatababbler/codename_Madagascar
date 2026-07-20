@@ -216,6 +216,8 @@ class TaskExecutionState(BaseModel):
     plan_content_hash: str = ""
     # M5 Slow Loop / communication.
     delivery_ledger: list[DeliveryRecord] = Field(default_factory=list)
+    # Append-only normalized backend usage for M5/M6 objective accounting.
+    backend_usage_records: list[Any] = Field(default_factory=list)
     active_plan_revision_id: str | None = None
     active_plan_hash: str | None = None
     active_communication_hash: str | None = None
@@ -259,6 +261,15 @@ class TaskExecutionState(BaseModel):
             self.scheduling_policy = TaskSchedulingPolicy.model_validate(
                 self.scheduling_policy
             )
+        if self.backend_usage_records:
+            from orchestra.control.backend_usage import BackendUsageRecord
+
+            self.backend_usage_records = [
+                v
+                if isinstance(v, BackendUsageRecord)
+                else BackendUsageRecord.model_validate(v)
+                for v in self.backend_usage_records
+            ]
         return self
 
     @classmethod

@@ -541,6 +541,28 @@ class FastLoopController:
             attempt_id=record.attempt_id,
             candidate_id=record.candidate_id,
         )
+        from datetime import UTC, datetime
+
+        from orchestra.control.backend_usage import collect_usage_from_graph_result
+
+        finished_at = datetime.now(UTC)
+        started_at = datetime.fromtimestamp(
+            finished_at.timestamp() - (record.latency_ms or 0) / 1000.0,
+            tz=UTC,
+        )
+        state.backend_usage_records.extend(
+            collect_usage_from_graph_result(
+                task_id=state.task_id,
+                subtask_id=subtask_id,
+                attempt_id=record.attempt_id,
+                result=result,
+                candidate_id=record.candidate_id,
+                started_at=started_at,
+                finished_at=finished_at,
+                status=str(getattr(record.status, "value", record.status)),
+                accounting_source="fast_loop_candidate",
+            )
+        )
         # Single source of truth: CandidateRecord.cost only (search_cost is derived).
         record.cost = _cost_from_result(result)
 
