@@ -63,11 +63,29 @@ class SlowLoopController:
         observation,
         commit: bool,
     ) -> None:
+        """Advance watermark only when checkpoint persistence succeeds.
+
+        Diagnosed no-safe outcomes consume evidence. Infrastructure /
+        transaction failures must retain evidence for retry.
+        """
+        previous = None
+        if state.slow_loop_state is not None:
+            previous = (
+                state.slow_loop_state
+                if isinstance(state.slow_loop_state, SlowLoopState)
+                else SlowLoopState.model_validate(state.slow_loop_state)
+            )
+            previous = previous.model_copy(deep=True)
         advance_observation_watermark(state, observation=observation)
         if not commit:
             return
         store = self.checkpoint_store or TaskCheckpointStore(context.run_dir)
-        await store.save(state)
+        try:
+            await store.save(state)
+        except Exception:
+            # Do not silently consume evidence when persistence fails.
+            state.slow_loop_state = previous
+            raise
 
     async def maybe_update(
         self,
@@ -338,6 +356,7 @@ class SlowLoopController:
                 message="applied",
             )
         except Exception as exc:  # noqa: BLE001
+            # Staging/checkpoint transaction failure: retain evidence for retry.
             revision.status = GlobalPlanRevisionStatus.FAILED
             revision.metadata["error"] = str(exc)
             state.plan_revision_history.append(revision)

@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from orchestra.communication.aggregation import AggregationRule
 from orchestra.communication.payload import DeliveryRule, PayloadContract
 from orchestra.communication.plan import CommunicationPlan
+from orchestra.control.backend_usage import ObjectiveAccountingQuality
 from orchestra.control.fast_loop.schemas import CostRecord
 from orchestra.decomposition.schemas import TaskPlan
 
@@ -72,8 +73,11 @@ class TaskBudgetRemaining(BaseModel):
     remaining_cost_usd: float | None = None
     ratio: float = 1.0
     budget_configured: bool = False
-    # approximate: heuristic from subtask/fast-loop costs; exact: usage ledger.
+    # Summary only: "exact" iff every dimension used for this snapshot is exact.
     accounting_quality: Literal["approximate", "exact"] = "approximate"
+    objective_accounting: ObjectiveAccountingQuality = Field(
+        default_factory=ObjectiveAccountingQuality
+    )
 
 
 class DeliveryStatistics(BaseModel):
@@ -163,6 +167,8 @@ class GlobalObservation(BaseModel):
     current_serialization_groups: list[list[str]] = Field(default_factory=list)
     commits_since_last_slow_update: int = 0
     new_evidence_keys: list[str] = Field(default_factory=list)
+    # Unhandled active communication blocks contributing to recent triggers.
+    recent_active_block_reasons: dict[str, str] = Field(default_factory=dict)
 
 
 class GlobalDiagnosis(BaseModel):

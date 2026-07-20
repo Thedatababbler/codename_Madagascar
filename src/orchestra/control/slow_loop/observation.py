@@ -6,6 +6,11 @@ from orchestra.communication.ledger import DeliveryFailureReason, DeliveryStatus
 from orchestra.communication.projection import estimate_tokens
 from orchestra.control.fast_loop.budget import add_costs
 from orchestra.control.fast_loop.schemas import CostRecord, sum_candidate_costs
+from orchestra.control.slow_loop.evidence import (
+    RuntimeEvidenceKind,
+    collect_active_block_events,
+    collect_runtime_evidence_events,
+)
 from orchestra.control.slow_loop.schemas import (
     DeliveryStatistics,
     GlobalObservation,
@@ -118,38 +123,11 @@ def collect_evidence_keys(
     delivery_start: int = 0,
     commit_start: int = 0,
 ) -> list[str]:
-    keys: list[str] = []
-    ledger = list(state.delivery_ledger or [])
-    for rec in ledger[delivery_start:]:
-        if getattr(rec, "delivery_id", None):
-            keys.append(f"delivery:{rec.delivery_id}")
-    commits = list(state.workspace_commit_records or [])
-    for rec in commits[commit_start:]:
-        rid = getattr(rec, "record_id", None) or getattr(rec, "commit_id", None)
-        status = getattr(rec, "status", None)
-        status_s = status.value if hasattr(status, "value") else str(status)
-        if rid:
-            keys.append(f"canonical:{rid}:{status_s}")
-    for sid, sub in sorted(state.subtasks.items()):
-        if sub.failure_reason is SubtaskFailureReason.HARNESS:
-            attempt = getattr(sub, "attempt_id", None) or sub.failure_message or "1"
-            art = ""
-            if sub.committed_artifacts:
-                art = sub.committed_artifacts[-1].artifact_id
-            keys.append(f"harness:{sid}:{attempt}:{art}")
-        if sub.failure_reason in {
-            SubtaskFailureReason.INFRA,
-            SubtaskFailureReason.MODEL,
-        }:
-            for sess in sub.backend_sessions:
-                attempt = getattr(sess, "session_id", None) or "1"
-                keys.append(
-                    f"backend:{sid}:{attempt}:{sub.failure_reason.value}:"
-                    f"{sess.backend_id}"
-                )
-        if sub.communication_block_reason:
-            keys.append(f"block:{sid}:{sub.communication_block_reason}")
-    return sorted(set(keys))
+    """Stable evidence keys from typed runtime events."""
+    events = collect_runtime_evidence_events(
+        state, delivery_start=delivery_start, commit_start=commit_start
+    )
+    return sorted({ev.evidence_key for ev in events})
 
 
 def build_global_observation(
@@ -256,16 +234,23 @@ def build_global_observation(
     handled = set(slow.handled_evidence_keys) if slow else set()
 
     ledger = list(state.delivery_ledger or [])
-    # Active unresolved block reasons remain triggerable evidence.
-    active_blocks = {
-        sid: sub.communication_block_reason
-        for sid, sub in state.subtasks.items()
-        if sub.communication_block_reason
-        and sub.status in {SubtaskStatus.PENDING, SubtaskStatus.READY}
-        and sub.lease_status != "leased"
+    active_block_events = collect_active_block_events(state)
+    lifetime_active_blocks = {
+        ev.target_subtask_id: (ev.failure_reason or "")
+        for ev in active_block_events
+        if ev.target_subtask_id
     }
+    recent_active_block_events = [
+        ev for ev in active_block_events if ev.evidence_key not in handled
+    ]
+    recent_active_blocks = {
+        ev.target_subtask_id: (ev.failure_reason or "")
+        for ev in recent_active_block_events
+        if ev.target_subtask_id
+    }
+
     lifetime_stats = _compute_delivery_stats(
-        ledger, active_block_reasons=active_blocks
+        ledger, active_block_reasons=lifetime_active_blocks
     )
     # Recent ledger slice: watermark + active communication plan version.
     active_version = state.communication_plan.version
@@ -275,32 +260,45 @@ def build_global_observation(
         if i >= watermark_delivery and d.communication_plan_version == active_version
     ]
     recent_stats = _compute_delivery_stats(
-        recent_ledger, active_block_reasons=active_blocks
+        recent_ledger, active_block_reasons=recent_active_blocks
     )
 
-    # Recent harness / canonical / backend from watermarked evidence keys.
-    all_new_keys = collect_evidence_keys(
+    all_events = collect_runtime_evidence_events(
         state, delivery_start=watermark_delivery, commit_start=watermark_commits
     )
-    new_keys = [k for k in all_new_keys if k not in handled]
+    new_events = [ev for ev in all_events if ev.evidence_key not in handled]
+    # Active block keys must appear in new_evidence_keys for watermark consumption.
+    new_keys = sorted({ev.evidence_key for ev in new_events})
 
-    recent_harness = sum(1 for k in new_keys if k.startswith("harness:"))
+    recent_harness = sum(
+        1 for ev in new_events if ev.kind is RuntimeEvidenceKind.HARNESS_FAILURE
+    )
     recent_conflicts = sum(
-        1
-        for k in new_keys
-        if k.startswith("canonical:")
-        and (
-            "conflicted" in k.lower()
-            or WorkspaceCommitStatus.CONFLICTED.value in k
-        )
+        1 for ev in new_events if ev.kind is RuntimeEvidenceKind.CANONICAL_CONFLICT
     )
     recent_backend: dict[str, int] = {}
-    for k in new_keys:
-        if not k.startswith("backend:"):
+    for ev in new_events:
+        if ev.kind is not RuntimeEvidenceKind.BACKEND_FAILURE:
             continue
-        parts = k.split(":")
-        backend_id = parts[-1] if parts else "unknown"
+        backend_id = ev.backend_id or "unknown"
         recent_backend[backend_id] = recent_backend.get(backend_id, 0) + 1
+
+    # Lifetime backend/harness from full typed events (not watermark-sliced).
+    lifetime_events = collect_runtime_evidence_events(state)
+    lifetime_harness = sum(
+        1 for ev in lifetime_events if ev.kind is RuntimeEvidenceKind.HARNESS_FAILURE
+    )
+    lifetime_backend: dict[str, int] = {}
+    for ev in lifetime_events:
+        if ev.kind is not RuntimeEvidenceKind.BACKEND_FAILURE:
+            continue
+        bid = ev.backend_id or "unknown"
+        lifetime_backend[bid] = lifetime_backend.get(bid, 0) + 1
+    lifetime_conflicts = sum(
+        1
+        for ev in lifetime_events
+        if ev.kind is RuntimeEvidenceKind.CANONICAL_CONFLICT
+    )
 
     commits = state.committed_subtask_count or len(committed)
     commits_since = commits - (slow.commits_at_last_update if slow else 0)
@@ -321,25 +319,26 @@ def build_global_observation(
         total_fast_loop_cost=total_fast,
         remaining_task_budget=rem,
         recent_failure_counts=failure_counts,
-        backend_failure_counts=backend_failures,
+        backend_failure_counts=lifetime_backend or backend_failures,
         backend_latency_summary={},
-        canonical_merge_conflicts=merge_conflicts,
-        harness_failures=harness_failures,
+        canonical_merge_conflicts=max(merge_conflicts, lifetime_conflicts),
+        harness_failures=max(harness_failures, lifetime_harness),
         artifact_token_estimates=token_estimates,
         target_context_pressure=pressure,
         delivery_statistics=lifetime_stats,
         lifetime_delivery_statistics=lifetime_stats,
         recent_delivery_statistics=recent_stats,
-        lifetime_harness_failures=harness_failures,
+        lifetime_harness_failures=max(harness_failures, lifetime_harness),
         recent_harness_failures=recent_harness,
-        lifetime_canonical_conflicts=merge_conflicts,
+        lifetime_canonical_conflicts=max(merge_conflicts, lifetime_conflicts),
         recent_canonical_conflicts=recent_conflicts,
-        lifetime_backend_failure_counts=dict(backend_failures),
+        lifetime_backend_failure_counts=dict(lifetime_backend or backend_failures),
         recent_backend_failure_counts=recent_backend,
         current_max_concurrency=policy.max_concurrent_subtasks,
         current_serialization_groups=list(policy.serialization_groups),
         commits_since_last_slow_update=max(0, commits_since),
         new_evidence_keys=new_keys,
+        recent_active_block_reasons=recent_active_blocks,
     )
 
 

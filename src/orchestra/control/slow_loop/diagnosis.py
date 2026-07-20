@@ -139,6 +139,9 @@ def diagnose(
         affected.extend(future_ids)
         edit_types.extend(["serialization_group", "scheduling_concurrency"])
 
+    # Only unhandled active blocks (watermark-aware) may affect diagnosis.
+    recent_blocks = dict(observation.recent_active_block_reasons or {})
+
     if SlowLoopTriggerReason.DELIVERY_FAILURE in triggers:
         reasons.append(GlobalDiagnosisReason.DELIVERY_FAILURE)
         stats = observation.recent_delivery_statistics
@@ -156,15 +159,14 @@ def diagnose(
         }:
             reasons.append(GlobalDiagnosisReason.MISSING_PAYLOAD)
             edit_types.extend(["upsert_payload_contract", "upsert_delivery_rule"])
-        # Only blocked future targets are affected — not all futures.
         for sid in future_ids:
-            if task_state.subtasks[sid].communication_block_reason:
+            if sid in recent_blocks:
                 affected.append(sid)
 
     if SlowLoopTriggerReason.AGGREGATION_RISK in triggers:
         reasons.append(GlobalDiagnosisReason.AGGREGATION_RISK)
         for sid in future_ids:
-            br = task_state.subtasks[sid].communication_block_reason
+            br = recent_blocks.get(sid)
             if br and br in AGGREGATION_FAILURE_REASONS:
                 affected.append(sid)
         edit_types.extend(["upsert_payload_contract"])
@@ -181,8 +183,7 @@ def diagnose(
             edit_types.extend(["upsert_payload_contract", "upsert_delivery_rule"])
 
     for sid in future_ids:
-        sub = task_state.subtasks[sid]
-        reason = sub.communication_block_reason
+        reason = recent_blocks.get(sid)
         if not reason:
             continue
         if reason in AGGREGATION_FAILURE_REASONS:
