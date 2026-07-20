@@ -78,16 +78,15 @@ class TaskBudgetTracker:
                 used,
                 CostRecord(
                     backend_calls=len(usage_records),
-                    prompt_tokens=sum(r.prompt_tokens for r in usage_records),
-                    completion_tokens=sum(r.completion_tokens for r in usage_records),
+                    prompt_tokens=sum(int(r.prompt_tokens or 0) for r in usage_records),
+                    completion_tokens=sum(
+                        int(r.completion_tokens or 0) for r in usage_records
+                    ),
                     estimated_cost_usd=sum(
                         float(r.estimated_cost_usd or 0.0) for r in usage_records
                     ),
                 ),
             )
-            # Cost remains unavailable when any record lacks estimated_cost_usd.
-            if any(r.estimated_cost_usd is None for r in usage_records):
-                obj = obj.model_copy(update={"cost": "unavailable"})
         else:
             # Approximate path: sessions / terminals are not exact objectives.
             session_calls = sum(
@@ -154,10 +153,20 @@ class TaskBudgetTracker:
         quality = "exact"
         for dim in used_dims:
             dim_q = getattr(obj, dim)
+            # derived cost is acceptable for exact-enough call accounting when
+            # only backend_calls are constrained; cost dimension itself must be
+            # exact or derived to keep summary exact when cost is used.
+            if dim == "cost" and dim_q in {"exact", "derived"}:
+                continue
             if dim_q != "exact":
                 quality = "approximate"
                 break
         if not used_dims:
+            quality = "approximate"
+        if "cost" in used_dims and obj.cost == "derived" and quality == "exact":
+            # Summary remains exact for call+derived-cost snapshots.
+            pass
+        if "cost" in used_dims and obj.cost not in {"exact", "derived"}:
             quality = "approximate"
 
         return TaskBudgetRemaining(

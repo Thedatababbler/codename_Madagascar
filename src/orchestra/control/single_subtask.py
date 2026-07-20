@@ -169,17 +169,37 @@ class SingleSubtaskCompatibilityRunner:
                 context=run_context,
             )
         except Exception as exc:  # noqa: BLE001 - persist failure then re-raise
+            from orchestra.control.backend_usage import (
+                append_usage_records,
+                exception_usage_record,
+            )
+
             status, reason, message = await classify_subtask_outcome(
                 result=None,
                 artifact_store=self.artifact_store,
                 error=exc,
             )
+            finished_exc = datetime.now(UTC)
             sub.status = status
             sub.failure_reason = reason
             sub.failure_message = message
             sub.attempts[-1].status = status
-            sub.attempts[-1].finished_at = datetime.now(UTC)
+            sub.attempts[-1].finished_at = finished_exc
             sub.attempts[-1].error = message
+            state.backend_usage_records = append_usage_records(
+                list(state.backend_usage_records or []),
+                [
+                    exception_usage_record(
+                        task_id=state.task_id,
+                        subtask_id=subtask_id,
+                        attempt_id=attempt_id,
+                        started_at=started,
+                        finished_at=finished_exc,
+                        status=status.value,
+                        accounting_source="single_subtask_exception",
+                    )
+                ],
+            )
             state.frozen = False
             await self.task_checkpoint_store.save(state)
             raise
@@ -198,9 +218,13 @@ class SingleSubtaskCompatibilityRunner:
             artifact_store=self.artifact_store,
             error=None,
         )
-        from orchestra.control.backend_usage import collect_usage_from_graph_result
+        from orchestra.control.backend_usage import (
+            append_usage_records,
+            collect_usage_from_graph_result,
+        )
 
-        state.backend_usage_records.extend(
+        state.backend_usage_records = append_usage_records(
+            list(state.backend_usage_records or []),
             collect_usage_from_graph_result(
                 task_id=state.task_id,
                 subtask_id=subtask_id,
@@ -211,7 +235,7 @@ class SingleSubtaskCompatibilityRunner:
                 finished_at=finished,
                 status=status.value,
                 accounting_source="single_subtask",
-            )
+            ),
         )
         sub.status = status
         sub.attempts[-1].status = status

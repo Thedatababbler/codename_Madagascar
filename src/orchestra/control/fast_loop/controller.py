@@ -525,6 +525,13 @@ class FastLoopController:
                 context=run_context,
             )
         except Exception as exc:  # noqa: BLE001
+            from datetime import UTC, datetime
+
+            from orchestra.control.backend_usage import (
+                append_usage_records,
+                exception_usage_record,
+            )
+
             record.status = CandidateStatus.BACKEND_FAILED
             record.failure_reason = SubtaskFailureReason.INFRA
             record.failure_message = f"{type(exc).__name__}: {exc}"
@@ -532,6 +539,26 @@ class FastLoopController:
             record.cost = CostRecord(backend_calls=1)
             record.stability_incidents.append(
                 StabilityIncident(kind="exception", message=record.failure_message)
+            )
+            finished_at = datetime.now(UTC)
+            started_at = datetime.fromtimestamp(
+                finished_at.timestamp() - (record.latency_ms or 0) / 1000.0,
+                tz=UTC,
+            )
+            state.backend_usage_records = append_usage_records(
+                list(state.backend_usage_records or []),
+                [
+                    exception_usage_record(
+                        task_id=state.task_id,
+                        subtask_id=subtask_id,
+                        attempt_id=record.attempt_id,
+                        candidate_id=record.candidate_id,
+                        started_at=started_at,
+                        finished_at=finished_at,
+                        status="exception",
+                        accounting_source="fast_loop_candidate_exception",
+                    )
+                ],
             )
             return
 
@@ -543,14 +570,18 @@ class FastLoopController:
         )
         from datetime import UTC, datetime
 
-        from orchestra.control.backend_usage import collect_usage_from_graph_result
+        from orchestra.control.backend_usage import (
+            append_usage_records,
+            collect_usage_from_graph_result,
+        )
 
         finished_at = datetime.now(UTC)
         started_at = datetime.fromtimestamp(
             finished_at.timestamp() - (record.latency_ms or 0) / 1000.0,
             tz=UTC,
         )
-        state.backend_usage_records.extend(
+        state.backend_usage_records = append_usage_records(
+            list(state.backend_usage_records or []),
             collect_usage_from_graph_result(
                 task_id=state.task_id,
                 subtask_id=subtask_id,
@@ -561,7 +592,7 @@ class FastLoopController:
                 finished_at=finished_at,
                 status=str(getattr(record.status, "value", record.status)),
                 accounting_source="fast_loop_candidate",
-            )
+            ),
         )
         # Single source of truth: CandidateRecord.cost only (search_cost is derived).
         record.cost = _cost_from_result(result)

@@ -16,7 +16,9 @@ from orchestra.cli.validate_graph import build_compiler
 from orchestra.communication.ledger import DeliveryRecord
 from orchestra.control.backend_usage import (
     BackendUsageRecord,
+    append_usage_records,
     collect_usage_from_graph_result,
+    exception_usage_record,
 )
 from orchestra.control.canonical_workspace import (
     CanonicalCommitError,
@@ -704,11 +706,10 @@ class ReadySubtaskScheduler:
             state.fast_loop_history.append(item)
         for rec in result.delivery_records_append:
             state.delivery_ledger.append(rec)
-        existing_usage = {r.usage_id for r in (state.backend_usage_records or [])}
-        for rec in result.backend_usage_append:
-            if rec.usage_id not in existing_usage:
-                state.backend_usage_records.append(rec)
-                existing_usage.add(rec.usage_id)
+        state.backend_usage_records = append_usage_records(
+            list(state.backend_usage_records or []),
+            list(result.backend_usage_append or []),
+        )
 
     async def _run_subtask_isolated(
         self,
@@ -890,13 +891,28 @@ class ReadySubtaskScheduler:
                 artifact_store=self.artifact_store,
                 error=exc,
             )
+            finished_exc = datetime.now(UTC)
             sub.status = status
             sub.failure_reason = reason
             sub.failure_message = message
             sub.attempts[-1].status = status
-            sub.attempts[-1].finished_at = datetime.now(UTC)
+            sub.attempts[-1].finished_at = finished_exc
             sub.attempts[-1].error = message
             local_state.subtasks[subtask_id] = sub
+            local_state.backend_usage_records = append_usage_records(
+                list(local_state.backend_usage_records or []),
+                [
+                    exception_usage_record(
+                        task_id=local_state.task_id,
+                        subtask_id=subtask_id,
+                        attempt_id=attempt_id,
+                        started_at=started,
+                        finished_at=finished_exc,
+                        status=status.value,
+                        accounting_source="ready_scheduler_exception",
+                    )
+                ],
+            )
             local_state = await self.fast_loop.run(
                 state=local_state,
                 subtask_id=subtask_id,
@@ -931,7 +947,9 @@ class ReadySubtaskScheduler:
             status="executed",
             accounting_source="ready_scheduler",
         )
-        local_state.backend_usage_records.extend(usage_records)
+        local_state.backend_usage_records = append_usage_records(
+            list(local_state.backend_usage_records or []), usage_records
+        )
         status, reason, message = await classify_subtask_outcome(
             result=result,
             artifact_store=self.artifact_store,
