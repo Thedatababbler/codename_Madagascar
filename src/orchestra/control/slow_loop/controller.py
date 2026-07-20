@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from typing import TYPE_CHECKING
 
 from orchestra.control.slow_loop.candidate_generator import (
     RuleBasedGlobalCandidateGenerator,
@@ -36,6 +37,9 @@ from orchestra.decomposition.schemas import TaskPlan
 from orchestra.runtime.backend import RunContext
 from orchestra.runtime.task_checkpoint import TaskCheckpointStore
 
+if TYPE_CHECKING:
+    from orchestra.control.pareto.controller import GlobalCandidatePolicy
+
 logger = logging.getLogger(__name__)
 
 
@@ -48,12 +52,14 @@ class SlowLoopController:
         selector: DeterministicGlobalCandidateSelector | None = None,
         validator: FuturePlanValidator | None = None,
         checkpoint_store: TaskCheckpointStore | None = None,
+        candidate_policy: GlobalCandidatePolicy | None = None,
     ) -> None:
         self.config = config or SlowLoopConfig()
         self.generator = generator or RuleBasedGlobalCandidateGenerator(self.config)
         self.selector = selector or DeterministicGlobalCandidateSelector()
         self.validator = validator or FuturePlanValidator(self.config)
         self.checkpoint_store = checkpoint_store
+        self.candidate_policy = candidate_policy
 
     async def _checkpoint_watermark(
         self,
@@ -100,6 +106,15 @@ class SlowLoopController:
         del task_plan  # always use state.task_plan as source of truth
         if not self.config.enabled:
             return SlowLoopUpdateResult(updated=False, message="slow_loop disabled")
+        # A Pareto policy owns horizon accounting; finish an outstanding decision
+        # before considering a new context.
+        if (
+            state.pareto_state is not None
+            and getattr(state.pareto_state, "enabled", False)
+            and getattr(state.pareto_state, "pending_decision", None) is not None
+            and hasattr(self.candidate_policy, "finalize_realized")
+        ):
+            self.candidate_policy.finalize_realized(state)
 
         started = time.monotonic()
         if state.slow_loop_state is None:
@@ -177,32 +192,47 @@ class SlowLoopController:
                 message="NO_SAFE_FUTURE_EDIT",
             )
 
-        candidates = self.generator.generate(
-            task_plan=state.task_plan,
-            communication_plan=state.communication_plan,
-            scheduling_policy=policy,
-            state=state,
-            observation=observation,
-            diagnosis=diagnosis,
-            eligible=eligible,
-        )
-        validated = []
-        for cand in candidates:
-            result = self.validator.validate(
-                current_state=state,
-                proposed_plan=cand.proposed_task_plan,
-                edits=list(cand.edits),
-                leased_subtask_ids=set(leased_subtask_ids),
-                proposed_scheduling_policy=cand.proposed_scheduling_policy,
-                proposed_communication_plan=cand.proposed_communication_plan,
+        if self.candidate_policy is not None:
+            candidates = self.candidate_policy.propose(
+                task_plan=state.task_plan,
+                communication_plan=state.communication_plan,
+                scheduling_policy=policy,
+                state=state,
+                observation=observation,
+                diagnosis=diagnosis,
+                eligible=eligible,
+                triggers=triggers,
             )
-            if not result.ok:
-                cand.validation_status = GlobalCandidateValidationStatus.INVALID
-                cand.rejection_reason = "; ".join(result.errors)
-            else:
-                validated.append(cand)
-
-        selected = self.selector.select(validated or candidates, observation)
+            selected = self.candidate_policy.select(
+                candidates, observation, state=state,
+                leased_subtask_ids=set(leased_subtask_ids),
+            )
+        else:
+            candidates = self.generator.generate(
+                task_plan=state.task_plan,
+                communication_plan=state.communication_plan,
+                scheduling_policy=policy,
+                state=state,
+                observation=observation,
+                diagnosis=diagnosis,
+                eligible=eligible,
+            )
+            validated = []
+            for cand in candidates:
+                result = self.validator.validate(
+                    current_state=state,
+                    proposed_plan=cand.proposed_task_plan,
+                    edits=list(cand.edits),
+                    leased_subtask_ids=set(leased_subtask_ids),
+                    proposed_scheduling_policy=cand.proposed_scheduling_policy,
+                    proposed_communication_plan=cand.proposed_communication_plan,
+                )
+                if not result.ok:
+                    cand.validation_status = GlobalCandidateValidationStatus.INVALID
+                    cand.rejection_reason = "; ".join(result.errors)
+                else:
+                    validated.append(cand)
+            selected = self.selector.select(validated or candidates, observation)
         if selected is None or selected.rejection_reason:
             rev = build_revision(
                 state=state,

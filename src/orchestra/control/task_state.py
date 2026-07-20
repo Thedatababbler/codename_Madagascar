@@ -223,6 +223,7 @@ class TaskExecutionState(BaseModel):
     active_communication_hash: str | None = None
     plan_revision_history: list[Any] = Field(default_factory=list)
     slow_loop_state: Any | None = None
+    pareto_state: Any | None = None
     scheduling_policy: Any | None = None
     committed_subtask_count: int = 0
 
@@ -253,6 +254,10 @@ class TaskExecutionState(BaseModel):
             from orchestra.control.slow_loop.schemas import SlowLoopState
 
             self.slow_loop_state = SlowLoopState.model_validate(self.slow_loop_state)
+        if self.pareto_state is not None and not hasattr(self.pareto_state, "enabled"):
+            from orchestra.control.pareto.schemas import ParetoSearchState
+
+            self.pareto_state = ParetoSearchState.model_validate(self.pareto_state)
         if self.scheduling_policy is not None and not hasattr(
             self.scheduling_policy, "max_concurrent_subtasks"
         ):
