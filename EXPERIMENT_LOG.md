@@ -10,7 +10,7 @@
 | Status | `canonical` (use for comparisons) / `smoke` / `mock` / `superseded` / `incomplete` |
 | Paths | Repo-relative from AdaMAS root |
 
-**Last updated:** 2026-07-20 (UTC) — M5.3 Immutable History Closure
+**Last updated:** 2026-07-20 (UTC) — M5.4 Final Evidence Closure
 
 ---
 
@@ -53,6 +53,30 @@ Copy the template below after each run (evaluate + summarize when applicable):
 ---
 
 ## Entries (newest first)
+
+### EXP-20260720-02 — M5.4 Final Closure (evidence identity + usage)
+- **Status:** smoke (CI gate; no new real-API accuracy claim)
+- **Date:** 2026-07-20 (UTC)
+- **Branch / commit:** `agnostic` (M5.4)
+- **Benchmark / phase:** typed RuntimeEvidenceEvent, active-block fingerprints,
+  real attempt identity, BackendUsageRecord ledger, objective accounting quality
+- **Baseline / graph:** closes final M5 evidence-consumption gaps; FRESH
+  unchanged; M6 not implemented
+- **Command:**
+  ```bash
+  uv sync --extra smolagents --extra codex
+  uv run ruff check .
+  uv run pytest -q tests/unit
+  uv run pytest -q tests/integration
+  uv run python -m orchestra.cli.run_m5_smoke
+  ```
+- **Results:** Unresolved active blocks consumed once via fingerprints;
+  backend/harness evidence uses real attempt IDs; repeated-failure thresholds
+  work; no-safe watermark survives checkpoint resume; controller transaction
+  failures do not consume evidence; usage accounting does not overstate
+  exactness; M6 not implemented.
+- **Notes / interpretation:** Docs: `docs/m5_slow_global_adaptation.md`
+  §§11f–11g. M5 final closure.
 
 ### EXP-20260720-01 — M5.3 Immutable History and Observation Watermark Closure
 - **Status:** smoke (CI gate; no new real-API accuracy claim)

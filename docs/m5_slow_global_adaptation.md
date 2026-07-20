@@ -211,9 +211,54 @@ re-consumed every wave. Context pressure is computed only for
 `PENDING|READY` + `UNLEASED` targets; pressure with no eligible affected
 target yields `NO_SAFE_FUTURE_EDIT` (no fallback to all future subtasks).
 
-`TaskBudgetRemaining.accounting_quality` is `exact` when backend session
-usage records are available, otherwise `approximate`. Approximate cost is
-not M6 Pareto truth; M6 must use a telemetry ledger for exact objectives.
+`TaskBudgetRemaining.accounting_quality` is a **summary** only (see §11f).
+
+## 11f. Typed evidence + active-block fingerprints (M5.4)
+
+Slow Loop observation builds `RuntimeEvidenceEvent` records with
+deterministic keys from real identifiers (not failure messages):
+
+```text
+delivery:<delivery_id>
+block:<comm-version>:<target>:<reason>:<contract-hash>:<source-artifact-hash>
+backend:<subtask>:<node>:<attempt>:<candidate-or-main>:<backend>:<reason>:<session-id>
+harness:<subtask>:<attempt>:<harness-artifact>:<reason>
+canonical:<record_id>:<status>
+```
+
+Backend keys use `BackendSessionRecord.attempt_id` and
+`session_ref.session_id` (or a stable hash of the session_ref). Harness keys
+use `SubtaskAttempt.attempt_id`, workspace commit `attempt_id`, or Fast Loop
+candidate attempt identity — never `SubtaskState.attempt_id` (it does not
+exist).
+
+Active communication blocks are fingerprint-aware. Unchanged unresolved
+blocks are filtered through `handled_evidence_keys` before contributing to
+`recent_delivery_statistics` / `DELIVERY_FAILURE` / `AGGREGATION_RISK`.
+After `NO_SAFE_FUTURE_EDIT` (or applied revision) the block key is handled;
+the same block does not retrigger. Changing plan version, source artifacts,
+reason, or contracts produces a new fingerprint and may trigger again.
+
+Diagnosed no-safe outcomes advance watermarks only when checkpoint
+persistence succeeds. Staging/checkpoint transaction failures retain
+evidence for retry and keep the previous plan active.
+
+## 11g. Backend usage telemetry + objective accounting (M5.4)
+
+`TaskExecutionState.backend_usage_records` is an append-only ledger of
+normalized `BackendUsageRecord` rows produced at the shared graph-execution
+boundary (scheduler / Fast Loop candidates / single-subtask), not via
+backend-id branches in the Slow Loop controller.
+
+`ObjectiveAccountingQuality` reports per dimension:
+
+```text
+backend_calls / tokens / cost / latency ∈ {exact, approximate, unavailable}
+```
+
+Summary `accounting_quality == "exact"` only when every dimension used for
+the snapshot ratio is exact. Session existence alone is never exact cost
+accounting. Approximate / unavailable dimensions are not M6 Pareto truth.
 
 ## 12. Communication dependency + cycle validation
 
@@ -297,5 +342,5 @@ arbitrary TaskPlans, subtask add/delete, re-decomposition, dependency
 rewiring, committed rollback, Codex native subagents, CodeAgent
 `managed_agents`, or Codex RESUME/FORK.
 
-**M5 is immutable-history-safe and runtime-correct (M5.3 closure). M6 is
-not implemented.**
+**M5 is evidence-consumption-safe and runtime-correct (M5.4 final closure).
+M6 is not implemented.**
