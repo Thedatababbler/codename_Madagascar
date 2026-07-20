@@ -176,8 +176,8 @@ async def test_chained_communication_survives_completed_intermediate_target(
         await store.put(art)
         state.subtasks[sid].status = SubtaskStatus.COMMITTED
         state.subtasks[sid].final_output_artifact_id = art.artifact_id
-    # Seed historical delivery for p12.
-    state.subtasks["s2"].status = SubtaskStatus.COMMITTED
+    # Historical S1→S2 delivery must happen while S2 is still READY.
+    state.subtasks["s2"].status = SubtaskStatus.READY
     hist = await engine.deliver_for_target(
         task_plan=plan,
         task_state=state,
@@ -185,9 +185,9 @@ async def test_chained_communication_survives_completed_intermediate_target(
         target_subtask_id="s2",
         persist=True,
     )
-    # S2 already committed — delivery may still write ledger for audit; ensure
-    # subsequent S3 works with historical contract retained.
-    state.delivery_ledger.extend(hist.new_records + hist.audit_records)
+    assert hist.blocked is False
+    state.delivery_ledger.extend(hist.new_records)
+    state.subtasks["s2"].status = SubtaskStatus.COMMITTED
     state.subtasks["s3"].status = SubtaskStatus.READY
     d3 = await engine.deliver_for_target(
         task_plan=plan,
@@ -207,6 +207,17 @@ async def test_chained_communication_survives_completed_intermediate_target(
     )
     assert d3b.blocked is False
     assert not d3b.new_records
+    # Completed S2 must not be redelivered.
+    red = await engine.deliver_for_target(
+        task_plan=plan,
+        task_state=state,
+        communication_plan=state.communication_plan,
+        target_subtask_id="s2",
+    )
+    assert red.blocked is True
+    assert red.block_reason is DeliveryFailureReason.TARGET_NOT_DELIVERABLE
+    assert not red.new_records
+    assert not red.delivered_slots
 
 
 @pytest.mark.asyncio
@@ -580,7 +591,15 @@ def test_repeated_harness_failure_has_diagnosis():
     state.subtasks["s2"].status = SubtaskStatus.PENDING
     state.subtasks["s3"].status = SubtaskStatus.PENDING
     obs = build_global_observation(state)
-    obs = obs.model_copy(update={"harness_failures": 3, "commits_since_last_slow_update": 0})
+    obs = obs.model_copy(
+        update={
+            "harness_failures": 3,
+            "lifetime_harness_failures": 3,
+            "recent_harness_failures": 3,
+            "commits_since_last_slow_update": 0,
+            "new_evidence_keys": ["harness:s1:1:", "harness:s2:1:", "harness:s3:1:"],
+        }
+    )
     triggers = detect_triggers(
         obs, budget=SlowLoopBudget(repeated_failure_threshold=2, min_commits_between_updates=99)
     )
@@ -605,6 +624,7 @@ def test_delivery_failure_trigger_from_block_reason():
         DeliveryFailureReason.REQUIRED_RULE_MISSING.value
     )
     obs = build_global_observation(state)
+    assert obs.recent_delivery_statistics.required_delivery_block_count >= 1
     assert obs.delivery_statistics.required_delivery_block_count >= 1
     triggers = detect_triggers(
         obs, budget=SlowLoopBudget(min_commits_between_updates=99)

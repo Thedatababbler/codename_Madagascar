@@ -152,7 +152,9 @@ def test_proposed_revision_rejects_new_contract_to_completed_target():
         ],
         delivery_schedule=[DeliveryRule(rule_id="d", payload_id="new_to_past")],
     )
-    with pytest.raises(CommunicationPlanValidationError, match="past/leased"):
+    with pytest.raises(
+        CommunicationPlanValidationError, match="IMMUTABLE_COMMUNICATION_HISTORY"
+    ):
         CommunicationPlanCompiler().compile(
             task_plan=task,
             communication_plan=new_comm,

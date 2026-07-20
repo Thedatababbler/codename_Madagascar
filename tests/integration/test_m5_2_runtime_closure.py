@@ -170,24 +170,31 @@ async def test_slow_loop_revision_after_historical_delivery(tmp_path: Path):
     state = TaskExecutionState.from_plan(plan)
     state.communication_plan = plan.communication_plan
     engine = CommunicationDeliveryEngine(store)
-    for sid, text in [("s1", "A"), ("s2", "B")]:
-        art = create_artifact(
-            FinalAnswerArtifact(answer=text, source_node=sid),
-            producer_node_id=sid,
-            task_id="m52",
-        )
-        await store.put(art)
-        state.subtasks[sid].status = SubtaskStatus.COMMITTED
-        state.subtasks[sid].final_output_artifact_id = art.artifact_id
-    # Historical delivery S1→S2
-    state.subtasks["s2"].status = SubtaskStatus.COMMITTED
+    a1 = create_artifact(
+        FinalAnswerArtifact(answer="A", source_node="s1"),
+        producer_node_id="s1",
+        task_id="m52",
+    )
+    await store.put(a1)
+    state.subtasks["s1"].status = SubtaskStatus.COMMITTED
+    state.subtasks["s1"].final_output_artifact_id = a1.artifact_id
+    state.subtasks["s2"].status = SubtaskStatus.READY
     d2 = await engine.deliver_for_target(
         task_plan=plan,
         task_state=state,
         communication_plan=state.communication_plan,
         target_subtask_id="s2",
     )
+    assert d2.blocked is False
     state.delivery_ledger.extend(d2.new_records)
+    a2 = create_artifact(
+        FinalAnswerArtifact(answer="B", source_node="s2"),
+        producer_node_id="s2",
+        task_id="m52",
+    )
+    await store.put(a2)
+    state.subtasks["s2"].status = SubtaskStatus.COMMITTED
+    state.subtasks["s2"].final_output_artifact_id = a2.artifact_id
     state.subtasks["s3"].status = SubtaskStatus.PENDING
     # Slow Loop edits future S3 communication only.
     new_contract = PayloadContract(
