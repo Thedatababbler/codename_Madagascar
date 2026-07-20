@@ -565,33 +565,44 @@ def test_active_revision_delivery_failure_triggers():
 def test_handled_harness_failure_does_not_retrigger():
     plan = _plan()
     state = TaskExecutionState.from_plan(plan)
-    state.subtasks["s1"].status = SubtaskStatus.HARNESS_FAILED
-    from orchestra.control.task_state import SubtaskFailureReason
+    from orchestra.control.task_state import SubtaskAttempt, SubtaskFailureReason
 
+    state.subtasks["s1"].status = SubtaskStatus.HARNESS_FAILED
     state.subtasks["s1"].failure_reason = SubtaskFailureReason.HARNESS
+    state.subtasks["s1"].attempts = [
+        SubtaskAttempt(attempt_id=1, status=SubtaskStatus.HARNESS_FAILED)
+    ]
+    from orchestra.control.slow_loop.evidence import harness_evidence_key
+
+    key = harness_evidence_key(
+        subtask_id="s1",
+        attempt_id=1,
+        harness_artifact_id="",
+        failure_reason=SubtaskFailureReason.HARNESS.value,
+    )
     state.slow_loop_state = SlowLoopState(
-        handled_evidence_keys=["harness:s1:1:"],
+        handled_evidence_keys=[key],
         last_observed_delivery_index=0,
     )
-    # Rebuild keys will include harness:s1:1: — already handled → recent=0
     obs = build_global_observation(state)
-    # Force keys to match handled form used by collect_evidence_keys.
-    assert obs.recent_harness_failures == 0 or all(
-        k in set(state.slow_loop_state.handled_evidence_keys)
-        for k in obs.new_evidence_keys
-        if k.startswith("harness:")
-    )
+    assert obs.recent_harness_failures == 0
 
 
 def test_new_harness_failure_after_watermark_triggers():
     plan = _plan()
     state = TaskExecutionState.from_plan(plan)
-    from orchestra.control.task_state import SubtaskFailureReason
+    from orchestra.control.task_state import SubtaskAttempt, SubtaskFailureReason
 
     state.subtasks["s1"].status = SubtaskStatus.HARNESS_FAILED
     state.subtasks["s1"].failure_reason = SubtaskFailureReason.HARNESS
+    state.subtasks["s1"].attempts = [
+        SubtaskAttempt(attempt_id=1, status=SubtaskStatus.HARNESS_FAILED)
+    ]
     state.subtasks["s2"].status = SubtaskStatus.HARNESS_FAILED
     state.subtasks["s2"].failure_reason = SubtaskFailureReason.HARNESS
+    state.subtasks["s2"].attempts = [
+        SubtaskAttempt(attempt_id=1, status=SubtaskStatus.HARNESS_FAILED)
+    ]
     state.slow_loop_state = SlowLoopState(handled_evidence_keys=[])
     obs = build_global_observation(state)
     assert obs.recent_harness_failures >= 2
@@ -616,8 +627,8 @@ def test_watermark_advance_consumes_evidence():
         obs1, budget=SlowLoopBudget(min_commits_between_updates=99)
     )
     advance_observation_watermark(state, observation=obs1)
-    # Clear active block after "handling".
-    state.subtasks["s3"].communication_block_reason = None
+    # Block remains unresolved; fingerprint is handled → no retrigger.
+    assert state.subtasks["s3"].communication_block_reason is not None
     obs2 = build_global_observation(state)
     assert SlowLoopTriggerReason.DELIVERY_FAILURE not in detect_triggers(
         obs2, budget=SlowLoopBudget(min_commits_between_updates=99)

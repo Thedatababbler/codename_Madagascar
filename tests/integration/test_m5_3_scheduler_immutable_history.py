@@ -291,42 +291,55 @@ async def test_historical_context_pressure_does_not_edit_s3(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_no_safe_future_edit_consumed_once(tmp_path: Path):
+    """Unresolved active block triggers once, then is consumed via watermark."""
+    from orchestra.control.slow_loop.candidate_generator import (
+        RuleBasedGlobalCandidateGenerator,
+    )
+    from orchestra.control.slow_loop.schemas import SlowLoopBudget
+
+    class _EmptyGen(RuleBasedGlobalCandidateGenerator):
+        def generate(self, **kwargs):  # type: ignore[no-untyped-def]
+            return []
+
     plan = _chain()
     state = TaskExecutionState.from_plan(plan)
     state.communication_plan = plan.communication_plan
-    state.subtasks["s2"].status = SubtaskStatus.READY
-    state.subtasks["s2"].lease_status = "leased"
+    state.subtasks["s1"].status = SubtaskStatus.COMMITTED
+    state.subtasks["s2"].status = SubtaskStatus.COMMITTED
     state.subtasks["s3"].status = SubtaskStatus.READY
-    state.subtasks["s3"].lease_status = "leased"
-    # Force context pressure onto observation for leased targets only.
-    state.communication_plan = CommunicationPlan(
-        version=1,
-        payload_contracts=list(plan.communication_plan.payload_contracts),
-        delivery_schedule=list(plan.communication_plan.delivery_schedule),
-        context_budgets={"s2": 10, "s3": 10},
+    state.subtasks["s3"].lease_status = "unleased"
+    state.subtasks["s3"].communication_block_reason = (
+        DeliveryFailureReason.REQUIRED_RULE_MISSING.value
     )
     ctrl = SlowLoopController(
-        config=SlowLoopConfig(enabled=True),
+        config=SlowLoopConfig(
+            enabled=True,
+            budget=SlowLoopBudget(min_commits_between_updates=99),
+        ),
+        generator=_EmptyGen(),
         checkpoint_store=TaskCheckpointStore(tmp_path),
     )
-    # Inject pressure via oversized contracts on leased targets — observation
-    # will not include them; synthesize via diagnosis path using watermark.
-
     first = await ctrl.maybe_update(
         task_plan=plan,
         state=state,
         context=_ctx(tmp_path),
-        leased_subtask_ids={"s2", "s3"},
+        leased_subtask_ids=set(),
     )
-    # No eligible futures → NO_SAFE_FUTURE_EDIT and watermark advanced.
-    assert first.message in {"NO_SAFE_FUTURE_EDIT", "no trigger", "diagnosis NO_CHANGE"}
-    wm = state.slow_loop_state
-    assert wm is not None
+    assert SlowLoopTriggerReason.DELIVERY_FAILURE in first.trigger_reasons
+    assert first.message == "NO_SAFE_FUTURE_EDIT"
+    handled = set(state.slow_loop_state.handled_evidence_keys)
+    assert any(k.startswith("block:") for k in handled)
+    # Keep the exact same unresolved block.
+    assert state.subtasks["s3"].communication_block_reason == (
+        DeliveryFailureReason.REQUIRED_RULE_MISSING.value
+    )
     second = await ctrl.maybe_update(
         task_plan=plan,
         state=state,
         context=_ctx(tmp_path),
-        leased_subtask_ids={"s2", "s3"},
+        leased_subtask_ids=set(),
     )
-    # Without new evidence, should not keep applying updates.
+    assert SlowLoopTriggerReason.DELIVERY_FAILURE not in second.trigger_reasons
     assert second.updated is False
+    assert second.revision is None
+    assert state.slow_loop_state.updates_applied == 0
