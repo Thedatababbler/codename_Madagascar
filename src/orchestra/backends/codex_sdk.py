@@ -19,6 +19,11 @@ from orchestra.backends.base import (
     BackendSessionRef,
 )
 from orchestra.backends.capabilities import BackendCapabilities, SessionPolicy
+from orchestra.backends.codex_lifecycle import (
+    CodexLifecycleError,
+    CodexThreadLifecycleAdapter,
+    sdk_supports_resume_fork,
+)
 from orchestra.backends.codex_types import map_approval_policy, map_sandbox
 from orchestra.backends.exception_mapping import map_codex_exception
 from orchestra.ir.artifacts import create_artifact
@@ -66,6 +71,18 @@ class CodexSDKBackend:
 
     @property
     def capabilities(self) -> BackendCapabilities:
+        # openai_codex exposes thread_resume/thread_fork with cwd rebinding.
+        # Fast Loop still defaults to fresh_only unless hybrid mode is enabled.
+        resume_fork = True
+        try:
+            from openai_codex import AsyncCodex
+
+            resume_fork = sdk_supports_resume_fork(AsyncCodex)
+        except Exception:  # noqa: BLE001
+            resume_fork = False
+        policies = {SessionPolicy.FRESH}
+        if resume_fork:
+            policies |= {SessionPolicy.RESUME, SessionPolicy.FORK}
         return BackendCapabilities(
             multi_step=True,
             code_actions=True,
@@ -73,12 +90,15 @@ class CodexSDKBackend:
             repository_editing=True,
             supports_remote_executor=False,
             supports_step_trace=False,
-            supports_resume=False,
+            supports_resume=resume_fork,
+            supports_fork=resume_fork,
             supports_session_state=True,
-            supported_session_policies=frozenset({SessionPolicy.FRESH}),
+            supported_session_policies=frozenset(policies),
             supports_tool_policy_edit=False,
             supports_model_override=True,
             supports_workspace_rebinding=True,
+            supports_cross_workspace_resume=resume_fork,
+            supports_cross_workspace_fork=resume_fork,
             supports_parallel_instances=True,
         )
 
@@ -157,24 +177,36 @@ class CodexSDKBackend:
         context: BackendExecutionContext,
     ) -> AgentResult:
         started = time.perf_counter()
-        if request.session_policy is not AgentSessionPolicy.FRESH:
+        # Graph YAML thread_policy remains fresh-only; runtime lifecycle is driven
+        # by AgentRequest.session_policy from node session directives.
+        yaml_thread = str(request.backend_config.get("thread_policy") or "fresh")
+        if yaml_thread != "fresh":
             return self._fail(
                 request,
                 AgentRunStatus.INVALID_REQUEST,
-                "M3.5 only supports session_policy=fresh "
-                f"(got {request.session_policy.value})",
-            )
-        if request.backend_config.get("thread_policy", "fresh") != "fresh":
-            return self._fail(
-                request,
-                AgentRunStatus.INVALID_REQUEST,
-                "Codex thread_policy must be fresh in M3.5",
+                "CodexSDKBackendConfig.thread_policy must remain fresh; "
+                "use node session directives for RESUME/FORK",
             )
         if not context.workspace_ref:
             return self._fail(
                 request,
                 AgentRunStatus.INVALID_REQUEST,
                 "codex_sdk requires workspace_ref; refusing implicit cwd/project-root fallback",
+            )
+        # Fail closed on session policy before mutating/reading the workspace.
+        if request.session_policy is AgentSessionPolicy.FRESH:
+            if request.session_ref is not None:
+                return self._fail(
+                    request,
+                    AgentRunStatus.INVALID_REQUEST,
+                    "FRESH must not carry session_ref (no fake resume/fork)",
+                )
+        elif request.session_ref is None or not request.session_ref.session_id:
+            return self._fail(
+                request,
+                AgentRunStatus.INVALID_REQUEST,
+                f"{request.session_policy.value} requires parent session_ref; "
+                "refusing silent FRESH downgrade",
             )
 
         workspace = WorkspaceRef(
@@ -245,8 +277,12 @@ class CodexSDKBackend:
 
         timeout = float(request.timeout_seconds or 300.0)
         thread_id = ""
+        parent_thread_id: str | None = None
         final_response = ""
         usage = LLMUsage()
+        parent_from_request = (
+            request.session_ref.session_id if request.session_ref is not None else None
+        )
         try:
             async with asyncio.timeout(timeout):
                 client = client_factory()
@@ -255,14 +291,18 @@ class CodexSDKBackend:
                     if hasattr(client, "__aenter__"):
                         client = await client.__aenter__()
                     await self._ensure_auth(client)
-                    thread = await client.thread_start(
+                    lifecycle = CodexThreadLifecycleAdapter(client)
+                    handle = await lifecycle.open(
+                        policy=request.session_policy,
+                        parent_thread_id=parent_from_request,
                         cwd=workspace.path,
                         sandbox=sandbox,
                         approval_mode=approval,
                         model=request.model.name if request.model else None,
                     )
-                    thread_id = str(getattr(thread, "id", "") or "")
-                    turn = await thread.run(
+                    thread_id = handle.thread_id
+                    parent_thread_id = handle.parent_thread_id
+                    turn = await handle.thread.run(
                         prompt,
                         sandbox=sandbox,
                         approval_mode=approval,
@@ -292,6 +332,18 @@ class CodexSDKBackend:
                         result = close()
                         if asyncio.iscoroutine(result) or isinstance(result, Awaitable):
                             await result  # type: ignore[misc]
+        except CodexLifecycleError as exc:
+            return self._fail(
+                request,
+                AgentRunStatus.INVALID_REQUEST,
+                str(exc),
+                latency_ms=int((time.perf_counter() - started) * 1000),
+                metadata={
+                    "workspace_ref": workspace.path,
+                    "codex_failure_class": "invalid",
+                    "session_policy": request.session_policy.value,
+                },
+            )
         except TimeoutError:
             return self._fail(
                 request,
@@ -369,7 +421,7 @@ class CodexSDKBackend:
         session_ref = BackendSessionRef(
             backend_id=self.backend_id,
             session_id=thread_id or request.request_id,
-            parent_session_id=None,
+            parent_session_id=parent_thread_id,
         )
         return AgentResult(
             request_id=request.request_id,
@@ -384,6 +436,8 @@ class CodexSDKBackend:
             backend_metadata={
                 "workspace_ref": workspace.path,
                 "thread_id": thread_id,
+                "parent_thread_id": parent_thread_id,
+                "session_policy": request.session_policy.value,
                 "changed_files": list(snap.changed_files),
                 "base_revision": workspace.base_revision,
                 "approval_mode": "deny_all" if approval_name == "never" else approval_name,

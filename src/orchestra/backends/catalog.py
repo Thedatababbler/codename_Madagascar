@@ -44,12 +44,17 @@ KNOWN_BACKEND_CAPABILITIES: dict[str, BackendCapabilities] = {
         repository_editing=True,
         supports_remote_executor=False,
         supports_step_trace=False,
-        supports_resume=False,
+        supports_resume=True,
+        supports_fork=True,
         supports_session_state=True,
-        supported_session_policies=frozenset({SessionPolicy.FRESH}),
+        supported_session_policies=frozenset(
+            {SessionPolicy.FRESH, SessionPolicy.RESUME, SessionPolicy.FORK}
+        ),
         supports_tool_policy_edit=False,
         supports_model_override=True,
         supports_workspace_rebinding=True,
+        supports_cross_workspace_resume=True,
+        supports_cross_workspace_fork=True,
         supports_parallel_instances=True,
     ),
 }
