@@ -17,6 +17,7 @@ class DeliveryStatus(StrEnum):
     SKIPPED_CONDITION_FALSE = "skipped_condition_false"
     SKIPPED_RULE_DISABLED = "skipped_rule_disabled"
     SKIPPED_NO_RULE = "skipped_no_rule"
+    SKIPPED_TARGET_NOT_DELIVERABLE = "skipped_target_not_deliverable"
 
 
 class DeliveryFailureReason(StrEnum):
@@ -34,6 +35,7 @@ class DeliveryFailureReason(StrEnum):
     AMBIGUOUS_AGGREGATION_RULE = "ambiguous_aggregation_rule"
     AGGREGATION_INPUT_SET_MISMATCH = "aggregation_input_set_mismatch"
     UNSUPPORTED_TRIGGER = "unsupported_trigger"
+    TARGET_NOT_DELIVERABLE = "target_not_deliverable"
 
 
 class DeliveryRecord(BaseModel):

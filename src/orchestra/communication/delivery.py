@@ -355,6 +355,33 @@ class CommunicationDeliveryEngine:
             return None
         return None
 
+    def _target_deliverable(
+        self,
+        *,
+        task_state: TaskExecutionState,
+        target_subtask_id: str,
+    ) -> bool:
+        """Allow PENDING/READY (including leased assembly after preflight).
+
+        Hard-reject terminal and in-flight statuses so completed history cannot
+        be redelivered. Lease alone does not block: scheduler leases before
+        worker assembly, which replays the preflight ledger.
+        """
+        target = task_state.subtasks.get(target_subtask_id)
+        if target is None:
+            return False
+        if target.status in {
+            SubtaskStatus.COMMITTED,
+            SubtaskStatus.FAILED,
+            SubtaskStatus.SKIPPED,
+            SubtaskStatus.HARNESS_FAILED,
+            SubtaskStatus.RUNNING,
+            SubtaskStatus.RETRY_PENDING,
+            SubtaskStatus.AWAITING_CANONICAL_COMMIT,
+        }:
+            return False
+        return target.status in {SubtaskStatus.PENDING, SubtaskStatus.READY}
+
     async def deliver_for_target(
         self,
         *,
@@ -364,6 +391,30 @@ class CommunicationDeliveryEngine:
         target_subtask_id: str,
         persist: bool = True,
     ) -> DeliveryBatchResult:
+        target = task_state.subtasks.get(target_subtask_id)
+        target_status = target.status if target else SubtaskStatus.PENDING
+        target_leased = bool(target and target.lease_status == "leased")
+        if not self._target_deliverable(
+            task_state=task_state, target_subtask_id=target_subtask_id
+        ):
+            audit = DeliveryRecord(
+                delivery_id=f"del-{uuid.uuid4().hex[:12]}",
+                communication_plan_version=communication_plan.version,
+                payload_id="",
+                source_subtask_id="",
+                target_subtask_id=target_subtask_id,
+                source_artifact_id="",
+                delivered_at_state_version=task_state.state_version,
+                status=DeliveryStatus.SKIPPED_TARGET_NOT_DELIVERABLE,
+                failure_reason=DeliveryFailureReason.TARGET_NOT_DELIVERABLE,
+            )
+            return DeliveryBatchResult(
+                target_subtask_id=target_subtask_id,
+                blocked=True,
+                block_reason=DeliveryFailureReason.TARGET_NOT_DELIVERABLE,
+                audit_records=[audit] if persist else [],
+            )
+
         compiled = self.compile(
             task_plan=task_plan,
             communication_plan=communication_plan,
@@ -378,10 +429,6 @@ class CommunicationDeliveryEngine:
         pending_by_slot: dict[
             str, list[tuple[PayloadContract, DeliveryRule, PayloadProjectionResult]]
         ] = {}
-
-        target = task_state.subtasks.get(target_subtask_id)
-        target_status = target.status if target else SubtaskStatus.PENDING
-        target_leased = bool(target and target.lease_status == "leased")
 
         for contract in sorted(contracts, key=lambda c: c.payload_id):
             rules = compiled.delivery_rules_by_payload.get(contract.payload_id, [])
