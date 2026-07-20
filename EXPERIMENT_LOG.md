@@ -10,7 +10,7 @@
 | Status | `canonical` (use for comparisons) / `smoke` / `mock` / `superseded` / `incomplete` |
 | Paths | Repo-relative from AdaMAS root |
 
-**Last updated:** 2026-07-21 (UTC) — M6.1 Runtime-Correct Pareto Closure
+**Last updated:** 2026-07-20 (UTC) — Hybrid Codex Fast Loop (branch `hybrid_codex`)
 
 ---
 
@@ -53,6 +53,30 @@ Copy the template below after each run (evaluate + summarize when applicable):
 ---
 
 ## Entries (newest first)
+
+### EXP-20260720-01 — Hybrid Codex Fast Loop (session lifecycle)
+- **Status:** smoke (CI gate; deterministic fake AsyncCodex; no new accuracy claim)
+- **Date:** 2026-07-20 (UTC)
+- **Branch / commit:** `hybrid_codex`
+- **Benchmark / phase:** trusted `codex_tiny_repo` fixture + fake Codex lifecycle
+- **Baseline / graph:** `configs/graphs/codex_single_implementer.yaml` +
+  `HybridCodexLocalCandidateGenerator` + `NodeSessionDirective`
+- **Config:** `configs/experiments/hybrid_codex_smoke.yaml`
+  (`codex_session_mode: hybrid`, `enable_resume/fork`, `missing_parent_policy: reject`)
+- **Command:**
+  ```bash
+  uv sync --extra codex
+  uv run pytest -q tests/unit/test_hybrid_codex_session.py
+  uv run pytest -q tests/integration/test_hybrid_codex_fast_loop.py
+  uv run python -m orchestra.cli.run_hybrid_codex_smoke
+  ```
+- **Run dir:** n/a (deterministic tests; optional smoke → `outputs/hybrid_codex_smoke`)
+- **Results:** RESUME/FORK/FRESH critic candidates; per-node directives; lineage
+  checkpoint roundtrip; workspace isolation; capability reject before backend;
+  lifecycle adapter uses real SDK method names (fake client in CI)
+- **Notes / interpretation:** Graph YAML stays `thread_policy: fresh`; session control
+  is runtime-only via directives. No silent FRESH downgrade; no native Codex subagents.
+  Docs: `docs/hybrid_codex_fast_loop.md`.
 
 ### EXP-20260721-01 — M6.1 Runtime-Correct Pareto Closure
 - **Status:** smoke (CI gate; no new real-API accuracy claim)

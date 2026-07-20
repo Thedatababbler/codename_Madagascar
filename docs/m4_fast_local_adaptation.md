@@ -212,7 +212,7 @@ Empty pool → no model-override candidate. No cross-provider guessing.
 | Backend | M4-A session policy | Notes |
 |---------|---------------------|-------|
 | CodeAgent | `FRESH` only | No managed_agents; no canonical commits; no harness bypass |
-| Codex | `FRESH` (RESUME/FORK schema-ready, capability-gated) | No silent downgrade; native subagents disabled |
+| Codex | `FRESH` default; **Hybrid** optional | `NodeSessionDirective` per node; RESUME/FORK capability-gated; see `docs/hybrid_codex_fast_loop.md` |
 
 ## 14. Workspace isolation
 
@@ -239,7 +239,11 @@ deterministic artifact assembly. Still out of scope:
 | Deterministic winner + post-apply harness | Pareto archive / GA (M6) |
 | FRESH candidates + model pools | Hidden-test optimization |
 | Deterministic artifact/repo propagation | Cross-subtask smart routing |
-| Serialized canonical commit transactions | Codex stateful FORK/RESUME |
+| Serialized canonical commit transactions | Hidden-test optimization |
+
+Hybrid Codex (branch `hybrid_codex`): RESUME/FORK/FRESH critic via
+`HybridCodexLocalCandidateGenerator` + `NodeSessionDirective` — see
+`docs/hybrid_codex_fast_loop.md`.
 
 ## 17. Subprocess harness security boundary
 

@@ -157,10 +157,12 @@ with deterministic slot precedence (`explicit > implicit > root`; equal-priority
 conflicts fail closed). Concurrent subtasks serialize canonical commits under
 `_state_lock` with `WorkspaceCommitRecord` idempotency.
 
-CodeAgent and Codex both use `SessionPolicy.FRESH` in M4-A; RESUME/FORK stay
-capability-gated.
+CodeAgent uses `SessionPolicy.FRESH` only. Codex supports **Hybrid mode**
+(FRESH / RESUME / FORK) via per-node `NodeSessionDirective` when
+`fast_loop.codex_session_mode: hybrid`; policies remain capability-gated with
+no silent downgrade.
 
-Design: `docs/m4_fast_local_adaptation.md`.
+Design: `docs/m4_fast_local_adaptation.md`, `docs/hybrid_codex_fast_loop.md`.
 
 ## Slow global adaptation (Milestone 5)
 
