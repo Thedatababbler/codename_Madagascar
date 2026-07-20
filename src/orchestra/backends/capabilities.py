@@ -26,6 +26,7 @@ class BackendCapabilities(BaseModel):
     supports_step_trace: bool = False
     # Legacy flag kept for compile-time catalogs; prefer supported_session_policies.
     supports_resume: bool = False
+    supports_fork: bool = False
     supports_session_state: bool = False
     supported_session_policies: frozenset[SessionPolicy] = Field(
         default_factory=lambda: frozenset({SessionPolicy.FRESH})
@@ -33,6 +34,8 @@ class BackendCapabilities(BaseModel):
     supports_tool_policy_edit: bool = False
     supports_model_override: bool = True
     supports_workspace_rebinding: bool = True
+    supports_cross_workspace_resume: bool = False
+    supports_cross_workspace_fork: bool = False
     supports_parallel_instances: bool = True
 
     def supports_policy(self, policy: SessionPolicy) -> bool:

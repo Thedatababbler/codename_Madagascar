@@ -227,6 +227,8 @@ class TaskExecutionState(BaseModel):
     pareto_state: Any | None = None
     scheduling_policy: Any | None = None
     committed_subtask_count: int = 0
+    # Hybrid Codex / backend-agnostic session lineage (append-only, deduped).
+    session_lineage_records: list[Any] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _coerce_fast_loop_states(self) -> TaskExecutionState:

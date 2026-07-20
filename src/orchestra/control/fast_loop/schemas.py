@@ -111,6 +111,76 @@ class FastLoopBudget(BaseModel):
     max_attempts_per_subtask: int = 4
 
 
+class CodexSessionMode(StrEnum):
+    """Fast Loop Codex session orchestration mode."""
+
+    FRESH_ONLY = "fresh_only"
+    RESUME_ONLY = "resume_only"
+    FORK_ONLY = "fork_only"
+    HYBRID = "hybrid"
+
+
+class MissingParentPolicy(StrEnum):
+    REJECT = "reject"
+    FRESH_FALLBACK = "fresh_fallback"
+
+
+class WorkspaceIncompatibilityPolicy(StrEnum):
+    REJECT = "reject"
+    FRESH_FALLBACK = "fresh_fallback"
+
+
+class HybridCodexConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enable_resume: bool = True
+    enable_fork: bool = True
+    max_resume_candidates: int = 1
+    max_fork_candidates: int = 1
+    max_fresh_independent_candidates: int = 1
+    resume_same_strategy: bool = True
+    fork_alternative_strategy: bool = True
+    add_fresh_critic: bool = True
+    parent_preference: list[str] = Field(
+        default_factory=lambda: [
+            "failed_initial_attempt",
+            "last_selected_candidate",
+        ]
+    )
+    missing_parent_policy: MissingParentPolicy = MissingParentPolicy.REJECT
+    workspace_incompatibility_policy: WorkspaceIncompatibilityPolicy = (
+        WorkspaceIncompatibilityPolicy.REJECT
+    )
+
+
+class FastLoopConfig(BaseModel):
+    """Optional Fast Loop control-plane config (defaults preserve FRESH-only)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = True
+    codex_session_mode: CodexSessionMode = CodexSessionMode.FRESH_ONLY
+    hybrid_codex: HybridCodexConfig = Field(default_factory=HybridCodexConfig)
+    budget: FastLoopBudget = Field(default_factory=FastLoopBudget)
+
+
+class NodeSessionDirective(BaseModel):
+    """Per-node session lifecycle directive inside a candidate graph."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    node_id: str
+    backend_id: str
+    policy: SessionPolicy
+    source_session_ref: BackendSessionRef | None = None
+    source_candidate_id: str | None = None
+    source_node_id: str | None = None
+    source_attempt_id: int | None = None
+    workspace_binding: str = "candidate_isolated"
+    lineage_reason: str = ""
+    require_parent_session: bool = False
+
+
 class BackendModelPool(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -155,7 +225,10 @@ class LocalCandidate(BaseModel):
     parent_graph_hash: str
     edits: list[LocalEdit]
     graph: OrchestraGraph
+    # Legacy candidate-level policy (checkpoint migration / audit only).
+    # New execution uses session_directives per node.
     session_policy: SessionPolicy = SessionPolicy.FRESH
+    session_directives: dict[str, NodeSessionDirective] = Field(default_factory=dict)
     generation_reason: str
     compatibility_rejected: bool = False
     rejection_reason: CandidateRejectionReason | None = None
@@ -203,7 +276,9 @@ class CandidateRecord(BaseModel):
     failure_message: str | None = None
     rejection_reason: CandidateRejectionReason | None = None
     rejection_message: str | None = None
+    # Legacy candidate-level policy retained for checkpoint migration.
     session_policy: SessionPolicy = SessionPolicy.FRESH
+    session_directives: dict[str, NodeSessionDirective] = Field(default_factory=dict)
     patch: str = ""
     changed_files: list[str] = Field(default_factory=list)
     patch_hash: str | None = None

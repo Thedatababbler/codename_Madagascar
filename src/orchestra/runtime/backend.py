@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from orchestra.ir.artifacts import ArtifactBundle
 from orchestra.ir.compiler import CompiledGraph
@@ -19,6 +20,10 @@ class RunContext:
     allow_config_drift: bool = False
     subtask_id: str | None = None
     workspace_ref: str | None = None
+    candidate_id: str | None = None
+    attempt_id: int | None = None
+    # Mapping node_id -> NodeSessionDirective (or dict payload).
+    node_session_directives: dict[str, Any] = field(default_factory=dict)
 
 
 class RuntimeBackend(ABC):
