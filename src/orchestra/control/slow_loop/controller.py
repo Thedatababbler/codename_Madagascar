@@ -10,7 +10,10 @@ from orchestra.control.slow_loop.candidate_generator import (
     eligible_future_subtask_ids,
 )
 from orchestra.control.slow_loop.diagnosis import detect_triggers, diagnose
-from orchestra.control.slow_loop.observation import build_global_observation
+from orchestra.control.slow_loop.observation import (
+    advance_observation_watermark,
+    build_global_observation,
+)
 from orchestra.control.slow_loop.revision import (
     build_revision,
     commit_prepared_revision,
@@ -18,6 +21,7 @@ from orchestra.control.slow_loop.revision import (
 )
 from orchestra.control.slow_loop.schemas import (
     GlobalCandidateValidationStatus,
+    GlobalDiagnosisReason,
     GlobalPlanRevisionStatus,
     SlowLoopConfig,
     SlowLoopState,
@@ -50,6 +54,20 @@ class SlowLoopController:
         self.selector = selector or DeterministicGlobalCandidateSelector()
         self.validator = validator or FuturePlanValidator(self.config)
         self.checkpoint_store = checkpoint_store
+
+    async def _checkpoint_watermark(
+        self,
+        *,
+        state: TaskExecutionState,
+        context: RunContext,
+        observation,
+        commit: bool,
+    ) -> None:
+        advance_observation_watermark(state, observation=observation)
+        if not commit:
+            return
+        store = self.checkpoint_store or TaskCheckpointStore(context.run_dir)
+        await store.save(state)
 
     async def maybe_update(
         self,
@@ -101,27 +119,44 @@ class SlowLoopController:
             triggers=triggers,
             budget=self.config.budget,
         )
-        if not diagnosis.update_required:
-            msg = "diagnosis NO_CHANGE"
-            if any(
-                r.value == "no_safe_future_edit"
-                for r in (diagnosis.reasons or [])
-            ):
-                msg = "NO_SAFE_FUTURE_EDIT"
+        if GlobalDiagnosisReason.NO_SAFE_FUTURE_EDIT in diagnosis.reasons and (
+            not diagnosis.affected_future_subtask_ids
+            or diagnosis.reasons == [GlobalDiagnosisReason.NO_SAFE_FUTURE_EDIT]
+        ):
+            await self._checkpoint_watermark(
+                state=state,
+                context=context,
+                observation=observation,
+                commit=commit,
+            )
             return SlowLoopUpdateResult(
                 updated=False,
                 trigger_reasons=triggers,
                 diagnosis=diagnosis,
-                message=msg,
+                message="NO_SAFE_FUTURE_EDIT",
+            )
+
+        if not diagnosis.update_required:
+            return SlowLoopUpdateResult(
+                updated=False,
+                trigger_reasons=triggers,
+                diagnosis=diagnosis,
+                message="diagnosis NO_CHANGE",
             )
 
         eligible = eligible_future_subtask_ids(state) - set(leased_subtask_ids)
         if not eligible:
+            await self._checkpoint_watermark(
+                state=state,
+                context=context,
+                observation=observation,
+                commit=commit,
+            )
             return SlowLoopUpdateResult(
                 updated=False,
                 trigger_reasons=triggers,
                 diagnosis=diagnosis,
-                message="no eligible future subtasks",
+                message="NO_SAFE_FUTURE_EDIT",
             )
 
         candidates = self.generator.generate(
@@ -170,6 +205,12 @@ class SlowLoopController:
                     summary="slow_loop rejected/no valid candidate",
                     metadata={"triggers": [t.value for t in triggers]},
                 )
+            )
+            await self._checkpoint_watermark(
+                state=state,
+                context=context,
+                observation=observation,
+                commit=commit,
             )
             return SlowLoopUpdateResult(
                 updated=False,
@@ -222,6 +263,19 @@ class SlowLoopController:
             proj_slow.last_update_revision_id = prepared.revision.revision_id
             proj_slow.commits_at_last_update = state.committed_subtask_count or len(
                 observation.committed_subtasks
+            )
+            # Watermark advances atomically with the applied revision checkpoint.
+            keys = sorted(
+                set(list(proj_slow.handled_evidence_keys) + observation.new_evidence_keys)
+            )
+            proj_slow.handled_evidence_keys = keys
+            proj_slow.last_observed_state_version = state.state_version + 1
+            proj_slow.last_observed_delivery_index = len(state.delivery_ledger or [])
+            proj_slow.last_observed_commit_record_index = len(
+                state.workspace_commit_records or []
+            )
+            proj_slow.last_observed_fast_loop_history_index = len(
+                state.fast_loop_history or []
             )
             prepared.projected_state.slow_loop_state = proj_slow
             prepared.projected_state.slow_loop_history = list(state.slow_loop_history) + [

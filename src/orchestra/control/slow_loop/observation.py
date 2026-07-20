@@ -25,6 +25,7 @@ _SKIPPED_STATUSES = {
     DeliveryStatus.SKIPPED_CONDITION_FALSE,
     DeliveryStatus.SKIPPED_RULE_DISABLED,
     DeliveryStatus.SKIPPED_NO_RULE,
+    DeliveryStatus.SKIPPED_TARGET_NOT_DELIVERABLE,
 }
 
 _AGGREGATION_REASONS = {
@@ -45,6 +46,110 @@ _REQUIRED_BLOCK_REASONS = {
     DeliveryFailureReason.PROJECTION_INFEASIBLE.value,
     DeliveryFailureReason.LEDGER_CORRUPTION.value,
 }
+
+_NON_FAILURE_REASONS = {
+    DeliveryFailureReason.TARGET_NOT_DELIVERABLE.value,
+}
+
+
+def _reason_str(reason: object | None) -> str:
+    if reason is None:
+        return ""
+    if isinstance(reason, DeliveryFailureReason):
+        return reason.value
+    return str(reason)
+
+
+def _compute_delivery_stats(
+    records: list,
+    *,
+    active_block_reasons: dict[str, str] | None = None,
+) -> DeliveryStatistics:
+    delivered = [d for d in records if d.status is DeliveryStatus.DELIVERED]
+    delivery_failure_counts: dict[str, int] = {}
+    aggregation_failure_counts: dict[str, int] = {}
+    required_blocks = 0
+    for d in records:
+        reason_s = _reason_str(getattr(d, "failure_reason", None))
+        if reason_s in _NON_FAILURE_REASONS:
+            continue
+        if d.status is DeliveryStatus.FAILED or reason_s:
+            if reason_s:
+                delivery_failure_counts[reason_s] = (
+                    delivery_failure_counts.get(reason_s, 0) + 1
+                )
+            if reason_s in _AGGREGATION_REASONS:
+                aggregation_failure_counts[reason_s] = (
+                    aggregation_failure_counts.get(reason_s, 0) + 1
+                )
+            if reason_s in _REQUIRED_BLOCK_REASONS:
+                required_blocks += 1
+    for br in (active_block_reasons or {}).values():
+        if not br or br in _NON_FAILURE_REASONS:
+            continue
+        delivery_failure_counts[br] = delivery_failure_counts.get(br, 0) + 1
+        if br in _AGGREGATION_REASONS:
+            aggregation_failure_counts[br] = aggregation_failure_counts.get(br, 0) + 1
+        if br in _REQUIRED_BLOCK_REASONS:
+            required_blocks += 1
+    return DeliveryStatistics(
+        delivered_count=len(delivered),
+        skipped_count=sum(1 for d in records if d.status in _SKIPPED_STATUSES),
+        failed_count=sum(1 for d in records if d.status is DeliveryStatus.FAILED),
+        unique_payloads=len({d.payload_id for d in delivered}),
+        delivery_failure_counts=delivery_failure_counts,
+        aggregation_failure_counts=aggregation_failure_counts,
+        required_delivery_block_count=required_blocks,
+    )
+
+
+def _slow_state(state: TaskExecutionState) -> SlowLoopState | None:
+    slow = state.slow_loop_state
+    if slow is None:
+        return None
+    if not isinstance(slow, SlowLoopState):
+        return SlowLoopState.model_validate(slow)
+    return slow
+
+
+def collect_evidence_keys(
+    state: TaskExecutionState,
+    *,
+    delivery_start: int = 0,
+    commit_start: int = 0,
+) -> list[str]:
+    keys: list[str] = []
+    ledger = list(state.delivery_ledger or [])
+    for rec in ledger[delivery_start:]:
+        if getattr(rec, "delivery_id", None):
+            keys.append(f"delivery:{rec.delivery_id}")
+    commits = list(state.workspace_commit_records or [])
+    for rec in commits[commit_start:]:
+        rid = getattr(rec, "record_id", None) or getattr(rec, "commit_id", None)
+        status = getattr(rec, "status", None)
+        status_s = status.value if hasattr(status, "value") else str(status)
+        if rid:
+            keys.append(f"canonical:{rid}:{status_s}")
+    for sid, sub in sorted(state.subtasks.items()):
+        if sub.failure_reason is SubtaskFailureReason.HARNESS:
+            attempt = getattr(sub, "attempt_id", None) or sub.failure_message or "1"
+            art = ""
+            if sub.committed_artifacts:
+                art = sub.committed_artifacts[-1].artifact_id
+            keys.append(f"harness:{sid}:{attempt}:{art}")
+        if sub.failure_reason in {
+            SubtaskFailureReason.INFRA,
+            SubtaskFailureReason.MODEL,
+        }:
+            for sess in sub.backend_sessions:
+                attempt = getattr(sess, "session_id", None) or "1"
+                keys.append(
+                    f"backend:{sid}:{attempt}:{sub.failure_reason.value}:"
+                    f"{sess.backend_id}"
+                )
+        if sub.communication_block_reason:
+            keys.append(f"block:{sid}:{sub.communication_block_reason}")
+    return sorted(set(keys))
 
 
 def build_global_observation(
@@ -124,13 +229,19 @@ def build_global_observation(
     for sid in committed:
         sub = state.subtasks[sid]
         for ref in sub.committed_artifacts:
-            # Rough public estimate without loading private evaluators.
             token_estimates[ref.artifact_id] = token_estimates.get(ref.artifact_id, 256)
 
-    # Context pressure: estimate delivered tokens vs target budget.
+    # Context pressure: only eligible future (PENDING/READY + UNLEASED) targets.
     pressure: dict[str, float] = {}
     for target, budget in state.communication_plan.context_budgets.items():
         if budget <= 0:
+            continue
+        sub = state.subtasks.get(target)
+        if sub is None:
+            continue
+        if sub.lease_status == "leased":
+            continue
+        if sub.status not in {SubtaskStatus.PENDING, SubtaskStatus.READY}:
             continue
         est = 0
         for contract in state.communication_plan.payload_contracts:
@@ -139,56 +250,58 @@ def build_global_observation(
             est += int(contract.max_tokens)
         pressure[target] = est / float(budget)
 
-    delivered = [
-        d for d in state.delivery_ledger if d.status is DeliveryStatus.DELIVERED
+    slow = _slow_state(state)
+    watermark_delivery = slow.last_observed_delivery_index if slow else 0
+    watermark_commits = slow.last_observed_commit_record_index if slow else 0
+    handled = set(slow.handled_evidence_keys) if slow else set()
+
+    ledger = list(state.delivery_ledger or [])
+    # Active unresolved block reasons remain triggerable evidence.
+    active_blocks = {
+        sid: sub.communication_block_reason
+        for sid, sub in state.subtasks.items()
+        if sub.communication_block_reason
+        and sub.status in {SubtaskStatus.PENDING, SubtaskStatus.READY}
+        and sub.lease_status != "leased"
+    }
+    lifetime_stats = _compute_delivery_stats(
+        ledger, active_block_reasons=active_blocks
+    )
+    # Recent ledger slice: watermark + active communication plan version.
+    active_version = state.communication_plan.version
+    recent_ledger = [
+        d
+        for i, d in enumerate(ledger)
+        if i >= watermark_delivery and d.communication_plan_version == active_version
     ]
-    delivery_failure_counts: dict[str, int] = {}
-    aggregation_failure_counts: dict[str, int] = {}
-    required_blocks = 0
-    for d in state.delivery_ledger:
-        reason = getattr(d, "failure_reason", None)
-        reason_s = (
-            reason.value
-            if isinstance(reason, DeliveryFailureReason)
-            else (str(reason) if reason else "")
-        )
-        if d.status is DeliveryStatus.FAILED or reason_s:
-            if reason_s:
-                delivery_failure_counts[reason_s] = (
-                    delivery_failure_counts.get(reason_s, 0) + 1
-                )
-            if reason_s in _AGGREGATION_REASONS:
-                aggregation_failure_counts[reason_s] = (
-                    aggregation_failure_counts.get(reason_s, 0) + 1
-                )
-            if reason_s in _REQUIRED_BLOCK_REASONS:
-                required_blocks += 1
-    for sub in state.subtasks.values():
-        br = sub.communication_block_reason
-        if not br:
-            continue
-        delivery_failure_counts[br] = delivery_failure_counts.get(br, 0) + 1
-        if br in _AGGREGATION_REASONS:
-            aggregation_failure_counts[br] = aggregation_failure_counts.get(br, 0) + 1
-        if br in _REQUIRED_BLOCK_REASONS:
-            required_blocks += 1
-    stats = DeliveryStatistics(
-        delivered_count=len(delivered),
-        skipped_count=sum(
-            1 for d in state.delivery_ledger if d.status in _SKIPPED_STATUSES
-        ),
-        failed_count=sum(
-            1 for d in state.delivery_ledger if d.status is DeliveryStatus.FAILED
-        ),
-        unique_payloads=len({d.payload_id for d in delivered}),
-        delivery_failure_counts=delivery_failure_counts,
-        aggregation_failure_counts=aggregation_failure_counts,
-        required_delivery_block_count=required_blocks,
+    recent_stats = _compute_delivery_stats(
+        recent_ledger, active_block_reasons=active_blocks
     )
 
-    slow: SlowLoopState | None = state.slow_loop_state
-    if slow is not None and not isinstance(slow, SlowLoopState):
-        slow = SlowLoopState.model_validate(slow)
+    # Recent harness / canonical / backend from watermarked evidence keys.
+    all_new_keys = collect_evidence_keys(
+        state, delivery_start=watermark_delivery, commit_start=watermark_commits
+    )
+    new_keys = [k for k in all_new_keys if k not in handled]
+
+    recent_harness = sum(1 for k in new_keys if k.startswith("harness:"))
+    recent_conflicts = sum(
+        1
+        for k in new_keys
+        if k.startswith("canonical:")
+        and (
+            "conflicted" in k.lower()
+            or WorkspaceCommitStatus.CONFLICTED.value in k
+        )
+    )
+    recent_backend: dict[str, int] = {}
+    for k in new_keys:
+        if not k.startswith("backend:"):
+            continue
+        parts = k.split(":")
+        backend_id = parts[-1] if parts else "unknown"
+        recent_backend[backend_id] = recent_backend.get(backend_id, 0) + 1
+
     commits = state.committed_subtask_count or len(committed)
     commits_since = commits - (slow.commits_at_last_update if slow else 0)
 
@@ -214,11 +327,41 @@ def build_global_observation(
         harness_failures=harness_failures,
         artifact_token_estimates=token_estimates,
         target_context_pressure=pressure,
-        delivery_statistics=stats,
+        delivery_statistics=lifetime_stats,
+        lifetime_delivery_statistics=lifetime_stats,
+        recent_delivery_statistics=recent_stats,
+        lifetime_harness_failures=harness_failures,
+        recent_harness_failures=recent_harness,
+        lifetime_canonical_conflicts=merge_conflicts,
+        recent_canonical_conflicts=recent_conflicts,
+        lifetime_backend_failure_counts=dict(backend_failures),
+        recent_backend_failure_counts=recent_backend,
         current_max_concurrency=policy.max_concurrent_subtasks,
         current_serialization_groups=list(policy.serialization_groups),
         commits_since_last_slow_update=max(0, commits_since),
+        new_evidence_keys=new_keys,
     )
+
+
+def advance_observation_watermark(
+    state: TaskExecutionState,
+    *,
+    observation: GlobalObservation | None = None,
+    evidence_keys: list[str] | None = None,
+) -> SlowLoopState:
+    """Update SlowLoopState watermarks after a diagnosed wave."""
+    slow = _slow_state(state) or SlowLoopState()
+    keys = list(slow.handled_evidence_keys)
+    for k in evidence_keys or (observation.new_evidence_keys if observation else []):
+        if k not in keys:
+            keys.append(k)
+    slow.handled_evidence_keys = sorted(set(keys))
+    slow.last_observed_state_version = state.state_version
+    slow.last_observed_delivery_index = len(state.delivery_ledger or [])
+    slow.last_observed_commit_record_index = len(state.workspace_commit_records or [])
+    slow.last_observed_fast_loop_history_index = len(state.fast_loop_history or [])
+    state.slow_loop_state = slow
+    return slow
 
 
 # Silence unused import if estimate_tokens unused in some builds

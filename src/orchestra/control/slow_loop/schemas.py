@@ -72,6 +72,8 @@ class TaskBudgetRemaining(BaseModel):
     remaining_cost_usd: float | None = None
     ratio: float = 1.0
     budget_configured: bool = False
+    # approximate: heuristic from subtask/fast-loop costs; exact: usage ledger.
+    accounting_quality: Literal["approximate", "exact"] = "approximate"
 
 
 class DeliveryStatistics(BaseModel):
@@ -145,9 +147,22 @@ class GlobalObservation(BaseModel):
     artifact_token_estimates: dict[str, int] = Field(default_factory=dict)
     target_context_pressure: dict[str, float] = Field(default_factory=dict)
     delivery_statistics: DeliveryStatistics = Field(default_factory=DeliveryStatistics)
+    lifetime_delivery_statistics: DeliveryStatistics = Field(
+        default_factory=DeliveryStatistics
+    )
+    recent_delivery_statistics: DeliveryStatistics = Field(
+        default_factory=DeliveryStatistics
+    )
+    lifetime_harness_failures: int = 0
+    recent_harness_failures: int = 0
+    lifetime_canonical_conflicts: int = 0
+    recent_canonical_conflicts: int = 0
+    lifetime_backend_failure_counts: dict[str, int] = Field(default_factory=dict)
+    recent_backend_failure_counts: dict[str, int] = Field(default_factory=dict)
     current_max_concurrency: int = 1
     current_serialization_groups: list[list[str]] = Field(default_factory=list)
     commits_since_last_slow_update: int = 0
+    new_evidence_keys: list[str] = Field(default_factory=list)
 
 
 class GlobalDiagnosis(BaseModel):
@@ -309,6 +324,11 @@ class SlowLoopState(BaseModel):
     control_plane_cost: CostRecord = Field(default_factory=CostRecord)
     commits_at_last_update: int = 0
     last_observation_hash: str | None = None
+    last_observed_state_version: int | None = None
+    last_observed_delivery_index: int = 0
+    last_observed_commit_record_index: int = 0
+    last_observed_fast_loop_history_index: int = 0
+    handled_evidence_keys: list[str] = Field(default_factory=list)
 
 
 class SlowLoopUpdateResult(BaseModel):
