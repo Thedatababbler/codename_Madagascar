@@ -27,10 +27,21 @@ class DeterministicParetoSelector:
         profile: PreferenceProfile,
         objective_config: dict[str, ObjectiveDirection],
     ) -> ParetoOrchestraCandidate | None:
-        # Incomplete vectors cannot dominate a complete frontier, but may still
-        # be selected deterministically for data collection or when no complete
-        # quality evidence exists.
         usable = [c for c in candidates if not c.validation_errors]
+        required = set(objective_config)
+        def is_complete(c: ParetoOrchestraCandidate) -> bool:
+            return all(
+                c.objectives.values.get(name) is not None
+                and c.objectives.values[name].available
+                and c.objectives.values[name].value is not None
+                for name in required
+            )
+
+        allow_partial = (
+            profile.allow_partial_objectives and profile.profile_id == "data_collection"
+        )
+        if not allow_partial:
+            usable = [c for c in usable if is_complete(c)]
         usable = [c for c in usable if self._passes_constraints(c, profile)]
         if not usable:
             return None
@@ -52,8 +63,7 @@ class DeterministicParetoSelector:
                 if direction is None:
                     continue
                 if name not in vals or not vals[name].available:
-                    total += 1_000_000.0
-                    continue
+                    return float("inf")
                 value = vals[name].value
                 total += float(weights.get(name, 1.0)) * (
                     -value if direction is ObjectiveDirection.MAXIMIZE else value

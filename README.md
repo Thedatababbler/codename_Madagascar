@@ -158,7 +158,7 @@ conflicts fail closed). Concurrent subtasks serialize canonical commits under
 `_state_lock` with `WorkspaceCommitRecord` idempotency.
 
 CodeAgent and Codex both use `SessionPolicy.FRESH` in M4-A; RESUME/FORK stay
-capability-gated. M6 Pareto is **not** implemented.
+capability-gated.
 
 Design: `docs/m4_fast_local_adaptation.md`.
 
@@ -181,18 +181,24 @@ redelivery to completed/in-flight targets. M5.4 adds typed evidence events,
 active-block fingerprints filtered by `handled_evidence_keys`, real
 backend/harness attempt identity, append-only `BackendUsageRecord`
 telemetry, and per-dimension `ObjectiveAccountingQuality` (session
-existence alone is not exact cost). M6 is **not** implemented.
+existence alone is not exact cost). Pareto search is layered in M6/M6.1
+without replacing these M5 guarantees.
 
 Design: `docs/m5_slow_global_adaptation.md`.
 
-## Pareto-guided orchestra search (Milestone 6)
+## Pareto-guided orchestra search (Milestone 6 / M6.1)
 
 M6 adds a backend-agnostic multi-objective search layer on top of M5:
 context-local estimated/realized Pareto archives, bounded deterministic
 candidate generation, preference-conditioned selection, and decision-horizon
-realized accounting. M5 validation and revision transactions remain
-authoritative. M6 does **not** train a learned generator; it exports search
-traces for future training.
+realized accounting. M6.1 closes the runtime loop: selection uses only the
+**complete** non-dominated frontier; estimates are candidate-specific;
+realized metrics are horizon-local (wall latency, measured tokens); Pareto
+decisions activate only through M5 staging/checkpoint; archives, pending
+decisions, and search traces persist across restart. Partial candidates are
+diagnostic-only unless `data_collection` + `allow_partial_objectives`.
+M5 validation and revision transactions remain authoritative. M6 does **not**
+train a learned generator.
 
 Design: `docs/m6_pareto_orchestra_search.md`.
 

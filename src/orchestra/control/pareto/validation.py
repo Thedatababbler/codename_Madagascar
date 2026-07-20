@@ -27,6 +27,14 @@ class ParetoCandidateValidator:
             proposed_scheduling_policy=global_candidate.proposed_scheduling_policy,
             proposed_communication_plan=global_candidate.proposed_communication_plan,
         )
+        # Candidates rejected during apply_global_edits must not be admitted even if
+        # the resulting unchanged plan happens to pass structural validation.
+        status = str(getattr(global_candidate, "validation_status", "") or "").lower()
+        rejected = getattr(global_candidate, "rejection_reason", None)
+        if status in {"invalid", "rejected"} or rejected:
+            result.ok = False
+            reason = rejected or status or "rejected edits"
+            result.errors.append(f"global candidate rejected: {reason}")
         serialized = str(
             global_candidate.proposed_communication_plan.model_dump(mode="json")
         ).lower()

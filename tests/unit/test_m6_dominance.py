@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from orchestra.control.pareto.dominance import dominates
 from orchestra.control.pareto.schemas import (
+    EvaluationVisibility,
     ObjectiveDirection,
     ObjectiveSource,
     ObjectiveValue,
@@ -25,7 +26,7 @@ def _vec(**kwargs) -> ParetoObjectiveVector:
             value=float(value),
             source=ObjectiveSource.REALIZED,
             available=True,
-            evaluation_visibility=ParetoEvaluationKind.REALIZED,
+            evaluation_visibility=EvaluationVisibility.PUBLIC,
         )
     return ParetoObjectiveVector(values=values, evaluation_kind=ParetoEvaluationKind.REALIZED)
 

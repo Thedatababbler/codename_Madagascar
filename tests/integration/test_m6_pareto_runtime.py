@@ -213,7 +213,7 @@ def test_estimated_frontier_excludes_dominated():
     d = _cand("D", quality=0.7, cost=3.0, latency=0.5, risk=0.8)
     for cand in (a, b, c, d):
         archive.insert(cand)
-    frontier = {x.content_hash for x in archive.frontier("ctx")}
+    frontier = {x.content_hash for x in archive.complete_frontier("ctx")}
     assert "C" not in frontier
     assert {"A", "B", "D"} <= frontier
     assert dominates(a, c, OBJ)
@@ -252,6 +252,15 @@ def test_preference_selection_profiles():
 
 @pytest.mark.asyncio
 async def test_selected_candidate_uses_m5_transaction(tmp_path: Path):
+    from datetime import UTC, datetime
+
+    from orchestra.control.backend_usage import BackendUsageRecord
+    from orchestra.control.pareto.schemas import (
+        EvaluationVisibility,
+        ParetoSearchState,
+        PublicEvaluationRecord,
+    )
+
     plan = _plan()
     state = TaskExecutionState.from_plan(plan)
     state.communication_plan = plan.communication_plan
@@ -259,12 +268,42 @@ async def test_selected_candidate_uses_m5_transaction(tmp_path: Path):
     state.subtasks["s2"].status = SubtaskStatus.PENDING
     state.subtasks["s3"].status = SubtaskStatus.PENDING
     state.committed_subtask_count = 1
-    from orchestra.control.pareto.schemas import ParetoSearchState
-
     state.pareto_state = ParetoSearchState(enabled=True)
+    state.public_evaluation_records = [
+        PublicEvaluationRecord(
+            evaluation_id="e1",
+            task_id="m6",
+            harness_id="repository_test_harness",
+            visibility=EvaluationVisibility.PUBLIC,
+            passed=True,
+            normalized_score=1.0,
+        )
+    ]
+    now = datetime.now(UTC)
+    state.backend_usage_records = [
+        BackendUsageRecord(
+            usage_id="u1",
+            task_id="m6",
+            subtask_id="s1",
+            node_id="n",
+            backend_id="codex_sdk",
+            attempt_id=1,
+            started_at=now,
+            finished_at=now,
+            latency_seconds=0.4,
+            prompt_tokens=10,
+            completion_tokens=5,
+            estimated_cost_usd=0.01,
+            cost_quality="exact",
+            accounting_source="hist",
+            status="success",
+            model_name="fake-test-model",
+        )
+    ]
     policy = ParetoGlobalCandidatePolicy(
-        config=ParetoConfig(enabled=True, max_candidates=8),
+        config=ParetoConfig(enabled=True, max_candidates=8, objectives=OBJ),
         preference_profile=PreferenceProfile(profile_id="balanced_knee"),
+        run_dir=str(tmp_path),
     )
     ctrl = SlowLoopController(
         config=SlowLoopConfig(
@@ -287,11 +326,21 @@ async def test_selected_candidate_uses_m5_transaction(tmp_path: Path):
         context=_ctx(tmp_path),
         leased_subtask_ids=set(),
     )
-    # Either applied a revision via M5 path or audited no-safe; never direct mutate.
-    assert result.message in {"applied", "NO_SAFE_FUTURE_EDIT", "no trigger", "diagnosis NO_CHANGE"}
+    assert result.message in {
+        "applied",
+        "NO_SAFE_FUTURE_EDIT",
+        "NO_COMPARABLE_PARETO_CANDIDATE",
+        "no trigger",
+        "diagnosis NO_CHANGE",
+    }
     if result.updated:
         assert state.active_plan_revision_id is not None
-        assert (tmp_path / "plan_revisions").exists() or state.global_revision >= 0
+        assert state.pareto_state is not None
+        assert state.pareto_state.pending_decision is not None
+        assert (
+            state.pareto_state.pending_decision.activated_revision_id
+            == state.active_plan_revision_id
+        )
 
 
 @pytest.mark.asyncio

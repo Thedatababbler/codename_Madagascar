@@ -11,6 +11,8 @@ from orchestra.control.pareto.schemas import (
     ObjectiveValue,
     ParetoConfig,
     ParetoSearchState,
+    ParetoSelectionProposal,
+    ParetoSelectionStatus,
     PreferenceProfile,
 )
 
@@ -22,6 +24,8 @@ __all__ = [
     "ParetoConfig",
     "ParetoGlobalCandidatePolicy",
     "ParetoSearchState",
+    "ParetoSelectionProposal",
+    "ParetoSelectionStatus",
     "PreferenceProfile",
     "RuleBasedGlobalCandidatePolicy",
 ]

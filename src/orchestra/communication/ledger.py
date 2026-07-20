@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class DeliveryStatus(StrEnum):
@@ -54,9 +54,19 @@ class DeliveryRecord(BaseModel):
     delivered_at_state_version: int
     status: DeliveryStatus = DeliveryStatus.DELIVERED
     estimated_tokens: int = 0
+    projected_token_count: int | None = None
+    aggregated_token_count: int | None = None
+    payload_count: int = 1
+    target_context_utilization: float | None = None
     truncated: bool = False
     failure_reason: DeliveryFailureReason | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+
+    @model_validator(mode="after")
+    def _project_legacy_tokens(self) -> DeliveryRecord:
+        if self.projected_token_count is None:
+            self.projected_token_count = self.estimated_tokens
+        return self
 
     def idempotency_key(self) -> tuple[Any, ...]:
         return (

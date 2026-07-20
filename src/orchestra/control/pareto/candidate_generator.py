@@ -172,8 +172,51 @@ class ParetoCandidateGenerator:
 
     @staticmethod
     def _compatible(edits: list[GlobalEdit]) -> bool:
-        targets = [(getattr(e, "target_subtask_id", None), e.type) for e in edits]
-        return len(targets) == len(set(targets)) or all(t[0] is None for t in targets)
+        targets: dict[str, set[str]] = {}
+        node_backends: dict[str, str] = {}
+        payload_ops: dict[str, set[str]] = {}
+        concurrency = 0
+        priorities: dict[str, int] = {}
+        serialization: set[str] = set()
+        for edit in edits:
+            if isinstance(edit, SchedulingConcurrencyEdit):
+                concurrency += 1
+            if isinstance(edit, SerializationGroupEdit):
+                members = set(edit.subtask_ids)
+                if serialization & members:
+                    return False
+                serialization |= members
+            if isinstance(edit, PendingBackendAssignmentEdit):
+                previous = node_backends.get(edit.node_id)
+                if previous is not None and previous != edit.backend_id:
+                    return False
+                node_backends[edit.node_id] = edit.backend_id
+            if isinstance(edit, PendingPriorityEdit):
+                previous = priorities.get(edit.subtask_id)
+                if previous is not None and previous != edit.priority:
+                    return False
+                priorities[edit.subtask_id] = edit.priority
+            payload_id = getattr(edit, "payload_id", None)
+            if payload_id is None and isinstance(edit, UpsertPayloadContractEdit):
+                payload_id = getattr(edit.contract, "payload_id", None)
+            if payload_id:
+                ops = payload_ops.setdefault(str(payload_id), set())
+                ops.add(edit.type)
+                if {"remove_payload_contract", "upsert_payload_contract"} <= ops:
+                    return False
+            target = getattr(edit, "subtask_id", None) or getattr(edit, "target_subtask_id", None)
+            if target is None and isinstance(edit, UpsertPayloadContractEdit):
+                target = getattr(edit.contract, "target_subtask_id", None)
+            if target:
+                kinds = targets.setdefault(str(target), set())
+                if edit.type in kinds:
+                    return False
+                if {"remove_payload_contract", "upsert_payload_contract"} <= kinds | {edit.type}:
+                    return False
+                if edit.type == "context_budget" and "context_budget" in kinds:
+                    return False
+                kinds.add(edit.type)
+        return concurrency <= 1
 
     def _build(self, edits, task_plan, communication_plan, policy, diagnosis, eligible, context):
         new_plan, new_comm, new_policy, rejected = apply_global_edits(
@@ -184,7 +227,7 @@ class ParetoCandidateGenerator:
             eligible_subtask_ids=eligible,
         )
         global_candidate = GlobalCandidate(
-            candidate_id=f"pareto-{len(edits)}-{len(context.context_id)}",
+            candidate_id="pareto-pending",
             diagnosis=diagnosis,
             edits=edits,
             proposed_task_plan=new_plan,
@@ -195,7 +238,7 @@ class ParetoCandidateGenerator:
             else GlobalCandidateValidationStatus.VALID,
             rejection_reason="rejected ineligible edits" if rejected else None,
         )
-        return build_pareto_candidate(
+        candidate = build_pareto_candidate(
             global_candidate=global_candidate,
             context=context,
             communication_overhead=float(
@@ -205,3 +248,6 @@ class ParetoCandidateGenerator:
                 )
             ),
         )
+        candidate.candidate_id = f"pareto-{candidate.content_hash[:16]}"
+        candidate.global_candidate.candidate_id = candidate.candidate_id
+        return candidate

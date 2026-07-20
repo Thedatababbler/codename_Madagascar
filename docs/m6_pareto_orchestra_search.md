@@ -25,109 +25,170 @@ before archive insertion (not scored as soft penalties):
 * no subtask add/delete / dependency rewiring
 * hidden/private evaluator isolation
 * context-budget and task-budget feasibility
+* conflicting edit pairs (same-node backend, payload remove+upsert, …)
 
-## 3. Objective definitions
-
-Default frontier objectives:
-
-| Objective | Direction |
-|-----------|-----------|
-| quality | maximize |
-| cost / cost_usd | minimize |
-| latency / wall_latency_seconds | minimize |
-| risk / failure_risk | minimize |
-
-Optional (off by default unless configured): communication_tokens /
-orchestration_complexity.
-
-Online quality uses only public/development harness evidence. Hidden tests
-are forbidden in the runtime decision path.
-
-## 4. Measured vs estimated
+## 3. Complete frontier vs partial archive
 
 ```text
-EstimatedCandidateArchive  — guides proposal selection
-RealizedOutcomeArchive     — decision-horizon measured/derived outcomes
+complete Pareto frontier
+  — feasible, validation_errors == [], all required objectives available,
+    non-dominated within the same context and evaluation kind
+
+partial diagnostic archive
+  — missing at least one required objective (for example quality without
+    public harness history). Never mixed into complete_frontier().
+
+data-collection selection
+  — profile_id = data_collection AND allow_partial_objectives = true
+  — may select from the partial archive with an explicit audit status
+
+rule-based fallback
+  — ParetoConfig.fallback_to_rule_based = true
+  — returns FALLBACK_RULE_BASED; Slow Loop may then use M5 rule-based policy
+
+estimated objective
+  — candidate-specific forecast for the next decision horizon
+
+realized objective
+  — measured after activation using decision-horizon ledger slices
+
+public quality
+  — PUBLIC / DEVELOPMENT harness records only
+
+hidden final evaluation
+  — HIDDEN / PRIVATE records; rejected from estimator, selector, and online
+    realized quality
 ```
 
-Estimated candidates never dominate realized outcomes in the realized archive.
+Online selection for default profiles (`quality_first`, `cost_capped_quality`,
+`latency_capped_quality`, `robustness_first`, `balanced_knee`) uses **only**
+`archive.complete_frontier(context_id, ESTIMATED)`.
 
-## 5. Pareto dominance
+## 4. Selection flow
 
-Candidate A dominates B when A is no worse on all enabled objectives and
-strictly better on at least one, respecting maximize/minimize and epsilon
-tolerances. Unavailable required objectives exclude a candidate from the
-complete frontier (never imputed as 0/∞).
+```text
+validate candidates
+→ estimate objectives (candidate-specific)
+→ insert into estimated complete/partial archives
+→ complete_frontier(context, ESTIMATED)
+→ selector.select(frontier only)
+→ return ParetoSelectionProposal (does not mutate live state)
+→ M5 prepare_revision_staging + checkpoint commit
+→ only then pending_decision / baselines become live
+```
 
-## 6. Context-local archives
+Statuses:
 
-Dominance is scoped by `ParetoDecisionContext` (parent plan/communication
-hashes, committed prefix, eligible futures, triggers, diagnosis, preference
-profile, backend capability hash). Cross-context comparison is forbidden.
+```text
+selected_complete_frontier
+selected_partial_for_data_collection
+no_comparable_candidate
+fallback_rule_based
+```
 
-## 7. Preference profiles
+## 5. Candidate-specific estimation
 
-Profiles: `quality_first`, `cost_capped_quality`, `latency_capped_quality`,
-`robustness_first`, `balanced_knee`, `data_collection`.
+Estimates are incremental for the candidate’s next decision horizon.
 
-Selection: filter constraints → frontier → profile score → deterministic
-tie-break (fewest edits, communication overhead, content hash).
+* **Cost** — historical BackendUsageRecord by backend/model (+ verifier/retry
+  and control overhead). Never lifetime spent cost.
+* **Latency** — deterministic critical-path / concurrency-aware wall estimate,
+  not the sum of node times.
+* **Risk** — edit-conditioned (backend switch, serialization, context reduce).
+* **Quality** — public/development harness history only; otherwise unavailable
+  (candidate stays partial; no invented neutral score).
 
-## 8. Decision horizon
+Every estimate records source (`history`, `configured_profile`,
+`declared_budget`, `unavailable`), uncertainty, and evidence counts.
 
-A pending decision records baseline usage/delivery/commit indices. At the
-next Slow Loop safe checkpoint, realized objectives are computed from
-decision-horizon deltas (not lifetime totals).
+## 6. Realized decision-horizon accounting
 
-## 9. Telemetry accounting quality
+`ParetoDecisionRecord` stores activation revision, baseline usage / delivery /
+commit / public-evaluation indices, and a selected candidate snapshot.
+
+Realized metrics count only rows after those baselines:
+
+* backend / harness / timeout failures from the usage slice
+* delivery / aggregation failures from the delivery slice
+* canonical conflicts from the commit slice
+* **wall_latency** = `completed_at - started_at` (default latency objective)
+* cost unavailable if any horizon call lacks cost
+* communication = actual delivered projected tokens
+
+## 7. Transactional activation
+
+`ParetoGlobalCandidatePolicy.select()` returns a projection only. Slow Loop
+stamps `activated_revision_id` onto the prepared projected state and commits
+via M5. Staging / checkpoint / wall-time failure leaves **no** live pending
+decision. Finalization requires
+`decision.activated_revision_id == state.active_plan_revision_id`.
+
+## 8. Persistence and search traces
+
+Under `outputs/<run>/pareto/`:
+
+```text
+archive_events.jsonl
+estimated_archive.json
+realized_archive.json
+decisions.jsonl
+search_traces.jsonl
+```
+
+Archives and selected-candidate snapshots survive restart. Traces are emitted
+on the real controller path (one row per candidate; realization updates linked).
+
+## 9. Decision context fingerprint
+
+`ParetoDecisionContext` includes repository fingerprint, canonical revision,
+parent plan/communication hashes (communication content hash when active hash
+is missing), committed-subtask fingerprints, eligible futures, objective and
+preference hashes, and pricing version.
+
+Candidate IDs are content-addressed: `pareto-<content-hash-prefix>`.
+
+## 10. Telemetry accounting quality
 
 `WaveCommitter` persists `NodeUsageSnapshot` from `NodeExecutionResult`.
-`collect_usage_from_graph_result` prefers snapshots over metadata.
 
 ```text
 0     = provider reported zero
 None  = unavailable
 ```
 
-Cost quality:
-
-```text
-exact       — provider cost present
-derived     — exact tokens + configured model prices
-approximate — heuristic
-unavailable — missing inputs (never invent prices)
-```
-
+Cost quality: `exact` / `derived` / `approximate` / `unavailable`.
 Pricing registry: `configs/pricing/backend_models.yaml`.
 
-## 10. Hidden-evaluator isolation
-
-Online objectives and candidate validation reject private/hidden artifact
-types. Offline experiment reporting may join hidden results later.
-
-## 11. Search trace export
-
-JSONL under `outputs/<run>/pareto/search_traces.jsonl` for future generator
-training. **M6 does not train the orchestra generator.** M6 creates the
-search traces required for future training.
-
-## 12. Codex / backend-agnostic relationship
+## 11. Codex / backend-agnostic relationship
 
 Pareto controllers contain no `if backend_id == ...` branches. Codex and
 CodeAgent remain selectable via allowlists and remain FRESH-only.
 
-## 13. Current limitations
+## 12. Current limitations
 
 * Speculative multi-candidate global execution is disabled.
-* Quality estimates may be unavailable without historical evidence.
+* Quality estimates unavailable without public/development evidence.
 * Pricing entries may be null → cost unavailable until configured.
 * No genetic algorithm / learned proposer in default M6.
+* Critical-path latency estimator is deterministic but simplified.
 * Auxiliary objectives are optional to avoid near-total non-dominance.
 
-## 14. Modes
+## 13. Modes
 
 ```text
 M5 rule-based Slow Loop (default when Pareto disabled)
 M6 Pareto-guided Slow Loop (candidate_policy / pareto_state.enabled)
 M6 Pareto disabled
+M6.1 runtime-correct closure (complete frontier + transactional activation)
 ```
+
+## 14. Closure smoke
+
+```bash
+uv run python -m orchestra.cli.run_m6_smoke \
+  --config configs/experiments/m6_pareto_smoke.yaml
+```
+
+The smoke loads the YAML, runs TaskExecutionState → Slow Loop → frontier
+selection → M5 commit → realized finalization → restart recovery, and asserts
+search traces plus archive persistence.

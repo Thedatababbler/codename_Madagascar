@@ -1,5 +1,6 @@
 profiles:
   quality_first:
+    allow_partial_objectives: false
     objective_weights: {quality: 10.0, cost: 1.0, latency: 1.0, risk: 1.0}
   cost_capped_quality:
     objective_weights: {quality: 5.0, cost: 1.0}
@@ -9,4 +10,5 @@ profiles:
     objective_weights: {risk: 5.0, quality: 2.0}
   balanced_knee: {}
   data_collection:
+    allow_partial_objectives: true
     objective_weights: {communication_overhead: 1.0}

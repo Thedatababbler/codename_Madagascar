@@ -487,6 +487,7 @@ async def commit_prepared_revision(
     state.global_revision = projected.global_revision
     state.state_version = projected.state_version
     state.slow_loop_state = projected.slow_loop_state
+    state.pareto_state = projected.pareto_state
     for sid, sub in projected.subtasks.items():
         if state.subtasks[sid].lease_status == "leased":
             continue

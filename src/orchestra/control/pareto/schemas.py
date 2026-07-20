@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
@@ -17,6 +18,7 @@ class ObjectiveSource(StrEnum):
     ESTIMATED = "estimated"
     REALIZED = "realized"
     DECLARED_BUDGET = "declared_budget"
+    CONFIGURED_PROFILE = "configured_profile"
     ARCHIVE = "archive"
     HISTORY = "history"
     UNAVAILABLE = "unavailable"
@@ -26,6 +28,19 @@ class ParetoEvaluationKind(StrEnum):
     ESTIMATED = "estimated"
     REALIZED = "realized"
 
+class ParetoSelectionStatus(StrEnum):
+    SELECTED_COMPLETE_FRONTIER = "selected_complete_frontier"
+    SELECTED_PARTIAL_FOR_DATA_COLLECTION = "selected_partial_for_data_collection"
+    NO_COMPARABLE_CANDIDATE = "no_comparable_candidate"
+    FALLBACK_RULE_BASED = "fallback_rule_based"
+
+
+class EvaluationVisibility(StrEnum):
+    PUBLIC = "public"
+    DEVELOPMENT = "development"
+    HIDDEN = "hidden"
+    PRIVATE = "private"
+
 
 class ObjectiveValue(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -33,7 +48,7 @@ class ObjectiveValue(BaseModel):
     value: float | None = None
     source: ObjectiveSource = ObjectiveSource.UNAVAILABLE
     available: bool = False
-    evaluation_visibility: ParetoEvaluationKind = ParetoEvaluationKind.ESTIMATED
+    evaluation_visibility: EvaluationVisibility = EvaluationVisibility.PUBLIC
     evidence_count: int = 0
     detail: str | None = None
 
@@ -47,6 +62,58 @@ class ParetoObjectiveVector(BaseModel):
 
     values: dict[str, ObjectiveValue] = Field(default_factory=dict)
     evaluation_kind: ParetoEvaluationKind = ParetoEvaluationKind.ESTIMATED
+
+
+class CandidateObjectiveEstimate(BaseModel):
+    """Candidate-conditioned estimate with evidence and conservative bounds."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    objective_vector: ParetoObjectiveVector
+    uncertainty: dict[str, float] = Field(default_factory=dict)
+    lower_bounds: dict[str, float] = Field(default_factory=dict)
+    upper_bounds: dict[str, float] = Field(default_factory=dict)
+    evidence_counts: dict[str, int] = Field(default_factory=dict)
+    estimator_version: str = "m6.1"
+
+
+class CommittedSubtaskFingerprint(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    subtask_id: str
+    spec_hash: str = ""
+    committed_revision: str | None = None
+    artifact_hashes: list[str] = Field(default_factory=list)
+
+
+class PublicEvaluationRecord(BaseModel):
+    """Only PUBLIC/DEVELOPMENT records are admissible for online quality."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    evaluation_id: str = ""
+    task_id: str = ""
+    subtask_id: str | None = None
+    decision_id: str | None = None
+    harness_id: str = ""
+    visibility: EvaluationVisibility = EvaluationVisibility.PUBLIC
+    passed: bool = False
+    passed_checks: int | None = None
+    total_checks: int | None = None
+    normalized_score: float = 0.0
+    # Legacy alias retained for estimators that still read ``quality``.
+    quality: float | None = None
+    candidate_content_hash: str | None = None
+    edit_signature: str | None = None
+    state_version: int = 0
+    revision_id: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    def resolved_quality(self) -> float:
+        if self.quality is not None:
+            return float(self.quality)
+        return float(self.normalized_score)
 
 
 class RawFailureCounts(BaseModel):
@@ -78,6 +145,7 @@ class PreferenceProfile(BaseModel):
     reference_point: dict[str, float] = Field(default_factory=dict)
     exploration_budget: int = 0
     seed: int = 42
+    allow_partial_objectives: bool = False
 
 
 class ParetoDecisionContext(BaseModel):
@@ -92,6 +160,17 @@ class ParetoDecisionContext(BaseModel):
     diagnosis: dict[str, Any] = Field(default_factory=dict)
     preference_profile_id: str = "balanced_knee"
     backend_capability_hash: str = ""
+    task_id: str = ""
+    repository_fingerprint: str = ""
+    canonical_revision: str | None = None
+    parent_revision_id: str | None = None
+    committed_prefix_hash: str = ""
+    committed_subtasks: list[CommittedSubtaskFingerprint] = Field(default_factory=list)
+    objective_config_hash: str = ""
+    preference_profile_hash: str = ""
+    pricing_version: str = ""
+    trigger_reasons: list[str] = Field(default_factory=list)
+    diagnosis_reasons: list[str] = Field(default_factory=list)
 
 
 class ParetoOrchestraCandidate(BaseModel):
@@ -119,6 +198,29 @@ class ParetoDecisionRecord(BaseModel):
     profile_id: str
     evaluation_kind: ParetoEvaluationKind = ParetoEvaluationKind.ESTIMATED
     reason: str = ""
+    activated_revision_id: str | None = None
+    activated_state_version: int | None = None
+    baseline_usage_index: int = 0
+    baseline_delivery_index: int = 0
+    baseline_commit_index: int = 0
+    baseline_evidence_keys: list[str] = Field(default_factory=list)
+    baseline_public_evaluation_index: int = 0
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    completed_state_version: int | None = None
+    selected_candidate_snapshot: ParetoOrchestraCandidate | None = None
+    selection_status: ParetoSelectionStatus = ParetoSelectionStatus.NO_COMPARABLE_CANDIDATE
+
+
+class ParetoSelectionProposal(BaseModel):
+    model_config = ConfigDict(extra="forbid", arbitrary_types_allowed=True)
+
+    selected_global_candidate: Any | None = None
+    selected_pareto_candidate: ParetoOrchestraCandidate | None = None
+    projected_pareto_state: ParetoSearchState
+    decision_record: ParetoDecisionRecord
+    selection_status: ParetoSelectionStatus
+    context: ParetoDecisionContext
 
 
 class ParetoSearchState(BaseModel):
@@ -148,6 +250,7 @@ class ParetoConfig(BaseModel):
     max_estimated_archive_size: int = 64
     max_realized_archive_size: int = 64
     allow_two_edit_pairs: bool = True
+    fallback_to_rule_based: bool = False
     horizon_commits: int = 1
     epsilon: dict[str, float] = Field(default_factory=dict)
     risk_coefficients: dict[str, float] = Field(

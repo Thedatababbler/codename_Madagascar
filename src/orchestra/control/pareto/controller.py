@@ -2,20 +2,26 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Protocol
 
 from orchestra.control.pareto.archive import ParetoArchive
 from orchestra.control.pareto.candidate_generator import ParetoCandidateGenerator
 from orchestra.control.pareto.context import build_decision_context
 from orchestra.control.pareto.estimator import ParetoObjectiveEstimator
+from orchestra.control.pareto.persistence import ParetoPersistence
 from orchestra.control.pareto.schemas import (
     ParetoConfig,
     ParetoDecisionRecord,
+    ParetoEvaluationKind,
     ParetoSearchState,
+    ParetoSelectionProposal,
+    ParetoSelectionStatus,
     PreferenceProfile,
 )
 from orchestra.control.pareto.selector import DeterministicParetoSelector
 from orchestra.control.pareto.telemetry import realized_horizon_objectives
+from orchestra.control.pareto.trace_export import ParetoTraceExporter
 from orchestra.control.pareto.validation import ParetoCandidateValidator
 from orchestra.control.slow_loop.candidate_generator import RuleBasedGlobalCandidateGenerator
 from orchestra.control.slow_loop.selector import DeterministicGlobalCandidateSelector
@@ -44,6 +50,7 @@ class ParetoGlobalCandidatePolicy:
         self,
         config: ParetoConfig | None = None,
         preference_profile: PreferenceProfile | None = None,
+        run_dir: str | None = None,
     ) -> None:
         self.config = config or ParetoConfig(enabled=True)
         self.profile = preference_profile or PreferenceProfile()
@@ -52,7 +59,17 @@ class ParetoGlobalCandidatePolicy:
         self.estimator = ParetoObjectiveEstimator()
         self.validator = ParetoCandidateValidator()
         self.selector = DeterministicParetoSelector()
-        self._candidates_by_hash = {}
+        self._candidates_by_hash: dict[str, object] = {}
+        self._contexts: dict[str, object] = {}
+        self.persistence = ParetoPersistence(run_dir) if run_dir else None
+        self.trace_exporter = ParetoTraceExporter(run_dir) if run_dir else None
+        if self.persistence is not None:
+            loaded = self.persistence.load_estimated_archive(self.config)
+            self.archive.estimated_complete.update(loaded.estimated_complete)
+            self.archive.estimated_partial.update(loaded.estimated_partial)
+            realized = self.persistence.load_realized_archive(self.config)
+            self.archive.realized_complete.update(realized.realized_complete)
+            self.archive.realized_partial.update(realized.realized_partial)
 
     def propose(self, **kwargs):
         state = kwargs["state"]
@@ -67,78 +84,203 @@ class ParetoGlobalCandidatePolicy:
             diagnosis=kwargs["diagnosis"],
             preference_profile=self.profile,
             backend_capabilities=state.task_plan.metadata.get("backend_capabilities", {}),
+            state=state,
+            objective_config=self.config.objectives,
+            communication_plan=state.communication_plan,
         )
-        return self.generator.generate(
+        generated = self.generator.generate(
             context=context, **{k: v for k, v in kwargs.items() if k != "triggers"}
         )
+        self._contexts[context.context_id] = context
+        for cand in generated:
+            self._candidates_by_hash[cand.content_hash] = cand
+        return generated
 
-    def select(self, candidates, observation, **kwargs):
+    def select(self, candidates, observation, **kwargs) -> ParetoSelectionProposal | None:
+        """Propose a selection; never mutate live TaskExecutionState.pareto_state."""
         state = kwargs["state"]
         valid = []
         for candidate in candidates:
             if self.validator.validate(
                 candidate, current_state=state, leased_subtask_ids=kwargs["leased_subtask_ids"]
             ).ok:
-                self.estimator.estimate(candidate, observation=observation, archive=self.archive)
+                estimate = self.estimator.estimate(
+                    candidate,
+                    observation=observation,
+                    archive=self.archive,
+                    public_evaluations=getattr(state, "public_evaluation_records", []),
+                    state=state,
+                    risk_coefficients=self.config.risk_coefficients,
+                )
+                candidate.objectives = estimate.objective_vector
                 self.archive.insert(candidate)
+                if self.persistence:
+                    self.persistence.append_event(
+                        {
+                            "event_id": f"est:{candidate.content_hash}",
+                            "kind": "estimated",
+                            "content_hash": candidate.content_hash,
+                            "context_id": candidate.context_id,
+                        }
+                    )
                 valid.append(candidate)
-        selected = self.selector.select(valid, self.profile, self.config.objectives)
-        if selected is None:
-            return None
-        search = (
-            state.pareto_state
-            if isinstance(state.pareto_state, ParetoSearchState)
-            else ParetoSearchState.model_validate(state.pareto_state or {})
+        context_id = (
+            valid[0].context_id
+            if valid
+            else (candidates[0].context_id if candidates else "")
         )
-        search.enabled = self.config.enabled
-        search.pending_candidate_hash = selected.content_hash
-        self._candidates_by_hash[selected.content_hash] = selected.model_copy(deep=True)
-        search.pending_decision = ParetoDecisionRecord(
-            decision_id=f"decision-{selected.content_hash[:16]}",
-            context=self._context_from_candidate(selected),
-            selected_content_hash=selected.content_hash,
+        context = self._contexts.get(context_id)
+        if context is None and candidates:
+            # Prefer the context captured during propose(); never invent empty hashes.
+            raise RuntimeError(
+                "ParetoDecisionContext missing for selection; propose() must run first"
+            )
+        if context is None:
+            return None
+        frontier = self.archive.complete_frontier(
+            context.context_id, ParetoEvaluationKind.ESTIMATED
+        )
+        status = ParetoSelectionStatus.NO_COMPARABLE_CANDIDATE
+        selected = None
+        if frontier:
+            selected = self.selector.select(frontier, self.profile, self.config.objectives)
+            status = (
+                ParetoSelectionStatus.SELECTED_COMPLETE_FRONTIER if selected else status
+            )
+        elif (
+            self.profile.allow_partial_objectives
+            and self.profile.profile_id == "data_collection"
+        ):
+            selected = self.selector.select(
+                self.archive.partial_candidates(
+                    context.context_id, ParetoEvaluationKind.ESTIMATED
+                ),
+                self.profile,
+                self.config.objectives,
+            )
+            status = (
+                ParetoSelectionStatus.SELECTED_PARTIAL_FOR_DATA_COLLECTION
+                if selected
+                else status
+            )
+        elif self.config.fallback_to_rule_based:
+            status = ParetoSelectionStatus.FALLBACK_RULE_BASED
+
+        search = ParetoSearchState(enabled=self.config.enabled)
+        if isinstance(state.pareto_state, ParetoSearchState):
+            search = state.pareto_state.model_copy(deep=True)
+            search.enabled = self.config.enabled
+        elif state.pareto_state:
+            search = ParetoSearchState.model_validate(state.pareto_state)
+            search.enabled = self.config.enabled
+
+        decision = ParetoDecisionRecord(
+            decision_id=(
+                f"decision-{selected.content_hash[:16]}"
+                if selected
+                else f"decision-{context.context_id[:16]}"
+            ),
+            context=context,
+            selected_content_hash=selected.content_hash if selected else None,
             candidate_hashes=sorted(c.content_hash for c in valid),
             profile_id=self.profile.profile_id,
+            selected_candidate_snapshot=selected.model_copy(deep=True) if selected else None,
+            selection_status=status,
+            baseline_usage_index=len(state.backend_usage_records or []),
+            baseline_delivery_index=len(state.delivery_ledger or []),
+            baseline_commit_index=len(state.workspace_commit_records or []),
+            baseline_evidence_keys=list(
+                getattr(getattr(state, "slow_loop_state", None), "handled_evidence_keys", [])
+                or []
+            ),
+            baseline_public_evaluation_index=len(
+                getattr(state, "public_evaluation_records", []) or []
+            ),
+            started_at=datetime.now(UTC),
         )
-        search.horizon_usage_index = len(state.backend_usage_records or [])
-        search.horizon_delivery_index = len(state.delivery_ledger or [])
-        search.horizon_commit_index = len(state.workspace_commit_records or [])
-        search.decisions += 1
-        state.pareto_state = search
-        return selected.global_candidate
-
-    def _context_from_candidate(self, candidate):
-        # The context fields are stored by the active decision and do not need
-        # backend identities. Reconstructing minimal fields keeps candidates portable.
-        from orchestra.control.pareto.schemas import ParetoDecisionContext
-
-        return ParetoDecisionContext(
-            context_id=candidate.context_id, parent_plan_hash="", parent_communication_hash=""
+        if selected:
+            search.pending_candidate_hash = selected.content_hash
+            search.pending_decision = decision
+            search.horizon_usage_index = decision.baseline_usage_index
+            search.horizon_delivery_index = decision.baseline_delivery_index
+            search.horizon_commit_index = decision.baseline_commit_index
+            search.decisions += 1
+        proposal = ParetoSelectionProposal(
+            selected_global_candidate=selected.global_candidate if selected else None,
+            selected_pareto_candidate=selected,
+            projected_pareto_state=search,
+            decision_record=decision,
+            selection_status=status,
+            context=context,
         )
+        if self.persistence:
+            self.persistence.snapshot(self.archive)
+            self.persistence.append_decision(decision)
+        if self.trace_exporter:
+            self.trace_exporter.emit_candidates(
+                valid,
+                decision_id=decision.decision_id,
+                decision_context=context,
+                preference_profile=self.profile,
+                selected_hash=selected.content_hash if selected else None,
+                status=status,
+                activated_revision_id=None,
+            )
+        return proposal
 
     def finalize_realized(self, state) -> None:
         search = state.pareto_state
         if not isinstance(search, ParetoSearchState) or not search.pending_decision:
             return
+        if search.pending_decision.activated_revision_id != state.active_plan_revision_id:
+            return
+        completed_at = datetime.now(UTC)
         vector, failures = realized_horizon_objectives(
             state,
-            usage_start=search.horizon_usage_index,
-            delivery_start=search.horizon_delivery_index,
-            commit_start=search.horizon_commit_index,
+            usage_start=search.pending_decision.baseline_usage_index,
+            delivery_start=search.pending_decision.baseline_delivery_index,
+            commit_start=search.pending_decision.baseline_commit_index,
             config=self.config,
+            started_at=search.pending_decision.started_at,
+            completed_at=completed_at,
+            public_evaluation_start=search.pending_decision.baseline_public_evaluation_index,
         )
-        candidate = self._candidates_by_hash.get(search.pending_candidate_hash or "")
+        candidate = search.pending_decision.selected_candidate_snapshot
         if candidate is not None:
             candidate.objectives = vector
             candidate.raw_failure_counts = failures
-            self.archive.insert(candidate)
-        # A realized record is retained even when quality remains unavailable.
-        search.pending_decision = search.pending_decision.model_copy(
+            self.archive.insert(candidate, ParetoEvaluationKind.REALIZED)
+            if self.persistence:
+                self.persistence.append_event(
+                    {
+                        "event_id": (
+                            f"real:{candidate.content_hash}:"
+                            f"{search.pending_decision.decision_id}"
+                        ),
+                        "kind": "realized",
+                        "content_hash": candidate.content_hash,
+                        "context_id": candidate.context_id,
+                    }
+                )
+        finalized = search.pending_decision.model_copy(
             update={
-                "evaluation_kind": "realized",
+                "evaluation_kind": ParetoEvaluationKind.REALIZED,
                 "reason": f"risk={failures.total}",
+                "completed_at": completed_at,
+                "completed_state_version": state.state_version,
+                "selected_candidate_snapshot": candidate,
             }
         )
-        search.decision_history.append(search.pending_decision)
+        search.decision_history.append(finalized)
         search.pending_decision = None
         search.pending_candidate_hash = None
+        if self.persistence:
+            self.persistence.snapshot(self.archive)
+            self.persistence.append_decision(finalized)
+        if self.trace_exporter and candidate is not None:
+            self.trace_exporter.emit_realization(
+                candidate=candidate,
+                decision=finalized,
+                preference_profile=self.profile,
+                status=finalized.selection_status,
+            )

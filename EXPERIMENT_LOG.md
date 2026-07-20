@@ -10,7 +10,7 @@
 | Status | `canonical` (use for comparisons) / `smoke` / `mock` / `superseded` / `incomplete` |
 | Paths | Repo-relative from AdaMAS root |
 
-**Last updated:** 2026-07-20 (UTC) — M6 Pareto Orchestra Search
+**Last updated:** 2026-07-21 (UTC) — M6.1 Runtime-Correct Pareto Closure
 
 ---
 
@@ -54,10 +54,50 @@ Copy the template below after each run (evaluate + summarize when applicable):
 
 ## Entries (newest first)
 
-### EXP-20260720-03 — M6 Pareto-Guided Orchestra Search
+### EXP-20260721-01 — M6.1 Runtime-Correct Pareto Closure
 - **Status:** smoke (CI gate; no new real-API accuracy claim)
+- **Date:** 2026-07-21 (UTC)
+- **Branch / commit:** `agnostic` @ post-`7738d10` (M6.1)
+- **Benchmark / phase:** complete-frontier selection, candidate-specific
+  estimates, public quality ledger, horizon-local realized metrics,
+  transactional M5 activation, archive/decision restart recovery, runtime
+  search traces, real pipeline smoke
+- **Baseline / graph:** starts from `7738d10`; FRESH unchanged; no learned
+  generator / GA / speculative global execution
+- **Command:**
+  ```bash
+  uv sync --extra smolagents --extra codex
+  uv run ruff check .
+  uv run pytest -q tests/unit
+  uv run pytest -q tests/integration
+  uv run python -m orchestra.cli.run_m5_smoke
+  uv run python -m orchestra.cli.run_m6_smoke \
+    --config configs/experiments/m6_pareto_smoke.yaml
+  uv run pytest -q \
+    tests/unit/test_m6_telemetry.py \
+    tests/unit/test_m6_dominance.py \
+    tests/unit/test_m6_archive.py \
+    tests/unit/test_m6_candidate_generation.py \
+    tests/unit/test_m6_selector.py \
+    tests/unit/test_m6_runtime_closure.py \
+    tests/integration/test_m6_pareto_runtime.py \
+    tests/integration/test_m6_pareto_recovery.py
+  ```
+- **Results:** Online selection uses only complete frontiers; dominated /
+  partial candidates excluded from default profiles; data-collection and
+  rule-based fallback are explicit statuses; realized wall latency is
+  decision-local; archives + selected snapshot survive restart; M6 smoke
+  loads YAML and completes M5-activated Pareto path; M5 smoke still green;
+  ruff green. Unit **304** passed; integration **91** passed / **14** skipped.
+- **Notes / interpretation:** Docs: `docs/m6_pareto_orchestra_search.md`.
+  Repository-level Pareto experiments may begin once this commit is on the
+  shared branch.
+
+### EXP-20260720-03 — M6 Pareto-Guided Orchestra Search
+- **Status:** superseded by EXP-20260721-01 (utilities landed; runtime closure
+  completed in M6.1)
 - **Date:** 2026-07-20 (UTC)
-- **Branch / commit:** `agnostic` (M6)
+- **Branch / commit:** `agnostic` (M6) `7738d10`
 - **Benchmark / phase:** node usage persistence, pricing registry, Pareto
   dominance/archives, preference selection, Slow Loop policy integration
 - **Baseline / graph:** builds on M5.4; FRESH unchanged; no learned generator
@@ -76,6 +116,7 @@ Copy the template below after each run (evaluate + summarize when applicable):
   transaction path remains authoritative; search traces exportable; no GA /
   generator training.
 - **Notes / interpretation:** Docs: `docs/m6_pareto_orchestra_search.md`.
+  Runtime-correct selection/activation closed in EXP-20260721-01.
 
 ### EXP-20260720-02 — M5.4 Final Closure (evidence identity + usage)
 - **Status:** smoke (CI gate; no new real-API accuracy claim)

@@ -218,6 +218,7 @@ class TaskExecutionState(BaseModel):
     delivery_ledger: list[DeliveryRecord] = Field(default_factory=list)
     # Append-only normalized backend usage for M5/M6 objective accounting.
     backend_usage_records: list[Any] = Field(default_factory=list)
+    public_evaluation_records: list[Any] = Field(default_factory=list)
     active_plan_revision_id: str | None = None
     active_plan_hash: str | None = None
     active_communication_hash: str | None = None
@@ -274,6 +275,14 @@ class TaskExecutionState(BaseModel):
                 if isinstance(v, BackendUsageRecord)
                 else BackendUsageRecord.model_validate(v)
                 for v in self.backend_usage_records
+            ]
+        if self.public_evaluation_records:
+            from orchestra.control.pareto.schemas import PublicEvaluationRecord
+            self.public_evaluation_records = [
+                v
+                if isinstance(v, PublicEvaluationRecord)
+                else PublicEvaluationRecord.model_validate(v)
+                for v in self.public_evaluation_records
             ]
         return self
 

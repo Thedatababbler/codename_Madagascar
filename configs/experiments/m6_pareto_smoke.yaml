@@ -5,4 +5,7 @@ pareto:
   enabled: true
   max_candidates: 8
   horizon_commits: 1
+  fallback_to_rule_based: false
+  max_estimated_archive_size: 64
+  max_realized_archive_size: 64
 preference_profile: balanced_knee

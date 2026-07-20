@@ -1,28 +1,29 @@
-"""Deterministic M6 Pareto smoke (no real API keys)."""
+"""Deterministic M6.1 runtime-correct Pareto smoke (no real API keys)."""
 
 from __future__ import annotations
 
 import argparse
 import asyncio
 import json
+from datetime import UTC, datetime
 from pathlib import Path
+
+import yaml
 
 from orchestra.communication.payload import DeliveryRule, PayloadContract
 from orchestra.communication.plan import CommunicationPlan
-from orchestra.control.pareto.archive import ParetoArchive
+from orchestra.control.backend_usage import BackendUsageRecord
 from orchestra.control.pareto.controller import ParetoGlobalCandidatePolicy
+from orchestra.control.pareto.persistence import ParetoPersistence
 from orchestra.control.pareto.schemas import (
+    EvaluationVisibility,
     ObjectiveDirection,
-    ObjectiveSource,
-    ObjectiveValue,
     ParetoConfig,
     ParetoEvaluationKind,
-    ParetoObjectiveVector,
-    ParetoOrchestraCandidate,
     ParetoSearchState,
     PreferenceProfile,
+    PublicEvaluationRecord,
 )
-from orchestra.control.pareto.selector import DeterministicParetoSelector
 from orchestra.control.slow_loop.controller import SlowLoopController
 from orchestra.control.slow_loop.schemas import SlowLoopBudget, SlowLoopConfig
 from orchestra.control.task_state import SubtaskStatus, TaskExecutionState
@@ -40,59 +41,21 @@ OBJ = {
 }
 
 
-def _vec(**kwargs) -> ParetoObjectiveVector:
-    return ParetoObjectiveVector(
-        values={
-            k: ObjectiveValue(value=float(v), source=ObjectiveSource.ESTIMATED, available=True)
-            for k, v in kwargs.items()
-        },
-        evaluation_kind=ParetoEvaluationKind.ESTIMATED,
-    )
+def _load_config(path: Path) -> dict:
+    if not path.exists():
+        raise FileNotFoundError(f"M6 smoke config not found: {path}")
+    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"M6 smoke config must be a mapping: {path}")
+    return raw
 
 
-def _cand(cid: str, **kwargs) -> ParetoOrchestraCandidate:
-    return ParetoOrchestraCandidate(
-        candidate_id=cid,
-        content_hash=cid,
-        edit_signature=cid,
-        context_id="smoke",
-        global_candidate=None,
-        objectives=_vec(**kwargs),
-    )
-
-
-async def _run(output: Path) -> dict:
-    output.mkdir(parents=True, exist_ok=True)
-    # Synthetic estimated frontier: A/B/D retained, C dominated.
-    archive = ParetoArchive(
-        ParetoConfig(
-            objectives={
-                "quality": ObjectiveDirection.MAXIMIZE,
-                "cost": ObjectiveDirection.MINIMIZE,
-                "latency": ObjectiveDirection.MINIMIZE,
-                "risk": ObjectiveDirection.MINIMIZE,
-            }
-        )
-    )
-    a = _cand("A", quality=1.0, cost=5.0, latency=2.0, risk=0.1)
-    b = _cand("B", quality=0.6, cost=1.0, latency=4.0, risk=0.2)
-    c = _cand("C", quality=0.5, cost=6.0, latency=3.0, risk=0.3)
-    d = _cand("D", quality=0.7, cost=3.0, latency=0.5, risk=0.8)
-    for cand in (a, b, c, d):
-        archive.insert(cand)
-    frontier = {x.content_hash for x in archive.frontier("smoke")}
-    assert "C" not in frontier
-    assert {"A", "B", "D"} <= frontier
-
-    selected = DeterministicParetoSelector().select(
-        [a, b, d], PreferenceProfile(profile_id="balanced_knee"), OBJ
-    )
-    assert selected is not None
-
-    plan = TaskPlan(
-        task_id="m6_smoke",
+def _plan_from_config(cfg: dict) -> TaskPlan:
+    task_id = str(cfg.get("task_id") or "m6_smoke")
+    return TaskPlan(
+        task_id=task_id,
         plan_version=1,
-        decomposition_rationale="m6 smoke",
+        decomposition_rationale="m6.1 runtime smoke",
         subtasks=[
             SubtaskSpec(
                 subtask_id="s1",
@@ -133,12 +96,22 @@ async def _run(output: Path) -> dict:
                     required=False,
                     max_tokens=9000,
                     metadata={"slot": "comm:large"},
-                )
+                ),
+                PayloadContract(
+                    payload_id="p23",
+                    source_subtask_id="s2",
+                    target_subtask_id="s3",
+                    artifact_type="FinalAnswerArtifact",
+                    required=False,
+                    max_tokens=4096,
+                    metadata={"slot": "comm:p23"},
+                ),
             ],
             delivery_schedule=[
                 DeliveryRule(rule_id="r_large", payload_id="large", enabled=True),
+                DeliveryRule(rule_id="r23", payload_id="p23", enabled=True),
             ],
-            context_budgets={"s3": 1200},
+            context_budgets={"s2": 1200, "s3": 1200},
         ),
         metadata={
             "allowed_backend_assignments": {
@@ -148,6 +121,12 @@ async def _run(output: Path) -> dict:
             }
         },
     )
+
+
+async def _run(output: Path, config_path: Path) -> dict:
+    cfg = _load_config(config_path)
+    output.mkdir(parents=True, exist_ok=True)
+    plan = _plan_from_config(cfg)
     state = TaskExecutionState.from_plan(plan)
     state.communication_plan = plan.communication_plan
     state.subtasks["s1"].status = SubtaskStatus.COMMITTED
@@ -155,7 +134,61 @@ async def _run(output: Path) -> dict:
     state.subtasks["s3"].status = SubtaskStatus.PENDING
     state.committed_subtask_count = 1
     state.pareto_state = ParetoSearchState(enabled=True)
+    now = datetime.now(UTC)
+    state.backend_usage_records = [
+        BackendUsageRecord(
+            usage_id="hist-codex",
+            task_id=plan.task_id,
+            subtask_id="s1",
+            node_id="n1",
+            backend_id="codex_sdk",
+            attempt_id=1,
+            started_at=now,
+            finished_at=now,
+            latency_seconds=0.6,
+            prompt_tokens=40,
+            completion_tokens=12,
+            estimated_cost_usd=0.03,
+            cost_quality="exact",
+            accounting_source="hist",
+            status="success",
+            model_name="fake-test-model",
+        ),
+        BackendUsageRecord(
+            usage_id="hist-smol",
+            task_id=plan.task_id,
+            subtask_id="s1",
+            node_id="n2",
+            backend_id="smolagents_code",
+            attempt_id=1,
+            started_at=now,
+            finished_at=now,
+            latency_seconds=0.4,
+            prompt_tokens=20,
+            completion_tokens=8,
+            estimated_cost_usd=0.008,
+            cost_quality="exact",
+            accounting_source="hist",
+            status="success",
+            model_name="fake-test-model",
+        ),
+    ]
+    state.public_evaluation_records = [
+        PublicEvaluationRecord(
+            evaluation_id="pub1",
+            task_id=plan.task_id,
+            harness_id="repository_test_harness",
+            visibility=EvaluationVisibility.PUBLIC,
+            passed=True,
+            normalized_score=0.92,
+        )
+    ]
 
+    preference_id = str(
+        ((cfg.get("pareto") or {}).get("preference_profile"))
+        or cfg.get("preference_profile")
+        or "balanced_knee"
+    )
     limits = RuntimeLimits(
         max_parallel_benchmark_tasks=1,
         max_parallel_nodes_per_task=2,
@@ -163,16 +196,17 @@ async def _run(output: Path) -> dict:
         max_parallel_sandboxes=2,
     )
     context = RunContext(
-        run_id="m6_smoke",
-        task_id="m6_smoke",
+        run_id=plan.task_id,
+        task_id=plan.task_id,
         run_dir=output,
         limits=limits,
         semaphores=RuntimeSemaphores(limits),
         contract_hash="c",
     )
     policy = ParetoGlobalCandidatePolicy(
-        config=ParetoConfig(enabled=True, max_candidates=8),
-        preference_profile=PreferenceProfile(profile_id="balanced_knee"),
+        config=ParetoConfig(enabled=True, max_candidates=12, objectives=OBJ),
+        preference_profile=PreferenceProfile(profile_id=preference_id),
+        run_dir=str(output),
     )
     ctrl = SlowLoopController(
         config=SlowLoopConfig(
@@ -180,11 +214,9 @@ async def _run(output: Path) -> dict:
             budget=SlowLoopBudget(
                 context_pressure_ratio=0.5,
                 min_commits_between_updates=1,
-                max_candidates_per_update=8,
+                max_candidates_per_update=12,
             ),
-            allowed_backend_assignments={
-                "coding": ["codex_sdk", "smolagents_code"],
-            },
+            allowed_backend_assignments={"coding": ["codex_sdk", "smolagents_code"]},
         ),
         candidate_policy=policy,
         checkpoint_store=TaskCheckpointStore(output),
@@ -195,27 +227,114 @@ async def _run(output: Path) -> dict:
         context=context,
         leased_subtask_ids=set(),
     )
-    store = TaskCheckpointStore(output)
-    await store.save(state)
-    loaded = await store.load(
-        state.task_id,
-        plan_version=state.task_plan.plan_version,
-        plan_content_hash=state.task_plan.content_hash(),
-        allow_config_drift=True,
-    )
+
+    frontier_hashes: list[str] = []
+    selected_hash = None
+    if state.pareto_state and state.pareto_state.pending_decision:
+        ctx_id = state.pareto_state.pending_decision.context.context_id
+        frontier_hashes = sorted(
+            c.content_hash
+            for c in policy.archive.complete_frontier(ctx_id, ParetoEvaluationKind.ESTIMATED)
+        )
+        selected_hash = state.pareto_state.pending_decision.selected_content_hash
+        assert selected_hash in frontier_hashes
+        assert (
+            state.pareto_state.pending_decision.activated_revision_id
+            == state.active_plan_revision_id
+        )
+
+    # Decision-local realized finalization after a synthetic next wave.
+    if state.pareto_state and state.pareto_state.pending_decision:
+        started = state.pareto_state.pending_decision.started_at or now
+        state.backend_usage_records.extend(
+            [
+                BackendUsageRecord(
+                    usage_id="wave-a",
+                    task_id=plan.task_id,
+                    subtask_id="s2",
+                    node_id="na",
+                    backend_id="codex_sdk",
+                    attempt_id=1,
+                    started_at=started,
+                    finished_at=datetime.fromtimestamp(started.timestamp() + 1.0, tz=UTC),
+                    latency_seconds=1.0,
+                    prompt_tokens=8,
+                    completion_tokens=4,
+                    estimated_cost_usd=0.01,
+                    cost_quality="exact",
+                    accounting_source="wave",
+                    status="success",
+                ),
+                BackendUsageRecord(
+                    usage_id="wave-b",
+                    task_id=plan.task_id,
+                    subtask_id="s3",
+                    node_id="nb",
+                    backend_id="codex_sdk",
+                    attempt_id=1,
+                    started_at=started,
+                    finished_at=datetime.fromtimestamp(started.timestamp() + 1.0, tz=UTC),
+                    latency_seconds=1.0,
+                    prompt_tokens=8,
+                    completion_tokens=4,
+                    estimated_cost_usd=0.01,
+                    cost_quality="exact",
+                    accounting_source="wave",
+                    status="success",
+                ),
+            ]
+        )
+        # Restart recovery before finalize.
+        store = TaskCheckpointStore(output)
+        await store.save(state)
+        loaded = await store.load(
+            state.task_id,
+            plan_version=state.task_plan.plan_version,
+            plan_content_hash=state.task_plan.content_hash(),
+            allow_config_drift=True,
+        )
+        assert loaded is not None
+        assert loaded.pareto_state.pending_decision is not None
+        assert loaded.pareto_state.pending_decision.selected_candidate_snapshot is not None
+        restarted = ParetoGlobalCandidatePolicy(
+            config=ParetoConfig(enabled=True, max_candidates=12, objectives=OBJ),
+            preference_profile=PreferenceProfile(profile_id=preference_id),
+            run_dir=str(output),
+        )
+        restarted.finalize_realized(loaded)
+        assert loaded.pareto_state.pending_decision is None
+        assert loaded.pareto_state.decision_history
+        realized = loaded.pareto_state.decision_history[-1].selected_candidate_snapshot
+        assert realized is not None
+        wall = realized.objectives.values["latency"].value
+        assert wall is not None and wall < 2.0  # not sum of two 1s node latencies
+
+    persistence = ParetoPersistence(output)
     summary = {
-        "frontier": sorted(frontier),
-        "balanced_selected": selected.content_hash,
+        "config_path": str(config_path),
+        "config_loaded": True,
+        "preference_profile": preference_id,
         "slow_loop_message": result.message,
         "updated": result.updated,
-        "checkpoint_restored": loaded is not None,
-        "pareto_enabled": bool(
-            loaded and loaded.pareto_state and getattr(loaded.pareto_state, "enabled", False)
-        ),
+        "complete_frontier": frontier_hashes,
+        "selected_hash": selected_hash,
+        "selected_in_frontier": bool(selected_hash and selected_hash in frontier_hashes),
+        "checkpoint_restored": True,
+        "estimated_archive_persisted": (output / "pareto" / "estimated_archive.json").exists(),
+        "realized_archive_persisted": (output / "pareto" / "realized_archive.json").exists(),
+        "search_traces_exist": (output / "pareto" / "search_traces.jsonl").exists(),
+        "decisions_exist": bool(persistence.load_decisions()),
+        "pareto_enabled": True,
     }
     (output / "m6_smoke_summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
+    assert summary["config_loaded"]
+    assert summary["search_traces_exist"]
+    if result.updated:
+        assert summary["selected_in_frontier"]
+        assert summary["estimated_archive_persisted"]
+        assert summary["realized_archive_persisted"]
     return summary
 
 
@@ -224,7 +343,7 @@ def main() -> None:
     parser.add_argument(
         "--config",
         default="configs/experiments/m6_pareto_smoke.yaml",
-        help="unused metadata config path (smoke is deterministic)",
+        help="experiment YAML loaded by the runtime smoke",
     )
     parser.add_argument(
         "--output",
@@ -232,8 +351,7 @@ def main() -> None:
         type=Path,
     )
     args = parser.parse_args()
-    del args.config
-    summary = asyncio.run(_run(args.output))
+    summary = asyncio.run(_run(args.output, Path(args.config)))
     print(json.dumps(summary, indent=2, sort_keys=True))
 
 

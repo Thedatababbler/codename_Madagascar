@@ -104,6 +104,27 @@ class SlowLoopController:
         commit: bool = True,
     ) -> SlowLoopUpdateResult:
         del task_plan  # always use state.task_plan as source of truth
+        if (
+            self.candidate_policy is not None
+            and getattr(self.candidate_policy, "persistence", None) is None
+            and hasattr(self.candidate_policy, "archive")
+        ):
+            # Bind durable Pareto artefacts to the actual run directory.
+            from orchestra.control.pareto.persistence import ParetoPersistence
+            from orchestra.control.pareto.trace_export import ParetoTraceExporter
+
+            persistence = ParetoPersistence(context.run_dir)
+            self.candidate_policy.persistence = persistence
+            self.candidate_policy.trace_exporter = ParetoTraceExporter(context.run_dir)
+            loaded = persistence.load_estimated_archive(
+                getattr(self.candidate_policy, "config", None)
+            )
+            self.candidate_policy.archive.estimated_complete.update(
+                loaded.estimated_complete
+            )
+            self.candidate_policy.archive.estimated_partial.update(
+                loaded.estimated_partial
+            )
         if not self.config.enabled:
             return SlowLoopUpdateResult(updated=False, message="slow_loop disabled")
         # A Pareto policy owns horizon accounting; finish an outstanding decision
@@ -203,10 +224,42 @@ class SlowLoopController:
                 eligible=eligible,
                 triggers=triggers,
             )
-            selected = self.candidate_policy.select(
+            selection = self.candidate_policy.select(
                 candidates, observation, state=state,
                 leased_subtask_ids=set(leased_subtask_ids),
             )
+            proposal = selection if hasattr(selection, "selected_global_candidate") else None
+            if proposal is not None:
+                selected = proposal.selected_global_candidate
+                status_value = str(
+                    getattr(proposal.selection_status, "value", proposal.selection_status)
+                )
+                if selected is None and status_value == "fallback_rule_based":
+                    fallback = RuleBasedGlobalCandidateGenerator(self.config).generate(
+                        task_plan=state.task_plan,
+                        communication_plan=state.communication_plan,
+                        scheduling_policy=policy,
+                        state=state,
+                        observation=observation,
+                        diagnosis=diagnosis,
+                        eligible=eligible,
+                    )
+                    selected = self.selector.select(fallback, observation)
+                elif selected is None and status_value == "no_comparable_candidate":
+                    await self._checkpoint_watermark(
+                        state=state,
+                        context=context,
+                        observation=observation,
+                        commit=commit,
+                    )
+                    return SlowLoopUpdateResult(
+                        updated=False,
+                        trigger_reasons=triggers,
+                        diagnosis=diagnosis,
+                        message="NO_COMPARABLE_PARETO_CANDIDATE",
+                    )
+            else:
+                selected = selection
         else:
             candidates = self.generator.generate(
                 task_plan=state.task_plan,
@@ -302,6 +355,18 @@ class SlowLoopController:
                 allowed_backend_pools=self.config.allowed_backend_assignments,
                 backend_model_pools=self.config.backend_model_pools,
             )
+            if (
+                self.candidate_policy is not None
+                and "proposal" in locals()
+                and proposal is not None
+            ):
+                pareto = proposal.projected_pareto_state.model_copy(deep=True)
+                if pareto.pending_decision is not None:
+                    pareto.pending_decision = pareto.pending_decision.model_copy(update={
+                        "activated_revision_id": prepared.revision.revision_id,
+                        "activated_state_version": state.state_version + 1,
+                    })
+                prepared.projected_state.pareto_state = pareto
             # Stamp slow-loop counters onto projected state before commit.
             proj_slow = prepared.projected_state.slow_loop_state
             if not isinstance(proj_slow, SlowLoopState):
