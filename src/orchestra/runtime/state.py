@@ -18,6 +18,28 @@ class NodeStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class NodeUsageSnapshot(BaseModel):
+    """Per-node usage ledger written by WaveCommitter from NodeExecutionResult."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    node_id: str
+    backend_id: str | None = None
+    backend_status: str | None = None
+
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    cached_tokens: int | None = None
+
+    provider_cost_usd: float | None = None
+    latency_ms: int
+    tool_calls: int | None = None
+    sandbox_seconds: float | None = None
+
+    model_name: str | None = None
+    usage_source: str
+
+
 class RuntimeState(BaseModel):
     run_id: str
     task_id: str
@@ -36,6 +58,8 @@ class RuntimeState(BaseModel):
     node_latencies_ms: dict[str, int] = Field(default_factory=dict)
     # Per-node backend metadata (session_ref, backend_status, errors, …).
     node_backend_metadata: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    # Authoritative typed usage ledger (preferred over metadata embedding).
+    node_usage_snapshots: dict[str, NodeUsageSnapshot] = Field(default_factory=dict)
 
 
 class NodeExecutionResult(BaseModel):
