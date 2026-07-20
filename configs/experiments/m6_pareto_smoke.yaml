@@ -1,0 +1,8 @@
+experiment: m6_pareto_smoke
+slow_loop:
+  enabled: true
+pareto:
+  enabled: true
+  max_candidates: 8
+  horizon_commits: 1
+preference_profile: balanced_knee
