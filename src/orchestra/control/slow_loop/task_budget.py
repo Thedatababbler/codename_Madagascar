@@ -44,32 +44,48 @@ class TaskBudgetTracker:
             return TaskBudgetRemaining(
                 ratio=1.0,
                 budget_configured=False,
+                accounting_quality="approximate",
             )
 
         used = CostRecord()
-        for fl in task_state.fast_loop_states.values():
-            if hasattr(fl, "search_cost"):
-                used = add_costs(used, fl.search_cost)  # type: ignore[arg-type]
-            elif isinstance(fl, dict) and "candidates" in fl:
-                from orchestra.control.fast_loop.schemas import CandidateRecord
+        quality: str = "approximate"
+        # Prefer explicit backend session usage when present (exact path).
+        session_calls = 0
+        for sub in task_state.subtasks.values():
+            session_calls += len(list(sub.backend_sessions or []))
+        if session_calls > 0:
+            used = add_costs(used, CostRecord(backend_calls=session_calls))
+            quality = "exact"
+        else:
+            # Approximate: fast-loop search cost + one call per terminal subtask.
+            for fl in task_state.fast_loop_states.values():
+                if hasattr(fl, "search_cost"):
+                    used = add_costs(used, fl.search_cost)  # type: ignore[arg-type]
+                elif isinstance(fl, dict) and "candidates" in fl:
+                    from orchestra.control.fast_loop.schemas import CandidateRecord
 
-                cands = [
-                    CandidateRecord.model_validate(c) for c in fl.get("candidates", [])
-                ]
-                used = add_costs(used, sum_candidate_costs(cands))
-
-        # Approximate execution spend: one backend call per terminal attempt.
-        exec_calls = sum(
-            1
-            for sub in task_state.subtasks.values()
-            if sub.status
-            in {
-                SubtaskStatus.COMMITTED,
-                SubtaskStatus.FAILED,
-                SubtaskStatus.HARNESS_FAILED,
-            }
-        )
-        used = add_costs(used, CostRecord(backend_calls=exec_calls))
+                    cands = [
+                        CandidateRecord.model_validate(c)
+                        for c in fl.get("candidates", [])
+                    ]
+                    used = add_costs(used, sum_candidate_costs(cands))
+            exec_calls = sum(
+                1
+                for sub in task_state.subtasks.values()
+                if sub.status
+                in {
+                    SubtaskStatus.COMMITTED,
+                    SubtaskStatus.FAILED,
+                    SubtaskStatus.HARNESS_FAILED,
+                }
+            )
+            used = add_costs(used, CostRecord(backend_calls=exec_calls))
+            # Include Slow Loop control-plane cost when recorded.
+            slow = task_state.slow_loop_state
+            if slow is not None:
+                ctrl = getattr(slow, "control_plane_cost", None)
+                if ctrl is not None:
+                    used = add_costs(used, ctrl)
 
         rem_calls: int | None = None
         rem_cost: float | None = None
@@ -89,4 +105,5 @@ class TaskBudgetTracker:
             remaining_cost_usd=rem_cost,
             ratio=ratio,
             budget_configured=True,
+            accounting_quality=quality,  # type: ignore[arg-type]
         )

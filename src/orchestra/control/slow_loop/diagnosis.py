@@ -54,18 +54,19 @@ def detect_triggers(
     )
     if budget_signal and rem.ratio < budget.budget_pressure_ratio:
         reasons.append(SlowLoopTriggerReason.BUDGET_PRESSURE)
+
+    recent_backend = observation.recent_backend_failure_counts
     if (
-        observation.backend_failure_counts
-        and max(observation.backend_failure_counts.values())
-        >= budget.repeated_failure_threshold
+        recent_backend
+        and max(recent_backend.values()) >= budget.repeated_failure_threshold
     ):
         reasons.append(SlowLoopTriggerReason.REPEATED_BACKEND_FAILURE)
-    if observation.harness_failures >= budget.repeated_failure_threshold:
+    if observation.recent_harness_failures >= budget.repeated_failure_threshold:
         reasons.append(SlowLoopTriggerReason.REPEATED_HARNESS_FAILURE)
-    if observation.canonical_merge_conflicts > 0:
+    if observation.recent_canonical_conflicts > 0:
         reasons.append(SlowLoopTriggerReason.CANONICAL_CONFLICT)
 
-    stats = observation.delivery_statistics
+    stats = observation.recent_delivery_statistics
     delivery_fail = (
         stats.failed_count > 0
         or stats.required_delivery_block_count > 0
@@ -105,8 +106,8 @@ def diagnose(
         for target, ratio in observation.target_context_pressure.items():
             if ratio >= threshold and target in future_ids:
                 affected.append(target)
-        if not affected:
-            affected.extend(future_ids)
+        # No fallback to all future subtasks — pressure without eligible
+        # affected target is handled as NO_SAFE_FUTURE_EDIT below.
         edit_types.extend(["upsert_payload_contract"])
 
     if SlowLoopTriggerReason.BUDGET_PRESSURE in triggers:
@@ -140,13 +141,14 @@ def diagnose(
 
     if SlowLoopTriggerReason.DELIVERY_FAILURE in triggers:
         reasons.append(GlobalDiagnosisReason.DELIVERY_FAILURE)
-        stats = observation.delivery_statistics
+        stats = observation.recent_delivery_statistics
         fail_keys = set(stats.delivery_failure_counts)
-        if fail_keys & {
-            DeliveryFailureReason.CONTEXT_BUDGET_INFEASIBLE.value,
-        }:
+        if fail_keys & {DeliveryFailureReason.CONTEXT_BUDGET_INFEASIBLE.value}:
             reasons.append(GlobalDiagnosisReason.CONTEXT_PRESSURE)
             edit_types.append("upsert_payload_contract")
+            for target, ratio in observation.target_context_pressure.items():
+                if ratio >= threshold and target in future_ids:
+                    affected.append(target)
         if fail_keys & {
             DeliveryFailureReason.REQUIRED_RULE_MISSING.value,
             DeliveryFailureReason.REQUIRED_ARTIFACT_MISSING.value,
@@ -154,14 +156,19 @@ def diagnose(
         }:
             reasons.append(GlobalDiagnosisReason.MISSING_PAYLOAD)
             edit_types.extend(["upsert_payload_contract", "upsert_delivery_rule"])
-        affected.extend(future_ids)
+        # Only blocked future targets are affected — not all futures.
+        for sid in future_ids:
+            if task_state.subtasks[sid].communication_block_reason:
+                affected.append(sid)
 
     if SlowLoopTriggerReason.AGGREGATION_RISK in triggers:
         reasons.append(GlobalDiagnosisReason.AGGREGATION_RISK)
-        affected.extend(future_ids)
-        edit_types.extend(["upsert_payload_contract", "context_budget"])
+        for sid in future_ids:
+            br = task_state.subtasks[sid].communication_block_reason
+            if br and br in AGGREGATION_FAILURE_REASONS:
+                affected.append(sid)
+        edit_types.extend(["upsert_payload_contract"])
 
-    # Missing payload: future subtask with empty input selectors and no covering contract.
     covered_targets = {
         c.target_subtask_id for c in communication_plan.payload_contracts
     }
@@ -173,7 +180,6 @@ def diagnose(
             affected.append(sid)
             edit_types.extend(["upsert_payload_contract", "upsert_delivery_rule"])
 
-    # Communication block reasons on ready future targets.
     for sid in future_ids:
         sub = task_state.subtasks[sid]
         reason = sub.communication_block_reason
@@ -209,7 +215,15 @@ def diagnose(
         update_required = False
         reasons = [GlobalDiagnosisReason.NO_CHANGE]
 
-    # Trigger present but no actionable diagnosis → keep trigger visibility.
+    # CONTEXT_PRESSURE (or other pressure) with no eligible affected target.
+    if (
+        pressure_triggers
+        and not affected
+        and GlobalDiagnosisReason.MISSING_PAYLOAD not in reasons
+    ):
+        reasons = [GlobalDiagnosisReason.NO_SAFE_FUTURE_EDIT]
+        update_required = True
+
     if pressure_triggers and reasons == [GlobalDiagnosisReason.NO_CHANGE]:
         reasons = [GlobalDiagnosisReason.NO_SAFE_FUTURE_EDIT]
         update_required = True
