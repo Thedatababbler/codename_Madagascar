@@ -286,6 +286,9 @@ class SlowLoopController:
                 else:
                     validated.append(cand)
             selected = self.selector.select(validated or candidates, observation)
+        # Pareto/other policies must return a GlobalCandidate (or None), never a bare dict.
+        if selected is not None and not hasattr(selected, "rejection_reason"):
+            selected = None
         if selected is None or selected.rejection_reason:
             rev = build_revision(
                 state=state,

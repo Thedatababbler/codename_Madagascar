@@ -7,8 +7,8 @@ import time
 from collections.abc import Mapping
 from pathlib import Path
 
-from orchestra.backends.base import ArtifactRef
-from orchestra.backends.capabilities import BackendCapabilities
+from orchestra.backends.base import ArtifactRef, BackendSessionRef
+from orchestra.backends.capabilities import BackendCapabilities, SessionPolicy
 from orchestra.backends.catalog import capabilities_for
 from orchestra.cli.validate_graph import build_compiler
 from orchestra.control.failure import classify_subtask_outcome
@@ -18,6 +18,7 @@ from orchestra.control.fast_loop.candidate_generator import (
 )
 from orchestra.control.fast_loop.capability import validate_candidate_against_capabilities
 from orchestra.control.fast_loop.diagnosis import diagnose_subtask_failure
+from orchestra.control.fast_loop.hybrid_generator import HybridCodexLocalCandidateGenerator
 from orchestra.control.fast_loop.schemas import (
     BackendModelPool,
     CandidateRecord,
@@ -25,6 +26,7 @@ from orchestra.control.fast_loop.schemas import (
     CandidateStatus,
     CostRecord,
     FastLoopBudget,
+    FastLoopConfig,
     FastLoopState,
     LocalCandidate,
     StabilityIncident,
@@ -33,6 +35,14 @@ from orchestra.control.fast_loop.selector import DeterministicCandidateSelector
 from orchestra.control.fast_loop.workspace import (
     CandidateWorkspaceError,
     GitCandidateWorkspaceManager,
+)
+from orchestra.control.session_lineage import (
+    AgentSessionLineageRecord,
+    SessionLineageResolver,
+    append_lineage_records,
+    make_lineage_id,
+    records_from_backend_sessions,
+    validate_session_workspace_binding,
 )
 from orchestra.control.task_state import (
     BackendSessionRecord,
@@ -66,9 +76,12 @@ class FastLoopController:
         task_checkpoint_store: TaskCheckpointStore,
         contracts_dir: str = "configs/contracts",
         workspace_manager: GitCandidateWorkspaceManager | None = None,
-        generator: RuleBasedLocalCandidateGenerator | None = None,
+        generator: RuleBasedLocalCandidateGenerator
+        | HybridCodexLocalCandidateGenerator
+        | None = None,
         selector: DeterministicCandidateSelector | None = None,
         budget: FastLoopBudget | None = None,
+        fast_loop_config: FastLoopConfig | None = None,
         capabilities: Mapping[str, BackendCapabilities] | None = None,
         model_pools: Mapping[str, BackendModelPool] | None = None,
         clock=None,
@@ -80,14 +93,26 @@ class FastLoopController:
         self.contracts_dir = contracts_dir
         self.workspace_manager = workspace_manager or GitCandidateWorkspaceManager()
         self.compiler = build_compiler(contracts_dir)
-        self.generator = generator or RuleBasedLocalCandidateGenerator(
+        self.fast_loop_config = fast_loop_config or FastLoopConfig(
+            budget=budget or FastLoopBudget()
+        )
+        if budget is not None:
+            self.fast_loop_config = self.fast_loop_config.model_copy(
+                update={"budget": budget}
+            )
+        self.generator = generator or HybridCodexLocalCandidateGenerator(
             compiler=self.compiler,
-            model_pools=model_pools,
+            config=self.fast_loop_config,
+            fresh_generator=RuleBasedLocalCandidateGenerator(
+                compiler=self.compiler,
+                model_pools=model_pools,
+            ),
         )
         self.selector = selector or DeterministicCandidateSelector()
-        self.budget = budget or FastLoopBudget()
+        self.budget = self.fast_loop_config.budget
         self.budget_tracker = FastLoopBudgetTracker(self.budget, clock=clock)
         self.capabilities = dict(capabilities or {})
+        self.session_resolver = SessionLineageResolver()
         # When False, scheduler coordinator owns shared task checkpoints.
         self.persist_checkpoints = persist_checkpoints
 
@@ -133,12 +158,14 @@ class FastLoopController:
             edits=list(cand.edits),
             status=status,
             session_policy=cand.session_policy,
+            session_directives=dict(cand.session_directives or {}),
             rejection_reason=cand.rejection_reason,
             rejection_message=cand.rejection_message,
             failure_message=cand.rejection_message,
             metadata={
                 "generation_reason": cand.generation_reason,
                 "graph": cand.graph.model_dump(mode="json"),
+                "codex_session_mode": self.fast_loop_config.codex_session_mode.value,
             },
         )
 
@@ -226,13 +253,36 @@ class FastLoopController:
                 state.state_version += 1
                 await self._save_checkpoint(state)
                 return state
+            # Capture initial attempt sessions into lineage before Hybrid generation.
+            if sub.backend_sessions:
+                state.session_lineage_records = append_lineage_records(
+                    list(state.session_lineage_records or []),
+                    records_from_backend_sessions(
+                        sessions=list(sub.backend_sessions),
+                        task_id=state.task_id,
+                        subtask_id=subtask_id,
+                        workspace_ref=sub.workspace_ref or "",
+                        graph_hash=base_graph.content_hash,
+                        state_version=state.state_version,
+                        policy=SessionPolicy.FRESH,
+                        lineage_reason="initial_attempt_before_fast_loop",
+                    ),
+                )
             caps = self._caps_for_graph(base_graph)
-            generated = self.generator.generate(
-                graph=base_graph,
-                diagnosis=diagnosis,
-                budget=self.budget,
-                capabilities=caps,
-            )
+            gen_kwargs = {
+                "graph": base_graph,
+                "diagnosis": diagnosis,
+                "budget": self.budget,
+                "capabilities": caps,
+            }
+            if isinstance(self.generator, HybridCodexLocalCandidateGenerator):
+                generated = self.generator.generate(
+                    **gen_kwargs,
+                    state=state,
+                    subtask_id=subtask_id,
+                )
+            else:
+                generated = self.generator.generate(**gen_kwargs)
             for cand in generated:
                 fl_state.candidates.append(
                     self._record_from_local(
@@ -506,6 +556,45 @@ class FastLoopController:
             )
             record.workspace_ref = cand_ws
 
+        # Validate RESUME/FORK directives against candidate workspace binding.
+        for node_id, directive in (record.session_directives or {}).items():
+            if directive.policy is SessionPolicy.FRESH:
+                continue
+            if cand_ws is None:
+                record.status = CandidateStatus.REJECTED
+                record.rejection_reason = (
+                    CandidateRejectionReason.WORKSPACE_INCOMPATIBLE
+                )
+                record.rejection_message = (
+                    f"node {node_id} {directive.policy.value} requires isolated workspace"
+                )
+                return
+            parent_lineage = None
+            if directive.source_session_ref is not None:
+                for lin in state.session_lineage_records or []:
+                    if (
+                        lin.session_ref.session_id
+                        == directive.source_session_ref.session_id
+                        and lin.node_id
+                        == (directive.source_node_id or directive.node_id)
+                    ):
+                        parent_lineage = lin
+                        break
+            compat = validate_session_workspace_binding(
+                directive,
+                parent_lineage,
+                cand_ws,
+                canonical_workspace_ref=state.canonical_workspace_ref,
+            )
+            if not compat.compatible:
+                record.status = CandidateStatus.REJECTED
+                record.rejection_reason = (
+                    CandidateRejectionReason.WORKSPACE_INCOMPATIBLE
+                )
+                record.rejection_message = compat.reason
+                record.failure_message = compat.reason
+                return
+
         run_context = RunContext(
             run_id=f"{context.run_id}:{record.candidate_id}",
             task_id=f"{context.task_id}__candidate__{record.candidate_id}",
@@ -516,6 +605,9 @@ class FastLoopController:
             allow_config_drift=False,
             subtask_id=subtask_id,
             workspace_ref=cand_ws.path if cand_ws else context.workspace_ref,
+            candidate_id=record.candidate_id,
+            attempt_id=record.attempt_id,
+            node_session_directives=dict(record.session_directives or {}),
         )
         compiled = self.compiler.compile(candidate_graph)
         try:
@@ -567,6 +659,58 @@ class FastLoopController:
             result=result,
             attempt_id=record.attempt_id,
             candidate_id=record.candidate_id,
+        )
+        # Persist node-level session lineage for this candidate (including losers).
+        new_lineage: list[AgentSessionLineageRecord] = []
+        for sess in record.backend_sessions:
+            directive = (record.session_directives or {}).get(sess.node_id)
+            policy = directive.policy if directive is not None else SessionPolicy.FRESH
+            parent_ref: BackendSessionRef | None = None
+            if directive is not None and directive.source_session_ref is not None:
+                parent_ref = directive.source_session_ref
+            elif sess.session_ref.parent_session_id:
+                parent_ref = BackendSessionRef(
+                    backend_id=sess.backend_id,
+                    session_id=sess.session_ref.parent_session_id,
+                    parent_session_id=None,
+                )
+            new_lineage.append(
+                AgentSessionLineageRecord(
+                    lineage_id=make_lineage_id(
+                        task_id=state.task_id,
+                        subtask_id=subtask_id,
+                        attempt_id=record.attempt_id,
+                        candidate_id=record.candidate_id,
+                        node_id=sess.node_id,
+                        backend_id=sess.backend_id,
+                        session_id=sess.session_ref.session_id,
+                    ),
+                    task_id=state.task_id,
+                    subtask_id=subtask_id,
+                    attempt_id=record.attempt_id,
+                    candidate_id=record.candidate_id,
+                    node_id=sess.node_id,
+                    backend_id=sess.backend_id,
+                    policy=policy,
+                    session_ref=sess.session_ref,
+                    parent_session_ref=parent_ref,
+                    workspace_ref=(
+                        cand_ws.path if cand_ws is not None else (context.workspace_ref or "")
+                    ),
+                    workspace_base_revision=(
+                        cand_ws.base_revision if cand_ws is not None else None
+                    ),
+                    graph_hash=record.graph_hash,
+                    state_version=state.state_version,
+                    lineage_reason=(
+                        directive.lineage_reason
+                        if directive is not None
+                        else "candidate_execution"
+                    ),
+                )
+            )
+        state.session_lineage_records = append_lineage_records(
+            list(state.session_lineage_records or []), new_lineage
         )
         from datetime import UTC, datetime
 

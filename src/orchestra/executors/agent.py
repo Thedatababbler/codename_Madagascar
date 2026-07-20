@@ -73,10 +73,7 @@ class AgentNodeExecutor:
                 parser_id=contract.parser_id,
                 output_schema=contract.output_schema,
             )
-        if node.session_policy:
-            session_policy = AgentSessionPolicy(node.session_policy)
-        else:
-            session_policy = AgentSessionPolicy.FRESH
+        session_policy, session_ref = self._resolve_session_directive(node, context)
         return AgentRequest(
             request_id=str(uuid4()),
             task_id=context.task_id,
@@ -102,8 +99,56 @@ class AgentNodeExecutor:
             messages=messages,
             contract_id=contract.contract_id,
             session_policy=session_policy,
-            session_ref=None,
+            session_ref=session_ref,
         )
+
+    def _resolve_session_directive(
+        self,
+        node: AgentNodeSpec,
+        context: RunContext,
+    ) -> tuple[AgentSessionPolicy, object | None]:
+        """Resolve node-level session directive; never infer RESUME/FORK without parent."""
+        from orchestra.backends.base import BackendSessionRef
+        from orchestra.control.fast_loop.schemas import NodeSessionDirective
+
+        raw = (context.node_session_directives or {}).get(node.node_id)
+        if raw is None:
+            # Spec string alone is insufficient for RESUME/FORK without parent ref.
+            if node.session_policy in {"resume", "fork"}:
+                raise BackendCapabilityError(
+                    f"node {node.node_id} declares session_policy="
+                    f"{node.session_policy!r} without a validated NodeSessionDirective "
+                    f"(parent session required; no silent FRESH downgrade)"
+                )
+            if node.session_policy:
+                return AgentSessionPolicy(node.session_policy), None
+            return AgentSessionPolicy.FRESH, None
+
+        if isinstance(raw, NodeSessionDirective):
+            directive = raw
+        elif isinstance(raw, dict):
+            directive = NodeSessionDirective.model_validate(raw)
+        else:
+            raise BackendCapabilityError(
+                f"invalid node_session_directive for {node.node_id}: {type(raw)!r}"
+            )
+
+        policy = AgentSessionPolicy(directive.policy.value)
+        session_ref: BackendSessionRef | None = directive.source_session_ref
+        if policy is not AgentSessionPolicy.FRESH:
+            if session_ref is None and directive.require_parent_session:
+                raise BackendCapabilityError(
+                    f"node {node.node_id} policy={policy.value} requires "
+                    "source_session_ref; refusing silent FRESH downgrade"
+                )
+            if session_ref is None:
+                raise BackendCapabilityError(
+                    f"node {node.node_id} policy={policy.value} missing "
+                    "validated parent session reference"
+                )
+        else:
+            session_ref = None
+        return policy, session_ref
 
     def _trace_dir(self, context: RunContext, node_id: str) -> str:
         path = Path(context.run_dir) / "tasks" / context.task_id / "backend_traces" / node_id
