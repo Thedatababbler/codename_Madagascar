@@ -16,8 +16,11 @@ from orchestra.control.slow_loop.observation import (
     build_global_observation,
 )
 from orchestra.control.slow_loop.revision import (
+    RevisionAlreadyActivated,
+    apply_projected_state_to_live,
     build_revision,
     commit_prepared_revision,
+    merge_history_by_record_id,
     prepare_revision_staging,
 )
 from orchestra.control.slow_loop.schemas import (
@@ -231,6 +234,10 @@ class SlowLoopController:
             proposal = selection if hasattr(selection, "selected_global_candidate") else None
             if proposal is not None:
                 selected = proposal.selected_global_candidate
+                if isinstance(selected, dict):
+                    from orchestra.control.slow_loop.schemas import GlobalCandidate
+
+                    selected = GlobalCandidate.model_validate(selected)
                 status_value = str(
                     getattr(proposal.selection_status, "value", proposal.selection_status)
                 )
@@ -260,6 +267,10 @@ class SlowLoopController:
                     )
             else:
                 selected = selection
+                if isinstance(selected, dict):
+                    from orchestra.control.slow_loop.schemas import GlobalCandidate
+
+                    selected = GlobalCandidate.model_validate(selected)
         else:
             candidates = self.generator.generate(
                 task_plan=state.task_plan,
@@ -391,19 +402,21 @@ class SlowLoopController:
                 state.fast_loop_history or []
             )
             prepared.projected_state.slow_loop_state = proj_slow
-            prepared.projected_state.slow_loop_history = list(state.slow_loop_history) + [
-                GlobalUpdateRecord(
-                    record_id=prepared.revision.revision_id,
-                    revision=state.global_revision + 1,
-                    summary=diagnosis.concise_explanation,
-                    metadata={
-                        "candidate_id": selected.candidate_id,
-                        "triggers": [t.value for t in triggers],
-                        "edit_types": [e.type for e in selected.edits],
-                        "eligible": sorted(eligible),
-                    },
-                )
-            ]
+            history_record = GlobalUpdateRecord(
+                record_id=prepared.revision.revision_id,
+                revision=state.global_revision + 1,
+                summary=diagnosis.concise_explanation,
+                metadata={
+                    "candidate_id": selected.candidate_id,
+                    "triggers": [t.value for t in triggers],
+                    "edit_types": [e.type for e in selected.edits],
+                    "eligible": sorted(eligible),
+                },
+            )
+            prepared.projected_state.slow_loop_history = merge_history_by_record_id(
+                list(state.slow_loop_history or []),
+                [history_record],
+            )
 
             if not commit:
                 return SlowLoopUpdateResult(
@@ -416,12 +429,23 @@ class SlowLoopController:
                 )
 
             store = self.checkpoint_store or TaskCheckpointStore(context.run_dir)
-            await commit_prepared_revision(
-                state=state,
-                prepared=prepared,
-                checkpoint_store=store,
-                run_dir=context.run_dir,
-            )
+            try:
+                await commit_prepared_revision(
+                    state=state,
+                    prepared=prepared,
+                    checkpoint_store=store,
+                    run_dir=context.run_dir,
+                )
+            except RevisionAlreadyActivated as activated:
+                # Checkpoint already points at the new revision — never
+                # keep_previous_plan / continue on stale live state.
+                apply_projected_state_to_live(state, activated.projected_state)
+                logger.warning(
+                    "slow_loop post-activation recovery revision=%s: %s",
+                    activated.revision_id,
+                    activated,
+                )
+
             # Mirror slow counters onto live state after swap.
             if isinstance(state.slow_loop_state, SlowLoopState):
                 state.slow_loop_state.updates_applied = proj_slow.updates_applied
@@ -434,6 +458,11 @@ class SlowLoopController:
                 state.slow_loop_state.commits_at_last_update = (
                     proj_slow.commits_at_last_update
                 )
+            # Ensure live history includes the stamped record exactly once.
+            state.slow_loop_history = merge_history_by_record_id(
+                list(state.slow_loop_history or []),
+                list(prepared.projected_state.slow_loop_history or []),
+            )
             logger.info(
                 "slow_loop applied revision=%s triggers=%s edits=%s",
                 prepared.revision.revision_id,
@@ -450,8 +479,25 @@ class SlowLoopController:
                 diagnosis=diagnosis,
                 message="applied",
             )
+        except RevisionAlreadyActivated as activated:
+            apply_projected_state_to_live(state, activated.projected_state)
+            logger.warning(
+                "slow_loop post-activation recovery revision=%s: %s",
+                activated.revision_id,
+                activated,
+            )
+            return SlowLoopUpdateResult(
+                updated=True,
+                revision=activated.projected_state.plan_revision_history[-1]
+                if activated.projected_state.plan_revision_history
+                else revision,
+                trigger_reasons=triggers,
+                diagnosis=diagnosis,
+                message="applied_recovered_post_activation",
+            )
         except Exception as exc:  # noqa: BLE001
-            # Staging/checkpoint transaction failure: retain evidence for retry.
+            # Pre-activation staging/checkpoint failure only: retain evidence.
+            # Post-activation errors are RevisionAlreadyActivated (above).
             revision.status = GlobalPlanRevisionStatus.FAILED
             revision.metadata["error"] = str(exc)
             state.plan_revision_history.append(revision)

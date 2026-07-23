@@ -7,6 +7,7 @@ import asyncio
 import json
 from pathlib import Path
 
+from orchestra.communication.delivery import CommunicationDeliveryEngine
 from orchestra.communication.payload import PayloadContract
 from orchestra.communication.plan import CommunicationPlan
 from orchestra.control.slow_loop.controller import SlowLoopController
@@ -17,8 +18,11 @@ from orchestra.control.slow_loop.schemas import (
 )
 from orchestra.control.task_state import SubtaskStatus, TaskExecutionState
 from orchestra.decomposition.schemas import BudgetSpec, SubtaskSpec, TaskPlan
+from orchestra.ir.artifacts import create_artifact
 from orchestra.runtime.backend import RunContext
 from orchestra.runtime.limits import RuntimeLimits, RuntimeSemaphores
+from orchestra.schemas.artifacts import FinalAnswerArtifact
+from orchestra.storage.artifacts import FileArtifactStore
 
 
 async def _run(output: Path) -> dict:
@@ -83,6 +87,15 @@ async def _run(output: Path) -> dict:
     state.committed_subtask_count = 1
     state.scheduling_policy = TaskSchedulingPolicy()
 
+    store = FileArtifactStore(output / "artifacts")
+    source = create_artifact(
+        FinalAnswerArtifact(answer="m5-smoke-payload", source_node="s1"),
+        producer_node_id="s1",
+        task_id="m5_smoke",
+    )
+    await store.put(source)
+    state.subtasks["s1"].final_output_artifact_id = source.artifact_id
+
     limits = RuntimeLimits(
         max_parallel_benchmark_tasks=1,
         max_parallel_nodes_per_task=1,
@@ -106,17 +119,49 @@ async def _run(output: Path) -> dict:
             ),
         )
     )
+    pre_version = state.communication_plan.version
+    pre_tokens = state.communication_plan.payload_contracts[0].max_tokens
     result = await ctrl.maybe_update(
         task_plan=state.task_plan,
         state=state,
         context=ctx,
         leased_subtask_ids={"s2"},
     )
+
+    # Assert actual post-revision delivery feasibility, not only version churn.
+    engine = CommunicationDeliveryEngine(store)
+    delivery = await engine.deliver_for_target(
+        task_plan=state.task_plan,
+        task_state=state,
+        communication_plan=state.communication_plan,
+        target_subtask_id="s3",
+    )
+    post_contract = next(
+        c for c in state.communication_plan.payload_contracts if c.payload_id == "large"
+    )
+    applied_hist = [
+        r
+        for r in state.plan_revision_history
+        if getattr(r, "revision_id", None) == state.active_plan_revision_id
+    ]
+    slow_hist = [
+        r
+        for r in state.slow_loop_history
+        if r.record_id == state.active_plan_revision_id
+    ]
     summary = {
         "updated": result.updated,
         "s2_unchanged": state.subtasks["s2"].lease_status == "leased",
         "communication_version": state.communication_plan.version,
+        "communication_version_bumped": state.communication_plan.version > pre_version,
+        "payload_max_tokens_before": pre_tokens,
+        "payload_max_tokens_after": post_contract.max_tokens,
+        "payload_shrunk": post_contract.max_tokens < pre_tokens,
         "active_revision": state.active_plan_revision_id,
+        "post_revision_delivery_blocked": bool(delivery.blocked),
+        "post_revision_delivery_ok": not bool(delivery.blocked),
+        "plan_revision_history_count": len(applied_hist),
+        "slow_loop_history_count": len(slow_hist),
         "message": result.message,
     }
     (output / "m5_smoke_result.json").write_text(
@@ -140,7 +185,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     summary = asyncio.run(_run(Path(args.output)))
     print(json.dumps(summary, indent=2))
-    return 0 if summary.get("updated") else 1
+    ok = bool(
+        summary.get("updated")
+        and summary.get("post_revision_delivery_ok")
+        and summary.get("payload_shrunk")
+        and summary.get("plan_revision_history_count") == 1
+        and summary.get("slow_loop_history_count") == 1
+    )
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":

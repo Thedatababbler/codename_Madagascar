@@ -38,11 +38,20 @@ class ParetoPersistence:
             archive.realized_complete, archive.realized_partial
         ))
 
+    @staticmethod
+    def _rehydrate_candidate(item: Any):
+        from orchestra.control.pareto.schemas import ParetoOrchestraCandidate
+        from orchestra.control.slow_loop.schemas import GlobalCandidate
+
+        cand = ParetoOrchestraCandidate.model_validate(item)
+        if isinstance(cand.global_candidate, dict):
+            cand.global_candidate = GlobalCandidate.model_validate(cand.global_candidate)
+        return cand
+
     def load_estimated_archive(self, config=None) -> ParetoArchive:
         from orchestra.control.pareto.schemas import (
             ParetoConfig,
             ParetoEvaluationKind,
-            ParetoOrchestraCandidate,
         )
 
         archive = ParetoArchive(config or ParetoConfig())
@@ -52,19 +61,20 @@ class ParetoPersistence:
         raw = json.loads(path.read_text(encoding="utf-8"))
         for _ctx, entries in (raw.get("complete", raw) or {}).items():
             for item in entries:
-                cand = ParetoOrchestraCandidate.model_validate(item)
-                archive.insert(cand, ParetoEvaluationKind.ESTIMATED)
+                archive.insert(
+                    self._rehydrate_candidate(item), ParetoEvaluationKind.ESTIMATED
+                )
         for _ctx, entries in (raw.get("partial", {}) or {}).items():
             for item in entries:
-                cand = ParetoOrchestraCandidate.model_validate(item)
-                archive.insert(cand, ParetoEvaluationKind.ESTIMATED)
+                archive.insert(
+                    self._rehydrate_candidate(item), ParetoEvaluationKind.ESTIMATED
+                )
         return archive
 
     def load_realized_archive(self, config=None) -> ParetoArchive:
         from orchestra.control.pareto.schemas import (
             ParetoConfig,
             ParetoEvaluationKind,
-            ParetoOrchestraCandidate,
         )
         archive = ParetoArchive(config or ParetoConfig())
         path = self.directory / "realized_archive.json"
@@ -72,12 +82,14 @@ class ParetoPersistence:
             raw = json.loads(path.read_text(encoding="utf-8"))
             for entries in (raw.get("complete", raw) or {}).values():
                 for item in entries:
-                    cand = ParetoOrchestraCandidate.model_validate(item)
-                    archive.insert(cand, ParetoEvaluationKind.REALIZED)
+                    archive.insert(
+                        self._rehydrate_candidate(item), ParetoEvaluationKind.REALIZED
+                    )
             for entries in (raw.get("partial", {}) or {}).values():
                 for item in entries:
-                    cand = ParetoOrchestraCandidate.model_validate(item)
-                    archive.insert(cand, ParetoEvaluationKind.REALIZED)
+                    archive.insert(
+                        self._rehydrate_candidate(item), ParetoEvaluationKind.REALIZED
+                    )
         return archive
 
     def load_decisions(self) -> list[dict[str, Any]]:

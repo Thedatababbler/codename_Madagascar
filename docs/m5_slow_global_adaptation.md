@@ -336,11 +336,17 @@ diagnosis, projection, or GlobalEdit evidence.
 
 ## 18. Boundary vs M6
 
-M5 does **not** implement Pareto archive, weighted objective optimization,
-genetic algorithms, global candidate execution search, LLM-generated
-arbitrary TaskPlans, subtask add/delete, re-decomposition, dependency
-rewiring, committed rollback, Codex native subagents, CodeAgent
+M5 does **not** implement Pareto archive ownership, weighted objective
+optimization, genetic algorithms, global candidate execution search,
+LLM-generated arbitrary TaskPlans, subtask add/delete, re-decomposition,
+dependency rewiring, committed rollback, Codex native subagents, CodeAgent
 `managed_agents`, or Codex RESUME/FORK.
 
-**M5 is evidence-consumption-safe and runtime-correct (M5.4 final closure).
-M6 is not implemented.**
+M5 remains the authoritative safety path: feasibility validation, immutable
+history, communication preflight, revision staging, atomic checkpoint
+activation, blocked-wave recovery, and Slow Loop history persistence.
+
+**M5 is evidence-consumption-safe and runtime-correct (including blocked-wave
+recovery and transactional Slow Loop history).** Pareto-guided search is
+layered in **M6 / M6.1** (`docs/m6_pareto_orchestra_search.md`) without
+replacing these M5 guarantees.

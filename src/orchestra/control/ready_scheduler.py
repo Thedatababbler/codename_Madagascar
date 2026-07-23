@@ -34,15 +34,18 @@ from orchestra.control.input_assembler import (
     SubtaskInputAssemblyError,
 )
 from orchestra.control.slow_loop.controller import SlowLoopController
+from orchestra.control.slow_loop.evidence import active_block_evidence_key
 from orchestra.control.slow_loop.graph_materializer import FutureGraphMaterializer
 from orchestra.control.slow_loop.revision import PlanRevisionCorruption
 from orchestra.control.slow_loop.schemas import (
     SlowLoopConfig,
+    SlowLoopState,
     TaskSchedulingPolicy,
 )
 from orchestra.control.slow_loop.task_budget import TaskBudgetTracker
 from orchestra.control.task_state import (
     BackendSessionRecord,
+    GlobalUpdateRecord,
     SubtaskAttempt,
     SubtaskFailureReason,
     SubtaskState,
@@ -278,12 +281,12 @@ class ReadySubtaskScheduler:
         apply_limit: bool = True,
     ) -> list[str]:
         state.mark_ready_from_dependencies()
+        # Keep communication-blocked READY targets eligible for re-preflight.
+        # Block reasons gate leasing via `_deliverable_ready_ids`, not scheduling.
         ready = [
             sid
             for sid, sub in state.subtasks.items()
-            if sub.status is SubtaskStatus.READY
-            and sub.lease_status != "leased"
-            and not sub.communication_block_reason
+            if sub.status is SubtaskStatus.READY and sub.lease_status != "leased"
         ]
         policy = state.scheduling_policy
         if isinstance(policy, TaskSchedulingPolicy) or policy is not None:
@@ -381,7 +384,13 @@ class ReadySubtaskScheduler:
                 initial_artifacts=initial_artifacts,
             )
             if not deliverable:
-                # Every dependency-ready target is communication-blocked.
+                recovered = await self._recover_blocked_wave(
+                    state=state,
+                    context=context,
+                    ready_candidates=ready_candidates,
+                )
+                if recovered:
+                    continue
                 break
 
             # Acquire leases only for deliverable targets (future plan freeze).
@@ -452,13 +461,15 @@ class ReadySubtaskScheduler:
                     task_plan=state.task_plan,
                     task_state=state,
                 )
-                await self.slow_loop.maybe_update(
+                slow_result = await self.slow_loop.maybe_update(
                     task_plan=state.task_plan,
                     state=state,
                     context=context,
                     leased_subtask_ids=set(),
                     task_budget=task_budget,
                 )
+                if slow_result.updated:
+                    state.clear_communication_blocks()
                 await self.task_checkpoint_store.save(state)
 
             if not self._ready_ids(state):
@@ -470,6 +481,125 @@ class ReadySubtaskScheduler:
         state.state_version += 1
         await self.task_checkpoint_store.save(state)
         return state
+
+    async def _recover_blocked_wave(
+        self,
+        *,
+        state: TaskExecutionState,
+        context: RunContext,
+        ready_candidates: list[str],
+    ) -> bool:
+        """Persist block evidence, invoke Slow Loop, retry preflight if revised.
+
+        Returns True when the scheduler should retry the wave loop.
+        """
+        blocked = [
+            sid
+            for sid in ready_candidates
+            if state.subtasks[sid].communication_block_reason
+        ]
+        state.state_version += 1
+        await self.task_checkpoint_store.save(state)
+
+        async with self._state_lock:
+            task_budget = self.task_budget_tracker.snapshot(
+                task_plan=state.task_plan,
+                task_state=state,
+            )
+            result = await self.slow_loop.maybe_update(
+                task_plan=state.task_plan,
+                state=state,
+                context=context,
+                leased_subtask_ids=set(),
+                task_budget=task_budget,
+            )
+            if result.updated:
+                state.clear_communication_blocks()
+                state.state_version += 1
+                await self.task_checkpoint_store.save(state)
+                return True
+
+            handled: set[str] = set()
+            if state.slow_loop_state is not None:
+                slow = (
+                    state.slow_loop_state
+                    if isinstance(state.slow_loop_state, SlowLoopState)
+                    else SlowLoopState.model_validate(state.slow_loop_state)
+                )
+                handled = set(slow.handled_evidence_keys)
+            block_keys = [
+                active_block_evidence_key(
+                    state=state,
+                    target_subtask_id=sid,
+                    reason=state.subtasks[sid].communication_block_reason or "",
+                )
+                for sid in blocked
+                if state.subtasks[sid].communication_block_reason
+            ]
+            evidence_consumed = bool(block_keys) and all(k in handled for k in block_keys)
+            fail_closed = (
+                result.message
+                in {
+                    "NO_SAFE_FUTURE_EDIT",
+                    "NO_COMPARABLE_PARETO_CANDIDATE",
+                    "slow_loop disabled",
+                    "max_updates_per_task exhausted",
+                    "no trigger",
+                    "diagnosis NO_CHANGE",
+                }
+                or evidence_consumed
+                or not result.updated
+            )
+            if fail_closed:
+                self._terminate_blocked_wave(
+                    state,
+                    blocked_ids=blocked,
+                    message=result.message or "COMMUNICATION_BLOCKED_UNRECOVERABLE",
+                )
+                state.state_version += 1
+                await self.task_checkpoint_store.save(state)
+            return False
+
+    def _terminate_blocked_wave(
+        self,
+        state: TaskExecutionState,
+        *,
+        blocked_ids: list[str],
+        message: str,
+    ) -> None:
+        """Fail-closed audited outcome for unrecoverable communication blocks."""
+        summary = f"COMMUNICATION_BLOCKED_UNRECOVERABLE: {message}"
+        for sid in blocked_ids:
+            sub = state.subtasks[sid]
+            if sub.status not in {SubtaskStatus.READY, SubtaskStatus.PENDING}:
+                continue
+            if not sub.communication_block_reason:
+                continue
+            sub.status = SubtaskStatus.FAILED
+            sub.failure_reason = SubtaskFailureReason.INVALID_CONFIG
+            sub.failure_message = (
+                f"{summary}; target={sid}; reason={sub.communication_block_reason}"
+            )
+            sub.lease_status = "unleased"
+        # Skip remaining dependency-blocked pending work for a clean freeze.
+        for sid, sub in state.subtasks.items():
+            if sub.status is SubtaskStatus.PENDING and self._deps_failed(state, sid):
+                sub.status = SubtaskStatus.SKIPPED
+                sub.failure_message = "blocked by failed dependency"
+        state.slow_loop_history.append(
+            GlobalUpdateRecord(
+                record_id=f"blocked-wave-{state.state_version}-{uuid.uuid4().hex[:8]}",
+                revision=state.global_revision,
+                summary=summary,
+                metadata={
+                    "blocked_ids": list(blocked_ids),
+                    "block_reasons": {
+                        sid: state.subtasks[sid].communication_block_reason
+                        for sid in blocked_ids
+                    },
+                },
+            )
+        )
 
     async def _commit_subtask_result(
         self,

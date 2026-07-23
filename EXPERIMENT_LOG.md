@@ -10,9 +10,37 @@
 | Status | `canonical` (use for comparisons) / `smoke` / `mock` / `superseded` / `incomplete` |
 | Paths | Repo-relative from AdaMAS root |
 
-**Last updated:** 2026-07-21 (UTC) — M6.1 Runtime-Correct Pareto Closure
+**Last updated:** 2026-07-23 (UTC) — M5 blocked-wave recovery + transactional history
 
 ---
+
+### EXP-20260723-01 — M5 Blocked-Wave Recovery + Transactional Slow Loop History
+- **Status:** smoke (CI gate; preserves M6/M6.1; no Codex hybrid changes)
+- **Date:** 2026-07-23 (UTC)
+- **Branch / commit:** `agnostic` @ post-`b9d3c85` (M5 runtime guarantee repair)
+- **Benchmark / phase:** scheduler blocked-wave recovery, exact REQUIRED_RULE_MISSING
+  repair, Slow Loop history persistence across checkpoint/restart, post-activation
+  transaction boundary, M5/M6 smokes
+- **Baseline / graph:** starts from `b9d3c85`; M6/M6.1 preserved; no hybrid Codex work
+- **Command:**
+  ```bash
+  uv run ruff check .
+  uv run pytest -q tests/unit
+  uv run pytest -q tests/integration
+  uv run python -m orchestra.cli.run_m5_smoke \
+    --config configs/experiments/m5_slow_loop_smoke.yaml
+  uv run python -m orchestra.cli.run_m6_smoke \
+    --config configs/experiments/m6_pareto_smoke.yaml
+  ```
+- **Results:** All-READY communication-blocked waves invoke Slow Loop at the
+  unleased checkpoint, apply exact DeliveryRule repairs, re-preflight, and
+  continue; restart preserves blocked-target eligibility; Slow Loop history is
+  merged by `record_id` and survives checkpoint exactly once; post-checkpoint
+  failures raise `RevisionAlreadyActivated` and never claim
+  `keep_previous_plan`; M5 smoke asserts post-revision delivery; M6 smoke green
+  including archive resume rehydration of `GlobalCandidate`.
+- **Notes / interpretation:** Docs: `docs/m5_slow_global_adaptation.md` (M6
+  boundary updated). M6 remains layered on repaired M5 guarantees.
 
 ## Quick reference (canonical Stage 1 LCB-dev)
 

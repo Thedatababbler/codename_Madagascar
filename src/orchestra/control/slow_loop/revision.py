@@ -22,7 +22,11 @@ from orchestra.control.slow_loop.schemas import (
     SlowLoopTriggerReason,
     TaskSchedulingPolicy,
 )
-from orchestra.control.task_state import SubtaskStatus, TaskExecutionState
+from orchestra.control.task_state import (
+    GlobalUpdateRecord,
+    SubtaskStatus,
+    TaskExecutionState,
+)
 from orchestra.decomposition.schemas import TaskPlan
 from orchestra.ir.graph import load_graph
 from orchestra.runtime.task_checkpoint import TaskCheckpointStore
@@ -49,6 +53,28 @@ class PlanRevisionIdCollision(PlanRevisionCorruption):
     pass
 
 
+class RevisionAlreadyActivated(RuntimeError):
+    """Checkpoint activation succeeded; live state may still be stale.
+
+    Callers must not report keep_previous_plan. Apply ``projected_state`` (or
+    reload the checkpoint) onto the live TaskExecutionState.
+    """
+
+    def __init__(
+        self,
+        *,
+        revision_id: str,
+        projected_state: TaskExecutionState,
+        message: str = "",
+    ) -> None:
+        self.revision_id = revision_id
+        self.projected_state = projected_state
+        super().__init__(
+            message
+            or f"REVISION_ALREADY_ACTIVATED: {revision_id} committed in checkpoint"
+        )
+
+
 class RevisionTransactionHooks(BaseModel):
     """Test-only crash injection points. Production leaves all None."""
 
@@ -58,6 +84,60 @@ class RevisionTransactionHooks(BaseModel):
     after_revision_promote: Callable[[], None] | None = None
     before_checkpoint_save: Callable[[], None] | None = None
     after_checkpoint_save: Callable[[], None] | None = None
+
+
+def merge_history_by_record_id(
+    *histories: list,
+) -> list[GlobalUpdateRecord]:
+    """Merge GlobalUpdateRecord lists by stable record_id (retry/idempotency)."""
+    merged: dict[str, GlobalUpdateRecord] = {}
+    order: list[str] = []
+    for history in histories:
+        for raw in history or []:
+            rec = (
+                raw
+                if isinstance(raw, GlobalUpdateRecord)
+                else GlobalUpdateRecord.model_validate(raw)
+            )
+            if rec.record_id not in merged:
+                order.append(rec.record_id)
+            merged[rec.record_id] = rec
+    return [merged[rid] for rid in order]
+
+
+def apply_projected_state_to_live(
+    state: TaskExecutionState,
+    projected: TaskExecutionState,
+) -> TaskExecutionState:
+    """Copy activated projected fields onto the live state object."""
+    state.task_plan = projected.task_plan
+    state.communication_plan = projected.communication_plan
+    state.plan_content_hash = projected.plan_content_hash
+    state.scheduling_policy = projected.scheduling_policy
+    state.active_plan_revision_id = projected.active_plan_revision_id
+    state.active_plan_hash = projected.active_plan_hash
+    state.active_communication_hash = projected.active_communication_hash
+    state.plan_revision_history = list(projected.plan_revision_history)
+    state.slow_loop_history = merge_history_by_record_id(
+        list(state.slow_loop_history or []),
+        list(projected.slow_loop_history or []),
+    )
+    state.global_revision = projected.global_revision
+    state.state_version = projected.state_version
+    state.slow_loop_state = projected.slow_loop_state
+    state.pareto_state = projected.pareto_state
+    for sid, sub in projected.subtasks.items():
+        if sid not in state.subtasks:
+            state.subtasks[sid] = sub.model_copy(deep=True)
+            continue
+        if state.subtasks[sid].lease_status == "leased":
+            continue
+        if state.subtasks[sid].status in {
+            SubtaskStatus.PENDING,
+            SubtaskStatus.READY,
+        }:
+            state.subtasks[sid].spec = sub.spec
+    return state
 
 
 def build_revision(
@@ -445,7 +525,12 @@ async def commit_prepared_revision(
     projected.delivery_ledger = list(state.delivery_ledger)
     projected.workspace_commit_records = list(state.workspace_commit_records)
     projected.fast_loop_history = list(state.fast_loop_history)
-    projected.slow_loop_history = list(state.slow_loop_history)
+    # Preserve GlobalUpdateRecord stamped onto prepared.projected_state; merge by
+    # record_id so retry/idempotent activation cannot duplicate history rows.
+    projected.slow_loop_history = merge_history_by_record_id(
+        list(state.slow_loop_history or []),
+        list(prepared.projected_state.slow_loop_history or []),
+    )
     projected.fast_loop_states = dict(state.fast_loop_states)
     projected.canonical_workspace_ref = state.canonical_workspace_ref
     projected.canonical_revision = state.canonical_revision
@@ -464,38 +549,43 @@ async def commit_prepared_revision(
         handle.flush()
         os.fsync(handle.fileno())
 
+    # Pre-activation consistency: final revision must exist with expected hash.
+    if not final.exists() or not (final / "revision.json").exists():
+        raise PlanRevisionCorruption(
+            "PLAN_REVISION_CORRUPTION: final revision missing before checkpoint"
+        )
+    disk_pre = GlobalPlanRevision.model_validate_json(
+        (final / "revision.json").read_text(encoding="utf-8")
+    )
+    if disk_pre.new_plan_hash != rev.new_plan_hash:
+        raise PlanRevisionCorruption(
+            "PLAN_REVISION_CORRUPTION: pre-activation plan hash mismatch"
+        )
+    if disk_pre.status is not GlobalPlanRevisionStatus.APPLIED:
+        raise PlanRevisionCorruption(
+            "PLAN_REVISION_CORRUPTION: revision not APPLIED before checkpoint"
+        )
+
     if hooks.before_checkpoint_save is not None:
         hooks.before_checkpoint_save()
 
     # Checkpoint activation is the sole active pointer.
     await checkpoint_store.save(projected)
 
-    if hooks.after_checkpoint_save is not None:
-        hooks.after_checkpoint_save()
-
-    verify_checkpoint_revision_consistency(state=projected, run_dir=run_dir)
-
-    # Swap in-memory fields from projected onto live state object.
-    state.task_plan = projected.task_plan
-    state.communication_plan = projected.communication_plan
-    state.plan_content_hash = projected.plan_content_hash
-    state.scheduling_policy = projected.scheduling_policy
-    state.active_plan_revision_id = projected.active_plan_revision_id
-    state.active_plan_hash = projected.active_plan_hash
-    state.active_communication_hash = projected.active_communication_hash
-    state.plan_revision_history = projected.plan_revision_history
-    state.global_revision = projected.global_revision
-    state.state_version = projected.state_version
-    state.slow_loop_state = projected.slow_loop_state
-    state.pareto_state = projected.pareto_state
-    for sid, sub in projected.subtasks.items():
-        if state.subtasks[sid].lease_status == "leased":
-            continue
-        if state.subtasks[sid].status in {
-            SubtaskStatus.PENDING,
-            SubtaskStatus.READY,
-        }:
-            state.subtasks[sid].spec = sub.spec
+    try:
+        if hooks.after_checkpoint_save is not None:
+            hooks.after_checkpoint_save()
+        verify_checkpoint_revision_consistency(state=projected, run_dir=run_dir)
+        apply_projected_state_to_live(state, projected)
+    except RevisionAlreadyActivated:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        # Post-activation: never claim keep_previous_plan / stale live state.
+        raise RevisionAlreadyActivated(
+            revision_id=rev.revision_id,
+            projected_state=projected,
+            message=str(exc),
+        ) from exc
     return state
 
 
