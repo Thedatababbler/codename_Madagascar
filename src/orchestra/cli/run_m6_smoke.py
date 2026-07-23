@@ -50,6 +50,26 @@ def _load_config(path: Path) -> dict:
     return raw
 
 
+def _pareto_config_from_yaml(cfg: dict) -> ParetoConfig:
+    """Construct ParetoConfig from the YAML values reported as loaded."""
+    section = dict(cfg.get("pareto") or {})
+    kwargs: dict = {"objectives": OBJ}
+    for key in (
+        "enabled",
+        "max_candidates",
+        "horizon_commits",
+        "fallback_to_rule_based",
+        "max_estimated_archive_size",
+        "max_realized_archive_size",
+        "allow_two_edit_pairs",
+    ):
+        if key in section:
+            kwargs[key] = section[key]
+    if "enabled" not in kwargs:
+        kwargs["enabled"] = True
+    return ParetoConfig(**kwargs)
+
+
 def _plan_from_config(cfg: dict) -> TaskPlan:
     task_id = str(cfg.get("task_id") or "m6_smoke")
     return TaskPlan(
@@ -189,6 +209,7 @@ async def _run(output: Path, config_path: Path) -> dict:
         or cfg.get("preference_profile")
         or "balanced_knee"
     )
+    pareto_config = _pareto_config_from_yaml(cfg)
     limits = RuntimeLimits(
         max_parallel_benchmark_tasks=1,
         max_parallel_nodes_per_task=2,
@@ -204,7 +225,7 @@ async def _run(output: Path, config_path: Path) -> dict:
         contract_hash="c",
     )
     policy = ParetoGlobalCandidatePolicy(
-        config=ParetoConfig(enabled=True, max_candidates=12, objectives=OBJ),
+        config=pareto_config,
         preference_profile=PreferenceProfile(profile_id=preference_id),
         run_dir=str(output),
     )
@@ -214,7 +235,7 @@ async def _run(output: Path, config_path: Path) -> dict:
             budget=SlowLoopBudget(
                 context_pressure_ratio=0.5,
                 min_commits_between_updates=1,
-                max_candidates_per_update=12,
+                max_candidates_per_update=max(1, int(pareto_config.max_candidates)),
             ),
             allowed_backend_assignments={"coding": ["codex_sdk", "smolagents_code"]},
         ),
@@ -297,7 +318,7 @@ async def _run(output: Path, config_path: Path) -> dict:
         assert loaded.pareto_state.pending_decision is not None
         assert loaded.pareto_state.pending_decision.selected_candidate_snapshot is not None
         restarted = ParetoGlobalCandidatePolicy(
-            config=ParetoConfig(enabled=True, max_candidates=12, objectives=OBJ),
+            config=pareto_config,
             preference_profile=PreferenceProfile(profile_id=preference_id),
             run_dir=str(output),
         )
@@ -314,6 +335,14 @@ async def _run(output: Path, config_path: Path) -> dict:
         "config_path": str(config_path),
         "config_loaded": True,
         "preference_profile": preference_id,
+        "pareto_config": {
+            "enabled": pareto_config.enabled,
+            "max_candidates": pareto_config.max_candidates,
+            "horizon_commits": pareto_config.horizon_commits,
+            "fallback_to_rule_based": pareto_config.fallback_to_rule_based,
+            "max_estimated_archive_size": pareto_config.max_estimated_archive_size,
+            "max_realized_archive_size": pareto_config.max_realized_archive_size,
+        },
         "slow_loop_message": result.message,
         "updated": result.updated,
         "complete_frontier": frontier_hashes,
@@ -324,7 +353,7 @@ async def _run(output: Path, config_path: Path) -> dict:
         "realized_archive_persisted": (output / "pareto" / "realized_archive.json").exists(),
         "search_traces_exist": (output / "pareto" / "search_traces.jsonl").exists(),
         "decisions_exist": bool(persistence.load_decisions()),
-        "pareto_enabled": True,
+        "pareto_enabled": bool(pareto_config.enabled),
     }
     (output / "m6_smoke_summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"

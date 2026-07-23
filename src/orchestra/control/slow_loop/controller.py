@@ -10,6 +10,10 @@ from orchestra.control.slow_loop.candidate_generator import (
     RuleBasedGlobalCandidateGenerator,
     eligible_future_subtask_ids,
 )
+from orchestra.control.slow_loop.communication_safety import (
+    active_required_communication_blocks,
+    candidate_resolves_active_required_blocks,
+)
 from orchestra.control.slow_loop.diagnosis import detect_triggers, diagnose
 from orchestra.control.slow_loop.observation import (
     advance_observation_watermark,
@@ -24,8 +28,11 @@ from orchestra.control.slow_loop.revision import (
     prepare_revision_staging,
 )
 from orchestra.control.slow_loop.schemas import (
+    GlobalCandidate,
     GlobalCandidateValidationStatus,
+    GlobalDiagnosis,
     GlobalDiagnosisReason,
+    GlobalObservation,
     GlobalPlanRevisionStatus,
     SlowLoopConfig,
     SlowLoopState,
@@ -63,6 +70,58 @@ class SlowLoopController:
         self.validator = validator or FuturePlanValidator(self.config)
         self.checkpoint_store = checkpoint_store
         self.candidate_policy = candidate_policy
+
+    def _select_rule_based_safety_repair(
+        self,
+        *,
+        state: TaskExecutionState,
+        observation: GlobalObservation,
+        diagnosis: GlobalDiagnosis,
+        eligible: set[str],
+        leased_subtask_ids: set[str],
+        scheduling_policy: TaskSchedulingPolicy,
+    ) -> GlobalCandidate | None:
+        """M5 rule-based repair that must resolve active required blocks."""
+        candidates = self.generator.generate(
+            task_plan=state.task_plan,
+            communication_plan=state.communication_plan,
+            scheduling_policy=scheduling_policy,
+            state=state,
+            observation=observation,
+            diagnosis=diagnosis,
+            eligible=eligible,
+        )
+        validated: list[GlobalCandidate] = []
+        for cand in candidates:
+            result = self.validator.validate(
+                current_state=state,
+                proposed_plan=cand.proposed_task_plan,
+                edits=list(cand.edits),
+                leased_subtask_ids=set(leased_subtask_ids),
+                proposed_scheduling_policy=cand.proposed_scheduling_policy,
+                proposed_communication_plan=cand.proposed_communication_plan,
+            )
+            ok_blocks, block_errors = candidate_resolves_active_required_blocks(
+                state=state,
+                proposed_communication_plan=cand.proposed_communication_plan,
+            )
+            if not result.ok or not ok_blocks:
+                cand.validation_status = GlobalCandidateValidationStatus.INVALID
+                parts = list(result.errors) + list(block_errors)
+                cand.rejection_reason = "; ".join(parts) if parts else "invalid"
+                continue
+            validated.append(cand)
+        selected = self.selector.select(validated, observation)
+        if selected is None or selected.rejection_reason:
+            return None
+        if active_required_communication_blocks(state):
+            ok_blocks, _ = candidate_resolves_active_required_blocks(
+                state=state,
+                proposed_communication_plan=selected.proposed_communication_plan,
+            )
+            if not ok_blocks:
+                return None
+        return selected
 
     async def _checkpoint_watermark(
         self,
@@ -216,7 +275,25 @@ class SlowLoopController:
                 message="NO_SAFE_FUTURE_EDIT",
             )
 
-        if self.candidate_policy is not None:
+        required_blocks = active_required_communication_blocks(state)
+        # Mandatory communication safety repairs bypass Pareto selection so that
+        # scheduling/backend/context-only candidates cannot consume revisions
+        # while a required block remains (even when fallback_to_rule_based=false).
+        proposal = None
+        if required_blocks:
+            logger.info(
+                "slow_loop bypassing Pareto for required communication blocks: %s",
+                required_blocks,
+            )
+            selected = self._select_rule_based_safety_repair(
+                state=state,
+                observation=observation,
+                diagnosis=diagnosis,
+                eligible=eligible,
+                leased_subtask_ids=set(leased_subtask_ids),
+                scheduling_policy=policy,
+            )
+        elif self.candidate_policy is not None:
             candidates = self.candidate_policy.propose(
                 task_plan=state.task_plan,
                 communication_plan=state.communication_plan,
@@ -231,72 +308,72 @@ class SlowLoopController:
                 candidates, observation, state=state,
                 leased_subtask_ids=set(leased_subtask_ids),
             )
-            proposal = selection if hasattr(selection, "selected_global_candidate") else None
+            proposal = (
+                selection if hasattr(selection, "selected_global_candidate") else None
+            )
             if proposal is not None:
                 selected = proposal.selected_global_candidate
                 if isinstance(selected, dict):
-                    from orchestra.control.slow_loop.schemas import GlobalCandidate
-
                     selected = GlobalCandidate.model_validate(selected)
                 status_value = str(
-                    getattr(proposal.selection_status, "value", proposal.selection_status)
+                    getattr(
+                        proposal.selection_status, "value", proposal.selection_status
+                    )
                 )
+                if selected is not None:
+                    ok_blocks, _ = candidate_resolves_active_required_blocks(
+                        state=state,
+                        proposed_communication_plan=selected.proposed_communication_plan,
+                    )
+                    if not ok_blocks:
+                        selected = None
                 if selected is None and status_value == "fallback_rule_based":
-                    fallback = RuleBasedGlobalCandidateGenerator(self.config).generate(
-                        task_plan=state.task_plan,
-                        communication_plan=state.communication_plan,
-                        scheduling_policy=policy,
+                    selected = self._select_rule_based_safety_repair(
                         state=state,
                         observation=observation,
                         diagnosis=diagnosis,
                         eligible=eligible,
+                        leased_subtask_ids=set(leased_subtask_ids),
+                        scheduling_policy=policy,
                     )
-                    selected = self.selector.select(fallback, observation)
                 elif selected is None and status_value == "no_comparable_candidate":
-                    await self._checkpoint_watermark(
-                        state=state,
-                        context=context,
-                        observation=observation,
-                        commit=commit,
-                    )
-                    return SlowLoopUpdateResult(
-                        updated=False,
-                        trigger_reasons=triggers,
-                        diagnosis=diagnosis,
-                        message="NO_COMPARABLE_PARETO_CANDIDATE",
-                    )
+                    # Safety net: never convert an M5-required repair into
+                    # NO_COMPARABLE_PARETO_CANDIDATE when required blocks exist.
+                    if active_required_communication_blocks(state):
+                        selected = self._select_rule_based_safety_repair(
+                            state=state,
+                            observation=observation,
+                            diagnosis=diagnosis,
+                            eligible=eligible,
+                            leased_subtask_ids=set(leased_subtask_ids),
+                            scheduling_policy=policy,
+                        )
+                    else:
+                        await self._checkpoint_watermark(
+                            state=state,
+                            context=context,
+                            observation=observation,
+                            commit=commit,
+                        )
+                        return SlowLoopUpdateResult(
+                            updated=False,
+                            trigger_reasons=triggers,
+                            diagnosis=diagnosis,
+                            message="NO_COMPARABLE_PARETO_CANDIDATE",
+                        )
             else:
                 selected = selection
                 if isinstance(selected, dict):
-                    from orchestra.control.slow_loop.schemas import GlobalCandidate
-
                     selected = GlobalCandidate.model_validate(selected)
         else:
-            candidates = self.generator.generate(
-                task_plan=state.task_plan,
-                communication_plan=state.communication_plan,
-                scheduling_policy=policy,
+            selected = self._select_rule_based_safety_repair(
                 state=state,
                 observation=observation,
                 diagnosis=diagnosis,
                 eligible=eligible,
+                leased_subtask_ids=set(leased_subtask_ids),
+                scheduling_policy=policy,
             )
-            validated = []
-            for cand in candidates:
-                result = self.validator.validate(
-                    current_state=state,
-                    proposed_plan=cand.proposed_task_plan,
-                    edits=list(cand.edits),
-                    leased_subtask_ids=set(leased_subtask_ids),
-                    proposed_scheduling_policy=cand.proposed_scheduling_policy,
-                    proposed_communication_plan=cand.proposed_communication_plan,
-                )
-                if not result.ok:
-                    cand.validation_status = GlobalCandidateValidationStatus.INVALID
-                    cand.rejection_reason = "; ".join(result.errors)
-                else:
-                    validated.append(cand)
-            selected = self.selector.select(validated or candidates, observation)
         if selected is None or selected.rejection_reason:
             rev = build_revision(
                 state=state,
