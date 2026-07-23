@@ -51,11 +51,15 @@ class ParetoGlobalCandidatePolicy:
         config: ParetoConfig | None = None,
         preference_profile: PreferenceProfile | None = None,
         run_dir: str | None = None,
+        catalog=None,
     ) -> None:
         self.config = config or ParetoConfig(enabled=True)
         self.profile = preference_profile or PreferenceProfile()
         self.archive = ParetoArchive(self.config)
-        self.generator = ParetoCandidateGenerator(self.config, self.archive)
+        self.catalog = catalog
+        self.generator = ParetoCandidateGenerator(
+            self.config, self.archive, catalog=catalog
+        )
         self.estimator = ParetoObjectiveEstimator()
         self.validator = ParetoCandidateValidator()
         self.selector = DeterministicParetoSelector()
@@ -137,6 +141,8 @@ class ParetoGlobalCandidatePolicy:
             )
         if context is None:
             return None
+        # With scalarize_without_pareto_filter, complete_frontier holds all complete
+        # candidates (archive insert skips dominance filtering).
         frontier = self.archive.complete_frontier(
             context.context_id, ParetoEvaluationKind.ESTIMATED
         )

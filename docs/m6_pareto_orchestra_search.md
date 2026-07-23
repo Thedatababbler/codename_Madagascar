@@ -192,3 +192,34 @@ uv run python -m orchestra.cli.run_m6_smoke \
 The smoke loads the YAML, runs TaskExecutionState → Slow Loop → frontier
 selection → M5 commit → realized finalization → restart recovery, and asserts
 search traces plus archive persistence.
+
+## 15. M6.2 production and Stage-2 experiments
+
+M6.2 adds an opt-in, configuration-driven production path and a Stage-2
+experiment/reporting layer. Shared typed loader:
+`orchestra.experiments.control_plane` (used by smoke, production, and reports).
+
+```text
+TaskPlan → ReadySubtaskScheduler → M5 Slow Loop → M6 Pareto policy
+  → M5 transactional activation → realized horizon accounting
+  → restart-safe reports
+```
+
+```bash
+# Production multi-subtask runner (not SingleSubtaskCompatibilityRunner)
+uv run python -m orchestra.cli.run_m6_orchestra \
+  --config configs/experiments/stage2/m6_balanced_knee.yaml \
+  --mock-llm
+
+# Stage-2 CLI (no paid API by default)
+uv run python -m orchestra.cli.stage2_pareto_experiments validate \
+  --config configs/experiments/stage2/m6_balanced_knee.yaml
+uv run python -m orchestra.cli.stage2_pareto_experiments run-fixture \
+  --config configs/experiments/stage2/m6_balanced_knee.yaml
+uv run python -m orchestra.cli.stage2_pareto_experiments report \
+  --run-dir <fixture-run-dir>
+```
+
+Protocol: `docs/stage2_pareto_experiment_protocol.md`.
+
+Fixture/smoke results must not be claimed as real-model quality improvement.

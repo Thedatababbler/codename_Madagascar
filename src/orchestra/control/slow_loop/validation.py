@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from orchestra.communication.compiler import communication_plan_hash
@@ -222,5 +224,23 @@ class FuturePlanValidator:
                     errors.append(
                         f"graph template edit targets leased subtask {edit.subtask_id}"
                     )
+                # Reject non-compiling / unsafe graph paths before archive admission.
+                graph_path = str(edit.graph_template_id)
+                normalized = graph_path.replace("\\", "/")
+                if (
+                    "/.staging-" in normalized
+                    or ".." in Path(graph_path).parts
+                    or graph_path.startswith("/")
+                ):
+                    errors.append(f"unsafe graph template path: {graph_path}")
+                else:
+                    try:
+                        from orchestra.ir.graph import load_graph
+
+                        materializer.compiler.compile(load_graph(graph_path))
+                    except Exception as exc:  # noqa: BLE001 — surface compile failures
+                        errors.append(
+                            f"graph template failed to compile ({graph_path}): {exc}"
+                        )
 
         return FuturePlanValidationResult(ok=not errors, errors=errors)

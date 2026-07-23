@@ -132,7 +132,7 @@ class ParetoArchive:
             bucket = partial.setdefault(candidate.context_id, [])
         if any(c.content_hash == candidate.content_hash for c in bucket):
             return False
-        if self._complete(candidate):
+        if self._complete(candidate) and not self.config.scalarize_without_pareto_filter:
             if any(
                 dominates(c, candidate, self.config.objectives, self.config.epsilon)
                 for c in bucket

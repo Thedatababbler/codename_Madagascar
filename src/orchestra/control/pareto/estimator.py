@@ -55,11 +55,73 @@ class ParetoObjectiveEstimator:
         if not history:
             history = list(getattr(observation, "backend_usage_records", []) or [])
 
-        values["cost"] = self._estimate_cost(candidate, history, edit_types)
-        values["latency"] = self._estimate_latency(candidate, history, observation, edit_types)
+        graph_only = edit_types == {"pending_graph_template"} or (
+            "pending_graph_template" in edit_types and not (
+                edit_types & {
+                    "pending_backend_assignment",
+                    "scheduling_concurrency",
+                    "serialization_group",
+                    "context_budget",
+                    "upsert_payload_contract",
+                    "remove_payload_contract",
+                }
+            )
+        )
+        # Honor catalog-declared evidence when present; otherwise do not invent
+        # neutral values for graph-template-only candidates.
+        pre_cost = values.get("cost")
+        pre_latency = values.get("latency")
+        if (
+            graph_only
+            and pre_cost is not None
+            and pre_cost.available
+            and pre_cost.value is not None
+        ):
+            values["cost"] = pre_cost
+        else:
+            values["cost"] = self._estimate_cost(candidate, history, edit_types)
+            if (
+                graph_only
+                and (
+                    pre_cost is None
+                    or not pre_cost.available
+                    or "missing defensible evidence" in str(pre_cost.detail or "")
+                )
+                and values["cost"].evidence_count == 0
+            ):
+                values["cost"] = ObjectiveValue.unavailable(
+                    "catalog graph template missing defensible cost evidence"
+                )
+        if (
+            graph_only
+            and pre_latency is not None
+            and pre_latency.available
+            and pre_latency.value is not None
+        ):
+            values["latency"] = pre_latency
+        else:
+            values["latency"] = self._estimate_latency(
+                candidate, history, observation, edit_types
+            )
+            if (
+                graph_only
+                and (
+                    pre_latency is None
+                    or not pre_latency.available
+                    or "missing defensible evidence" in str(pre_latency.detail or "")
+                )
+                and values["latency"].evidence_count == 0
+            ):
+                values["latency"] = ObjectiveValue.unavailable(
+                    "catalog graph template missing defensible latency evidence"
+                )
         values["risk"] = self._estimate_risk(candidate, observation, edit_types, coeffs)
         values["communication_overhead"] = self._estimate_communication(candidate, edit_types)
         values["quality"] = self._estimate_quality(candidate, public_evaluations)
+        if graph_only and not values["quality"].available:
+            values["quality"] = ObjectiveValue.unavailable(
+                "catalog graph template missing defensible quality evidence"
+            )
 
         candidate.objectives.values = values
         candidate.objectives.evaluation_kind = ParetoEvaluationKind.ESTIMATED

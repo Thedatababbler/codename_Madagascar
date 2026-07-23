@@ -55,6 +55,14 @@ async def _run(args: argparse.Namespace) -> int:
     load_env_file()
     started_at = datetime.now(UTC)
     config = load_experiment_config(args.config)
+    # Pareto-enabled production must use ReadySubtaskScheduler via run_m6_orchestra.
+    # Do not silently wrap SingleSubtaskCompatibilityRunner.
+    if bool((config.pareto or {}).get("enabled", False)):
+        raise SystemExit(
+            "pareto.enabled=true is not supported by run_task_plan "
+            "(SingleSubtaskCompatibilityRunner). Use: "
+            "python -m orchestra.cli.run_m6_orchestra --config <cfg>"
+        )
     if args.manifest:
         config.benchmark.manifest = args.manifest
     if args.output_root:

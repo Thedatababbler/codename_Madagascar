@@ -1,0 +1,111 @@
+experiment:
+  name: stage2_m6_balanced_knee
+  seed: 42
+  graph_config: configs/graphs/codex_single_implementer.yaml
+  plan_config: configs/plans/stage2_pareto_three_subtasks.yaml
+  contracts_dir: configs/contracts
+  output_root: outputs/stage2_pareto
+  source_repo: tests/fixtures/codex_tiny_repo
+benchmark:
+  name: livecodebench
+  release_version: release_v6
+  scenario: codegeneration
+  language: python
+  manifest: configs/manifests/lcb_smoke.json
+  data_dir: ${LCB_DATA_DIR:-/root/data/livecodebench/code_generation_lite}
+  repository_path: ${LCB_REPOSITORY_PATH:-/root/projects/LiveCodeBench}
+runtime:
+  backend: native_async
+  max_parallel_benchmark_tasks: 1
+  max_parallel_nodes_per_task: 2
+  max_parallel_llm_calls: 4
+  max_parallel_sandboxes: 1
+  checkpoint_after_each_wave: true
+sandbox:
+  backend: mock
+  per_test_timeout_seconds: 6
+  worker_grace_seconds: 5
+  max_worker_wall_seconds: 60
+  num_process_evaluate: 1
+  limits:
+    memory_mb: 2048
+    max_processes: 32
+    max_open_files: 128
+    max_file_size_mb: 16
+evaluation:
+  max_repair_attempts: 0
+  final_samples_per_task: 1
+  total_task_budget_usd: 1.0
+  timeout_seconds: 120
+logging:
+  save_prompts: true
+  save_raw_responses: true
+  save_artifacts: true
+  redact_environment: true
+candidate_catalog:
+  graph_templates:
+  - template_id: single_implementer
+    graph_path: configs/graphs/codex_single_implementer.yaml
+    target_roles:
+    - s2
+    - s3
+    declared_cost_usd: 0.02
+    declared_latency_seconds: 0.8
+  concurrency_alternatives:
+  - 1
+  - 2
+  serialization_groups:
+  - - s2
+    - s3
+  context_budget_alternatives:
+    s2:
+    - 512
+    - 1024
+    s3:
+    - 512
+    - 1024
+  allow_archive_replay: true
+  allow_two_edit_pairs: true
+slow_loop:
+  enabled: true
+  every_n_committed_subtasks: 1
+  context_pressure_ratio: 0.5
+  max_updates_per_task: 4
+  max_candidates_per_update: 8
+  allowed_backend_assignments:
+    coding:
+    - codex_sdk
+    - smolagents_code
+    s2:
+    - codex_sdk
+    - smolagents_code
+    s3:
+    - codex_sdk
+    - smolagents_code
+pareto:
+  enabled: true
+  max_candidates: 8
+  horizon_commits: 1
+  fallback_to_rule_based: false
+  max_estimated_archive_size: 64
+  max_realized_archive_size: 64
+  allow_two_edit_pairs: true
+  allow_archive_replay: true
+  scalarize_without_pareto_filter: false
+  preference_profile: balanced_knee
+  objectives:
+    quality: maximize
+    cost: minimize
+    latency: minimize
+    risk: minimize
+    communication_overhead: minimize
+  pricing_registry: configs/pricing/backend_models.yaml
+  preferences_path: configs/pareto/default_preferences.yaml
+preference_profile: balanced_knee
+stage2:
+  enabled: true
+  output_root: outputs/stage2_pareto
+  mode: m6_balanced_knee
+  seed: 42
+  fixture_plan: configs/plans/stage2_pareto_three_subtasks.yaml
+  include_oracle_diagnostics: false

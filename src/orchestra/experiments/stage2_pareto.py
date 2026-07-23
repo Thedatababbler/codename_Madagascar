@@ -1,0 +1,785 @@
+"""Stage-2 Pareto experiment configs, fixture runner, calibration, and reports."""
+
+from __future__ import annotations
+
+import csv
+import hashlib
+import json
+import math
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any, Literal
+
+import yaml
+
+from orchestra.control.pareto.schemas import (
+    EvaluationVisibility,
+    ObjectiveDirection,
+    ParetoEvaluationKind,
+)
+from orchestra.experiments.control_plane import (
+    DEFAULT_OBJECTIVES,
+    ControlPlaneConfig,
+    load_control_plane_mapping,
+    resolve_pareto_runtime,
+)
+
+Stage2Mode = Literal[
+    "m5_rule_based",
+    "m6_quality_first",
+    "m6_cost_capped_quality",
+    "m6_latency_capped_quality",
+    "m6_robustness_first",
+    "m6_balanced_knee",
+    "m6_no_two_edit",
+    "m6_no_archive_replay",
+    "m6_scalarized_ablation",
+]
+
+MODE_ORDER: list[Stage2Mode] = [
+    "m5_rule_based",
+    "m6_quality_first",
+    "m6_cost_capped_quality",
+    "m6_latency_capped_quality",
+    "m6_robustness_first",
+    "m6_balanced_knee",
+    "m6_no_two_edit",
+    "m6_no_archive_replay",
+    "m6_scalarized_ablation",
+]
+
+PROFILE_BY_MODE: dict[Stage2Mode, str | None] = {
+    "m5_rule_based": None,
+    "m6_quality_first": "quality_first",
+    "m6_cost_capped_quality": "cost_capped_quality",
+    "m6_latency_capped_quality": "latency_capped_quality",
+    "m6_robustness_first": "robustness_first",
+    "m6_balanced_knee": "balanced_knee",
+    "m6_no_two_edit": "balanced_knee",
+    "m6_no_archive_replay": "balanced_knee",
+    "m6_scalarized_ablation": "balanced_knee",
+}
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def shared_stage2_base(*, seed: int = 42) -> dict[str, Any]:
+    """Shared task/model/sandbox settings for comparable Stage-2 modes."""
+    return {
+        "experiment": {
+            "name": "stage2_shared",
+            "seed": seed,
+            "graph_config": "configs/graphs/codex_single_implementer.yaml",
+            "plan_config": "configs/plans/stage2_pareto_three_subtasks.yaml",
+            "contracts_dir": "configs/contracts",
+            "output_root": "outputs/stage2_pareto",
+            "source_repo": "tests/fixtures/codex_tiny_repo",
+        },
+        "benchmark": {
+            "name": "livecodebench",
+            "release_version": "release_v6",
+            "scenario": "codegeneration",
+            "language": "python",
+            "manifest": "configs/manifests/lcb_smoke.json",
+            "data_dir": "${LCB_DATA_DIR:-/root/data/livecodebench/code_generation_lite}",
+            "repository_path": "${LCB_REPOSITORY_PATH:-/root/projects/LiveCodeBench}",
+        },
+        "runtime": {
+            "backend": "native_async",
+            "max_parallel_benchmark_tasks": 1,
+            "max_parallel_nodes_per_task": 2,
+            "max_parallel_llm_calls": 4,
+            "max_parallel_sandboxes": 1,
+            "checkpoint_after_each_wave": True,
+        },
+        "sandbox": {
+            "backend": "mock",
+            "per_test_timeout_seconds": 6,
+            "worker_grace_seconds": 5,
+            "max_worker_wall_seconds": 60,
+            "num_process_evaluate": 1,
+            "limits": {
+                "memory_mb": 2048,
+                "max_processes": 32,
+                "max_open_files": 128,
+                "max_file_size_mb": 16,
+            },
+        },
+        "evaluation": {
+            "max_repair_attempts": 0,
+            "final_samples_per_task": 1,
+            "total_task_budget_usd": 1.0,
+            "timeout_seconds": 120,
+        },
+        "logging": {
+            "save_prompts": True,
+            "save_raw_responses": True,
+            "save_artifacts": True,
+            "redact_environment": True,
+        },
+        "candidate_catalog": {
+            "graph_templates": [
+                {
+                    "template_id": "single_implementer",
+                    "graph_path": "configs/graphs/codex_single_implementer.yaml",
+                    "target_roles": ["s2", "s3"],
+                    # Evidence present → may enter complete frontier.
+                    "declared_cost_usd": 0.02,
+                    "declared_latency_seconds": 0.8,
+                }
+            ],
+            "concurrency_alternatives": [1, 2],
+            "serialization_groups": [["s2", "s3"]],
+            "context_budget_alternatives": {"s2": [512, 1024], "s3": [512, 1024]},
+            "allow_archive_replay": True,
+            "allow_two_edit_pairs": True,
+        },
+    }
+
+
+def build_mode_config(mode: Stage2Mode, *, seed: int = 42) -> dict[str, Any]:
+    cfg = shared_stage2_base(seed=seed)
+    cfg["experiment"]["name"] = f"stage2_{mode}"
+    profile = PROFILE_BY_MODE[mode]
+    if mode == "m5_rule_based":
+        cfg["slow_loop"] = {
+            "enabled": True,
+            "every_n_committed_subtasks": 1,
+            "context_pressure_ratio": 0.5,
+            "max_updates_per_task": 4,
+            "max_candidates_per_update": 8,
+            "allowed_backend_assignments": {
+                "coding": ["codex_sdk", "smolagents_code"],
+                "s2": ["codex_sdk", "smolagents_code"],
+                "s3": ["codex_sdk", "smolagents_code"],
+            },
+        }
+        cfg["pareto"] = {"enabled": False}
+    else:
+        cfg["slow_loop"] = {
+            "enabled": True,
+            "every_n_committed_subtasks": 1,
+            "context_pressure_ratio": 0.5,
+            "max_updates_per_task": 4,
+            "max_candidates_per_update": 8,
+            "allowed_backend_assignments": {
+                "coding": ["codex_sdk", "smolagents_code"],
+                "s2": ["codex_sdk", "smolagents_code"],
+                "s3": ["codex_sdk", "smolagents_code"],
+            },
+        }
+        cfg["pareto"] = {
+            "enabled": True,
+            "max_candidates": 8,
+            "horizon_commits": 1,
+            "fallback_to_rule_based": False,
+            "max_estimated_archive_size": 64,
+            "max_realized_archive_size": 64,
+            "allow_two_edit_pairs": mode != "m6_no_two_edit",
+            "allow_archive_replay": mode != "m6_no_archive_replay",
+            "scalarize_without_pareto_filter": mode == "m6_scalarized_ablation",
+            "preference_profile": profile,
+            "objectives": {k: v.value for k, v in DEFAULT_OBJECTIVES.items()},
+            "pricing_registry": "configs/pricing/backend_models.yaml",
+            "preferences_path": "configs/pareto/default_preferences.yaml",
+        }
+        cfg["preference_profile"] = profile
+        if mode == "m6_no_two_edit":
+            cfg["candidate_catalog"]["allow_two_edit_pairs"] = False
+        if mode == "m6_no_archive_replay":
+            cfg["candidate_catalog"]["allow_archive_replay"] = False
+    cfg["stage2"] = {
+        "enabled": True,
+        "output_root": "outputs/stage2_pareto",
+        "mode": mode,
+        "seed": seed,
+        "fixture_plan": "configs/plans/stage2_pareto_three_subtasks.yaml",
+        "include_oracle_diagnostics": False,
+    }
+    return cfg
+
+
+def write_all_stage2_configs(output_dir: str | Path | None = None) -> list[Path]:
+    out = Path(output_dir or (_repo_root() / "configs/experiments/stage2"))
+    out.mkdir(parents=True, exist_ok=True)
+    paths: list[Path] = []
+    for mode in MODE_ORDER:
+        path = out / f"{mode}.yaml"
+        path.write_text(
+            yaml.safe_dump(build_mode_config(mode), sort_keys=False),
+            encoding="utf-8",
+        )
+        paths.append(path)
+    return paths
+
+
+def validate_stage2_config(path: str | Path) -> dict[str, Any]:
+    raw = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {}
+    control = load_control_plane_mapping(raw)
+    resolved = resolve_pareto_runtime(control, repo_root=_repo_root())
+    # Shared loader rejects unknown objectives / missing profiles already.
+    return {
+        "config_path": str(path),
+        "ok": True,
+        "pareto_enabled": resolved.pareto_config.enabled,
+        "slow_loop_enabled": resolved.slow_loop_config.enabled,
+        "preference_profile": resolved.preference_profile.profile_id,
+        "preference_hash": resolved.preference_hash,
+        "objective_hash": resolved.objective_hash,
+        "pricing_version": resolved.pricing_version,
+        "control_plane_hash": resolved.control_plane_hash,
+        "pareto_config": resolved.pareto_config.model_dump(mode="json"),
+    }
+
+
+@dataclass(frozen=True)
+class CalibrationArtifact:
+    control_plane_hash: str
+    preference_hash: str
+    objective_hash: str
+    pricing_version: str
+    normalization: dict[str, dict[str, float]]
+    reference_point: dict[str, float]
+    created_at: str
+    split: str = "development"
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "control_plane_hash": self.control_plane_hash,
+            "preference_hash": self.preference_hash,
+            "objective_hash": self.objective_hash,
+            "pricing_version": self.pricing_version,
+            "normalization": self.normalization,
+            "reference_point": self.reference_point,
+            "created_at": self.created_at,
+            "split": self.split,
+        }
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> CalibrationArtifact:
+        return cls(
+            control_plane_hash=str(payload["control_plane_hash"]),
+            preference_hash=str(payload["preference_hash"]),
+            objective_hash=str(payload["objective_hash"]),
+            pricing_version=str(payload["pricing_version"]),
+            normalization=dict(payload.get("normalization") or {}),
+            reference_point=dict(payload.get("reference_point") or {}),
+            created_at=str(payload.get("created_at") or ""),
+            split=str(payload.get("split") or "development"),
+        )
+
+
+def write_calibration_artifact(
+    path: str | Path,
+    *,
+    control: ControlPlaneConfig,
+    development_points: list[dict[str, float | None]],
+) -> CalibrationArtifact:
+    resolved = resolve_pareto_runtime(control, repo_root=_repo_root())
+    norms: dict[str, dict[str, float]] = {}
+    reference: dict[str, float] = {}
+    for name, direction in resolved.pareto_config.objectives.items():
+        values = [
+            float(p[name])
+            for p in development_points
+            if p.get(name) is not None and not isinstance(p.get(name), bool)
+        ]
+        if not values:
+            continue
+        lo, hi = min(values), max(values)
+        if math.isclose(lo, hi):
+            hi = lo + 1.0
+        norms[name] = {"min": lo, "max": hi}
+        reference[name] = hi if direction is ObjectiveDirection.MINIMIZE else lo
+    artifact = CalibrationArtifact(
+        control_plane_hash=resolved.control_plane_hash,
+        preference_hash=resolved.preference_hash,
+        objective_hash=resolved.objective_hash,
+        pricing_version=resolved.pricing_version,
+        normalization=norms,
+        reference_point=reference,
+        created_at=datetime.now(UTC).isoformat(),
+        split="development",
+    )
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    Path(path).write_text(
+        json.dumps(artifact.to_dict(), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    return artifact
+
+
+def assert_calibration_matches(
+    artifact: CalibrationArtifact, control: ControlPlaneConfig
+) -> None:
+    resolved = resolve_pareto_runtime(control, repo_root=_repo_root())
+    if (
+        artifact.control_plane_hash != resolved.control_plane_hash
+        or artifact.preference_hash != resolved.preference_hash
+        or artifact.objective_hash != resolved.objective_hash
+        or artifact.pricing_version != resolved.pricing_version
+    ):
+        raise RuntimeError(
+            "frozen calibration mismatch: refusing held-out reporting "
+            f"(artifact={artifact.control_plane_hash}, "
+            f"current={resolved.control_plane_hash})"
+        )
+
+
+def _read_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _objective_value(obj: dict[str, Any] | None) -> float | None:
+    if not obj:
+        return None
+    if not obj.get("available", False):
+        return None
+    value = obj.get("value")
+    return None if value is None else float(value)
+
+
+def collect_run_records(run_dir: Path) -> dict[str, Any]:
+    """Build report inputs from durable artifacts (never console output)."""
+    run_dir = Path(run_dir)
+    manifest = {}
+    if (run_dir / "run_manifest.json").exists():
+        manifest = _read_json(run_dir / "run_manifest.json")
+    summary = {}
+    for name in (
+        "m6_orchestra_summary.json",
+        "stage2_fixture_summary.json",
+        "m6_smoke_summary.json",
+    ):
+        if (run_dir / name).exists():
+            summary = _read_json(run_dir / name)
+            break
+    decisions: list[dict[str, Any]] = []
+    decisions_path = run_dir / "pareto" / "decisions.jsonl"
+    if decisions_path.exists():
+        for line in decisions_path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                decisions.append(json.loads(line))
+    traces: list[dict[str, Any]] = []
+    traces_path = run_dir / "pareto" / "search_traces.jsonl"
+    if traces_path.exists():
+        for line in traces_path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                traces.append(json.loads(line))
+    estimated = {}
+    realized = {}
+    if (run_dir / "pareto" / "estimated_archive.json").exists():
+        estimated = _read_json(run_dir / "pareto" / "estimated_archive.json")
+    if (run_dir / "pareto" / "realized_archive.json").exists():
+        realized = _read_json(run_dir / "pareto" / "realized_archive.json")
+    return {
+        "run_dir": str(run_dir),
+        "manifest": manifest,
+        "summary": summary,
+        "decisions": decisions,
+        "traces": traces,
+        "estimated_archive": estimated,
+        "realized_archive": realized,
+    }
+
+
+def _write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({k: row.get(k, "") for k in fieldnames})
+
+
+def _svg_scatter(
+    path: Path,
+    *,
+    points: list[dict[str, Any]],
+    x_key: str,
+    y_key: str,
+    title: str,
+    profile: str,
+) -> None:
+    """Deterministic SVG scatter without external plotting deps."""
+    width, height = 640, 480
+    margin = 60
+    usable_w = width - 2 * margin
+    usable_h = height - 2 * margin
+    xs = [p[x_key] for p in points if p.get(x_key) is not None]
+    ys = [p[y_key] for p in points if p.get(y_key) is not None]
+    if not xs or not ys:
+        path.write_text(
+            f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">'
+            f'<text x="20" y="40">no {x_key}/{y_key} points</text></svg>\n',
+            encoding="utf-8",
+        )
+        return
+    xmin, xmax = min(xs), max(xs)
+    ymin, ymax = min(ys), max(ys)
+    if math.isclose(xmin, xmax):
+        xmax = xmin + 1.0
+    if math.isclose(ymin, ymax):
+        ymax = ymin + 1.0
+
+    def px(x: float) -> float:
+        return margin + (x - xmin) / (xmax - xmin) * usable_w
+
+    def py(y: float) -> float:
+        return margin + (1.0 - (y - ymin) / (ymax - ymin)) * usable_h
+
+    parts = [
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">',
+        '<rect width="100%" height="100%" fill="#fafafa"/>',
+        f'<text x="{margin}" y="28" font-size="16">{title}</text>',
+        f'<text x="{margin}" y="48" font-size="12">profile={profile}</text>',
+        f'<line x1="{margin}" y1="{height-margin}" x2="{width-margin}" '
+        f'y2="{height-margin}" stroke="#333"/>',
+        f'<line x1="{margin}" y1="{margin}" x2="{margin}" '
+        f'y2="{height-margin}" stroke="#333"/>',
+    ]
+    for p in sorted(points, key=lambda r: (r.get("content_hash") or "")):
+        if p.get(x_key) is None or p.get(y_key) is None:
+            continue
+        cx, cy = px(float(p[x_key])), py(float(p[y_key]))
+        dominated = bool(p.get("dominated"))
+        selected = bool(p.get("selected"))
+        kind = str(p.get("evaluation_kind") or "estimated")
+        fill = "#4c78a8" if kind == "estimated" else "#f58518"
+        if dominated:
+            fill = "#bbbbbb"
+        r = 7 if selected else 4
+        stroke = "#111" if selected else fill
+        parts.append(
+            f'<circle cx="{cx:.2f}" cy="{cy:.2f}" r="{r}" fill="{fill}" '
+            f'stroke="{stroke}" stroke-width="1.5"/>'
+        )
+        if selected:
+            parts.append(
+                f'<text x="{cx + 8:.2f}" y="{cy:.2f}" font-size="10">selected</text>'
+            )
+    parts.append("</svg>\n")
+    path.write_text("\n".join(parts), encoding="utf-8")
+
+
+def write_stage2_report(
+    run_dirs: list[Path],
+    *,
+    output_dir: Path,
+    calibration: CalibrationArtifact | None = None,
+    seed: int = 42,
+    include_oracle: bool = False,
+) -> dict[str, Any]:
+    """Generate deterministic Stage-2 CSV/JSON/MD/SVG artifacts."""
+    del seed  # reserved for future sampling; outputs already sorted deterministically
+    output_dir.mkdir(parents=True, exist_ok=True)
+    main_rows: list[dict[str, Any]] = []
+    profile_rows: list[dict[str, Any]] = []
+    decision_rows: list[dict[str, Any]] = []
+    est_vs_real: list[dict[str, Any]] = []
+    frontier_rows: list[dict[str, Any]] = []
+    failure_rows: list[dict[str, Any]] = []
+    difficulty_rows: list[dict[str, Any]] = []
+
+    for run_dir in sorted(run_dirs, key=lambda p: str(p)):
+        rec = collect_run_records(run_dir)
+        manifest = rec["manifest"]
+        summary = rec["summary"]
+        profile = (
+            (manifest.get("preference_profile_id"))
+            or (manifest.get("pareto_config") or {}).get("preference_profile")
+            or summary.get("preference_profile")
+            or "unknown"
+        )
+        mode = (manifest.get("stage2") or {}).get("mode") or summary.get("mode") or "run"
+        decisions = rec["decisions"]
+        traces = rec["traces"]
+        generated = sum(int(t.get("generated_count") or 0) for t in traces)
+        rejected = sum(int(t.get("rejected_count") or 0) for t in traces)
+        selected_status = {}
+        for d in decisions:
+            status = str(d.get("selection_status") or "unknown")
+            selected_status[status] = selected_status.get(status, 0) + 1
+            if str(d.get("evaluation_kind") or "") == "oracle" and not include_oracle:
+                # Diagnostic oracle never enters online aggregates.
+                failure_rows.append(
+                    {
+                        "run_dir": str(run_dir),
+                        "category": "oracle_diagnostic_excluded",
+                        "detail": d.get("decision_id"),
+                    }
+                )
+                continue
+            decision_rows.append(
+                {
+                    "run_dir": str(run_dir),
+                    "mode": mode,
+                    "profile": profile,
+                    "decision_id": d.get("decision_id"),
+                    "selection_status": status,
+                    "selected_content_hash": d.get("selected_content_hash"),
+                    "activated_revision_id": d.get("activated_revision_id"),
+                    "label": "online_policy",
+                }
+            )
+            snap = d.get("selected_candidate_snapshot") or {}
+            objs = (snap.get("objectives") or {}).get("values") or {}
+            est_vs_real.append(
+                {
+                    "run_dir": str(run_dir),
+                    "decision_id": d.get("decision_id"),
+                    "quality_est": _objective_value(objs.get("quality")),
+                    "cost_est": _objective_value(objs.get("cost")),
+                    "latency_est": _objective_value(objs.get("latency")),
+                    "quality_real": "",
+                    "cost_real": "",
+                    "latency_real": "",
+                }
+            )
+
+        # Frontier points from estimated archive (complete + dominated partials labeled).
+        est = rec["estimated_archive"]
+        complete_map = est.get("estimated_complete") or est.get("complete") or {}
+        partial_map = est.get("estimated_partial") or est.get("partial") or {}
+        selected_hashes = {
+            d.get("selected_content_hash") for d in decisions if d.get("selected_content_hash")
+        }
+        for ctx_id, items in sorted(complete_map.items()):
+            for item in items:
+                vals = (item.get("objectives") or {}).get("values") or {}
+                row = {
+                    "run_dir": str(run_dir),
+                    "context_id": ctx_id,
+                    "content_hash": item.get("content_hash"),
+                    "evaluation_kind": "estimated",
+                    "dominated": False,
+                    "selected": item.get("content_hash") in selected_hashes,
+                    "profile": profile,
+                    "quality": _objective_value(vals.get("quality")),
+                    "cost": _objective_value(vals.get("cost")),
+                    "latency": _objective_value(vals.get("latency")),
+                    "partial": False,
+                }
+                frontier_rows.append(row)
+        for ctx_id, items in sorted(partial_map.items()):
+            for item in items:
+                vals = (item.get("objectives") or {}).get("values") or {}
+                frontier_rows.append(
+                    {
+                        "run_dir": str(run_dir),
+                        "context_id": ctx_id,
+                        "content_hash": item.get("content_hash"),
+                        "evaluation_kind": "estimated",
+                        "dominated": True,
+                        "selected": False,
+                        "profile": profile,
+                        "quality": _objective_value(vals.get("quality")),
+                        "cost": _objective_value(vals.get("cost")),
+                        "latency": _objective_value(vals.get("latency")),
+                        "partial": True,
+                    }
+                )
+
+        committed = summary.get("committed") or []
+        revisions = int(summary.get("m5_revision_count") or 0)
+        main_rows.append(
+            {
+                "run_dir": str(run_dir),
+                "mode": mode,
+                "profile": profile,
+                "hidden_pass_at_1": summary.get("hidden_pass_at_1", ""),
+                "execution_success_rate": summary.get(
+                    "execution_success_rate",
+                    (1.0 if committed else 0.0),
+                ),
+                "avg_cost_usd": summary.get("avg_cost_usd", ""),
+                "total_cost_usd": summary.get("total_cost_usd", ""),
+                "cost_per_solved": summary.get("cost_per_solved", ""),
+                "wall_latency_s": summary.get("wall_latency_s", ""),
+                "critical_path_latency_s": summary.get("critical_path_latency_s", ""),
+                "communication_overhead": summary.get("communication_overhead", ""),
+                "generated_candidates": generated or summary.get("generated_candidates", ""),
+                "rejected_candidates": rejected or summary.get("rejected_candidates", ""),
+                "partial_candidates": summary.get("partial_candidates", len(partial_map)),
+                "dominated_candidates": summary.get("dominated_candidates", ""),
+                "selected_candidates": len(
+                    [d for d in decisions if d.get("selected_content_hash")]
+                ),
+                "archive_frontier_size": sum(len(v) for v in complete_map.values()),
+                "m5_revision_count": revisions,
+                "control_plane_cost_usd": summary.get("control_plane_cost_usd", ""),
+                "restart_recovery_counts": summary.get("restart_recovery_counts", 0),
+                "label": "online_policy",
+            }
+        )
+        profile_rows.append(
+            {
+                "profile": profile,
+                "mode": mode,
+                "decisions": len(decisions),
+                "selected": len([d for d in decisions if d.get("selected_content_hash")]),
+                "run_dir": str(run_dir),
+            }
+        )
+        difficulty_rows.append(
+            {
+                "difficulty": summary.get("difficulty", "fixture"),
+                "mode": mode,
+                "execution_success_rate": main_rows[-1]["execution_success_rate"],
+                "run_dir": str(run_dir),
+            }
+        )
+
+    _write_csv(
+        output_dir / "stage2_main_results.csv",
+        main_rows,
+        [
+            "run_dir",
+            "mode",
+            "profile",
+            "hidden_pass_at_1",
+            "execution_success_rate",
+            "avg_cost_usd",
+            "total_cost_usd",
+            "cost_per_solved",
+            "wall_latency_s",
+            "critical_path_latency_s",
+            "communication_overhead",
+            "generated_candidates",
+            "rejected_candidates",
+            "partial_candidates",
+            "dominated_candidates",
+            "selected_candidates",
+            "archive_frontier_size",
+            "m5_revision_count",
+            "control_plane_cost_usd",
+            "restart_recovery_counts",
+            "label",
+        ],
+    )
+    _write_csv(
+        output_dir / "stage2_by_difficulty.csv",
+        difficulty_rows,
+        ["difficulty", "mode", "execution_success_rate", "run_dir"],
+    )
+    _write_csv(
+        output_dir / "stage2_profile_results.csv",
+        profile_rows,
+        ["profile", "mode", "decisions", "selected", "run_dir"],
+    )
+    _write_csv(
+        output_dir / "stage2_decision_summary.csv",
+        decision_rows,
+        [
+            "run_dir",
+            "mode",
+            "profile",
+            "decision_id",
+            "selection_status",
+            "selected_content_hash",
+            "activated_revision_id",
+            "label",
+        ],
+    )
+    _write_csv(
+        output_dir / "stage2_estimated_vs_realized.csv",
+        est_vs_real,
+        [
+            "run_dir",
+            "decision_id",
+            "quality_est",
+            "cost_est",
+            "latency_est",
+            "quality_real",
+            "cost_real",
+            "latency_real",
+        ],
+    )
+    _write_csv(
+        output_dir / "stage2_frontier_points.csv",
+        frontier_rows,
+        [
+            "run_dir",
+            "context_id",
+            "content_hash",
+            "evaluation_kind",
+            "dominated",
+            "selected",
+            "profile",
+            "quality",
+            "cost",
+            "latency",
+            "partial",
+        ],
+    )
+    _write_csv(
+        output_dir / "stage2_failures.csv",
+        failure_rows,
+        ["run_dir", "category", "detail"],
+    )
+
+    profile = profile_rows[0]["profile"] if profile_rows else "unknown"
+    _svg_scatter(
+        output_dir / "pareto_quality_cost.svg",
+        points=frontier_rows,
+        x_key="cost",
+        y_key="quality",
+        title="Pareto quality vs cost (estimated)",
+        profile=profile,
+    )
+    _svg_scatter(
+        output_dir / "pareto_quality_latency.svg",
+        points=frontier_rows,
+        x_key="latency",
+        y_key="quality",
+        title="Pareto quality vs latency (estimated)",
+        profile=profile,
+    )
+
+    payload = {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "run_count": len(run_dirs),
+        "calibration": calibration.to_dict() if calibration else None,
+        "hypervolume": None,  # not implemented; do not invent
+        "notes": [
+            "hidden Pass@1 is evaluation-only when present",
+            "oracle diagnostics excluded from online aggregates",
+            "missing cost/tokens remain empty (unavailable), never coerced to zero",
+        ],
+        "main_results": main_rows,
+    }
+    (output_dir / "stage2_summary.json").write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    md = [
+        "# Stage-2 Pareto Summary",
+        "",
+        f"- runs: {len(run_dirs)}",
+        f"- online decisions: {len(decision_rows)}",
+        f"- frontier points: {len(frontier_rows)}",
+        "",
+        "Do not interpret fixture/smoke results as real-model quality gains.",
+        "",
+    ]
+    (output_dir / "stage2_summary.md").write_text("\n".join(md), encoding="utf-8")
+    return payload
+
+
+# Re-export visibility helpers for tests.
+PUBLIC_VIS = {
+    EvaluationVisibility.PUBLIC.value,
+    EvaluationVisibility.DEVELOPMENT.value,
+}
+FORBIDDEN_ONLINE_VIS = {
+    EvaluationVisibility.HIDDEN.value,
+    EvaluationVisibility.PRIVATE.value,
+    ParetoEvaluationKind.REALIZED.value,  # realized is post-hoc, not online estimate
+}
+
+
+def content_address(payload: Any) -> str:
+    blob = json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()

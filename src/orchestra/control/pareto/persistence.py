@@ -19,10 +19,40 @@ class ParetoPersistence:
         self._append("archive_events.jsonl", event)
 
     def append_decision(self, decision: Any) -> None:
-        self._append(
-            "decisions.jsonl",
-            decision.model_dump(mode="json") if hasattr(decision, "model_dump") else decision,
+        payload = (
+            decision.model_dump(mode="json")
+            if hasattr(decision, "model_dump")
+            else dict(decision)
         )
+        # Upsert by decision_id so propose→activate→finalize / restart does not
+        # duplicate durable decision rows.
+        decision_id = payload.get("decision_id")
+        target = self.directory / "decisions.jsonl"
+        if decision_id and target.exists():
+            kept: list[dict[str, Any]] = []
+            replaced = False
+            for line in target.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                row = json.loads(line)
+                if row.get("decision_id") == decision_id:
+                    kept.append(payload)
+                    replaced = True
+                else:
+                    kept.append(row)
+            if replaced:
+                temporary = target.with_suffix(target.suffix + ".tmp")
+                temporary.write_text(
+                    "".join(
+                        json.dumps(row, sort_keys=True, default=str, separators=(",", ":"))
+                        + "\n"
+                        for row in kept
+                    ),
+                    encoding="utf-8",
+                )
+                os.replace(temporary, target)
+                return
+        self._append("decisions.jsonl", payload)
 
     def snapshot(self, archive: ParetoArchive) -> None:
         self.save_estimated_archive(archive)

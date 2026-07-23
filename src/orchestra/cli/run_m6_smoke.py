@@ -51,23 +51,23 @@ def _load_config(path: Path) -> dict:
 
 
 def _pareto_config_from_yaml(cfg: dict) -> ParetoConfig:
-    """Construct ParetoConfig from the YAML values reported as loaded."""
-    section = dict(cfg.get("pareto") or {})
-    kwargs: dict = {"objectives": OBJ}
-    for key in (
-        "enabled",
-        "max_candidates",
-        "horizon_commits",
-        "fallback_to_rule_based",
-        "max_estimated_archive_size",
-        "max_realized_archive_size",
-        "allow_two_edit_pairs",
-    ):
-        if key in section:
-            kwargs[key] = section[key]
-    if "enabled" not in kwargs:
-        kwargs["enabled"] = True
-    return ParetoConfig(**kwargs)
+    """Construct ParetoConfig via the shared typed control-plane loader."""
+    from orchestra.control.pareto.runtime_factory import resolve_from_mapping
+
+    # Smoke YAML may omit slow_loop.enabled; treat as enabled when pareto is on.
+    mapping = dict(cfg)
+    slow = dict(mapping.get("slow_loop") or {})
+    pareto = dict(mapping.get("pareto") or {})
+    if pareto.get("enabled", True) and "enabled" not in slow:
+        slow["enabled"] = True
+    if "enabled" not in pareto:
+        pareto["enabled"] = True
+    # Preserve smoke objective set when YAML omits objectives.
+    if "objectives" not in pareto:
+        pareto["objectives"] = {k: v.value for k, v in OBJ.items()}
+    mapping["slow_loop"] = slow
+    mapping["pareto"] = pareto
+    return resolve_from_mapping(mapping).pareto_config
 
 
 def _plan_from_config(cfg: dict) -> TaskPlan:

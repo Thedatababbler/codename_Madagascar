@@ -1,0 +1,59 @@
+task_id: stage2_pareto_three
+plan_version: 1
+decomposition_rationale: >
+  Deterministic three-subtask fixture for Stage-2 Pareto online adaptation.
+  Distinct from offline Stage-1 single-subtask candidate analysis.
+subtasks:
+  - subtask_id: s1
+    title: seed
+    objective: Produce an initial public answer artifact.
+    dependencies: []
+    keystone_harness_id: repository_test_harness
+    local_graph_template: configs/graphs/codex_single_implementer.yaml
+    budget: {}
+  - subtask_id: s2
+    title: adapt
+    objective: Continue after Slow Loop / Pareto future adaptation.
+    dependencies: [s1]
+    keystone_harness_id: repository_test_harness
+    local_graph_template: configs/graphs/codex_single_implementer.yaml
+    budget: {}
+  - subtask_id: s3
+    title: finish
+    objective: Finalize after adapted communication and scheduling.
+    dependencies: [s2]
+    keystone_harness_id: repository_test_harness
+    local_graph_template: configs/graphs/codex_single_implementer.yaml
+    budget: {}
+communication_plan:
+  version: 1
+  payload_contracts:
+    - payload_id: large
+      source_subtask_id: s1
+      target_subtask_id: s3
+      artifact_type: FinalAnswerArtifact
+      required: false
+      max_tokens: 9000
+      metadata: {slot: "comm:large"}
+    - payload_id: p23
+      source_subtask_id: s2
+      target_subtask_id: s3
+      artifact_type: FinalAnswerArtifact
+      required: false
+      max_tokens: 4096
+      metadata: {slot: "comm:p23"}
+  delivery_schedule:
+    - rule_id: r_large
+      payload_id: large
+      enabled: true
+    - rule_id: r23
+      payload_id: p23
+      enabled: true
+  context_budgets:
+    s2: 1200
+    s3: 1200
+metadata:
+  allowed_backend_assignments:
+    coding: [codex_sdk, smolagents_code]
+    s2: [codex_sdk, smolagents_code]
+    s3: [codex_sdk, smolagents_code]

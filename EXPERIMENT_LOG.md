@@ -10,9 +10,45 @@
 | Status | `canonical` (use for comparisons) / `smoke` / `mock` / `superseded` / `incomplete` |
 | Paths | Repo-relative from AdaMAS root |
 
-**Last updated:** 2026-07-23 (UTC) — M5 blocked-wave recovery + transactional history
+**Last updated:** 2026-07-23 (UTC) — M6.2 production + Stage-2 experiment closure
 
 ---
+
+### EXP-20260723-02 — M6.2 Production Path + Stage-2 Pareto Experiments
+- **Status:** smoke / mock (fixture; no paid or held-out real-model runs)
+- **Date:** 2026-07-23 (UTC)
+- **Branch / commit:** `agnostic` @ post-`ccdbfe4` (M6.2 uncommitted local work)
+- **Benchmark / phase:** opt-in production runner via ReadySubtaskScheduler;
+  typed control-plane config; Stage-2 CLI validate/dry-run/run-fixture/report;
+  leakage-free calibration gates; deterministic reports
+- **Baseline / graph:** starts from `ccdbfe4`; no Codex hybrid changes; no GA/RL
+- **Command:**
+  ```bash
+  uv sync --extra smolagents --extra codex
+  uv run ruff check .
+  uv run pytest -q tests/unit
+  uv run pytest -q tests/integration
+  uv run python -m orchestra.cli.run_m5_smoke \
+    --config configs/experiments/m5_slow_loop_smoke.yaml
+  uv run python -m orchestra.cli.run_m6_smoke \
+    --config configs/experiments/m6_pareto_smoke.yaml
+  uv run python -m orchestra.cli.stage2_pareto_experiments validate \
+    --config configs/experiments/stage2/m6_balanced_knee.yaml
+  uv run python -m orchestra.cli.stage2_pareto_experiments dry-run \
+    --config configs/experiments/stage2/m6_balanced_knee.yaml
+  uv run python -m orchestra.cli.stage2_pareto_experiments run-fixture \
+    --config configs/experiments/stage2/m6_balanced_knee.yaml
+  uv run python -m orchestra.cli.stage2_pareto_experiments report \
+    --run-dir <fixture-run-dir>
+  ```
+- **Results:** M6 reachable from `run_m6_orchestra` / Stage-2 fixture on the
+  real scheduler path; M5 hard safety remains authoritative; hidden/private
+  labels cannot influence selection; reports are artifact-backed and
+  deterministic. **Do not claim real-model quality improvement from fixtures.**
+- **Artifacts:** `docs/stage2_pareto_experiment_protocol.md`,
+  `configs/experiments/stage2/*.yaml`, `outputs/stage2_pareto/`
+- **Notes:** leave uncommitted until review; real M6 dev experiments require
+  explicit authorization + frozen calibration
 
 ### EXP-20260723-01 — M5 Blocked-Wave Recovery + Transactional Slow Loop History
 - **Status:** smoke (CI gate; preserves M6/M6.1; no Codex hybrid changes)

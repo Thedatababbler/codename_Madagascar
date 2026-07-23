@@ -1,10 +1,12 @@
+from __future__ import annotations
+
 import os
 import re
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from orchestra.runtime.limits import RuntimeLimits
 
@@ -27,6 +29,9 @@ class ExperimentSection(BaseModel):
     graph_config: str
     contracts_dir: str
     output_root: str
+    # Optional multi-subtask production / Stage-2 fields (ignored by Stage-1 runner).
+    plan_config: str | None = None
+    source_repo: str | None = None
 
 
 class BenchmarkSection(BaseModel):
@@ -57,15 +62,40 @@ class SandboxSection(BaseModel):
 
 
 class ExperimentConfig(BaseModel):
+    """Stage-1 experiment config with optional opt-in M5/M6 control-plane sections.
+
+    Existing Stage-1 YAML files omit control-plane keys and remain behaviorally
+    unchanged (slow_loop/pareto default to disabled).
+    """
+
     experiment: ExperimentSection
     benchmark: BenchmarkSection
     runtime: RuntimeLimits
     sandbox: SandboxSection
     evaluation: dict[str, Any]
     logging: dict[str, Any]
+    # Opt-in dual-frequency / Pareto sections (shared typed loader).
+    slow_loop: dict[str, Any] = Field(default_factory=dict)
+    pareto: dict[str, Any] = Field(default_factory=dict)
+    preference_profile: str | None = None
+    candidate_catalog: dict[str, Any] = Field(default_factory=dict)
+    stage2: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _pareto_requires_slow_loop(self) -> ExperimentConfig:
+        pareto_enabled = bool((self.pareto or {}).get("enabled", False))
+        slow_enabled = bool((self.slow_loop or {}).get("enabled", False))
+        if pareto_enabled and not slow_enabled:
+            raise ValueError("pareto.enabled=true requires slow_loop.enabled=true")
+        return self
 
 
 def load_experiment_config(path: str | Path) -> ExperimentConfig:
     return ExperimentConfig.model_validate(
         _expand(yaml.safe_load(Path(path).read_text(encoding="utf-8")))
     )
+
+
+def load_experiment_raw(path: str | Path) -> dict[str, Any]:
+    """Load and expand YAML without discarding control-plane keys."""
+    return _expand(yaml.safe_load(Path(path).read_text(encoding="utf-8")) or {})

@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from itertools import combinations
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from orchestra.control.pareto.archive import ParetoArchive
 from orchestra.control.pareto.candidate import build_pareto_candidate
 from orchestra.control.pareto.schemas import (
+    ObjectiveValue,
     ParetoConfig,
     ParetoDecisionContext,
     ParetoOrchestraCandidate,
@@ -32,6 +33,9 @@ from orchestra.control.slow_loop.schemas import (
 )
 from orchestra.control.task_state import TaskExecutionState
 
+if TYPE_CHECKING:
+    from orchestra.control.pareto.catalog import SafeCandidateCatalog
+
 
 class CandidateProposer(Protocol):
     def propose(self, **kwargs) -> list[GlobalEdit]: ...
@@ -39,10 +43,14 @@ class CandidateProposer(Protocol):
 
 class ParetoCandidateGenerator:
     def __init__(
-        self, config: ParetoConfig | None = None, archive: ParetoArchive | None = None
+        self,
+        config: ParetoConfig | None = None,
+        archive: ParetoArchive | None = None,
+        catalog: SafeCandidateCatalog | None = None,
     ) -> None:
         self.config = config or ParetoConfig()
         self.archive = archive
+        self.catalog = catalog
         self.resolver = FutureAgentNodeResolver()
 
     def generate(
@@ -72,6 +80,19 @@ class ParetoCandidateGenerator:
         ):
             if concurrency != scheduling_policy.max_concurrent_subtasks:
                 edits.append([SchedulingConcurrencyEdit(max_concurrent_subtasks=concurrency)])
+        if self.catalog is not None:
+            edits.extend(
+                self.catalog.scheduling_edits(
+                    current_concurrency=scheduling_policy.max_concurrent_subtasks
+                )
+            )
+            edits.extend(self.catalog.serialization_edits(eligible=set(ids)))
+            edits.extend(
+                self.catalog.context_budget_edits(
+                    eligible=set(ids),
+                    current_budgets=dict(communication_plan.context_budgets or {}),
+                )
+            )
         if len(ids) >= 2 and (
             GlobalDiagnosisReason.SCHEDULING_CONTENTION in reasons
             or GlobalDiagnosisReason.CANONICAL_CONFLICT_RISK in reasons
@@ -128,14 +149,26 @@ class ParetoCandidateGenerator:
                             )
                         ]
                     )
+        # Allowlisted graph-template candidates (compile-gated in catalog).
+        declared_by_hash: dict[str, dict] = {}
+        if self.catalog is not None:
+            for edit_list, declared in self.catalog.graph_template_edits(
+                eligible=set(ids)
+            ):
+                edits.append(edit_list)
+                # Stash declarations keyed later by content hash after build.
+                declared_by_hash[id(edit_list)] = declared
         # Archive-guided replay is only a declared edit list, never a genetic operation.
-        if self.archive:
+        if self.archive and self.config.allow_archive_replay:
             for archived in self.archive.entries(context.context_id, kind=self._estimated_kind())[
                 :1
             ]:
                 if archived.edits:
                     edits.append(list(archived.edits[:1]))
-        if self.config.allow_two_edit_pairs:
+        allow_pairs = self.config.allow_two_edit_pairs
+        if self.catalog is not None:
+            allow_pairs = allow_pairs and self.catalog.section.allow_two_edit_pairs
+        if allow_pairs:
             singles = list(edits)
             for left, right in combinations(singles, 2):
                 merged = left + right
@@ -153,6 +186,16 @@ class ParetoCandidateGenerator:
                 eligible,
                 context,
             )
+            # Graph-template candidates without declared evidence stay incomplete.
+            declared = declared_by_hash.get(id(edit_list))
+            if declared is not None:
+                for name, value in declared.items():
+                    if value is None:
+                        built.objectives.values[name] = ObjectiveValue.unavailable(
+                            "catalog graph template missing defensible evidence"
+                        )
+                    else:
+                        built.objectives.values[name] = value
             if built.content_hash not in seen:
                 seen.add(built.content_hash)
                 candidates.append(built)

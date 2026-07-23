@@ -221,7 +221,23 @@ uv run python -m orchestra.cli.run_m5_smoke \
 # Deterministic M6 smoke (no API keys)
 uv run python -m orchestra.cli.run_m6_smoke \
   --config configs/experiments/m6_pareto_smoke.yaml
+
+# M6.2 opt-in production path (ReadySubtaskScheduler; multi-subtask plan)
+uv run python -m orchestra.cli.run_m6_orchestra \
+  --config configs/experiments/stage2/m6_balanced_knee.yaml \
+  --mock-llm
+
+# Stage-2 Pareto experiments (fixture / report; no paid API by default)
+uv run python -m orchestra.cli.stage2_pareto_experiments validate \
+  --config configs/experiments/stage2/m6_balanced_knee.yaml
+uv run python -m orchestra.cli.stage2_pareto_experiments run-fixture \
+  --config configs/experiments/stage2/m6_balanced_knee.yaml
+uv run python -m orchestra.cli.stage2_pareto_experiments report \
+  --run-dir <fixture-run-dir>
 ```
+
+Protocol: `docs/stage2_pareto_experiment_protocol.md`. Design:
+`docs/m6_pareto_orchestra_search.md`. Fixture results are not real-model gains.
 
 ## Stage 1 experiments
 

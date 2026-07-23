@@ -250,6 +250,8 @@ class ParetoConfig(BaseModel):
     max_estimated_archive_size: int = 64
     max_realized_archive_size: int = 64
     allow_two_edit_pairs: bool = True
+    allow_archive_replay: bool = True
+    scalarize_without_pareto_filter: bool = False
     fallback_to_rule_based: bool = False
     horizon_commits: int = 1
     epsilon: dict[str, float] = Field(default_factory=dict)
