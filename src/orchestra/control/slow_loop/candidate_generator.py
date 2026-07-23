@@ -6,6 +6,7 @@ from orchestra.communication.ledger import DeliveryFailureReason
 from orchestra.communication.payload import DeliveryRule, DeliveryTrigger, PayloadContract
 from orchestra.communication.plan import CommunicationPlan
 from orchestra.control.slow_loop.agent_node_resolver import FutureAgentNodeResolver
+from orchestra.control.slow_loop.communication_safety import enabled_rule_payload_ids
 from orchestra.control.slow_loop.edits import apply_global_edits
 from orchestra.control.slow_loop.graph_materializer import (
     FutureGraphMaterializer,
@@ -29,6 +30,36 @@ from orchestra.control.slow_loop.schemas import (
 )
 from orchestra.control.task_state import SubtaskStatus, TaskExecutionState
 from orchestra.decomposition.schemas import TaskPlan
+
+
+def _enabled_delivery_rule_edit(
+    *,
+    payload_id: str,
+    existing_rules: list[DeliveryRule],
+) -> UpsertDeliveryRuleEdit:
+    """Enable/replace a DeliveryRule for ``payload_id`` (delivery-engine aligned)."""
+    if existing_rules:
+        base = sorted(existing_rules, key=lambda r: (-r.priority, r.rule_id))[0]
+        return UpsertDeliveryRuleEdit(
+            rule=DeliveryRule(
+                rule_id=base.rule_id,
+                payload_id=payload_id,
+                trigger=base.trigger,
+                enabled=True,
+                condition=base.condition,
+                priority=base.priority,
+                forward_only=base.forward_only,
+            )
+        )
+    return UpsertDeliveryRuleEdit(
+        rule=DeliveryRule(
+            rule_id=f"del_{payload_id}",
+            payload_id=payload_id,
+            trigger=DeliveryTrigger.ON_SOURCE_COMMIT,
+            enabled=True,
+            forward_only=True,
+        )
+    )
 
 # Communication blocks that cannot be safely repaired by future-only edits.
 _UNREPAIRABLE_COMM_REASONS = {
@@ -94,9 +125,8 @@ class RuleBasedGlobalCandidateGenerator:
         if GlobalDiagnosisReason.MISSING_PAYLOAD in diagnosis.reasons or (
             GlobalDiagnosisReason.DELIVERY_FAILURE in diagnosis.reasons
         ):
-            rule_payloads = {
-                r.payload_id for r in communication_plan.delivery_schedule
-            }
+            # Align with delivery engine: only enabled rules count.
+            enabled_ruled = enabled_rule_payload_ids(communication_plan)
             for sid in diagnosis.affected_future_subtask_ids:
                 if sid not in eligible:
                     continue
@@ -106,26 +136,28 @@ class RuleBasedGlobalCandidateGenerator:
                     # Leave unrepaired; selector/controller yield NO_SAFE_FUTURE_EDIT.
                     continue
 
-                # Exact repair: existing required contracts missing a DeliveryRule.
+                # Exact repair: required contracts with no enabled DeliveryRule
+                # (missing entirely, or only disabled rules present).
                 restored_existing = False
                 for contract in communication_plan.payload_contracts:
                     if contract.target_subtask_id != sid:
                         continue
                     if not contract.is_required():
                         continue
-                    if contract.payload_id in rule_payloads:
+                    if contract.payload_id in enabled_ruled:
                         continue
+                    existing_rules = [
+                        r
+                        for r in communication_plan.delivery_schedule
+                        if r.payload_id == contract.payload_id
+                    ]
                     edits_a.append(
-                        UpsertDeliveryRuleEdit(
-                            rule=DeliveryRule(
-                                rule_id=f"del_{contract.payload_id}",
-                                payload_id=contract.payload_id,
-                                trigger=DeliveryTrigger.ON_SOURCE_COMMIT,
-                                forward_only=True,
-                            )
+                        _enabled_delivery_rule_edit(
+                            payload_id=contract.payload_id,
+                            existing_rules=existing_rules,
                         )
                     )
-                    rule_payloads.add(contract.payload_id)
+                    enabled_ruled.add(contract.payload_id)
                     restored_existing = True
 
                 if restored_existing or block_reason == (
@@ -138,9 +170,11 @@ class RuleBasedGlobalCandidateGenerator:
                 deps = [d for d in sub.spec.dependencies if d]
                 if not deps:
                     continue
-                # Already covered by a required contract (rule present).
+                # Already covered by a required contract with an enabled rule.
                 if any(
-                    c.target_subtask_id == sid and c.is_required()
+                    c.target_subtask_id == sid
+                    and c.is_required()
+                    and c.payload_id in enabled_ruled
                     for c in communication_plan.payload_contracts
                 ):
                     continue
@@ -155,19 +189,19 @@ class RuleBasedGlobalCandidateGenerator:
                     None,
                 )
                 if existing_auto is not None:
-                    # Auto contract exists but rule was absent → restore rule only.
-                    if pid not in rule_payloads:
+                    # Auto contract exists but enabled rule absent → restore/enable.
+                    if pid not in enabled_ruled:
+                        existing_rules = [
+                            r
+                            for r in communication_plan.delivery_schedule
+                            if r.payload_id == pid
+                        ]
                         edits_a.append(
-                            UpsertDeliveryRuleEdit(
-                                rule=DeliveryRule(
-                                    rule_id=f"del_{pid}",
-                                    payload_id=pid,
-                                    trigger=DeliveryTrigger.ON_SOURCE_COMMIT,
-                                    forward_only=True,
-                                )
+                            _enabled_delivery_rule_edit(
+                                payload_id=pid, existing_rules=existing_rules
                             )
                         )
-                        rule_payloads.add(pid)
+                        enabled_ruled.add(pid)
                     continue
                 edits_a.append(
                     UpsertPayloadContractEdit(
@@ -188,16 +222,9 @@ class RuleBasedGlobalCandidateGenerator:
                     )
                 )
                 edits_a.append(
-                    UpsertDeliveryRuleEdit(
-                        rule=DeliveryRule(
-                            rule_id=f"del_{pid}",
-                            payload_id=pid,
-                            trigger=DeliveryTrigger.ON_SOURCE_COMMIT,
-                            forward_only=True,
-                        )
-                    )
+                    _enabled_delivery_rule_edit(payload_id=pid, existing_rules=[])
                 )
-                rule_payloads.add(pid)
+                enabled_ruled.add(pid)
 
         if edits_a:
             candidates.append(
