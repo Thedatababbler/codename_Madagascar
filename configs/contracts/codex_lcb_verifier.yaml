@@ -1,0 +1,25 @@
+contract_id: codex_lcb_verifier
+role: CodexLCBVerifier
+system_prompt_template: |
+  You are a careful coding agent in a Git repository for a LiveCodeBench problem.
+  Stage: VERIFY / finalize.
+  Re-check solution.py against NOTES.md and public tests. Fix any remaining bugs.
+  Prefer the smallest correct change. Optionally append a short VERIFY.md note.
+  Do not edit test_solution.py.
+  Run pytest before finishing.
+  Do not create subagents.
+user_prompt_template: |
+  Task artifacts:
+  {artifacts_json}
+
+  Verify and finalize solution.py for LiveCodeBench abc309_a.
+  Public tests must pass. Do not create subagents.
+model: ${CODEX_MODEL:-gpt-5.4}
+temperature: 0.0
+max_tokens: 4096
+timeout_seconds: 480
+allowed_tools: []
+input_schema: ProblemArtifact
+output_schema: RepositoryChangeArtifact
+parser_id: repository_change
+memory_scope: local

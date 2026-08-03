@@ -1,0 +1,132 @@
+# Stage 3 — VERIFY
+# Topology: linear stress → regenerate → mandatory polish repair.
+# Distinct from analyze (fan-in dual analysts) and implement (dual-coder race).
+#
+# Agents (3):
+#   - stress_analyst (edge_case_analyst): adversarial edge-case pass
+#   - final_coder (solution_coder): regenerate final candidate
+#   - polish_repair (repair_agent): always-on polish after public harness
+graph_id: lcb_mas_verify
+version: "1.1"
+initial_artifact_slots:
+  problem: ProblemArtifact
+final_output_slot: final_code
+metadata:
+  role: verify
+  topology: linear_stress_regenerate_polish
+  min_agents: 3
+nodes:
+  - node_id: stress_analyst
+    node_kind: agent
+    contract_id: edge_case_analyst
+    backend:
+      type: smolagents_code
+      max_steps: 6
+      executor_type: local
+      use_structured_outputs_internally: true
+      additional_authorized_imports: []
+    model:
+      provider: openai_compatible
+      name: ${ANALYST_MODEL:-gpt-5-mini}
+      temperature: 0.3
+      max_tokens: 1600
+    tools: [final_answer]
+    output_contract:
+      parser_id: json
+      output_schema: EdgeCaseArtifact
+    input_slots: {problem: ProblemArtifact}
+    output_slots: {edge_cases: EdgeCaseArtifact}
+    timeout_seconds: 180
+  - node_id: final_coder
+    node_kind: agent
+    contract_id: solution_coder
+    backend:
+      type: smolagents_code
+      max_steps: 8
+      executor_type: local
+      use_structured_outputs_internally: true
+      additional_authorized_imports: []
+    model:
+      provider: openai_compatible
+      name: ${CODER_MODEL:-gpt-5-mini}
+      temperature: 0.15
+      max_tokens: 4000
+    tools: [final_answer]
+    output_contract:
+      parser_id: python_code
+      output_schema: CodeArtifact
+    input_slots:
+      problem: ProblemArtifact
+      edge_cases: EdgeCaseArtifact
+    output_slots: {code: CodeArtifact}
+    timeout_seconds: 300
+  - node_id: public_harness_final
+    node_kind: harness
+    harness_id: public_code_harness
+    visibility: public
+    input_slots: {problem: ProblemArtifact, code: CodeArtifact}
+    output_slots: {result: PublicHarnessResultArtifact}
+  - node_id: polish_repair
+    node_kind: agent
+    contract_id: repair_agent
+    backend:
+      type: smolagents_code
+      max_steps: 8
+      executor_type: local
+      use_structured_outputs_internally: true
+      additional_authorized_imports: []
+    model:
+      provider: openai_compatible
+      name: ${REPAIR_MODEL:-gpt-5-mini}
+      temperature: 0.05
+      max_tokens: 4000
+    tools: [final_answer]
+    output_contract:
+      parser_id: json
+      output_schema: RepairArtifact
+    input_slots:
+      problem: ProblemArtifact
+      previous_code: CodeArtifact
+      public_result: PublicHarnessResultArtifact
+      edge_cases: EdgeCaseArtifact
+    output_slots: {repair: RepairArtifact}
+    timeout_seconds: 300
+  - node_id: repair_to_code
+    node_kind: transform
+    transform_id: repair_to_code
+    input_slots: {repair: RepairArtifact}
+    output_slots: {code: CodeArtifact}
+  - node_id: public_harness_polished
+    node_kind: harness
+    harness_id: public_code_harness
+    visibility: public
+    input_slots: {problem: ProblemArtifact, code: CodeArtifact}
+    output_slots: {result: PublicHarnessResultArtifact}
+  - node_id: selector
+    node_kind: selector
+    selector_id: deterministic_code_selector
+    input_slots:
+      initial_code: CodeArtifact
+      initial_result: PublicHarnessResultArtifact
+      repaired_code: CodeArtifact
+      repaired_result: PublicHarnessResultArtifact
+    output_slots: {code: CodeArtifact}
+  - node_id: freeze_selected
+    node_kind: transform
+    transform_id: freeze_code
+    input_slots: {code: CodeArtifact}
+    output_slots: {final_code: FinalCodeArtifact}
+edges:
+  # Strict linear backbone: stress → code → harness → polish → harness → pick.
+  - {edge_id: stress_to_coder, source_node: stress_analyst, source_output: edge_cases, destination_node: final_coder, destination_input: edge_cases}
+  - {edge_id: coder_to_harness, source_node: final_coder, source_output: code, destination_node: public_harness_final, destination_input: code}
+  - {edge_id: coder_to_polish, source_node: final_coder, source_output: code, destination_node: polish_repair, destination_input: previous_code}
+  - {edge_id: harness_to_polish, source_node: public_harness_final, source_output: result, destination_node: polish_repair, destination_input: public_result}
+  - {edge_id: stress_to_polish, source_node: stress_analyst, source_output: edge_cases, destination_node: polish_repair, destination_input: edge_cases}
+  - {edge_id: polish_to_conversion, source_node: polish_repair, source_output: repair, destination_node: repair_to_code, destination_input: repair}
+  - {edge_id: polished_to_harness, source_node: repair_to_code, source_output: code, destination_node: public_harness_polished, destination_input: code}
+  - {edge_id: final_code_to_selector, source_node: final_coder, source_output: code, destination_node: selector, destination_input: initial_code}
+  - {edge_id: final_result_to_selector, source_node: public_harness_final, source_output: result, destination_node: selector, destination_input: initial_result}
+  - {edge_id: polished_code_to_selector, source_node: repair_to_code, source_output: code, destination_node: selector, destination_input: repaired_code}
+  - {edge_id: polished_result_to_selector, source_node: public_harness_polished, source_output: result, destination_node: selector, destination_input: repaired_result}
+  - {edge_id: selector_to_freeze, source_node: selector, source_output: code, destination_node: freeze_selected, destination_input: code}

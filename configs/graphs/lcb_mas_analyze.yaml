@@ -1,0 +1,114 @@
+# Stage 1 — ANALYZE (fan-in planning team)
+# Topology: two analysts in parallel → merge → one draft coder → public harness.
+# Deliberately NO repair loop (that's implement/verify).
+graph_id: lcb_mas_analyze
+version: "1.1"
+initial_artifact_slots:
+  problem: ProblemArtifact
+final_output_slot: final_code
+metadata:
+  role: analyze
+  topology: parallel_analysts_then_draft
+  min_agents: 3
+nodes:
+  - node_id: algorithm_analyst
+    node_kind: agent
+    contract_id: algorithm_analyst
+    backend:
+      type: smolagents_code
+      max_steps: 6
+      executor_type: local
+      use_structured_outputs_internally: true
+      additional_authorized_imports: []
+    model:
+      provider: openai_compatible
+      name: ${ANALYST_MODEL:-gpt-5-mini}
+      temperature: 0.2
+      max_tokens: 1800
+    tools: [final_answer]
+    output_contract:
+      parser_id: json
+      output_schema: AlgorithmPlanArtifact
+    input_slots: {problem: ProblemArtifact}
+    output_slots: {plan: AlgorithmPlanArtifact}
+    timeout_seconds: 180
+  - node_id: edge_case_analyst
+    node_kind: agent
+    contract_id: edge_case_analyst
+    backend:
+      type: smolagents_code
+      max_steps: 6
+      executor_type: local
+      use_structured_outputs_internally: true
+      additional_authorized_imports: []
+    model:
+      provider: openai_compatible
+      name: ${ANALYST_MODEL:-gpt-5-mini}
+      temperature: 0.2
+      max_tokens: 1600
+    tools: [final_answer]
+    output_contract:
+      parser_id: json
+      output_schema: EdgeCaseArtifact
+    input_slots: {problem: ProblemArtifact}
+    output_slots: {edge_cases: EdgeCaseArtifact}
+    timeout_seconds: 180
+  - node_id: plan_merger
+    node_kind: transform
+    transform_id: merge_analysis_artifacts
+    input_slots:
+      plan: AlgorithmPlanArtifact
+      edge_cases: EdgeCaseArtifact
+    output_slots: {combined_plan: CombinedPlanArtifact}
+  - node_id: draft_coder
+    node_kind: agent
+    contract_id: solution_coder
+    backend:
+      type: smolagents_code
+      max_steps: 8
+      executor_type: local
+      use_structured_outputs_internally: true
+      additional_authorized_imports: []
+    model:
+      provider: openai_compatible
+      name: ${CODER_MODEL:-gpt-5-mini}
+      temperature: 0.3
+      max_tokens: 4000
+    tools: [final_answer]
+    output_contract:
+      parser_id: python_code
+      output_schema: CodeArtifact
+    input_slots:
+      problem: ProblemArtifact
+      combined_plan: CombinedPlanArtifact
+    output_slots: {code: CodeArtifact}
+    timeout_seconds: 300
+  - node_id: public_harness
+    node_kind: harness
+    harness_id: public_code_harness
+    visibility: public
+    input_slots: {problem: ProblemArtifact, code: CodeArtifact}
+    output_slots: {result: PublicHarnessResultArtifact}
+  - node_id: freeze_draft
+    node_kind: transform
+    transform_id: freeze_code
+    input_slots: {code: CodeArtifact, gate: PublicHarnessResultArtifact}
+    output_slots: {final_code: FinalCodeArtifact}
+edges:
+  - {edge_id: algo_to_merge, source_node: algorithm_analyst, source_output: plan, destination_node: plan_merger, destination_input: plan}
+  - {edge_id: edge_to_merge, source_node: edge_case_analyst, source_output: edge_cases, destination_node: plan_merger, destination_input: edge_cases}
+  - {edge_id: merge_to_draft, source_node: plan_merger, source_output: combined_plan, destination_node: draft_coder, destination_input: combined_plan}
+  - {edge_id: draft_to_harness, source_node: draft_coder, source_output: code, destination_node: public_harness, destination_input: code}
+  - {edge_id: draft_to_freeze, source_node: draft_coder, source_output: code, destination_node: freeze_draft, destination_input: code}
+  - edge_id: harness_pass_to_freeze
+    source_node: public_harness
+    source_output: result
+    destination_node: freeze_draft
+    destination_input: gate
+    condition: {source_field: passed, operator: is_true}
+  - edge_id: harness_unavailable_to_freeze
+    source_node: public_harness
+    source_output: result
+    destination_node: freeze_draft
+    destination_input: gate
+    condition: {source_field: harness_available, operator: is_false}

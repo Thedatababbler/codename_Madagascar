@@ -1,0 +1,73 @@
+task_id: codex_tiny_repo_m5
+plan_version: 1
+decomposition_rationale: >
+  Demo plan for M5 Codex sample: first subtask fixes the repository bug;
+  second subtask verifies on the committed canonical workspace. Pareto search
+  is intentionally disabled for this plan.
+decomposition_status: ok
+subtasks:
+  - subtask_id: implement_fix
+    title: Fix repository bug
+    objective: >
+      Fix calculator.add so that tests pass. Make the smallest correct change.
+      Run the tests before finishing. Do not create subagents.
+    dependencies: []
+    priority: 10
+    keystone_harness_id: repository_test_harness
+    local_graph_template: configs/graphs/codex_single_implementer.yaml
+    budget:
+      max_llm_calls: 2
+      max_steps: 2
+      timeout_seconds: 300
+    input_artifacts:
+      - slot: problem
+        artifact_id: ""
+        artifact_type: ProblemArtifact
+    expected_outputs:
+      - parser_id: repository_change
+        output_schema: RepositoryChangeArtifact
+  - subtask_id: verify_fix
+    title: Verify committed fix
+    objective: >
+      The upstream implement_fix subtask should already have fixed add().
+      Confirm repository tests pass on the current workspace. If anything is
+      still wrong, apply the smallest fix. Do not create subagents.
+    dependencies:
+      - implement_fix
+    priority: 5
+    keystone_harness_id: repository_test_harness
+    local_graph_template: configs/graphs/codex_single_implementer.yaml
+    budget:
+      max_llm_calls: 1
+      max_steps: 1
+      timeout_seconds: 300
+    input_artifacts:
+      - slot: problem
+        artifact_id: ""
+        artifact_type: ProblemArtifact
+    expected_outputs:
+      - parser_id: repository_change
+        output_schema: RepositoryChangeArtifact
+final_aggregation:
+  strategy: identity
+  terminal_subtask_id: verify_fix
+communication_plan:
+  version: 1
+  payload_contracts:
+    - payload_id: fix_change
+      source_subtask_id: implement_fix
+      target_subtask_id: verify_fix
+      artifact_type: RepositoryChangeArtifact
+      required: false
+      max_tokens: 4096
+      metadata:
+        slot: comm:fix_change
+  delivery_schedule:
+    - rule_id: deliver_fix
+      payload_id: fix_change
+      enabled: true
+  context_budgets:
+    verify_fix: 8000
+metadata:
+  demo: m5_codex_process_trace
+  pareto_enabled: false

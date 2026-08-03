@@ -1,0 +1,108 @@
+# Formal LiveCodeBench problem (AtCoder abc309_a "Nine") with 3 MAS subtasks.
+# Each subtask local graph has ≥3 agent nodes. Pareto is off for this sample.
+task_id: lcb_abc309_a
+plan_version: 1
+decomposition_rationale: >
+  Formal LiveCodeBench task abc309_a decomposed into three topologically
+  distinct MAS stages: analyze (parallel dual-analyst fan-in → draft),
+  implement (dual-coder race + conditional repair), verify (linear stress →
+  regenerate → polish). Each stage has ≥3 agents. Not a mock fixture.
+decomposition_status: ok
+subtasks:
+  - subtask_id: analyze
+    title: Analyze problem and draft solution
+    objective: >
+      Analyze LiveCodeBench problem abc309_a (Nine). Produce an algorithm plan,
+      enumerate edge cases, and emit an initial Python draft that passes public
+      tests when possible.
+    dependencies: []
+    priority: 30
+    keystone_harness_id: public_code_harness
+    local_graph_template: configs/graphs/lcb_mas_analyze.yaml
+    budget:
+      max_llm_calls: 6
+      max_steps: 12
+      timeout_seconds: 900
+    input_artifacts:
+      - slot: problem
+        artifact_id: ""
+        artifact_type: ProblemArtifact
+    expected_outputs:
+      - parser_id: python_code
+        output_schema: FinalCodeArtifact
+  - subtask_id: implement
+    title: Implement with repair loop
+    objective: >
+      Using the upstream draft when available, re-analyze and implement a robust
+      solution for abc309_a. Repair on public-harness failure before committing.
+    dependencies: [analyze]
+    priority: 20
+    keystone_harness_id: public_code_harness
+    local_graph_template: configs/graphs/lcb_mas_implement.yaml
+    budget:
+      max_llm_calls: 10
+      max_steps: 16
+      timeout_seconds: 1200
+    input_artifacts:
+      - slot: problem
+        artifact_id: ""
+        artifact_type: ProblemArtifact
+    expected_outputs:
+      - parser_id: python_code
+        output_schema: FinalCodeArtifact
+  - subtask_id: verify
+    title: Verify and finalize
+    objective: >
+      Re-check edge cases and algorithm assumptions, regenerate or repair the
+      solution, and freeze the final code for abc309_a.
+    dependencies: [implement]
+    priority: 10
+    keystone_harness_id: public_code_harness
+    local_graph_template: configs/graphs/lcb_mas_verify.yaml
+    budget:
+      max_llm_calls: 10
+      max_steps: 16
+      timeout_seconds: 1200
+    input_artifacts:
+      - slot: problem
+        artifact_id: ""
+        artifact_type: ProblemArtifact
+    expected_outputs:
+      - parser_id: python_code
+        output_schema: FinalCodeArtifact
+final_aggregation:
+  strategy: identity
+  terminal_subtask_id: verify
+communication_plan:
+  version: 1
+  payload_contracts:
+    - payload_id: draft_code
+      source_subtask_id: analyze
+      target_subtask_id: implement
+      artifact_type: FinalCodeArtifact
+      required: false
+      max_tokens: 8000
+      metadata: {slot: "comm:draft_code"}
+    - payload_id: implemented_code
+      source_subtask_id: implement
+      target_subtask_id: verify
+      artifact_type: FinalCodeArtifact
+      required: false
+      max_tokens: 8000
+      metadata: {slot: "comm:implemented_code"}
+  delivery_schedule:
+    - rule_id: deliver_draft
+      payload_id: draft_code
+      enabled: true
+    - rule_id: deliver_implemented
+      payload_id: implemented_code
+      enabled: true
+  context_budgets:
+    implement: 12000
+    verify: 12000
+metadata:
+  benchmark: livecodebench
+  question_id: abc309_a
+  release_version: release_v6
+  pareto_enabled: false
+  sample_kind: formal_lcb_three_subtask_mas

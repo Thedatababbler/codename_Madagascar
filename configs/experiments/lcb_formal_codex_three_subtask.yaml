@@ -1,0 +1,57 @@
+# Formal LiveCodeBench abc309_a × 3 Codex subtasks (public pytest fixture).
+# Pareto disabled. Requires: uv sync --extra codex, OPENAI_API_KEY,
+# and usually ADAMAS_CODEX_SANDBOX_OVERRIDE=full_access on this host.
+experiment:
+  name: lcb_formal_codex_three_subtask
+  seed: 42
+  graph_config: configs/graphs/codex_lcb_analyze.yaml
+  contracts_dir: configs/contracts
+  output_root: outputs/lcb_formal_codex_three_subtask
+  plan_config: configs/plans/lcb_abc309_a_codex_three_subtasks.yaml
+  source_repo: tests/fixtures/lcb_abc309_a_repo
+
+benchmark:
+  name: livecodebench
+  release_version: release_v6
+  scenario: codegeneration
+  language: python
+  task_id: abc309_a
+  manifest: configs/manifests/lcb_smoke.json
+  data_dir: /root/data/livecodebench/code_generation_lite
+  repository_path: /root/projects/LiveCodeBench
+
+runtime:
+  backend: native_async
+  max_parallel_benchmark_tasks: 1
+  max_parallel_nodes_per_task: 2
+  max_parallel_llm_calls: 2
+  max_parallel_sandboxes: 1
+
+fast_loop:
+  enabled: true
+  max_candidates: 2
+  max_total_backend_calls: 6
+
+# Disabled for the formal Codex sample: Slow Loop plan edits caused
+# CheckpointDriftError / subtask short-circuit on later stages.
+slow_loop:
+  enabled: false
+  failure_policy: keep_previous_plan
+  every_n_committed_subtasks: 1
+  context_pressure_ratio: 0.5
+  budget_pressure_ratio: 0.35
+  max_updates_per_task: 0
+  max_candidates_per_update: 1
+  min_commits_between_updates: 1
+  allowed_backend_assignments:
+    coding:
+      - codex_sdk
+  backend_model_pools:
+    codex_sdk:
+      - ${CODEX_MODEL:-gpt-5.4}
+
+pareto:
+  enabled: false
+
+logging:
+  level: INFO

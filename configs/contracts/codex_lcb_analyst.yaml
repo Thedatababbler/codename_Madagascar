@@ -1,0 +1,27 @@
+contract_id: codex_lcb_analyst
+role: CodexLCBAnalyst
+system_prompt_template: |
+  You are a careful coding agent in a Git repository for a LiveCodeBench problem.
+  Stage: ANALYZE + draft.
+  Read README.md and the problem statement in the task artifacts.
+  Write NOTES.md with: algorithm idea, edge cases, and why horizontal adjacency
+  on a 3x3 board of 1..9 matters.
+  Implement a draft in solution.py that should pass public pytest cases.
+  Do not edit test_solution.py.
+  Run pytest before finishing.
+  Do not create subagents.
+user_prompt_template: |
+  Task artifacts:
+  {artifacts_json}
+
+  Analyze the LiveCodeBench problem, write NOTES.md, and implement a draft
+  solution.py. Make public tests pass. Do not create subagents.
+model: ${CODEX_MODEL:-gpt-5.4}
+temperature: 0.0
+max_tokens: 4096
+timeout_seconds: 480
+allowed_tools: []
+input_schema: ProblemArtifact
+output_schema: RepositoryChangeArtifact
+parser_id: repository_change
+memory_scope: local

@@ -1,0 +1,106 @@
+# Formal LiveCodeBench abc309_a with 3 Codex subtasks (repo + public pytest).
+# smolagents MAS graphs cannot drive codex_sdk; each stage uses one Codex agent.
+task_id: lcb_abc309_a_codex
+plan_version: 1
+decomposition_rationale: >
+  Formal LiveCodeBench task abc309_a packaged as a Git workspace so Codex can
+  edit solution.py against public examples. Stages: analyze (draft) → implement
+  (harden) → verify (finalize). Pareto off.
+decomposition_status: ok
+subtasks:
+  - subtask_id: analyze
+    title: Analyze and draft
+    objective: >
+      Analyze LiveCodeBench abc309_a (Nine). Write NOTES.md and a draft
+      solution.py that passes public pytest cases. Do not create subagents.
+    dependencies: []
+    priority: 30
+    keystone_harness_id: repository_test_harness
+    local_graph_template: configs/graphs/codex_lcb_analyze.yaml
+    budget:
+      max_llm_calls: 2
+      max_steps: 4
+      timeout_seconds: 600
+    input_artifacts:
+      - slot: problem
+        artifact_id: ""
+        artifact_type: ProblemArtifact
+    expected_outputs:
+      - parser_id: repository_change
+        output_schema: RepositoryChangeArtifact
+  - subtask_id: implement
+    title: Harden implementation
+    objective: >
+      Harden solution.py for abc309_a using NOTES.md when present. Public
+      pytest must pass. Do not create subagents.
+    dependencies: [analyze]
+    priority: 20
+    keystone_harness_id: repository_test_harness
+    local_graph_template: configs/graphs/codex_lcb_implement.yaml
+    budget:
+      max_llm_calls: 2
+      max_steps: 4
+      timeout_seconds: 600
+    input_artifacts:
+      - slot: problem
+        artifact_id: ""
+        artifact_type: ProblemArtifact
+    expected_outputs:
+      - parser_id: repository_change
+        output_schema: RepositoryChangeArtifact
+  - subtask_id: verify
+    title: Verify and finalize
+    objective: >
+      Re-check and finalize solution.py for abc309_a. Public pytest must pass.
+      Do not create subagents.
+    dependencies: [implement]
+    priority: 10
+    keystone_harness_id: repository_test_harness
+    local_graph_template: configs/graphs/codex_lcb_verify.yaml
+    budget:
+      max_llm_calls: 2
+      max_steps: 4
+      timeout_seconds: 600
+    input_artifacts:
+      - slot: problem
+        artifact_id: ""
+        artifact_type: ProblemArtifact
+    expected_outputs:
+      - parser_id: repository_change
+        output_schema: RepositoryChangeArtifact
+final_aggregation:
+  strategy: identity
+  terminal_subtask_id: verify
+communication_plan:
+  version: 1
+  payload_contracts:
+    - payload_id: draft_change
+      source_subtask_id: analyze
+      target_subtask_id: implement
+      artifact_type: RepositoryChangeArtifact
+      required: false
+      max_tokens: 8000
+      metadata: {slot: "comm:draft_change"}
+    - payload_id: implemented_change
+      source_subtask_id: implement
+      target_subtask_id: verify
+      artifact_type: RepositoryChangeArtifact
+      required: false
+      max_tokens: 8000
+      metadata: {slot: "comm:implemented_change"}
+  delivery_schedule:
+    - rule_id: deliver_draft
+      payload_id: draft_change
+      enabled: true
+    - rule_id: deliver_implemented
+      payload_id: implemented_change
+      enabled: true
+  context_budgets:
+    implement: 12000
+    verify: 12000
+metadata:
+  benchmark: livecodebench
+  question_id: abc309_a
+  release_version: release_v6
+  pareto_enabled: false
+  sample_kind: formal_lcb_codex_three_subtask

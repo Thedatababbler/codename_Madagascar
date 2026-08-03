@@ -1,0 +1,153 @@
+# Stage 2 — IMPLEMENT
+# Topology: parallel dual-coder competition + conditional repair on the
+# planned coder. Distinct from analyze (no dual analysts / no plan merge).
+#
+# Agents (3):
+#   - planned_coder  (solution_coder): plan-style implementation
+#   - baseline_coder (direct_coder): independent baseline
+#   - repair_agent: repairs planned_coder only when public harness fails
+graph_id: lcb_mas_implement
+version: "1.1"
+initial_artifact_slots:
+  problem: ProblemArtifact
+final_output_slot: final_code
+metadata:
+  role: implement
+  topology: dual_coder_competition_plus_conditional_repair
+  min_agents: 3
+nodes:
+  - node_id: planned_coder
+    node_kind: agent
+    contract_id: solution_coder
+    backend:
+      type: smolagents_code
+      max_steps: 8
+      executor_type: local
+      use_structured_outputs_internally: true
+      additional_authorized_imports: []
+    model:
+      provider: openai_compatible
+      name: ${CODER_MODEL:-gpt-5-mini}
+      temperature: 0.2
+      max_tokens: 4000
+    tools: [final_answer]
+    output_contract:
+      parser_id: python_code
+      output_schema: CodeArtifact
+    input_slots: {problem: ProblemArtifact}
+    output_slots: {code: CodeArtifact}
+    timeout_seconds: 300
+  - node_id: baseline_coder
+    node_kind: agent
+    contract_id: direct_coder
+    backend:
+      type: smolagents_code
+      max_steps: 6
+      executor_type: local
+      use_structured_outputs_internally: true
+      additional_authorized_imports: []
+    model:
+      provider: openai_compatible
+      name: ${CODER_MODEL:-gpt-5-mini}
+      temperature: 0.1
+      max_tokens: 4000
+    tools: [final_answer]
+    output_contract:
+      parser_id: python_code
+      output_schema: CodeArtifact
+    input_slots: {problem: ProblemArtifact}
+    output_slots: {code: CodeArtifact}
+    timeout_seconds: 240
+  - node_id: public_harness_planned
+    node_kind: harness
+    harness_id: public_code_harness
+    visibility: public
+    input_slots: {problem: ProblemArtifact, code: CodeArtifact}
+    output_slots: {result: PublicHarnessResultArtifact}
+  - node_id: public_harness_baseline
+    node_kind: harness
+    harness_id: public_code_harness
+    visibility: public
+    input_slots: {problem: ProblemArtifact, code: CodeArtifact}
+    output_slots: {result: PublicHarnessResultArtifact}
+  - node_id: repair_agent
+    node_kind: agent
+    contract_id: repair_agent
+    backend:
+      type: smolagents_code
+      max_steps: 8
+      executor_type: local
+      use_structured_outputs_internally: true
+      additional_authorized_imports: []
+    model:
+      provider: openai_compatible
+      name: ${REPAIR_MODEL:-gpt-5-mini}
+      temperature: 0.1
+      max_tokens: 4000
+    tools: [final_answer]
+    output_contract:
+      parser_id: json
+      output_schema: RepairArtifact
+    input_slots:
+      problem: ProblemArtifact
+      previous_code: CodeArtifact
+      public_result: PublicHarnessResultArtifact
+    output_slots: {repair: RepairArtifact}
+    timeout_seconds: 300
+  - node_id: repair_to_code
+    node_kind: transform
+    transform_id: repair_to_code
+    input_slots: {repair: RepairArtifact}
+    output_slots: {code: CodeArtifact}
+  - node_id: public_harness_repaired
+    node_kind: harness
+    harness_id: public_code_harness
+    visibility: public
+    input_slots: {problem: ProblemArtifact, code: CodeArtifact}
+    output_slots: {result: PublicHarnessResultArtifact}
+  - node_id: freeze_planned_pass
+    node_kind: transform
+    transform_id: freeze_code
+    input_slots: {code: CodeArtifact, gate: PublicHarnessResultArtifact}
+    output_slots: {final_code: FinalCodeArtifact}
+  - node_id: selector
+    node_kind: selector
+    selector_id: deterministic_code_selector
+    input_slots:
+      initial_code: CodeArtifact
+      initial_result: PublicHarnessResultArtifact
+      repaired_code: CodeArtifact
+      repaired_result: PublicHarnessResultArtifact
+    output_slots: {code: CodeArtifact}
+  - node_id: freeze_selected
+    node_kind: transform
+    transform_id: freeze_code
+    input_slots: {code: CodeArtifact}
+    output_slots: {final_code: FinalCodeArtifact}
+edges:
+  - {edge_id: planned_to_harness, source_node: planned_coder, source_output: code, destination_node: public_harness_planned, destination_input: code}
+  - {edge_id: baseline_to_harness, source_node: baseline_coder, source_output: code, destination_node: public_harness_baseline, destination_input: code}
+  # Early freeze when planned coder already passes public tests.
+  - {edge_id: planned_code_to_freeze, source_node: planned_coder, source_output: code, destination_node: freeze_planned_pass, destination_input: code}
+  - edge_id: planned_pass_to_freeze
+    source_node: public_harness_planned
+    source_output: result
+    destination_node: freeze_planned_pass
+    destination_input: gate
+    condition: {source_field: passed, operator: is_true}
+  # Repair branch only when planned coder is repair-eligible.
+  - {edge_id: planned_code_to_repair, source_node: planned_coder, source_output: code, destination_node: repair_agent, destination_input: previous_code}
+  - edge_id: planned_fail_to_repair
+    source_node: public_harness_planned
+    source_output: result
+    destination_node: repair_agent
+    destination_input: public_result
+    condition: {source_field: repair_eligible, operator: is_true}
+  - {edge_id: repair_to_conversion, source_node: repair_agent, source_output: repair, destination_node: repair_to_code, destination_input: repair}
+  - {edge_id: repaired_to_harness, source_node: repair_to_code, source_output: code, destination_node: public_harness_repaired, destination_input: code}
+  # On failure path: choose better of baseline vs repaired.
+  - {edge_id: baseline_code_to_selector, source_node: baseline_coder, source_output: code, destination_node: selector, destination_input: initial_code}
+  - {edge_id: baseline_result_to_selector, source_node: public_harness_baseline, source_output: result, destination_node: selector, destination_input: initial_result}
+  - {edge_id: repaired_code_to_selector, source_node: repair_to_code, source_output: code, destination_node: selector, destination_input: repaired_code}
+  - {edge_id: repaired_result_to_selector, source_node: public_harness_repaired, source_output: result, destination_node: selector, destination_input: repaired_result}
+  - {edge_id: selector_to_freeze, source_node: selector, source_output: code, destination_node: freeze_selected, destination_input: code}

@@ -1,0 +1,48 @@
+# Live Codex demo through M5 Slow Loop (rule-based). Pareto is OFF.
+experiment:
+  name: m5_codex_process_demo
+  seed: 42
+  graph_config: configs/graphs/codex_single_implementer.yaml
+  contracts_dir: configs/contracts
+  output_root: outputs/m5_codex_process_demo
+  plan_config: configs/plans/codex_tiny_repo_two_subtasks.yaml
+  source_repo: tests/fixtures/codex_tiny_repo
+
+benchmark:
+  name: codex_tiny_repo
+  task_id: codex_tiny_repo_m5
+
+runtime:
+  backend: native_async
+  max_parallel_benchmark_tasks: 1
+  max_parallel_nodes_per_task: 2
+  max_parallel_llm_calls: 2
+  max_parallel_sandboxes: 1
+
+fast_loop:
+  enabled: true
+  max_candidates: 2
+  max_total_backend_calls: 6
+
+slow_loop:
+  enabled: true
+  failure_policy: keep_previous_plan
+  every_n_committed_subtasks: 1
+  context_pressure_ratio: 0.5
+  budget_pressure_ratio: 0.35
+  max_updates_per_task: 4
+  max_candidates_per_update: 3
+  min_commits_between_updates: 1
+  allowed_backend_assignments:
+    coding:
+      - codex_sdk
+  backend_model_pools:
+    codex_sdk:
+      - ${CODEX_MODEL:-gpt-5.4}
+
+# Explicitly keep M6 Pareto off for this demo.
+pareto:
+  enabled: false
+
+logging:
+  level: INFO
