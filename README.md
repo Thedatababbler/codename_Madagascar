@@ -248,6 +248,13 @@ Protocol: `docs/stage2_pareto_experiment_protocol.md`. Design:
 `docs/m6_pareto_orchestra_search.md`. Fixture results are not real-model gains.
 `--mock-backends` is the fully API-free override; `--mock-llm` is a compatibility alias.
 
+M6.2 final closure notes: production commits persist `PublicEvaluationRecord`s for
+Pareto quality; scheduler incarnations reclaim stale leases on resume; decisions
+finalize only after behavioral realization; run manifests carry typed
+`split=fixture|development|heldout` (held-out reporting never relabels); reports use
+task-level `cost_per_solved` and are byte-deterministic; synthetic formal runs resolve
+settings without mutating `LCB_REPOSITORY_PATH`.
+
 ## Stage 1 experiments
 
 The protocol in `Stage1_LiveCodeBench_Experiment_Protocol.md` is executed via:

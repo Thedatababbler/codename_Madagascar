@@ -305,6 +305,15 @@ async def _run(output: Path, config_path: Path) -> dict:
                 ),
             ]
         )
+        # Behavioral realization requires affected futures to reach terminal states.
+        affected = list(
+            state.pareto_state.pending_decision.affected_subtask_ids
+            or state.pareto_state.pending_decision.context.eligible_future_subtask_ids
+            or []
+        )
+        for sid in affected:
+            if sid in state.subtasks:
+                state.subtasks[sid].status = SubtaskStatus.COMMITTED
         # Restart recovery before finalize.
         store = TaskCheckpointStore(output)
         await store.save(state)

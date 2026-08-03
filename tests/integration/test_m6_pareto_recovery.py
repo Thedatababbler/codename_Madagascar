@@ -454,6 +454,10 @@ async def test_restart_after_activation_recovers_candidate(tmp_path: Path):
             normalized_score=0.85,
         )
     )
+    # Behavioral realization requires affected futures to reach a terminal state.
+    for sid in loaded.pareto_state.pending_decision.affected_subtask_ids or ["s2", "s3"]:
+        if sid in loaded.subtasks:
+            loaded.subtasks[sid].status = SubtaskStatus.COMMITTED
     restarted.finalize_realized(loaded)
     assert loaded.pareto_state.pending_decision is None
     assert loaded.pareto_state.decision_history

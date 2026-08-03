@@ -18,6 +18,7 @@ from orchestra.control.pareto.schemas import (
     ParetoSelectionProposal,
     ParetoSelectionStatus,
     PreferenceProfile,
+    RealizationStatus,
 )
 from orchestra.control.pareto.selector import DeterministicParetoSelector
 from orchestra.control.pareto.telemetry import realized_horizon_objectives
@@ -25,6 +26,7 @@ from orchestra.control.pareto.trace_export import ParetoTraceExporter
 from orchestra.control.pareto.validation import ParetoCandidateValidator
 from orchestra.control.slow_loop.candidate_generator import RuleBasedGlobalCandidateGenerator
 from orchestra.control.slow_loop.selector import DeterministicGlobalCandidateSelector
+from orchestra.control.task_state import SubtaskStatus
 
 
 class GlobalCandidatePolicy(Protocol):
@@ -187,6 +189,7 @@ class ParetoGlobalCandidatePolicy:
             search = ParetoSearchState.model_validate(state.pareto_state)
             search.enabled = self.config.enabled
 
+        affected = list(getattr(context, "eligible_future_subtask_ids", None) or [])
         decision = ParetoDecisionRecord(
             decision_id=(
                 f"decision-{selected.content_hash[:16]}"
@@ -210,6 +213,8 @@ class ParetoGlobalCandidatePolicy:
                 getattr(state, "public_evaluation_records", []) or []
             ),
             started_at=datetime.now(UTC),
+            affected_subtask_ids=affected,
+            realization_status=RealizationStatus.PENDING,
         )
         if selected:
             search.pending_candidate_hash = selected.content_hash
@@ -241,24 +246,105 @@ class ParetoGlobalCandidatePolicy:
             )
         return proposal
 
+    @staticmethod
+    def _behavioral_realization_ready(state, decision: ParetoDecisionRecord) -> tuple[bool, dict]:
+        """Require affected future work to reach a terminal state under activation.
+
+        Activation alone, wave start alone, or scheduler return alone are insufficient.
+        """
+        affected = list(decision.affected_subtask_ids or [])
+        if not affected:
+            affected = list(
+                getattr(decision.context, "eligible_future_subtask_ids", None) or []
+            )
+        terminal = {
+            SubtaskStatus.COMMITTED,
+            SubtaskStatus.FAILED,
+            SubtaskStatus.SKIPPED,
+            SubtaskStatus.HARNESS_FAILED,
+        }
+        if not affected:
+            return False, {
+                "reason": "no_eligible_future_wave",
+                "censored": True,
+            }
+        statuses: dict[str, str] = {}
+        incomplete: list[str] = []
+        for sid in affected:
+            sub = state.subtasks.get(sid)
+            if sub is None:
+                incomplete.append(sid)
+                statuses[sid] = "missing"
+                continue
+            statuses[sid] = str(sub.status.value if hasattr(sub.status, "value") else sub.status)
+            if sub.status not in terminal:
+                incomplete.append(sid)
+        evidence = {
+            "decision_id": decision.decision_id,
+            "candidate_hash": decision.selected_content_hash,
+            "activation_revision": decision.activated_revision_id,
+            "affected_subtask_ids": affected,
+            "terminal_states": statuses,
+            "incomplete_subtask_ids": incomplete,
+            "active_plan_revision_id": state.active_plan_revision_id,
+        }
+        if incomplete:
+            return False, evidence
+        # Require that the activated revision is still the live plan (wave ran under it).
+        if decision.activated_revision_id != state.active_plan_revision_id:
+            evidence["reason"] = "activation_revision_mismatch"
+            return False, evidence
+        evidence["reason"] = "affected_wave_terminal"
+        return True, evidence
+
     def finalize_realized(self, state) -> None:
         search = state.pareto_state
         if not isinstance(search, ParetoSearchState) or not search.pending_decision:
             return
-        if search.pending_decision.activated_revision_id != state.active_plan_revision_id:
+        pending = search.pending_decision
+        if pending.activated_revision_id != state.active_plan_revision_id:
+            return
+        # Exact-once: already realized in history (post-realization crash resume).
+        if any(
+            getattr(d, "decision_id", None) == pending.decision_id
+            and getattr(d, "realization_status", None) == RealizationStatus.REALIZED
+            for d in (search.decision_history or [])
+        ):
+            search.pending_decision = None
+            search.pending_candidate_hash = None
+            return
+        ready, evidence = self._behavioral_realization_ready(state, pending)
+        if not ready:
+            if evidence.get("censored"):
+                censored = pending.model_copy(
+                    update={
+                        "realization_status": RealizationStatus.CENSORED_NO_ELIGIBLE_WAVE,
+                        "realization_evidence": evidence,
+                        "reason": "censored_no_eligible_wave",
+                        "completed_at": datetime.now(UTC),
+                        "completed_state_version": state.state_version,
+                    }
+                )
+                search.decision_history.append(censored)
+                search.pending_decision = None
+                search.pending_candidate_hash = None
+                if self.persistence:
+                    self.persistence.append_decision(censored)
+            # Incomplete wave: keep pending (do not finalize on scheduler return).
             return
         completed_at = datetime.now(UTC)
         vector, failures = realized_horizon_objectives(
             state,
-            usage_start=search.pending_decision.baseline_usage_index,
-            delivery_start=search.pending_decision.baseline_delivery_index,
-            commit_start=search.pending_decision.baseline_commit_index,
+            usage_start=pending.baseline_usage_index,
+            delivery_start=pending.baseline_delivery_index,
+            commit_start=pending.baseline_commit_index,
             config=self.config,
-            started_at=search.pending_decision.started_at,
+            started_at=pending.started_at,
             completed_at=completed_at,
-            public_evaluation_start=search.pending_decision.baseline_public_evaluation_index,
+            public_evaluation_start=pending.baseline_public_evaluation_index,
         )
-        candidate = search.pending_decision.selected_candidate_snapshot
+        candidate = pending.selected_candidate_snapshot
+        realization_id = f"real:{pending.decision_id}:{pending.activated_revision_id}"
         if candidate is not None:
             candidate.objectives = vector
             candidate.raw_failure_counts = failures
@@ -266,22 +352,31 @@ class ParetoGlobalCandidatePolicy:
             if self.persistence:
                 self.persistence.append_event(
                     {
-                        "event_id": (
-                            f"real:{candidate.content_hash}:"
-                            f"{search.pending_decision.decision_id}"
-                        ),
+                        "event_id": realization_id,
                         "kind": "realized",
                         "content_hash": candidate.content_hash,
                         "context_id": candidate.context_id,
+                        "decision_id": pending.decision_id,
                     }
                 )
-        finalized = search.pending_decision.model_copy(
+        policy = getattr(state, "scheduling_policy", None)
+        evidence.update(
+            {
+                "policy_concurrency": getattr(policy, "max_concurrent_subtasks", None),
+                "wave_completion": True,
+            }
+        )
+        finalized = pending.model_copy(
             update={
                 "evaluation_kind": ParetoEvaluationKind.REALIZED,
                 "reason": f"risk={failures.total}",
                 "completed_at": completed_at,
                 "completed_state_version": state.state_version,
                 "selected_candidate_snapshot": candidate,
+                "realization_status": RealizationStatus.REALIZED,
+                "realization_id": realization_id,
+                "realization_evidence": evidence,
+                "affected_subtask_ids": list(evidence.get("affected_subtask_ids") or []),
             }
         )
         search.decision_history.append(finalized)

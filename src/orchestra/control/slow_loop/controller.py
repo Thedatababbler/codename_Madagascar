@@ -199,6 +199,16 @@ class SlowLoopController:
         ):
             self.candidate_policy.finalize_realized(state)
 
+        # Hold new selections until the outstanding decision is behaviorally realized.
+        if (
+            state.pareto_state is not None
+            and getattr(state.pareto_state, "pending_decision", None) is not None
+        ):
+            return SlowLoopUpdateResult(
+                updated=False,
+                message="pending_decision_awaiting_behavioral_realization",
+            )
+
         started = time.monotonic()
         if state.slow_loop_state is None:
             state.slow_loop_state = SlowLoopState()

@@ -242,6 +242,7 @@ async def run_stage2_fixture(
                 "event": "resume_from_checkpoint",
                 "active_plan_revision_id": state.active_plan_revision_id,
                 "state_version": state.state_version,
+                "scheduler_incarnation": state.scheduler_incarnation,
                 "at": datetime.now(UTC).isoformat(),
             }
         )
@@ -459,6 +460,7 @@ async def run_stage2_fixture(
         "started_at": started.isoformat(),
         "git_commit": git_commit_hash(repo_root),
         "config_path": str(config_path),
+        "split": "fixture",
         "stage2": raw.get("stage2") or {"mode": mode},
         "preference_profile_id": resolved.preference_profile.profile_id,
         "backend_override": "deterministic_mock",
@@ -618,15 +620,17 @@ async def run_stage2_fixture(
         "wave_records": wave_records,
         "concurrent_fork_wave": concurrent_fork,
         "recovery_events": recovery_events,
+        "scheduler_recovery_events": list(out.scheduler_recovery_events or []),
         "fixture_subtask_durations_seconds": FIXTURE_SUBTASK_DURATIONS,
         "fixture_latency_label": "fixture_estimate_not_real_model",
     }
     (run_dir / "concurrency_evidence.json").write_text(
         json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
-    if recovery_events:
+    all_recovery = list(recovery_events) + list(out.scheduler_recovery_events or [])
+    if all_recovery:
         (run_dir / "recovery_events.json").write_text(
-            json.dumps(recovery_events, indent=2, sort_keys=True) + "\n",
+            json.dumps(all_recovery, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
 
@@ -645,13 +649,23 @@ async def run_stage2_fixture(
     committed = [
         sid for sid, sub in out.subtasks.items() if sub.status is SubtaskStatus.COMMITTED
     ]
+    # Task-level solving: one root benchmark task, not committed-subtask count.
+    root_task_solved = set(committed) >= {"s1", "s2", "s3", "s4"}
+    solved_task_count = 1 if root_task_solved else 0
+    cost_per_solved_task = (
+        usage_cost / solved_task_count if solved_task_count > 0 else None
+    )
+    all_recovery = list(recovery_events) + list(out.scheduler_recovery_events or [])
     summary = {
         "mode": mode,
         "run_dir": str(run_dir),
         "task_id": plan.task_id,
+        "split": "fixture",
         "pareto_enabled": resolved.pareto_config.enabled,
         "preference_profile": resolved.preference_profile.profile_id,
         "committed": committed,
+        "committed_subtask_count": len(committed),
+        "solved_task_count": solved_task_count,
         "active_plan_revision_id": out.active_plan_revision_id,
         "activation_revision": activation_revision,
         "m5_revision_count": len(
@@ -672,23 +686,24 @@ async def run_stage2_fixture(
         "fork_activation_revision": activation_for_fork,
         "concurrent_fork_wave": concurrent_fork,
         "execution_success_rate": (
-            1.0 if set(committed) >= {"s1", "s2", "s3", "s4"} else 0.0
+            1.0 if root_task_solved else 0.0
         ),
         "avg_cost_usd": usage_cost / max(1, len(out.backend_usage_records)),
         "total_cost_usd": usage_cost,
-        "cost_per_solved": (
-            usage_cost / len(committed) if committed else None
-        ),
+        "cost_per_solved": cost_per_solved_task,
+        "cost_per_solved_task": cost_per_solved_task,
         "wall_latency_s": wall,
         "critical_path_latency_s": critical,
         "communication_overhead": None,
         "difficulty": "fixture",
         "hidden_pass_at_1": "",
-        "restart_recovery_counts": len(recovery_events),
+        "restart_recovery_counts": len(all_recovery),
         "control_plane_hash": resolved.control_plane_hash,
         "scheduler_path": "ReadySubtaskScheduler",
+        "scheduler_incarnation": out.scheduler_incarnation,
         "fixture_latency_label": "fixture_estimate_not_real_model",
         "cost_provenance": "persisted_usage_estimated_cost_usd",
+        "public_evaluation_count": len(out.public_evaluation_records or []),
     }
     (run_dir / "stage2_fixture_summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"

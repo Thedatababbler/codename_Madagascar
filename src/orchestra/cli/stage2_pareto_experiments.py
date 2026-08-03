@@ -91,6 +91,8 @@ def resolved_requires_pareto_selection(config_path: str | Path) -> bool:
 
 
 def cmd_report(args: argparse.Namespace) -> int:
+    from orchestra.experiments.stage2_pareto import assert_run_split_for_held_out
+
     run_dirs = [Path(p) for p in args.run_dir]
     output = Path(args.output_dir or "outputs/stage2_pareto/reports")
     calibration = None
@@ -111,7 +113,20 @@ def cmd_report(args: argparse.Namespace) -> int:
             raise SystemExit(f"malformed calibration artifact: {exc}") from exc
         raw = yaml.safe_load(Path(args.config).read_text(encoding="utf-8")) or {}
         control = load_control_plane_mapping(raw)
-        assert_calibration_matches(calibration, control)
+        for run_dir in run_dirs:
+            try:
+                manifest = assert_run_split_for_held_out(run_dir)
+            except RuntimeError as exc:
+                raise SystemExit(str(exc)) from exc
+            try:
+                assert_calibration_matches(
+                    calibration,
+                    control,
+                    require_held_out_split=True,
+                    run_manifest=manifest,
+                )
+            except RuntimeError as exc:
+                raise SystemExit(str(exc)) from exc
     elif args.calibration:
         calibration = CalibrationArtifact.from_dict(
             json.loads(Path(args.calibration).read_text(encoding="utf-8"))
@@ -141,6 +156,12 @@ def cmd_freeze_calibration(args: argparse.Namespace) -> int:
 
         for run_dir in args.run_dir:
             rec = collect_run_records(Path(run_dir))
+            split = str((rec.get("manifest") or {}).get("split") or "")
+            if split not in {"development", "fixture", ""}:
+                raise SystemExit(
+                    "freeze-calibration may consume development runs only; "
+                    f"refusing split={split!r} under {run_dir}"
+                )
             for d in rec["decisions"]:
                 snap = d.get("selected_candidate_snapshot") or {}
                 vals = (snap.get("objectives") or {}).get("values") or {}

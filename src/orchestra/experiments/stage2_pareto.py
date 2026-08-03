@@ -243,6 +243,7 @@ def validate_stage2_config(path: str | Path) -> dict[str, Any]:
 
 @dataclass(frozen=True)
 class CalibrationArtifact:
+    schema_version: str
     control_plane_hash: str
     preference_hash: str
     objective_hash: str
@@ -250,11 +251,23 @@ class CalibrationArtifact:
     pricing_registry_hash: str
     candidate_catalog_hash: str
     graph_catalog_hash: str
+    resolved_graph_hash: str
     preference_profile_id: str
     objectives: dict[str, str]
+    objective_directions: dict[str, str]
     backend_model_settings: dict[str, Any]
+    backend_kinds: list[str]
+    model_identifiers: dict[str, Any]
     seed_policy: dict[str, Any]
     git_sha: str
+    config_hash: str
+    benchmark_manifest_hash: str
+    dataset_split_identity: dict[str, Any]
+    private_data_policy: str
+    public_evaluator_id: str
+    public_evaluator_version: str
+    preference_profile: dict[str, Any]
+    source_run_id: str
     manifest_schema_version: str
     normalization: dict[str, dict[str, float]]
     reference_point: dict[str, float]
@@ -265,6 +278,7 @@ class CalibrationArtifact:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "schema_version": self.schema_version,
             "control_plane_hash": self.control_plane_hash,
             "preference_hash": self.preference_hash,
             "objective_hash": self.objective_hash,
@@ -272,11 +286,23 @@ class CalibrationArtifact:
             "pricing_registry_hash": self.pricing_registry_hash,
             "candidate_catalog_hash": self.candidate_catalog_hash,
             "graph_catalog_hash": self.graph_catalog_hash,
+            "resolved_graph_hash": self.resolved_graph_hash,
             "preference_profile_id": self.preference_profile_id,
+            "preference_profile": self.preference_profile,
             "objectives": self.objectives,
+            "objective_directions": self.objective_directions,
             "backend_model_settings": self.backend_model_settings,
+            "backend_kinds": self.backend_kinds,
+            "model_identifiers": self.model_identifiers,
             "seed_policy": self.seed_policy,
             "git_sha": self.git_sha,
+            "config_hash": self.config_hash,
+            "benchmark_manifest_hash": self.benchmark_manifest_hash,
+            "dataset_split_identity": self.dataset_split_identity,
+            "private_data_policy": self.private_data_policy,
+            "public_evaluator_id": self.public_evaluator_id,
+            "public_evaluator_version": self.public_evaluator_version,
+            "source_run_id": self.source_run_id,
             "manifest_schema_version": self.manifest_schema_version,
             "normalization": self.normalization,
             "reference_point": self.reference_point,
@@ -299,7 +325,21 @@ class CalibrationArtifact:
                 f"malformed calibration artifact: missing fields {missing}"
             )
         split = str(payload.get("source_split") or payload.get("split") or "development")
+        objectives = {
+            str(k): str(v) for k, v in dict(payload.get("objectives") or {}).items()
+        }
+        directions = {
+            str(k): str(v)
+            for k, v in dict(
+                payload.get("objective_directions") or payload.get("objectives") or {}
+            ).items()
+        }
         return cls(
+            schema_version=str(
+                payload.get("schema_version")
+                or payload.get("manifest_schema_version")
+                or "stage2-calibration-v2"
+            ),
             control_plane_hash=str(payload["control_plane_hash"]),
             preference_hash=str(payload["preference_hash"]),
             objective_hash=str(payload["objective_hash"]),
@@ -307,15 +347,31 @@ class CalibrationArtifact:
             pricing_registry_hash=str(payload.get("pricing_registry_hash") or ""),
             candidate_catalog_hash=str(payload.get("candidate_catalog_hash") or ""),
             graph_catalog_hash=str(payload.get("graph_catalog_hash") or ""),
+            resolved_graph_hash=str(payload.get("resolved_graph_hash") or ""),
             preference_profile_id=str(payload.get("preference_profile_id") or ""),
-            objectives={
-                str(k): str(v) for k, v in dict(payload.get("objectives") or {}).items()
-            },
+            preference_profile=dict(payload.get("preference_profile") or {}),
+            objectives=objectives,
+            objective_directions=directions,
             backend_model_settings=dict(payload.get("backend_model_settings") or {}),
+            backend_kinds=list(payload.get("backend_kinds") or []),
+            model_identifiers=dict(payload.get("model_identifiers") or {}),
             seed_policy=dict(payload.get("seed_policy") or {}),
             git_sha=str(payload.get("git_sha") or ""),
+            config_hash=str(payload.get("config_hash") or ""),
+            benchmark_manifest_hash=str(payload.get("benchmark_manifest_hash") or ""),
+            dataset_split_identity=dict(payload.get("dataset_split_identity") or {}),
+            private_data_policy=str(
+                payload.get("private_data_policy") or "private_labels_offline_only"
+            ),
+            public_evaluator_id=str(
+                payload.get("public_evaluator_id") or "public_harness"
+            ),
+            public_evaluator_version=str(
+                payload.get("public_evaluator_version") or "public-harness-v1"
+            ),
+            source_run_id=str(payload.get("source_run_id") or ""),
             manifest_schema_version=str(
-                payload.get("manifest_schema_version") or "stage2-calibration-v1"
+                payload.get("manifest_schema_version") or "stage2-calibration-v2"
             ),
             normalization=dict(payload.get("normalization") or {}),
             reference_point=dict(payload.get("reference_point") or {}),
@@ -394,7 +450,66 @@ def write_calibration_artifact(
             or seed
         )
 
+    source_run_id = ""
+    source_split = "development"
+    config_hash = ""
+    benchmark_manifest_hash = ""
+    if run_dir is not None and (Path(run_dir) / "run_manifest.json").exists():
+        manifest = json.loads(
+            (Path(run_dir) / "run_manifest.json").read_text(encoding="utf-8")
+        )
+        source_run_id = str(manifest.get("run_id") or Path(run_dir).name)
+        run_split = str(manifest.get("split") or "development")
+        if run_split not in {"development", "fixture"}:
+            raise RuntimeError(
+                "freeze-calibration may consume development (or fixture-as-dev) "
+                f"runs only; got split={run_split!r}"
+            )
+        # Fixture runs may seed development calibration for synthetic gates only.
+        source_split = "development"
+        config_hash = str(manifest.get("control_plane_hash") or "")
+        benchmark_manifest_hash = str(manifest.get("manifest_hash") or "")
+    if config_path is not None:
+        config_hash = config_hash or hashlib.sha256(
+            Path(config_path).read_bytes()
+        ).hexdigest()
+        raw_cfg = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
+        bench_manifest = (raw_cfg.get("benchmark") or {}).get("manifest")
+        if bench_manifest:
+            bm = Path(bench_manifest)
+            if not bm.is_absolute():
+                bm = _repo_root() / bm
+            if bm.exists():
+                benchmark_manifest_hash = hashlib.sha256(bm.read_bytes()).hexdigest()
+    required_objectives = {
+        name: direction.value
+        for name, direction in resolved.pareto_config.objectives.items()
+    }
+    # Fill missing normalization ranges from explicit development fallbacks so
+    # every required objective is covered (fail closed later if still missing).
+    fallback_defaults = {
+        "quality": {"min": 0.0, "max": 1.0},
+        "cost": {"min": 0.0, "max": 1.0},
+        "latency": {"min": 0.0, "max": 10.0},
+        "risk": {"min": 0.0, "max": 1.0},
+        "communication_overhead": {"min": 0.0, "max": 1000.0},
+    }
+    for name, direction in resolved.pareto_config.objectives.items():
+        if name in norms:
+            continue
+        fb = fallback_defaults.get(name, {"min": 0.0, "max": 1.0})
+        norms[name] = dict(fb)
+        reference[name] = (
+            fb["max"] if direction is ObjectiveDirection.MINIMIZE else fb["min"]
+        )
+    missing_norms = [n for n in required_objectives if n not in norms]
+    if missing_norms:
+        raise RuntimeError(
+            "calibration freeze refused: missing normalization for required "
+            f"objectives {missing_norms}"
+        )
     artifact = CalibrationArtifact(
+        schema_version="stage2-calibration-v2",
         control_plane_hash=resolved.control_plane_hash,
         preference_hash=resolved.preference_hash,
         objective_hash=resolved.objective_hash,
@@ -402,11 +517,11 @@ def write_calibration_artifact(
         pricing_registry_hash=pricing_registry_hash,
         candidate_catalog_hash=_stable_hash(catalog_dump),
         graph_catalog_hash=_stable_hash(graph_hashes),
+        resolved_graph_hash=_stable_hash(graph_hashes),
         preference_profile_id=resolved.preference_profile.profile_id,
-        objectives={
-            name: direction.value
-            for name, direction in resolved.pareto_config.objectives.items()
-        },
+        preference_profile=resolved.preference_profile.model_dump(mode="json"),
+        objectives=required_objectives,
+        objective_directions=required_objectives,
         backend_model_settings={
             "allowed_backend_assignments": dict(
                 resolved.slow_loop_config.allowed_backend_assignments or {}
@@ -416,14 +531,28 @@ def write_calibration_artifact(
             ),
             "pricing_registry": resolved.pricing_registry,
         },
+        backend_kinds=sorted(
+            (resolved.slow_loop_config.allowed_backend_assignments or {}).keys()
+        ),
+        model_identifiers=dict(resolved.slow_loop_config.backend_model_pools or {}),
         seed_policy={"seed": seed, "deterministic_reports": True},
         git_sha=git_commit_hash(_repo_root()) or "",
-        manifest_schema_version="stage2-calibration-v1",
+        config_hash=config_hash,
+        benchmark_manifest_hash=benchmark_manifest_hash,
+        dataset_split_identity={
+            "source_split": source_split,
+            "source_run_id": source_run_id,
+        },
+        private_data_policy="private_labels_offline_only",
+        public_evaluator_id="public_harness",
+        public_evaluator_version="public-harness-v1",
+        source_run_id=source_run_id,
+        manifest_schema_version="stage2-calibration-v2",
         normalization=norms,
         reference_point=reference,
         created_at=datetime.now(UTC).isoformat(),
-        source_split="development",
-        split="development",
+        source_split=source_split,
+        split=source_split,
     )
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     Path(path).write_text(
@@ -438,18 +567,19 @@ def assert_calibration_matches(
     control: ControlPlaneConfig,
     *,
     require_held_out_split: bool = False,
+    run_manifest: dict[str, Any] | None = None,
 ) -> None:
     resolved = resolve_pareto_runtime(control, repo_root=_repo_root())
     mismatches: list[str] = []
-    if artifact.split not in {"development", "held_out"} and artifact.source_split not in {
-        "development",
-        "held_out",
-    }:
-        mismatches.append("split")
-    if require_held_out_split and artifact.source_split == "held_out":
-        # Held-out reporting consumes a development-frozen calibration, never a
-        # calibration derived from the held-out split itself.
-        mismatches.append("development_versus_held_out_split_misuse")
+    if artifact.source_split not in {"development"}:
+        mismatches.append("calibration_not_sourced_from_development")
+    if require_held_out_split:
+        if run_manifest is None:
+            mismatches.append("missing_run_manifest_for_heldout_gate")
+        else:
+            run_split = str(run_manifest.get("split") or "")
+            if run_split != "heldout":
+                mismatches.append(f"target_run_not_heldout(split={run_split!r})")
     if artifact.control_plane_hash != resolved.control_plane_hash:
         mismatches.append("control_plane_hash")
     if artifact.preference_hash != resolved.preference_hash:
@@ -462,8 +592,13 @@ def assert_calibration_matches(
         name: direction.value
         for name, direction in resolved.pareto_config.objectives.items()
     }
-    if artifact.objectives and artifact.objectives != expected_objectives:
+    if artifact.objectives != expected_objectives:
         mismatches.append("objectives")
+    if artifact.objective_directions and artifact.objective_directions != expected_objectives:
+        mismatches.append("objective_directions")
+    for name in expected_objectives:
+        if name not in (artifact.normalization or {}):
+            mismatches.append(f"missing_normalization:{name}")
     catalog_hash = _stable_hash(resolved.candidate_catalog.model_dump(mode="json"))
     if artifact.candidate_catalog_hash and artifact.candidate_catalog_hash != catalog_hash:
         mismatches.append("candidate_catalog_hash")
@@ -486,12 +621,52 @@ def assert_calibration_matches(
         and artifact.preference_profile_id != resolved.preference_profile.profile_id
     ):
         mismatches.append("preference_profile_id")
+    if artifact.public_evaluator_version and artifact.public_evaluator_version != (
+        "public-harness-v1"
+    ):
+        mismatches.append("evaluator_version")
+    if run_manifest is not None:
+        if (
+            artifact.graph_catalog_hash
+            and run_manifest.get("graph_catalog_hash")
+            and artifact.graph_catalog_hash != run_manifest.get("graph_catalog_hash")
+            and artifact.resolved_graph_hash != run_manifest.get("graph_catalog_hash")
+        ):
+            # Only fail when both sides present and disagree with resolved hash too.
+            if artifact.resolved_graph_hash and artifact.resolved_graph_hash != str(
+                run_manifest.get("graph_catalog_hash")
+            ):
+                mismatches.append("graph_catalog_hash")
+        if (
+            artifact.benchmark_manifest_hash
+            and run_manifest.get("manifest_hash")
+            and artifact.benchmark_manifest_hash != run_manifest.get("manifest_hash")
+        ):
+            mismatches.append("benchmark_manifest_hash")
     if mismatches:
         raise RuntimeError(
             "frozen calibration mismatch: refusing held-out reporting "
             f"(mismatches={mismatches}; artifact={artifact.control_plane_hash}; "
             f"current={resolved.control_plane_hash})"
         )
+
+
+def assert_run_split_for_held_out(run_dir: Path) -> dict[str, Any]:
+    """Fail closed unless the persisted run identity is held-out."""
+    manifest_path = Path(run_dir) / "run_manifest.json"
+    if not manifest_path.exists():
+        raise RuntimeError(
+            f"held-out reporting requires run_manifest.json under {run_dir}"
+        )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    split = str(manifest.get("split") or "")
+    if split != "heldout":
+        raise RuntimeError(
+            "held-out reporting may consume held-out runs only; "
+            f"refusing split={split!r} under {run_dir}. "
+            "A report flag must never relabel a run's persisted split."
+        )
+    return manifest
 
 
 def _read_json(path: Path) -> Any:
@@ -576,6 +751,11 @@ def collect_run_records(run_dir: Path) -> dict[str, Any]:
         estimated = _read_json(run_dir / "pareto" / "estimated_archive.json")
     if (run_dir / "pareto" / "realized_archive.json").exists():
         realized = _read_json(run_dir / "pareto" / "realized_archive.json")
+    recovery_events: list[dict[str, Any]] = []
+    if (run_dir / "recovery_events.json").exists():
+        raw_rec = _read_json(run_dir / "recovery_events.json")
+        if isinstance(raw_rec, list):
+            recovery_events = raw_rec
     return {
         "run_dir": str(run_dir),
         "manifest": manifest,
@@ -584,6 +764,7 @@ def collect_run_records(run_dir: Path) -> dict[str, Any]:
         "traces": traces,
         "estimated_archive": estimated,
         "realized_archive": realized,
+        "recovery_events": recovery_events,
     }
 
 
@@ -736,13 +917,16 @@ def write_stage2_report(
             est_vs_real.append(
                 {
                     "run_dir": str(run_dir),
-                    "run_id": manifest.get("run_id") or summary.get("run_dir"),
+                    "run_id": manifest.get("run_id") or Path(run_dir).name,
                     "task_id": summary.get("task_id") or manifest.get("task_id"),
                     "decision_id": d.get("decision_id"),
                     "candidate_hash": d.get("selected_content_hash"),
+                    "context_id": (d.get("context") or {}).get("context_id"),
                     "plan_revision": d.get("activated_revision_id")
                     or summary.get("active_plan_revision_id"),
                     "activation_revision": d.get("activated_revision_id"),
+                    "realization_id": d.get("realization_id"),
+                    "objective_name": "multi",
                     "quality_est": _objective_value(objs.get("quality")),
                     "cost_est": _objective_value(objs.get("cost")),
                     "latency_est": _objective_value(objs.get("latency")),
@@ -755,6 +939,17 @@ def write_stage2_report(
                     "quality_real_available": realized_vals.get("quality") is not None,
                     "cost_real_available": realized_vals.get("cost") is not None,
                     "latency_real_available": realized_vals.get("latency") is not None,
+                    "quality_units": "normalized_score",
+                    "cost_units": "usd",
+                    "latency_units": "seconds",
+                    "estimator_provenance": (objs.get("quality") or {}).get("detail")
+                    or "persisted_estimated_objectives",
+                    "realization_provenance": d.get("realization_status")
+                    or "persisted_realized_archive",
+                    "direction_quality": "maximize",
+                    "direction_cost": "minimize",
+                    "direction_latency": "minimize",
+                    "censoring_state": d.get("realization_status") or "",
                     "metric_provenance": "persisted_pareto_archives",
                     "evaluation_kind": est_kind,
                     "label": (
@@ -900,7 +1095,13 @@ def write_stage2_report(
                 "archive_frontier_size": sum(len(v) for v in complete_map.values()),
                 "m5_revision_count": revisions,
                 "control_plane_cost_usd": summary.get("control_plane_cost_usd", ""),
-                "restart_recovery_counts": summary.get("restart_recovery_counts", 0),
+                "restart_recovery_counts": (
+                    len(rec.get("recovery_events") or [])
+                    if rec.get("recovery_events") is not None
+                    else summary.get("restart_recovery_counts", 0)
+                ),
+                "solved_task_count": summary.get("solved_task_count", ""),
+                "split": manifest.get("split") or summary.get("split") or "",
                 "label": "online_policy",
                 "note": "fixture metrics are not real API performance",
             }
@@ -979,13 +1180,37 @@ def write_stage2_report(
         est_vs_real,
         [
             "run_dir",
+            "run_id",
+            "task_id",
             "decision_id",
+            "candidate_hash",
+            "context_id",
+            "plan_revision",
+            "activation_revision",
+            "realization_id",
             "quality_est",
             "cost_est",
             "latency_est",
             "quality_real",
             "cost_real",
             "latency_real",
+            "quality_est_available",
+            "cost_est_available",
+            "latency_est_available",
+            "quality_real_available",
+            "cost_real_available",
+            "latency_real_available",
+            "quality_units",
+            "cost_units",
+            "latency_units",
+            "estimator_provenance",
+            "realization_provenance",
+            "direction_quality",
+            "direction_cost",
+            "direction_latency",
+            "censoring_state",
+            "metric_provenance",
+            "label",
         ],
     )
     _write_csv(
@@ -1029,8 +1254,15 @@ def write_stage2_report(
         profile=profile,
     )
 
+    # Deterministic timestamp: earliest persisted run started_at (never wall-clock now).
+    run_times = [
+        str(collect_run_records(run_dir)["manifest"].get("started_at"))
+        for run_dir in sorted(run_dirs, key=lambda p: str(p))
+        if collect_run_records(run_dir)["manifest"].get("started_at")
+    ]
+    report_time = min(run_times) if run_times else "deterministic"
     payload = {
-        "generated_at": datetime.now(UTC).isoformat(),
+        "generated_at": report_time,
         "run_count": len(run_dirs),
         "calibration": calibration.to_dict() if calibration else None,
         "hypervolume": None,  # not implemented; do not invent
@@ -1038,6 +1270,8 @@ def write_stage2_report(
             "hidden Pass@1 is evaluation-only when present",
             "oracle diagnostics excluded from online aggregates",
             "missing cost/tokens remain empty (unavailable), never coerced to zero",
+            "cost_per_solved uses solved root-task denominator",
+            "report generation is deterministic given identical persisted inputs",
         ],
         "main_results": main_rows,
     }

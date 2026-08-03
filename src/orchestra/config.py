@@ -29,6 +29,8 @@ class ExperimentSection(BaseModel):
     graph_config: str
     contracts_dir: str
     output_root: str
+    # Typed split identity — never inferred from directory names or report flags.
+    split: Literal["fixture", "development", "heldout"] = "development"
     # Optional multi-subtask production / Stage-2 fields (ignored by Stage-1 runner).
     plan_config: str | None = None
     source_repo: str | None = None

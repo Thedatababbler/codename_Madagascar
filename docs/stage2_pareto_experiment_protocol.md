@@ -93,6 +93,26 @@ harness, timeout, and total task-budget definitions.
 
 ## Dev / held-out separation
 
+Typed split identity is persisted on the run manifest (never inferred from
+directory names, CLI flags, or report commands):
+
+```text
+split: fixture | development | heldout
+```
+
+* `run-fixture` → `split=fixture`
+* Development runs → `split=development`
+* Held-out runs must explicitly persist `split=heldout`
+* `freeze-calibration` consumes development (synthetic fixture-as-dev allowed)
+* `report --held-out` consumes held-out runs only; fixture/development are rejected
+* A report flag must never relabel a run’s persisted split
+
+Frozen calibration validates every selection-relevant field (hashes, objectives/
+directions, normalization for each required objective, preference, pricing,
+candidate/graph catalogs, backend/model settings, evaluator identity/version,
+benchmark manifest, dataset/split identity, private-data policy). Fail closed on
+any mismatch.
+
 * Public/development evidence may inform estimation and selection.
 * Held-out results are evaluation-only.
 * Hidden/private results never enter generation, estimation, frontier
@@ -124,13 +144,30 @@ Reports are built from run manifests, checkpoints, usage records, delivery
 ledgers, Pareto decisions, archives, and `search_traces.jsonl` — never from
 console output.
 
+## Cost-per-solved (task-level)
+
+```text
+solved_task_count = # root benchmark tasks meeting the public success criterion
+cost_per_solved_task = total_attributed_cost / solved_task_count
+```
+
+Committed subtasks are not the denominator. If no task is solved, cost-per-solved
+is unavailable (not 0 / infinity).
+
+## Deterministic reports
+
+Repeated report generation from identical persisted inputs is byte-identical for
+CSV/JSON/Markdown/SVG. Reports use persisted run `started_at` (never wall-clock
+`now`). Recovery counts come from persisted recovery events.
+
 ## Failure and restart semantics
 
-* Finalize a decision only when
-  `activated_revision_id == active_plan_revision_id`.
-* Resume must not duplicate decisions, realization records, or applied
-  revisions.
-* Post-activation crash resumes from the activated checkpoint.
+* Finalize a decision only when activation matches **and** the affected wave is
+  behaviorally realized (all affected subtasks terminal under that revision).
+* Resume reclaims stale leases via scheduler incarnation ownership.
+* Resume must not duplicate decisions, realization records, usage, evaluations,
+  or applied revisions.
+* Post-activation / mid-wave / post-realization failpoints exercise exact-once.
 * Pareto requested but runtime init failure → fail closed.
 
 ## Commands

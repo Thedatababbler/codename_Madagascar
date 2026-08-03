@@ -240,6 +240,10 @@ class DeterministicMockBackend:
                 "mock": True,
                 "override": "deterministic_local",
                 "run_id": context.run_id,
+                # Priced fixture model so mock production cost evidence is available
+                # for complete Pareto candidates (never invents silent zero cost).
+                "model_name": "fake-test-model",
+                "model": "fake-test-model",
             },
         )
 

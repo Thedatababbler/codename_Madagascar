@@ -124,7 +124,9 @@ class ParetoObjectiveEstimator:
                 )
         values["risk"] = self._estimate_risk(candidate, observation, edit_types, coeffs)
         values["communication_overhead"] = self._estimate_communication(candidate, edit_types)
-        values["quality"] = self._estimate_quality(candidate, public_evaluations)
+        values["quality"] = self._estimate_quality(
+            candidate, public_evaluations, edit_types=edit_types
+        )
         if graph_only and not values["quality"].available:
             values["quality"] = ObjectiveValue.unavailable(
                 "catalog graph template missing defensible quality evidence"
@@ -379,7 +381,13 @@ class ParetoObjectiveEstimator:
             detail="projected tokens",
         )
 
-    def _estimate_quality(self, candidate, public_evaluations) -> ObjectiveValue:
+    def _estimate_quality(
+        self, candidate, public_evaluations, *, edit_types: set[str] | None = None
+    ) -> ObjectiveValue:
+        from orchestra.control.pareto.public_evaluation import (
+            is_quality_neutral_scheduling_change,
+        )
+
         def field(e, name):
             return e.get(name) if isinstance(e, dict) else getattr(e, name, None)
 
@@ -391,6 +399,7 @@ class ParetoObjectiveEstimator:
                 EvaluationVisibility.PUBLIC.value,
                 EvaluationVisibility.DEVELOPMENT.value,
             }
+            and str(field(e, "availability") or "available") != "unavailable"
         ]
         if not evaluations:
             return ObjectiveValue.unavailable(
@@ -412,14 +421,42 @@ class ParetoObjectiveEstimator:
             score = field(e, "quality")
             if score is None:
                 score = field(e, "normalized_score")
+            if score is None:
+                score = field(e, "metric_value")
             if score is not None:
                 scores.append(float(score))
         if not scores:
             return ObjectiveValue.unavailable(
                 "quality estimator requires public harness evidence"
             )
+        value = sum(scores) / len(scores)
+        # Scheduling-only neutrality: inherit current public quality as an
+        # explicit estimate — never invent zero/fixture constants.
+        types = edit_types or {getattr(e, "type", "") for e in candidate.edits}
+        if is_quality_neutral_scheduling_change(candidate) or (
+            "scheduling_concurrency" in types
+            and not (
+                types
+                & {
+                    "pending_backend_assignment",
+                    "pending_graph_template",
+                    "upsert_payload_contract",
+                    "remove_payload_contract",
+                    "serialization_group",
+                    "context_budget",
+                }
+            )
+        ):
+            return ObjectiveValue(
+                value=value,
+                available=True,
+                source=ObjectiveSource.ESTIMATED,
+                evaluation_visibility=EvaluationVisibility.PUBLIC,
+                evidence_count=len(scores),
+                detail="inherited_quality_neutral_scheduling_change",
+            )
         return ObjectiveValue(
-            value=sum(scores) / len(scores),
+            value=value,
             available=True,
             source=ObjectiveSource.HISTORY,
             evaluation_visibility=EvaluationVisibility.PUBLIC,

@@ -303,22 +303,29 @@ async def test_formal_sample_m5_mock_no_checkpoint_drift(tmp_path: Path):
         mock_llm = False
         synthetic_problem = True
 
+    import os
+
+    os.environ.pop("LCB_REPOSITORY_PATH", None)
     code = await mod._run(Args())
+    assert "LCB_REPOSITORY_PATH" not in os.environ
     summary = json.loads(
         (tmp_path / "formal" / "formal-m5" / "summary.json").read_text(encoding="utf-8")
     )
     assert summary.get("error") is None, summary.get("error")
-    assert code in {0, 2}
+    assert code == 0
     assert summary["slow_loop_enabled"] is True
     assert summary["mock_backends"] is True
     assert summary["problem_source"] == "synthetic_fixture"
-    assert summary["m5_revision_count"] >= 0
+    assert isinstance(summary["m5_revision_count"], int)
     statuses = summary.get("subtask_status") or {}
     assert set(statuses) >= {"analyze", "implement", "verify"}
     assert "CheckpointDrift" not in str(summary.get("error") or "")
     committed = set(summary.get("committed") or [])
     # With mock backends writing the public-fixture solution, all stages commit.
     assert committed >= {"analyze", "implement", "verify"}, statuses
+    assert statuses.get("analyze") == "committed"
+    assert statuses.get("implement") == "committed"
+    assert statuses.get("verify") == "committed"
 
 
 def test_missing_real_lcb_data_explicit_error(tmp_path: Path):
@@ -351,4 +358,7 @@ async def test_freeze_calibration_from_dev_run(tmp_path: Path):
     assert payload["source_split"] == "development"
     assert payload["candidate_catalog_hash"]
     assert payload["preference_hash"]
-    assert payload["manifest_schema_version"] == "stage2-calibration-v1"
+    assert payload["manifest_schema_version"] in {
+        "stage2-calibration-v1",
+        "stage2-calibration-v2",
+    }

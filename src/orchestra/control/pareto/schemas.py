@@ -92,10 +92,13 @@ class PublicEvaluationRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     evaluation_id: str = ""
+    run_id: str = ""
     task_id: str = ""
     subtask_id: str | None = None
     decision_id: str | None = None
     harness_id: str = ""
+    evaluator_id: str = ""
+    evaluator_version: str = "public-harness-v1"
     visibility: EvaluationVisibility = EvaluationVisibility.PUBLIC
     passed: bool = False
     passed_checks: int | None = None
@@ -103,6 +106,12 @@ class PublicEvaluationRecord(BaseModel):
     normalized_score: float = 0.0
     # Legacy alias retained for estimators that still read ``quality``.
     quality: float | None = None
+    metric_name: str = "normalized_score"
+    metric_value: float | None = None
+    availability: str = "available"
+    provenance: str = "public_harness_commit"
+    source_artifact_hash: str | None = None
+    plan_revision: str | None = None
     candidate_content_hash: str | None = None
     edit_signature: str | None = None
     state_version: int = 0
@@ -111,6 +120,10 @@ class PublicEvaluationRecord(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     def resolved_quality(self) -> float:
+        if self.availability == "unavailable":
+            return 0.0
+        if self.metric_value is not None:
+            return float(self.metric_value)
         if self.quality is not None:
             return float(self.quality)
         return float(self.normalized_score)
@@ -188,6 +201,13 @@ class ParetoOrchestraCandidate(BaseModel):
     validation_errors: list[str] = Field(default_factory=list)
 
 
+class RealizationStatus(StrEnum):
+    PENDING = "pending"
+    REALIZED = "realized"
+    CENSORED_NO_ELIGIBLE_WAVE = "censored_no_eligible_wave"
+    FAILED = "failed"
+
+
 class ParetoDecisionRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -210,6 +230,12 @@ class ParetoDecisionRecord(BaseModel):
     completed_state_version: int | None = None
     selected_candidate_snapshot: ParetoOrchestraCandidate | None = None
     selection_status: ParetoSelectionStatus = ParetoSelectionStatus.NO_COMPARABLE_CANDIDATE
+    # Behavioral realization gates (activation alone is insufficient).
+    affected_subtask_ids: list[str] = Field(default_factory=list)
+    affected_wave_id: str | None = None
+    realization_status: RealizationStatus = RealizationStatus.PENDING
+    realization_id: str | None = None
+    realization_evidence: dict[str, Any] = Field(default_factory=dict)
 
 
 class ParetoSelectionProposal(BaseModel):

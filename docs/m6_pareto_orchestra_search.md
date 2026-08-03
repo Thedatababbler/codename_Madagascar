@@ -97,6 +97,27 @@ Estimates are incremental for the candidate’s next decision horizon.
 * **Risk** — edit-conditioned (backend switch, serialization, context reduce).
 * **Quality** — public/development harness history only; otherwise unavailable
   (candidate stays partial; no invented neutral score).
+* **Scheduling-only quality inheritance** — when the mutation is concurrency-only
+  (cannot alter output-producing agents/prompts/tools/models/memory/graph/
+  verification) and a current public quality measurement exists, quality may be
+  inherited as an explicit estimate with provenance
+  `inherited_quality_neutral_scheduling_change`. Never invent zero/fixture/
+  private substitutes.
+
+### Public harness evidence lifecycle (production path)
+
+```text
+committed public harness artifact
+→ PublicEvaluationRecord (evaluator_id/version, source_artifact_hash, …)
+→ task state + public_evaluations.jsonl
+→ ParetoObjectiveEstimator
+→ complete frontier / selection
+```
+
+Fixture injection and production commit hooks share
+`orchestra.control.pareto.public_evaluation`. Real production mode fails closed
+(`no_comparable_candidate` / unavailable quality) when the public evaluator is
+genuinely unavailable.
 
 Every estimate records source (`history`, `configured_profile`,
 `declared_budget`, `unavailable`), uncertainty, and evidence counts.
@@ -120,8 +141,25 @@ Realized metrics count only rows after those baselines:
 `ParetoGlobalCandidatePolicy.select()` returns a projection only. Slow Loop
 stamps `activated_revision_id` onto the prepared projected state and commits
 via M5. Staging / checkpoint / wall-time failure leaves **no** live pending
-decision. Finalization requires
-`decision.activated_revision_id == state.active_plan_revision_id`.
+decision. Finalization requires:
+
+1. `decision.activated_revision_id == state.active_plan_revision_id`
+2. **Behavioral realization**: every `affected_subtask_ids` entry reaches a
+   terminal state under that activation (activation alone, wave start alone, or
+   scheduler return alone are insufficient). Incomplete waves keep the decision
+   `pending`; resume finalizes exactly once. If no eligible future wave exists,
+   record `censored_no_eligible_wave` rather than fabricating improvement.
+
+### Scheduler incarnation and stale-lease recovery
+
+```text
+run_id + scheduler_incarnation + lease_id + lease_owner_incarnation
+```
+
+Each `run_task` starts a new persisted incarnation and reclaims only
+noncommitted leases owned by previous inactive incarnations. Committed subtasks
+never re-execute. Recovery events are persisted (`recovery_events.json`) and
+drive report recovery counts.
 
 ## 8. Persistence and search traces
 
@@ -247,6 +285,13 @@ adapts after `s1`, then runs `s2||s3` as one wave. Evidence is persisted in
 `--mock-backends` replaces every configured execution backend with deterministic
 local implementations (no OpenAI/Codex/smolagents client init). `--mock-llm` is a
 compatibility alias with the same full override semantics.
+
+### Environment resolution
+
+`orchestra.settings.resolve_runtime_settings` merges process env + optional
+`.env` + defaults into an explicit mapping **without** mutating `os.environ`.
+Synthetic formal samples must not inject `LCB_REPOSITORY_PATH`. Importing library
+modules never loads environment files.
 
 Protocol: `docs/stage2_pareto_experiment_protocol.md`.
 

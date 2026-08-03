@@ -10,9 +10,27 @@
 | Status | `canonical` (use for comparisons) / `smoke` / `mock` / `superseded` / `incomplete` |
 | Paths | Repo-relative from AdaMAS root |
 
-**Last updated:** 2026-07-23 (UTC) — M6.2 production + Stage-2 experiment closure
+**Last updated:** 2026-08-03 (UTC) — M6.2 final correctness closure (uncommitted)
 
 ---
+
+### EXP-20260803-01 — M6.2 Final Correctness Closure
+- **Status:** smoke / mock (fixtures + fully mocked backends only; no paid API,
+  no real LCB, no private/held-out inference)
+- **Date:** 2026-08-03 (UTC)
+- **Branch / commit:** `agnostic` @ start `5d0a76f` (local `m62-final-closure`,
+  uncommitted)
+- **Benchmark / phase:** public harness → PublicEvaluationRecord → production
+  Pareto; scheduler incarnation stale-lease reclaim; behavioral realization
+  gate; typed `fixture|development|heldout` split; expanded calibration gates;
+  task-level cost-per-solved; deterministic reports; env resolution without
+  `LCB_REPOSITORY_PATH` pollution
+- **Baseline / graph:** starts from `5d0a76f`; no Codex hybrid changes; no new
+  Pareto algorithms / candidate types / orchestration features / benchmarks
+- **Notes:** leave uncommitted until review. Deterministic fixture results are
+  **not** real-model quality/latency/cost evidence. Fixed-budget real M6
+  development experiments require explicit authorization after this closure is
+  green.
 
 ### EXP-20260723-02 — M6.2 Production Path + Stage-2 Pareto Experiments
 - **Status:** smoke / mock (fixture; no paid or held-out real-model runs)

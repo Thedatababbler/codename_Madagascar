@@ -185,6 +185,9 @@ class SubtaskState(BaseModel):
     lease_status: str = "unleased"  # SubtaskLeaseStatus value
     lease_plan_version: int | None = None
     lease_acquired_state_version: int | None = None
+    lease_id: str | None = None
+    lease_owner_incarnation: int | None = None
+    lease_created_at: datetime | None = None
     # M5: required communication not satisfiable; target stays unleased.
     communication_block_reason: str | None = None
 
@@ -227,6 +230,9 @@ class TaskExecutionState(BaseModel):
     pareto_state: Any | None = None
     scheduling_policy: Any | None = None
     committed_subtask_count: int = 0
+    # Scheduler incarnation / lease ownership (stale-lease recovery).
+    scheduler_incarnation: int = 0
+    scheduler_recovery_events: list[dict[str, Any]] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _coerce_fast_loop_states(self) -> TaskExecutionState:

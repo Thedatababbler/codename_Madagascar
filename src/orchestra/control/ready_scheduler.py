@@ -33,6 +33,8 @@ from orchestra.control.input_assembler import (
     SubtaskInputAssembler,
     SubtaskInputAssemblyError,
 )
+from orchestra.control.pareto.public_evaluation import record_commit_public_evaluations
+from orchestra.control.scheduler_recovery import acquire_lease, begin_scheduler_incarnation
 from orchestra.control.slow_loop.controller import SlowLoopController
 from orchestra.control.slow_loop.evidence import active_block_evidence_key
 from orchestra.control.slow_loop.graph_materializer import FutureGraphMaterializer
@@ -368,6 +370,15 @@ class ReadySubtaskScheduler:
                 max_concurrent_subtasks=self.max_concurrent_subtasks
             )
 
+        # New scheduler incarnation: reclaim stale leases from prior inactive owners.
+        begin_scheduler_incarnation(
+            state,
+            reason="run_task_start",
+            checkpoint_revision_id=state.active_plan_revision_id,
+        )
+        state.state_version += 1
+        await self.task_checkpoint_store.save(state)
+
         while True:
             for sid, sub in state.subtasks.items():
                 if sub.status is SubtaskStatus.PENDING and self._deps_failed(state, sid):
@@ -399,10 +410,7 @@ class ReadySubtaskScheduler:
             # Acquire leases only for deliverable targets (future plan freeze).
             leased = set(deliverable)
             for sid in leased:
-                sub = state.subtasks[sid]
-                sub.lease_status = "leased"
-                sub.lease_plan_version = state.task_plan.plan_version
-                sub.lease_acquired_state_version = state.state_version
+                acquire_lease(state, sid)
             state.state_version += 1
             await self.task_checkpoint_store.save(state)
 
@@ -727,6 +735,7 @@ class ReadySubtaskScheduler:
             state.clear_communication_blocks()
             state.mark_ready_from_dependencies()
             state.state_version += 1
+            self._record_public_evaluation(state, result, context)
             return
 
         assert state.canonical_workspace_ref is not None
@@ -829,6 +838,25 @@ class ReadySubtaskScheduler:
         state.clear_communication_blocks()
         state.mark_ready_from_dependencies()
         state.state_version += 1
+        self._record_public_evaluation(state, result, context)
+
+    def _record_public_evaluation(
+        self,
+        state: TaskExecutionState,
+        result: SubtaskExecutionResult,
+        context: RunContext,
+    ) -> None:
+        """Persist public harness evidence for production Pareto quality estimation."""
+        if state.subtasks[result.subtask_id].status is not SubtaskStatus.COMMITTED:
+            return
+        record_commit_public_evaluations(
+            state=state,
+            run_id=str(getattr(context, "run_id", "") or state.task_id),
+            subtask_id=result.subtask_id,
+            produced_artifacts=list(result.produced_artifacts or []),
+            candidate_harness_passed=bool(result.candidate_harness_passed),
+            run_dir=getattr(context, "run_dir", None),
+        )
 
     def _merge_fast_loop(
         self, state: TaskExecutionState, result: SubtaskExecutionResult

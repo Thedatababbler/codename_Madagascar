@@ -52,7 +52,7 @@ from orchestra.sandbox.lcb_official import (
 )
 from orchestra.sandbox.mock import MockSandbox
 from orchestra.schemas.artifacts import ProblemArtifact
-from orchestra.settings import load_env_file
+from orchestra.settings import resolve_runtime_settings
 from orchestra.storage.artifacts import FileArtifactStore
 from orchestra.storage.events import AppendOnlyEventWriter
 from orchestra.telemetry.events import TelemetryEvent
@@ -79,7 +79,10 @@ def _graph_catalog_hash(plan: TaskPlan) -> str:
 
 
 async def _run(args: argparse.Namespace) -> int:
-    load_env_file()
+    # Resolve without mutating process-wide environment (mock runs need no LCB path).
+    resolve_runtime_settings(
+        include_lcb_repository_default=not bool(args.mock_backends or args.mock_llm)
+    )
     started_at = datetime.now(UTC)
     repo_root = _repo_root()
     raw = load_experiment_raw(args.config)
@@ -265,12 +268,14 @@ async def _run(args: argparse.Namespace) -> int:
     policy_conc = 1
     if state.scheduling_policy is not None:
         policy_conc = int(state.scheduling_policy.max_concurrent_subtasks)
+    split = str(getattr(config.experiment, "split", None) or "development")
     manifest: dict[str, Any] = {
         "runner": "run_m6_orchestra",
         "started_at": started_at.isoformat(),
         "git_commit": git_commit_hash(repo_root),
         "config_path": str(args.config),
         "plan_config": str(plan_path),
+        "split": split,
         "experiment": config.model_dump(mode="json"),
         "manifest_hash": hashlib.sha256(
             Path(config.benchmark.manifest).read_bytes()
@@ -308,9 +313,36 @@ async def _run(args: argparse.Namespace) -> int:
         source_repo=str(Path(source_repo).resolve()) if source_repo else None,
     )
 
+    # Finalize only when behavioral realization is satisfied (else keep pending).
+    if (
+        state.pareto_state is not None
+        and getattr(state.pareto_state, "pending_decision", None) is not None
+        and hasattr(slow_loop.candidate_policy, "finalize_realized")
+    ):
+        slow_loop.candidate_policy.finalize_realized(state)
+        await task_checkpoint_store.save(state)
+
+    selected_hash = None
+    decision_ids: list[str] = []
+    if state.pareto_state is not None:
+        for d in state.pareto_state.decision_history or []:
+            decision_ids.append(d.decision_id)
+            if d.selected_content_hash:
+                selected_hash = d.selected_content_hash
+        if state.pareto_state.pending_decision is not None:
+            selected_hash = (
+                state.pareto_state.pending_decision.selected_content_hash or selected_hash
+            )
+            decision_ids.append(state.pareto_state.pending_decision.decision_id)
+
+    public_eval_ids = [
+        getattr(r, "evaluation_id", None)
+        for r in (state.public_evaluation_records or [])
+    ]
     summary = {
         "run_dir": str(run_dir),
         "task_id": plan.task_id,
+        "split": split,
         "pareto_enabled": resolved.pareto_config.enabled,
         "active_plan_revision_id": state.active_plan_revision_id,
         "committed": [
@@ -323,9 +355,15 @@ async def _run(args: argparse.Namespace) -> int:
             if state.pareto_state is not None
             else 0
         ),
+        "decision_ids": decision_ids,
+        "selected_hash": selected_hash,
         "pending_decision": bool(
             state.pareto_state and state.pareto_state.pending_decision
         ),
+        "public_evaluation_count": len(state.public_evaluation_records or []),
+        "public_evaluation_ids": [e for e in public_eval_ids if e],
+        "scheduler_incarnation": state.scheduler_incarnation,
+        "recovery_event_count": len(state.scheduler_recovery_events or []),
         "control_plane_hash": resolved.control_plane_hash,
     }
     (run_dir / "m6_orchestra_summary.json").write_text(

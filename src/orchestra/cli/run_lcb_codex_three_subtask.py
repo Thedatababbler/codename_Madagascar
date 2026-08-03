@@ -56,7 +56,7 @@ from orchestra.runtime.native_async import NativeAsyncRuntime
 from orchestra.runtime.task_checkpoint import TaskCheckpointStore
 from orchestra.sandbox.mock import MockSandbox
 from orchestra.schemas.artifacts import ProblemArtifact
-from orchestra.settings import load_env_file
+from orchestra.settings import resolve_runtime_settings
 from orchestra.storage.artifacts import FileArtifactStore
 from orchestra.storage.events import AppendOnlyEventWriter
 from orchestra.telemetry.events import TelemetryEvent
@@ -111,7 +111,12 @@ def _load_lcb_problem(config: dict[str, Any]) -> ProblemArtifact:
 
 
 async def _run(args: argparse.Namespace) -> int:
-    load_env_file()
+    use_synthetic = bool(args.synthetic_problem)
+    # Resolve settings without mutating process env. Synthetic runs intentionally
+    # omit the LCB repository default so they cannot pollute later tests.
+    runtime_settings = resolve_runtime_settings(
+        include_lcb_repository_default=not use_synthetic,
+    )
     started_at = datetime.now(UTC)
     wall_started = time.perf_counter()
 
@@ -150,11 +155,22 @@ async def _run(args: argparse.Namespace) -> int:
         metadata={"plan_config": plan_path, "demo": "lcb_formal_codex_three_subtask"},
     )
 
-    use_synthetic = bool(args.synthetic_problem)
     if use_synthetic:
         problem = _load_synthetic_problem(config)
         problem_source = "synthetic_fixture"
     else:
+        # Real LCB: expand repository/data paths from resolved settings without
+        # permanently injecting them into os.environ for other tests.
+        bench = dict(config.get("benchmark") or {})
+        if not bench.get("repository_path") or str(bench.get("repository_path")).startswith("${"):
+            bench["repository_path"] = runtime_settings.get(
+                "LCB_REPOSITORY_PATH", "/root/projects/LiveCodeBench"
+            )
+        if not bench.get("data_dir") or str(bench.get("data_dir")).startswith("${"):
+            bench["data_dir"] = runtime_settings.get(
+                "LCB_DATA_DIR", "/root/data/livecodebench/code_generation_lite"
+            )
+        config = {**config, "benchmark": bench}
         problem = _load_lcb_problem(config)
         problem_source = "real_lcb"
 
