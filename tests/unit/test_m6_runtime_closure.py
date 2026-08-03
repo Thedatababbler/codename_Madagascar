@@ -482,7 +482,7 @@ def test_estimates_include_uncertainty_and_evidence_count():
     )
     assert out.uncertainty
     assert out.evidence_counts
-    assert out.estimator_version == "m6.1"
+    assert out.estimator_version == "m6.2"
 
 
 def test_backend_failures_are_usage_slice_local():

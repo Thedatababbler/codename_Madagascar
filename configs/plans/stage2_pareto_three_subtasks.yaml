@@ -1,8 +1,8 @@
-task_id: stage2_pareto_three
+task_id: stage2_pareto_fork_join
 plan_version: 1
 decomposition_rationale: >
-  Deterministic three-subtask fixture for Stage-2 Pareto online adaptation.
-  Distinct from offline Stage-1 single-subtask candidate analysis.
+  Deterministic fork/join fixture for Stage-2 Pareto concurrency adaptation.
+  s1 seeds; s2 and s3 form a parallel wave; s4 joins.
 subtasks:
   - subtask_id: s1
     title: seed
@@ -12,48 +12,83 @@ subtasks:
     local_graph_template: configs/graphs/codex_single_implementer.yaml
     budget: {}
   - subtask_id: s2
-    title: adapt
-    objective: Continue after Slow Loop / Pareto future adaptation.
+    title: fork-left
+    objective: Left branch after Slow Loop concurrency adaptation.
     dependencies: [s1]
     keystone_harness_id: repository_test_harness
     local_graph_template: configs/graphs/codex_single_implementer.yaml
     budget: {}
   - subtask_id: s3
-    title: finish
-    objective: Finalize after adapted communication and scheduling.
-    dependencies: [s2]
+    title: fork-right
+    objective: Right branch after Slow Loop concurrency adaptation.
+    dependencies: [s1]
+    keystone_harness_id: repository_test_harness
+    local_graph_template: configs/graphs/codex_single_implementer.yaml
+    budget: {}
+  - subtask_id: s4
+    title: join
+    objective: Finalize after both fork branches commit.
+    dependencies: [s2, s3]
     keystone_harness_id: repository_test_harness
     local_graph_template: configs/graphs/codex_single_implementer.yaml
     budget: {}
 communication_plan:
   version: 1
   payload_contracts:
-    - payload_id: large
+    - payload_id: p12
+      source_subtask_id: s1
+      target_subtask_id: s2
+      artifact_type: FinalAnswerArtifact
+      required: false
+      max_tokens: 4096
+      metadata: {slot: "comm:p12"}
+    - payload_id: p13
       source_subtask_id: s1
       target_subtask_id: s3
       artifact_type: FinalAnswerArtifact
       required: false
-      max_tokens: 9000
-      metadata: {slot: "comm:large"}
-    - payload_id: p23
+      max_tokens: 4096
+      metadata: {slot: "comm:p13"}
+    - payload_id: p24
       source_subtask_id: s2
-      target_subtask_id: s3
+      target_subtask_id: s4
       artifact_type: FinalAnswerArtifact
       required: false
       max_tokens: 4096
-      metadata: {slot: "comm:p23"}
+      metadata: {slot: "comm:p24"}
+    - payload_id: p34
+      source_subtask_id: s3
+      target_subtask_id: s4
+      artifact_type: FinalAnswerArtifact
+      required: false
+      max_tokens: 4096
+      metadata: {slot: "comm:p34"}
   delivery_schedule:
-    - rule_id: r_large
-      payload_id: large
+    - rule_id: r12
+      payload_id: p12
       enabled: true
-    - rule_id: r23
-      payload_id: p23
+    - rule_id: r13
+      payload_id: p13
+      enabled: true
+    - rule_id: r24
+      payload_id: p24
+      enabled: true
+    - rule_id: r34
+      payload_id: p34
       enabled: true
   context_budgets:
-    s2: 1200
-    s3: 1200
+    s2: 8000
+    s3: 8000
+    s4: 8000
 metadata:
   allowed_backend_assignments:
     coding: [codex_sdk, smolagents_code]
     s2: [codex_sdk, smolagents_code]
     s3: [codex_sdk, smolagents_code]
+    s4: [codex_sdk, smolagents_code]
+  fixture_subtask_durations_seconds:
+    s1: 0.10
+    s2: 0.20
+    s3: 0.20
+    s4: 0.15
+  fixture_latency_label: fixture_estimate_not_real_model

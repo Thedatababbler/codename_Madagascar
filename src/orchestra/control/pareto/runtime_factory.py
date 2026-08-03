@@ -40,6 +40,7 @@ def build_pareto_policy(
     run_dir: str | Path,
     contracts_dir: str = "configs/contracts",
     repo_root: str | Path | None = None,
+    runtime_concurrency_cap: int = 1,
 ) -> ParetoGlobalCandidatePolicy:
     if not resolved.pareto_config.enabled:
         raise RuntimeError("Pareto requested but pareto.enabled is false")
@@ -53,6 +54,7 @@ def build_pareto_policy(
         preference_profile=resolved.preference_profile,
         run_dir=str(run_dir),
         catalog=catalog,
+        runtime_concurrency_cap=runtime_concurrency_cap,
     )
 
 
@@ -64,6 +66,7 @@ def build_slow_loop_controller(
     repo_root: str | Path | None = None,
     checkpoint_store: TaskCheckpointStore | None = None,
     fail_closed: bool = True,
+    runtime_concurrency_cap: int = 1,
 ) -> SlowLoopController:
     """Construct SlowLoopController; attach Pareto policy when enabled."""
     policy = None
@@ -74,6 +77,7 @@ def build_slow_loop_controller(
                 run_dir=run_dir,
                 contracts_dir=contracts_dir,
                 repo_root=repo_root,
+                runtime_concurrency_cap=runtime_concurrency_cap,
             )
         except Exception as exc:
             if fail_closed:
@@ -88,9 +92,14 @@ def build_slow_loop_controller(
     )
 
 
-def control_plane_manifest_fields(resolved: ResolvedParetoRuntime) -> dict[str, Any]:
+def control_plane_manifest_fields(
+    resolved: ResolvedParetoRuntime,
+    *,
+    runtime_concurrency_cap: int | None = None,
+    policy_concurrency: int | None = None,
+) -> dict[str, Any]:
     """Fields recorded in run_manifest for auditable M6 runs."""
-    return {
+    fields: dict[str, Any] = {
         "pareto_config": resolved.pareto_config.model_dump(mode="json"),
         "slow_loop_config": resolved.slow_loop_config.model_dump(mode="json"),
         "preference_profile_id": resolved.preference_profile.profile_id,
@@ -101,6 +110,20 @@ def control_plane_manifest_fields(resolved: ResolvedParetoRuntime) -> dict[str, 
         "control_plane_hash": resolved.control_plane_hash,
         "candidate_catalog": resolved.candidate_catalog.model_dump(mode="json"),
     }
+    if runtime_concurrency_cap is not None:
+        from orchestra.control.scheduling_effect import concurrency_manifest_fields
+        from orchestra.control.slow_loop.schemas import TaskSchedulingPolicy
+
+        pol = None
+        if policy_concurrency is not None:
+            pol = TaskSchedulingPolicy(max_concurrent_subtasks=int(policy_concurrency))
+        fields.update(
+            concurrency_manifest_fields(
+                runtime_concurrency_cap=runtime_concurrency_cap,
+                policy=pol,
+            )
+        )
+    return fields
 
 
 def reported_pareto_config(control: ControlPlaneConfig) -> ParetoConfig:

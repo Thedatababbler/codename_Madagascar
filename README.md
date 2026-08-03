@@ -225,19 +225,28 @@ uv run python -m orchestra.cli.run_m6_smoke \
 # M6.2 opt-in production path (ReadySubtaskScheduler; multi-subtask plan)
 uv run python -m orchestra.cli.run_m6_orchestra \
   --config configs/experiments/stage2/m6_balanced_knee.yaml \
-  --mock-llm
+  --mock-backends
 
-# Stage-2 Pareto experiments (fixture / report; no paid API by default)
+# Stage-2 Pareto experiments (fork/join fixture / report; no paid API)
 uv run python -m orchestra.cli.stage2_pareto_experiments validate \
   --config configs/experiments/stage2/m6_balanced_knee.yaml
 uv run python -m orchestra.cli.stage2_pareto_experiments run-fixture \
   --config configs/experiments/stage2/m6_balanced_knee.yaml
+uv run python -m orchestra.cli.stage2_pareto_experiments freeze-calibration \
+  --config configs/experiments/stage2/m6_balanced_knee.yaml \
+  --run-dir <fixture-run-dir> \
+  --output outputs/stage2_pareto/calibration/dev_calibration.json
 uv run python -m orchestra.cli.stage2_pareto_experiments report \
   --run-dir <fixture-run-dir>
+
+# Formal Codex three-subtask sample (M5 on; API-free CI path)
+uv run python -m orchestra.cli.run_lcb_codex_three_subtask \
+  --mock-backends --synthetic-problem
 ```
 
 Protocol: `docs/stage2_pareto_experiment_protocol.md`. Design:
 `docs/m6_pareto_orchestra_search.md`. Fixture results are not real-model gains.
+`--mock-backends` is the fully API-free override; `--mock-llm` is a compatibility alias.
 
 ## Stage 1 experiments
 

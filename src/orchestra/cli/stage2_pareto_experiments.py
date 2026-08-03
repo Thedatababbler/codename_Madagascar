@@ -94,15 +94,32 @@ def cmd_report(args: argparse.Namespace) -> int:
     run_dirs = [Path(p) for p in args.run_dir]
     output = Path(args.output_dir or "outputs/stage2_pareto/reports")
     calibration = None
-    if args.calibration:
+    if args.held_out:
+        if not args.calibration:
+            raise SystemExit(
+                "held-out reporting requires --calibration <frozen-calibration.json>"
+            )
+        if not args.config:
+            raise SystemExit(
+                "held-out reporting requires --config <matching-experiment-config>"
+            )
+        try:
+            calibration = CalibrationArtifact.from_dict(
+                json.loads(Path(args.calibration).read_text(encoding="utf-8"))
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise SystemExit(f"malformed calibration artifact: {exc}") from exc
+        raw = yaml.safe_load(Path(args.config).read_text(encoding="utf-8")) or {}
+        control = load_control_plane_mapping(raw)
+        assert_calibration_matches(calibration, control)
+    elif args.calibration:
         calibration = CalibrationArtifact.from_dict(
             json.loads(Path(args.calibration).read_text(encoding="utf-8"))
         )
         if args.config:
             raw = yaml.safe_load(Path(args.config).read_text(encoding="utf-8")) or {}
             control = load_control_plane_mapping(raw)
-            if args.held_out:
-                assert_calibration_matches(calibration, control)
+            assert_calibration_matches(calibration, control)
     payload = write_stage2_report(
         run_dirs,
         output_dir=output,
@@ -117,31 +134,61 @@ def cmd_report(args: argparse.Namespace) -> int:
 def cmd_freeze_calibration(args: argparse.Namespace) -> int:
     raw = yaml.safe_load(Path(args.config).read_text(encoding="utf-8")) or {}
     control = load_control_plane_mapping(raw)
-    # Development-only points; never use held-out/private scores here.
-    points = [
-        {
-            "quality": 0.9,
-            "cost": 0.05,
-            "latency": 1.0,
-            "risk": 0.1,
-            "communication_overhead": 100.0,
-        },
-        {
-            "quality": 0.7,
-            "cost": 0.02,
-            "latency": 0.5,
-            "risk": 0.2,
-            "communication_overhead": 50.0,
-        },
-        {
-            "quality": 0.8,
-            "cost": 0.03,
-            "latency": 0.8,
-            "risk": 0.15,
-            "communication_overhead": 80.0,
-        },
-    ]
-    artifact = write_calibration_artifact(args.output, control=control, development_points=points)
+    points: list[dict[str, float | None]] = []
+    # Prefer development-run aggregates when --run-dir is provided.
+    if args.run_dir:
+        from orchestra.experiments.stage2_pareto import collect_run_records
+
+        for run_dir in args.run_dir:
+            rec = collect_run_records(Path(run_dir))
+            for d in rec["decisions"]:
+                snap = d.get("selected_candidate_snapshot") or {}
+                vals = (snap.get("objectives") or {}).get("values") or {}
+                row: dict[str, float | None] = {}
+                for name in (
+                    "quality",
+                    "cost",
+                    "latency",
+                    "risk",
+                    "communication_overhead",
+                ):
+                    obj = vals.get(name) or {}
+                    if obj.get("available") and obj.get("value") is not None:
+                        row[name] = float(obj["value"])
+                if row:
+                    points.append(row)
+    if not points:
+        # Deterministic development-only fallback points (never held-out/private).
+        points = [
+            {
+                "quality": 0.9,
+                "cost": 0.05,
+                "latency": 1.0,
+                "risk": 0.1,
+                "communication_overhead": 100.0,
+            },
+            {
+                "quality": 0.7,
+                "cost": 0.02,
+                "latency": 0.5,
+                "risk": 0.2,
+                "communication_overhead": 50.0,
+            },
+            {
+                "quality": 0.8,
+                "cost": 0.03,
+                "latency": 0.8,
+                "risk": 0.15,
+                "communication_overhead": 80.0,
+            },
+        ]
+    artifact = write_calibration_artifact(
+        args.output,
+        control=control,
+        development_points=points,
+        run_dir=(args.run_dir[0] if args.run_dir else None),
+        config_path=args.config,
+    )
     print(json.dumps(artifact.to_dict(), indent=2, sort_keys=True))
     return 0
 
@@ -186,6 +233,7 @@ def main() -> None:
         help="Write frozen development calibration artifact",
     )
     p_cal.add_argument("--config", required=True)
+    p_cal.add_argument("--run-dir", action="append", default=[])
     p_cal.add_argument(
         "--output",
         default="outputs/stage2_pareto/calibration/dev_calibration.json",

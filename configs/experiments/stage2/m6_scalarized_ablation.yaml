@@ -20,6 +20,7 @@ runtime:
   max_parallel_nodes_per_task: 2
   max_parallel_llm_calls: 4
   max_parallel_sandboxes: 1
+  max_concurrent_subtasks: 2
   checkpoint_after_each_wave: true
 sandbox:
   backend: mock
@@ -49,6 +50,7 @@ candidate_catalog:
     target_roles:
     - s2
     - s3
+    - s4
     declared_cost_usd: 0.02
     declared_latency_seconds: 0.8
   concurrency_alternatives:
@@ -62,6 +64,9 @@ candidate_catalog:
     - 512
     - 1024
     s3:
+    - 512
+    - 1024
+    s4:
     - 512
     - 1024
   allow_archive_replay: true

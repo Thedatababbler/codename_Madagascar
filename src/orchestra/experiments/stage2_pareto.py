@@ -93,6 +93,7 @@ def shared_stage2_base(*, seed: int = 42) -> dict[str, Any]:
             "max_parallel_nodes_per_task": 2,
             "max_parallel_llm_calls": 4,
             "max_parallel_sandboxes": 1,
+            "max_concurrent_subtasks": 2,
             "checkpoint_after_each_wave": True,
         },
         "sandbox": {
@@ -125,15 +126,20 @@ def shared_stage2_base(*, seed: int = 42) -> dict[str, Any]:
                 {
                     "template_id": "single_implementer",
                     "graph_path": "configs/graphs/codex_single_implementer.yaml",
-                    "target_roles": ["s2", "s3"],
+                    "target_roles": ["s2", "s3", "s4"],
                     # Evidence present → may enter complete frontier.
                     "declared_cost_usd": 0.02,
                     "declared_latency_seconds": 0.8,
                 }
             ],
             "concurrency_alternatives": [1, 2],
+            # Serialization of the fork wave is a catalog alternative (not initial policy).
             "serialization_groups": [["s2", "s3"]],
-            "context_budget_alternatives": {"s2": [512, 1024], "s3": [512, 1024]},
+            "context_budget_alternatives": {
+                "s2": [512, 1024],
+                "s3": [512, 1024],
+                "s4": [512, 1024],
+            },
             "allow_archive_replay": True,
             "allow_two_edit_pairs": True,
         },
@@ -241,9 +247,20 @@ class CalibrationArtifact:
     preference_hash: str
     objective_hash: str
     pricing_version: str
+    pricing_registry_hash: str
+    candidate_catalog_hash: str
+    graph_catalog_hash: str
+    preference_profile_id: str
+    objectives: dict[str, str]
+    backend_model_settings: dict[str, Any]
+    seed_policy: dict[str, Any]
+    git_sha: str
+    manifest_schema_version: str
     normalization: dict[str, dict[str, float]]
     reference_point: dict[str, float]
     created_at: str
+    source_split: str = "development"
+    # Backward-compatible alias used by older readers.
     split: str = "development"
 
     def to_dict(self) -> dict[str, Any]:
@@ -252,24 +269,65 @@ class CalibrationArtifact:
             "preference_hash": self.preference_hash,
             "objective_hash": self.objective_hash,
             "pricing_version": self.pricing_version,
+            "pricing_registry_hash": self.pricing_registry_hash,
+            "candidate_catalog_hash": self.candidate_catalog_hash,
+            "graph_catalog_hash": self.graph_catalog_hash,
+            "preference_profile_id": self.preference_profile_id,
+            "objectives": self.objectives,
+            "backend_model_settings": self.backend_model_settings,
+            "seed_policy": self.seed_policy,
+            "git_sha": self.git_sha,
+            "manifest_schema_version": self.manifest_schema_version,
             "normalization": self.normalization,
             "reference_point": self.reference_point,
             "created_at": self.created_at,
+            "source_split": self.source_split,
             "split": self.split,
         }
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> CalibrationArtifact:
+        required = (
+            "control_plane_hash",
+            "preference_hash",
+            "objective_hash",
+            "pricing_version",
+        )
+        missing = [k for k in required if k not in payload]
+        if missing:
+            raise RuntimeError(
+                f"malformed calibration artifact: missing fields {missing}"
+            )
+        split = str(payload.get("source_split") or payload.get("split") or "development")
         return cls(
             control_plane_hash=str(payload["control_plane_hash"]),
             preference_hash=str(payload["preference_hash"]),
             objective_hash=str(payload["objective_hash"]),
             pricing_version=str(payload["pricing_version"]),
+            pricing_registry_hash=str(payload.get("pricing_registry_hash") or ""),
+            candidate_catalog_hash=str(payload.get("candidate_catalog_hash") or ""),
+            graph_catalog_hash=str(payload.get("graph_catalog_hash") or ""),
+            preference_profile_id=str(payload.get("preference_profile_id") or ""),
+            objectives={
+                str(k): str(v) for k, v in dict(payload.get("objectives") or {}).items()
+            },
+            backend_model_settings=dict(payload.get("backend_model_settings") or {}),
+            seed_policy=dict(payload.get("seed_policy") or {}),
+            git_sha=str(payload.get("git_sha") or ""),
+            manifest_schema_version=str(
+                payload.get("manifest_schema_version") or "stage2-calibration-v1"
+            ),
             normalization=dict(payload.get("normalization") or {}),
             reference_point=dict(payload.get("reference_point") or {}),
             created_at=str(payload.get("created_at") or ""),
-            split=str(payload.get("split") or "development"),
+            source_split=split,
+            split=split,
         )
+
+
+def _stable_hash(payload: Any) -> str:
+    blob = json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha256(blob.encode()).hexdigest()
 
 
 def write_calibration_artifact(
@@ -277,7 +335,11 @@ def write_calibration_artifact(
     *,
     control: ControlPlaneConfig,
     development_points: list[dict[str, float | None]],
+    run_dir: str | Path | None = None,
+    config_path: str | Path | None = None,
 ) -> CalibrationArtifact:
+    from orchestra.experiments.metadata import git_commit_hash
+
     resolved = resolve_pareto_runtime(control, repo_root=_repo_root())
     norms: dict[str, dict[str, float]] = {}
     reference: dict[str, float] = {}
@@ -294,14 +356,73 @@ def write_calibration_artifact(
             hi = lo + 1.0
         norms[name] = {"min": lo, "max": hi}
         reference[name] = hi if direction is ObjectiveDirection.MINIMIZE else lo
+
+    catalog_dump = resolved.candidate_catalog.model_dump(mode="json")
+    graph_paths = sorted(
+        {
+            t.get("graph_path")
+            for t in catalog_dump.get("graph_templates") or []
+            if isinstance(t, dict) and t.get("graph_path")
+        }
+    )
+    graph_hashes = []
+    for gpath in graph_paths:
+        p = Path(gpath)
+        if not p.is_absolute():
+            p = _repo_root() / p
+        if p.exists():
+            graph_hashes.append(f"{gpath}:{hashlib.sha256(p.read_bytes()).hexdigest()}")
+    pricing_path = Path(resolved.pricing_registry)
+    if not pricing_path.is_absolute():
+        pricing_path = _repo_root() / pricing_path
+    pricing_registry_hash = (
+        hashlib.sha256(pricing_path.read_bytes()).hexdigest()
+        if pricing_path.exists()
+        else ""
+    )
+    seed = 42
+    if config_path is not None:
+        raw = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
+        seed = int((raw.get("experiment") or {}).get("seed") or 42)
+    if run_dir is not None and (Path(run_dir) / "run_manifest.json").exists():
+        manifest = json.loads(
+            (Path(run_dir) / "run_manifest.json").read_text(encoding="utf-8")
+        )
+        seed = int(
+            ((manifest.get("experiment") or {}).get("seed"))
+            or ((manifest.get("stage2") or {}).get("seed"))
+            or seed
+        )
+
     artifact = CalibrationArtifact(
         control_plane_hash=resolved.control_plane_hash,
         preference_hash=resolved.preference_hash,
         objective_hash=resolved.objective_hash,
         pricing_version=resolved.pricing_version,
+        pricing_registry_hash=pricing_registry_hash,
+        candidate_catalog_hash=_stable_hash(catalog_dump),
+        graph_catalog_hash=_stable_hash(graph_hashes),
+        preference_profile_id=resolved.preference_profile.profile_id,
+        objectives={
+            name: direction.value
+            for name, direction in resolved.pareto_config.objectives.items()
+        },
+        backend_model_settings={
+            "allowed_backend_assignments": dict(
+                resolved.slow_loop_config.allowed_backend_assignments or {}
+            ),
+            "backend_model_pools": dict(
+                resolved.slow_loop_config.backend_model_pools or {}
+            ),
+            "pricing_registry": resolved.pricing_registry,
+        },
+        seed_policy={"seed": seed, "deterministic_reports": True},
+        git_sha=git_commit_hash(_repo_root()) or "",
+        manifest_schema_version="stage2-calibration-v1",
         normalization=norms,
         reference_point=reference,
         created_at=datetime.now(UTC).isoformat(),
+        source_split="development",
         split="development",
     )
     Path(path).parent.mkdir(parents=True, exist_ok=True)
@@ -313,18 +434,62 @@ def write_calibration_artifact(
 
 
 def assert_calibration_matches(
-    artifact: CalibrationArtifact, control: ControlPlaneConfig
+    artifact: CalibrationArtifact,
+    control: ControlPlaneConfig,
+    *,
+    require_held_out_split: bool = False,
 ) -> None:
     resolved = resolve_pareto_runtime(control, repo_root=_repo_root())
+    mismatches: list[str] = []
+    if artifact.split not in {"development", "held_out"} and artifact.source_split not in {
+        "development",
+        "held_out",
+    }:
+        mismatches.append("split")
+    if require_held_out_split and artifact.source_split == "held_out":
+        # Held-out reporting consumes a development-frozen calibration, never a
+        # calibration derived from the held-out split itself.
+        mismatches.append("development_versus_held_out_split_misuse")
+    if artifact.control_plane_hash != resolved.control_plane_hash:
+        mismatches.append("control_plane_hash")
+    if artifact.preference_hash != resolved.preference_hash:
+        mismatches.append("preference_hash")
+    if artifact.objective_hash != resolved.objective_hash:
+        mismatches.append("objective_hash")
+    if artifact.pricing_version != resolved.pricing_version:
+        mismatches.append("pricing_version")
+    expected_objectives = {
+        name: direction.value
+        for name, direction in resolved.pareto_config.objectives.items()
+    }
+    if artifact.objectives and artifact.objectives != expected_objectives:
+        mismatches.append("objectives")
+    catalog_hash = _stable_hash(resolved.candidate_catalog.model_dump(mode="json"))
+    if artifact.candidate_catalog_hash and artifact.candidate_catalog_hash != catalog_hash:
+        mismatches.append("candidate_catalog_hash")
+    pricing_path = Path(resolved.pricing_registry)
+    if not pricing_path.is_absolute():
+        pricing_path = _repo_root() / pricing_path
+    pricing_hash = (
+        hashlib.sha256(pricing_path.read_bytes()).hexdigest()
+        if pricing_path.exists()
+        else ""
+    )
     if (
-        artifact.control_plane_hash != resolved.control_plane_hash
-        or artifact.preference_hash != resolved.preference_hash
-        or artifact.objective_hash != resolved.objective_hash
-        or artifact.pricing_version != resolved.pricing_version
+        artifact.pricing_registry_hash
+        and pricing_hash
+        and artifact.pricing_registry_hash != pricing_hash
     ):
+        mismatches.append("pricing_registry_hash")
+    if (
+        artifact.preference_profile_id
+        and artifact.preference_profile_id != resolved.preference_profile.profile_id
+    ):
+        mismatches.append("preference_profile_id")
+    if mismatches:
         raise RuntimeError(
             "frozen calibration mismatch: refusing held-out reporting "
-            f"(artifact={artifact.control_plane_hash}, "
+            f"(mismatches={mismatches}; artifact={artifact.control_plane_hash}; "
             f"current={resolved.control_plane_hash})"
         )
 
@@ -336,10 +501,46 @@ def _read_json(path: Path) -> Any:
 def _objective_value(obj: dict[str, Any] | None) -> float | None:
     if not obj:
         return None
-    if not obj.get("available", False):
+    if isinstance(obj, (int, float)) and not isinstance(obj, bool):
+        return float(obj)
+    if not isinstance(obj, dict):
+        return None
+    if "available" in obj and not obj.get("available", False):
         return None
     value = obj.get("value")
     return None if value is None else float(value)
+
+
+def _realized_objectives_for_decision(
+    realized_archive: dict[str, Any], decision: dict[str, Any]
+) -> dict[str, float | None]:
+    """Join realized archive entries to a decision via content hash."""
+    target = decision.get("selected_content_hash")
+    complete = (
+        realized_archive.get("realized_complete")
+        or realized_archive.get("complete")
+        or {}
+    )
+    if target:
+        for items in complete.values():
+            for item in items:
+                if item.get("content_hash") == target:
+                    vals = (item.get("objectives") or {}).get("values") or {}
+                    return {
+                        "quality": _objective_value(vals.get("quality")),
+                        "cost": _objective_value(vals.get("cost")),
+                        "latency": _objective_value(vals.get("latency")),
+                    }
+    # Fall back to finalized decision snapshot when evaluation_kind is realized.
+    if str(decision.get("evaluation_kind") or "") == "realized":
+        snap = decision.get("selected_candidate_snapshot") or {}
+        vals = (snap.get("objectives") or {}).get("values") or {}
+        return {
+            "quality": _objective_value(vals.get("quality")),
+            "cost": _objective_value(vals.get("cost")),
+            "latency": _objective_value(vals.get("latency")),
+        }
+    return {"quality": None, "cost": None, "latency": None}
 
 
 def collect_run_records(run_dir: Path) -> dict[str, Any]:
@@ -527,16 +728,40 @@ def write_stage2_report(
             )
             snap = d.get("selected_candidate_snapshot") or {}
             objs = (snap.get("objectives") or {}).get("values") or {}
+            # Estimated vs realized remain distinct; join realized by hash/decision.
+            realized_vals = _realized_objectives_for_decision(
+                rec["realized_archive"], d
+            )
+            est_kind = str(d.get("evaluation_kind") or "estimated")
             est_vs_real.append(
                 {
                     "run_dir": str(run_dir),
+                    "run_id": manifest.get("run_id") or summary.get("run_dir"),
+                    "task_id": summary.get("task_id") or manifest.get("task_id"),
                     "decision_id": d.get("decision_id"),
+                    "candidate_hash": d.get("selected_content_hash"),
+                    "plan_revision": d.get("activated_revision_id")
+                    or summary.get("active_plan_revision_id"),
+                    "activation_revision": d.get("activated_revision_id"),
                     "quality_est": _objective_value(objs.get("quality")),
                     "cost_est": _objective_value(objs.get("cost")),
                     "latency_est": _objective_value(objs.get("latency")),
-                    "quality_real": "",
-                    "cost_real": "",
-                    "latency_real": "",
+                    "quality_real": realized_vals.get("quality"),
+                    "cost_real": realized_vals.get("cost"),
+                    "latency_real": realized_vals.get("latency"),
+                    "quality_est_available": (objs.get("quality") or {}).get("available"),
+                    "cost_est_available": (objs.get("cost") or {}).get("available"),
+                    "latency_est_available": (objs.get("latency") or {}).get("available"),
+                    "quality_real_available": realized_vals.get("quality") is not None,
+                    "cost_real_available": realized_vals.get("cost") is not None,
+                    "latency_real_available": realized_vals.get("latency") is not None,
+                    "metric_provenance": "persisted_pareto_archives",
+                    "evaluation_kind": est_kind,
+                    "label": (
+                        "diagnostic_oracle"
+                        if est_kind == "oracle"
+                        else "online_policy"
+                    ),
                 }
             )
 
@@ -546,6 +771,11 @@ def write_stage2_report(
         partial_map = est.get("estimated_partial") or est.get("partial") or {}
         selected_hashes = {
             d.get("selected_content_hash") for d in decisions if d.get("selected_content_hash")
+        }
+        frontier_hashes = {
+            item.get("content_hash")
+            for items in complete_map.values()
+            for item in items
         }
         for ctx_id, items in sorted(complete_map.items()):
             for item in items:
@@ -562,8 +792,45 @@ def write_stage2_report(
                     "cost": _objective_value(vals.get("cost")),
                     "latency": _objective_value(vals.get("latency")),
                     "partial": False,
+                    "metric_provenance": "estimated_archive_complete",
                 }
                 frontier_rows.append(row)
+        # Dominated/rejected complete candidates remain auditable via search traces.
+        dominated_count = 0
+        for t in traces:
+            ch = t.get("candidate_content_hash")
+            if not ch or ch in frontier_hashes:
+                continue
+            if str(t.get("feasibility_status") or "") != "ok":
+                continue
+            objs = t.get("estimated_objectives") or {}
+            vals = objs.get("values") or objs
+            if not isinstance(vals, dict):
+                continue
+            # Only plot complete-enough candidates that left the frontier.
+            if not all(
+                _objective_value(vals.get(name)) is not None
+                for name in ("quality", "cost", "latency")
+            ):
+                continue
+            dominated_count += 1
+            frontier_rows.append(
+                {
+                    "run_dir": str(run_dir),
+                    "context_id": (t.get("decision_context") or {}).get("context_id")
+                    or t.get("decision_id"),
+                    "content_hash": ch,
+                    "evaluation_kind": "estimated",
+                    "dominated": True,
+                    "selected": False,
+                    "profile": profile,
+                    "quality": _objective_value(vals.get("quality")),
+                    "cost": _objective_value(vals.get("cost")),
+                    "latency": _objective_value(vals.get("latency")),
+                    "partial": False,
+                    "metric_provenance": "search_trace_dominated_complete",
+                }
+            )
         for ctx_id, items in sorted(partial_map.items()):
             for item in items:
                 vals = (item.get("objectives") or {}).get("values") or {}
@@ -580,14 +847,20 @@ def write_stage2_report(
                         "cost": _objective_value(vals.get("cost")),
                         "latency": _objective_value(vals.get("latency")),
                         "partial": True,
+                        "metric_provenance": "estimated_archive_partial",
                     }
                 )
 
         committed = summary.get("committed") or []
         revisions = int(summary.get("m5_revision_count") or 0)
+        total_cost = summary.get("total_cost_usd", "")
+        if total_cost == "" and summary.get("cost_provenance"):
+            total_cost = summary.get("total_cost_usd")
         main_rows.append(
             {
                 "run_dir": str(run_dir),
+                "run_id": manifest.get("run_id") or Path(run_dir).name,
+                "task_id": summary.get("task_id"),
                 "mode": mode,
                 "profile": profile,
                 "hidden_pass_at_1": summary.get("hidden_pass_at_1", ""),
@@ -596,15 +869,31 @@ def write_stage2_report(
                     (1.0 if committed else 0.0),
                 ),
                 "avg_cost_usd": summary.get("avg_cost_usd", ""),
-                "total_cost_usd": summary.get("total_cost_usd", ""),
-                "cost_per_solved": summary.get("cost_per_solved", ""),
+                "total_cost_usd": total_cost if total_cost is not None else "",
+                "cost_per_solved": (
+                    summary.get("cost_per_solved")
+                    if summary.get("cost_per_solved") is not None
+                    else ""
+                ),
+                "cost_available": summary.get("total_cost_usd") is not None
+                and summary.get("total_cost_usd") != "",
+                "cost_provenance": summary.get("cost_provenance", "unavailable"),
                 "wall_latency_s": summary.get("wall_latency_s", ""),
                 "critical_path_latency_s": summary.get("critical_path_latency_s", ""),
-                "communication_overhead": summary.get("communication_overhead", ""),
+                "latency_provenance": summary.get(
+                    "fixture_latency_label", "unavailable"
+                ),
+                "communication_overhead": (
+                    summary.get("communication_overhead")
+                    if summary.get("communication_overhead") is not None
+                    else ""
+                ),
                 "generated_candidates": generated or summary.get("generated_candidates", ""),
                 "rejected_candidates": rejected or summary.get("rejected_candidates", ""),
                 "partial_candidates": summary.get("partial_candidates", len(partial_map)),
-                "dominated_candidates": summary.get("dominated_candidates", ""),
+                "dominated_candidates": summary.get(
+                    "dominated_candidates", dominated_count
+                ),
                 "selected_candidates": len(
                     [d for d in decisions if d.get("selected_content_hash")]
                 ),
@@ -613,6 +902,7 @@ def write_stage2_report(
                 "control_plane_cost_usd": summary.get("control_plane_cost_usd", ""),
                 "restart_recovery_counts": summary.get("restart_recovery_counts", 0),
                 "label": "online_policy",
+                "note": "fixture metrics are not real API performance",
             }
         )
         profile_rows.append(

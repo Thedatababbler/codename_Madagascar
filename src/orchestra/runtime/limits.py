@@ -8,6 +8,9 @@ class RuntimeLimits(BaseModel):
     max_parallel_nodes_per_task: int = 4
     max_parallel_llm_calls: int = 8
     max_parallel_sandboxes: int = 2
+    # Scheduler runtime concurrency cap (subtasks). Effective concurrency is
+    # min(this, active TaskSchedulingPolicy.max_concurrent_subtasks).
+    max_concurrent_subtasks: int = 1
 
 
 class RuntimeSemaphores:

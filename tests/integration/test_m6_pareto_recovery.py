@@ -186,7 +186,22 @@ def _ready_state(plan: TaskPlan) -> TaskExecutionState:
 
 def test_real_online_frontier_excludes_dominated(tmp_path: Path):
     plan = _plan()
+    # Fixture duration evidence so latency remains available (m6.2 estimator).
+    plan = plan.model_copy(
+        update={
+            "metadata": {
+                **dict(plan.metadata or {}),
+                "fixture_subtask_durations_seconds": {
+                    "s1": 0.5,
+                    "s2": 0.5,
+                    "s3": 0.5,
+                },
+            }
+        }
+    )
     state = _ready_state(plan)
+    state.task_plan = plan
+    state.scheduling_policy = TaskSchedulingPolicy(max_concurrent_subtasks=2)
     state.public_evaluation_records = [
         PublicEvaluationRecord(
             evaluation_id="e1",
@@ -201,6 +216,7 @@ def test_real_online_frontier_excludes_dominated(tmp_path: Path):
         config=ParetoConfig(enabled=True, max_candidates=12, objectives=OBJ),
         preference_profile=PreferenceProfile(profile_id="balanced_knee"),
         run_dir=str(tmp_path),
+        runtime_concurrency_cap=2,
     )
     obs = GlobalObservation(
         task_id="m61",

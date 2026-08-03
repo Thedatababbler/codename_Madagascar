@@ -12,6 +12,10 @@ from orchestra.control.pareto.schemas import (
     ParetoEvaluationKind,
     ParetoOrchestraCandidate,
 )
+from orchestra.control.scheduling_effect import (
+    effective_concurrency,
+    future_ready_waves,
+)
 from orchestra.control.slow_loop.schemas import (
     ContextBudgetEdit,
     GlobalObservation,
@@ -27,7 +31,10 @@ from orchestra.control.slow_loop.schemas import (
 class ParetoObjectiveEstimator:
     """Estimate incremental decision-horizon objectives for one candidate."""
 
-    estimator_version = "m6.1"
+    estimator_version = "m6.2"
+
+    def __init__(self, *, runtime_concurrency_cap: int = 1) -> None:
+        self.runtime_concurrency_cap = max(1, int(runtime_concurrency_cap))
 
     def estimate(
         self,
@@ -101,7 +108,7 @@ class ParetoObjectiveEstimator:
             values["latency"] = pre_latency
         else:
             values["latency"] = self._estimate_latency(
-                candidate, history, observation, edit_types
+                candidate, history, observation, edit_types, state=state
             )
             if (
                 graph_only
@@ -211,49 +218,118 @@ class ParetoObjectiveEstimator:
         )
 
     def _estimate_latency(
-        self, candidate, history, observation: GlobalObservation, edit_types
+        self,
+        candidate,
+        history,
+        observation: GlobalObservation,
+        edit_types,
+        *,
+        state=None,
     ) -> ObjectiveValue:
         durations = [
             float(r.latency_seconds)
             for r in history
             if getattr(r, "latency_seconds", None) is not None
         ]
-        if durations:
+        fixture_durations: dict[str, float] = {}
+        plan = getattr(state, "task_plan", None) if state is not None else None
+        if plan is not None:
+            meta = dict(getattr(plan, "metadata", None) or {})
+            raw = meta.get("fixture_subtask_durations_seconds") or {}
+            if isinstance(raw, dict):
+                fixture_durations = {
+                    str(k): float(v) for k, v in raw.items() if v is not None
+                }
+
+        if fixture_durations:
+            node_expected = sum(fixture_durations.values()) / max(1, len(fixture_durations))
+            evidence = len(fixture_durations)
+            source = ObjectiveSource.CONFIGURED_PROFILE
+            detail_prefix = "fixture_estimate"
+        elif durations:
             node_expected = sum(durations) / len(durations)
             evidence = len(durations)
             source = ObjectiveSource.HISTORY
+            detail_prefix = "history"
         elif observation.backend_latency_summary:
             node_expected = sum(observation.backend_latency_summary.values()) / len(
                 observation.backend_latency_summary
             )
             evidence = len(observation.backend_latency_summary)
             source = ObjectiveSource.HISTORY
+            detail_prefix = "latency_summary"
         else:
-            node_expected = 1.0
-            evidence = 0
-            source = ObjectiveSource.CONFIGURED_PROFILE
+            # Insufficient evidence — do not invent a neutral latency.
+            return ObjectiveValue(
+                value=None,
+                available=False,
+                source=ObjectiveSource.UNAVAILABLE,
+                evidence_count=0,
+                detail="latency_unavailable",
+            )
 
-        concurrency = 1
+        proposed_policy = 1
         for edit in candidate.edits:
             if isinstance(edit, SchedulingConcurrencyEdit):
-                concurrency = max(1, int(edit.max_concurrent_subtasks))
+                proposed_policy = max(1, int(edit.max_concurrent_subtasks))
             if isinstance(edit, SerializationGroupEdit):
-                # Serialization forces a longer critical path.
                 node_expected *= 1.0 + 0.25 * max(0, len(edit.subtask_ids) - 1)
 
-        # Deterministic critical-path estimator over expected node durations.
-        waves = max(1, (2 + concurrency - 1) // concurrency)
-        critical_path = node_expected * waves
+        current_policy = 1
+        policy = getattr(state, "scheduling_policy", None) if state is not None else None
+        if policy is not None:
+            current_policy = max(1, int(policy.max_concurrent_subtasks))
+        if "scheduling_concurrency" not in edit_types:
+            proposed_policy = current_policy
+
+        eff = effective_concurrency(
+            runtime_concurrency_cap=self.runtime_concurrency_cap,
+            policy_concurrency=proposed_policy,
+        )
+
+        if plan is not None and state is not None and hasattr(state, "subtasks"):
+            waves = future_ready_waves(plan=plan, state=state)
+            if not waves:
+                return ObjectiveValue(
+                    value=None,
+                    available=False,
+                    source=ObjectiveSource.UNAVAILABLE,
+                    evidence_count=evidence,
+                    detail="no_future_waves",
+                )
+            # Critical path: sum over waves of (ceil(wave_width / eff) * node_duration).
+            critical = 0.0
+            for wave in waves:
+                width = len(wave)
+                steps = max(1, (width + eff - 1) // eff)
+                # Prefer per-subtask fixture durations when present.
+                wave_dur = 0.0
+                for sid in wave:
+                    wave_dur = max(
+                        wave_dur, float(fixture_durations.get(sid, node_expected))
+                    )
+                critical += steps * wave_dur
+            if "serialization_group" in edit_types:
+                critical = max(critical, node_expected * max(2, len(waves)))
+            return ObjectiveValue(
+                value=float(critical),
+                available=True,
+                source=source,
+                evidence_count=evidence,
+                detail=f"{detail_prefix};dag_waves={len(waves)};eff={eff}",
+            )
+
+        # Fallback without state: refuse parallel speedup claims on unknown DAG.
+        waves_n = max(1, evidence if evidence > 0 else 1)
+        critical_path = node_expected * waves_n
         if "serialization_group" in edit_types:
             critical_path = max(critical_path, node_expected * 2)
-        if "scheduling_concurrency" in edit_types and concurrency > 1:
-            critical_path = node_expected  # parallelizable wave
         return ObjectiveValue(
             value=float(critical_path),
             available=True,
             source=source,
             evidence_count=evidence,
-            detail="critical_path",
+            detail=f"{detail_prefix};no_dag;eff={eff}",
         )
 
     def _estimate_risk(

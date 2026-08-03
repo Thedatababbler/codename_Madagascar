@@ -145,8 +145,14 @@ uv run python -m orchestra.cli.stage2_pareto_experiments dry-run \
   --config configs/experiments/stage2/m6_balanced_knee.yaml
 uv run python -m orchestra.cli.stage2_pareto_experiments run-fixture \
   --config configs/experiments/stage2/m6_balanced_knee.yaml
+uv run python -m orchestra.cli.stage2_pareto_experiments freeze-calibration \
+  --config configs/experiments/stage2/m6_balanced_knee.yaml \
+  --run-dir <fixture-run-dir> \
+  --output outputs/stage2_pareto/calibration/dev_calibration.json
 uv run python -m orchestra.cli.stage2_pareto_experiments report \
   --run-dir <fixture-run-dir>
+# Held-out reporting fails closed without a matching frozen calibration:
+#   ... report --held-out --calibration <file> --config <matching-config> ...
 ```
 
 Production opt-in runner (multi-subtask TaskPlan + ReadySubtaskScheduler):
@@ -154,8 +160,19 @@ Production opt-in runner (multi-subtask TaskPlan + ReadySubtaskScheduler):
 ```bash
 uv run python -m orchestra.cli.run_m6_orchestra \
   --config configs/experiments/stage2/m6_balanced_knee.yaml \
-  --mock-llm
+  --mock-backends
 ```
+
+### Fixture DAG and concurrency
+
+The Stage-2 fixture uses a fork/join plan (`s1 → {s2,s3} → s4`), not a serial
+chain. Effective concurrency is `min(runtime_cap, policy)`. Fixture latency /
+cost figures are labeled as fixture estimates, never as real API performance.
+
+### Crash / resume
+
+Failpoints `after_activation_checkpoint`, `after_future_wave_started`, and
+`after_realization_persisted` validate exact-once activation and accounting.
 
 Later real-model / held-out runs require explicit authorization, a frozen
 calibration artifact, and must not be launched by the Stage-2 CLI defaults.

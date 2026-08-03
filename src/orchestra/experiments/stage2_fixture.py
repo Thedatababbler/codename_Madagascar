@@ -1,8 +1,12 @@
-"""Deterministic multi-subtask Stage-2 fixture (no paid API).
+"""Deterministic fork/join Stage-2 fixture (no paid API).
 
-Drives ReadySubtaskScheduler + SlowLoopController + ParetoGlobalCandidatePolicy
-with stubbed subtask execution so a real post-wave Pareto decision, M5
-activation, future-subtask execution, and realized finalization occur.
+DAG shape:
+          ┌→ s2 ─┐
+s1 ───────┤      ├→ s4
+          └→ s3 ─┘
+
+Starts at effective concurrency 1, adapts after s1 to concurrency 2,
+then executes s2||s3 as one concurrent wave before s4.
 """
 
 from __future__ import annotations
@@ -34,6 +38,11 @@ from orchestra.control.ready_scheduler import (
     SubtaskExecutionResult,
     SubtaskExecutionStatus,
 )
+from orchestra.control.scheduling_effect import (
+    concurrency_manifest_fields,
+    effective_concurrency,
+)
+from orchestra.control.slow_loop.schemas import TaskSchedulingPolicy
 from orchestra.control.task_state import SubtaskStatus, TaskExecutionState
 from orchestra.decomposition.schemas import BudgetSpec, SubtaskSpec, TaskPlan
 from orchestra.experiments.metadata import git_commit_hash
@@ -46,6 +55,14 @@ from orchestra.storage.artifacts import FileArtifactStore
 
 GRAPH = "configs/graphs/codex_single_implementer.yaml"
 
+# Fixture-only duration labels (not real-model measurements).
+FIXTURE_SUBTASK_DURATIONS = {
+    "s1": 0.10,
+    "s2": 0.20,
+    "s3": 0.20,
+    "s4": 0.15,
+}
+
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
@@ -55,7 +72,7 @@ def stage2_fixture_plan(task_id: str = "stage2_fixture") -> TaskPlan:
     return TaskPlan(
         task_id=task_id,
         plan_version=1,
-        decomposition_rationale="stage2 multi-subtask fixture",
+        decomposition_rationale="stage2 fork/join concurrency fixture",
         subtasks=[
             SubtaskSpec(
                 subtask_id="s1",
@@ -69,7 +86,7 @@ def stage2_fixture_plan(task_id: str = "stage2_fixture") -> TaskPlan:
             SubtaskSpec(
                 subtask_id="s2",
                 title="s2",
-                objective="adapt",
+                objective="fork-left",
                 dependencies=["s1"],
                 keystone_harness_id="repository_test_harness",
                 local_graph_template=GRAPH,
@@ -78,8 +95,17 @@ def stage2_fixture_plan(task_id: str = "stage2_fixture") -> TaskPlan:
             SubtaskSpec(
                 subtask_id="s3",
                 title="s3",
-                objective="finish",
-                dependencies=["s2"],
+                objective="fork-right",
+                dependencies=["s1"],
+                keystone_harness_id="repository_test_harness",
+                local_graph_template=GRAPH,
+                budget=BudgetSpec(),
+            ),
+            SubtaskSpec(
+                subtask_id="s4",
+                title="s4",
+                objective="join",
+                dependencies=["s2", "s3"],
                 keystone_harness_id="repository_test_harness",
                 local_graph_template=GRAPH,
                 budget=BudgetSpec(),
@@ -89,46 +115,76 @@ def stage2_fixture_plan(task_id: str = "stage2_fixture") -> TaskPlan:
             version=1,
             payload_contracts=[
                 PayloadContract(
-                    payload_id="large",
+                    payload_id="p12",
+                    source_subtask_id="s1",
+                    target_subtask_id="s2",
+                    artifact_type="FinalAnswerArtifact",
+                    required=False,
+                    max_tokens=4096,
+                    metadata={"slot": "comm:p12"},
+                ),
+                PayloadContract(
+                    payload_id="p13",
                     source_subtask_id="s1",
                     target_subtask_id="s3",
                     artifact_type="FinalAnswerArtifact",
                     required=False,
-                    max_tokens=9000,
-                    metadata={"slot": "comm:large"},
+                    max_tokens=4096,
+                    metadata={"slot": "comm:p13"},
                 ),
                 PayloadContract(
-                    payload_id="p23",
+                    payload_id="p24",
                     source_subtask_id="s2",
-                    target_subtask_id="s3",
+                    target_subtask_id="s4",
                     artifact_type="FinalAnswerArtifact",
                     required=False,
                     max_tokens=4096,
-                    metadata={"slot": "comm:p23"},
+                    metadata={"slot": "comm:p24"},
+                ),
+                PayloadContract(
+                    payload_id="p34",
+                    source_subtask_id="s3",
+                    target_subtask_id="s4",
+                    artifact_type="FinalAnswerArtifact",
+                    required=False,
+                    max_tokens=4096,
+                    metadata={"slot": "comm:p34"},
                 ),
             ],
             delivery_schedule=[
-                DeliveryRule(rule_id="r_large", payload_id="large", enabled=True),
-                DeliveryRule(rule_id="r23", payload_id="p23", enabled=True),
+                DeliveryRule(rule_id="r12", payload_id="p12", enabled=True),
+                DeliveryRule(rule_id="r13", payload_id="p13", enabled=True),
+                DeliveryRule(rule_id="r24", payload_id="p24", enabled=True),
+                DeliveryRule(rule_id="r34", payload_id="p34", enabled=True),
             ],
-            context_budgets={"s2": 1200, "s3": 1200},
+            # Generous budgets so CONTEXT_PRESSURE does not drown out concurrency.
+            context_budgets={"s2": 8000, "s3": 8000, "s4": 8000},
         ),
         metadata={
             "allowed_backend_assignments": {
                 "coding": ["codex_sdk", "smolagents_code"],
                 "s2": ["codex_sdk", "smolagents_code"],
                 "s3": ["codex_sdk", "smolagents_code"],
-            }
+                "s4": ["codex_sdk", "smolagents_code"],
+            },
+            "fixture_subtask_durations_seconds": dict(FIXTURE_SUBTASK_DURATIONS),
+            "fixture_latency_label": "fixture_estimate_not_real_model",
         },
     )
 
 
-def _ctx(run_dir: Path, task_id: str) -> RunContext:
+def _runtime_cap_from_raw(raw: dict[str, Any], default: int = 2) -> int:
+    runtime = raw.get("runtime") or {}
+    return max(1, int(runtime.get("max_concurrent_subtasks", default)))
+
+
+def _ctx(run_dir: Path, task_id: str, *, runtime_cap: int) -> RunContext:
     limits = RuntimeLimits(
         max_parallel_benchmark_tasks=1,
         max_parallel_nodes_per_task=2,
         max_parallel_llm_calls=2,
         max_parallel_sandboxes=2,
+        max_concurrent_subtasks=runtime_cap,
     )
     return RunContext(
         run_id=task_id,
@@ -145,6 +201,7 @@ async def run_stage2_fixture(
     *,
     output_root: str | Path | None = None,
     run_id: str | None = None,
+    failpoint: str | None = None,
 ) -> dict[str, Any]:
     repo_root = _repo_root()
     raw = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
@@ -152,6 +209,7 @@ async def run_stage2_fixture(
     if not resolved.slow_loop_config.enabled:
         raise RuntimeError("stage2 fixture requires slow_loop.enabled=true")
 
+    runtime_cap = _runtime_cap_from_raw(raw, default=2)
     started = datetime.now(UTC)
     mode = ((raw.get("stage2") or {}).get("mode")) or "fixture"
     experiment_name = ((raw.get("experiment") or {}).get("name")) or "stage2_fixture"
@@ -168,75 +226,105 @@ async def run_stage2_fixture(
     plan = stage2_fixture_plan(task_id=f"stage2_{mode}")
     store = FileArtifactStore(run_dir)
     ckpt = TaskCheckpointStore(run_dir)
-    state = TaskExecutionState.from_plan(plan, artifact_store_ref=str(run_dir / "artifacts"))
-    state.communication_plan = plan.communication_plan
-    # Seed first subtask as committed so Slow Loop can adapt future work.
-    state.subtasks["s1"].status = SubtaskStatus.COMMITTED
-    state.subtasks["s2"].status = SubtaskStatus.PENDING
-    state.subtasks["s3"].status = SubtaskStatus.PENDING
-    state.committed_subtask_count = 1
-    if resolved.pareto_config.enabled:
-        state.pareto_state = ParetoSearchState(enabled=True)
-    now = datetime.now(UTC)
-    state.backend_usage_records = [
-        BackendUsageRecord(
-            usage_id="hist-codex",
-            task_id=plan.task_id,
-            subtask_id="s1",
-            node_id="n1",
-            backend_id="codex_sdk",
-            attempt_id=1,
-            started_at=now,
-            finished_at=now,
-            latency_seconds=0.6,
-            prompt_tokens=40,
-            completion_tokens=12,
-            estimated_cost_usd=0.03,
-            cost_quality="exact",
-            accounting_source="hist",
-            status="success",
-            model_name="fake-test-model",
-        ),
-        BackendUsageRecord(
-            usage_id="hist-smol",
-            task_id=plan.task_id,
-            subtask_id="s1",
-            node_id="n2",
-            backend_id="smolagents_code",
-            attempt_id=1,
-            started_at=now,
-            finished_at=now,
-            latency_seconds=0.4,
-            prompt_tokens=20,
-            completion_tokens=8,
-            estimated_cost_usd=0.008,
-            cost_quality="exact",
-            accounting_source="hist",
-            status="success",
-            model_name="fake-test-model",
-        ),
-    ]
-    state.public_evaluation_records = [
-        PublicEvaluationRecord(
-            evaluation_id="pub1",
-            task_id=plan.task_id,
-            harness_id="repository_test_harness",
-            visibility=EvaluationVisibility.PUBLIC,
-            passed=True,
-            normalized_score=0.92,
-        )
-    ]
-    # Hidden/private records must never influence selection.
-    state.public_evaluation_records.append(
-        PublicEvaluationRecord(
-            evaluation_id="hidden1",
-            task_id=plan.task_id,
-            harness_id="private_harness",
-            visibility=EvaluationVisibility.HIDDEN,
-            passed=True,
-            normalized_score=0.01,
-        )
+
+    # Resume path: if a checkpoint already exists, continue from it.
+    loaded = await ckpt.load(
+        plan.task_id,
+        plan_version=plan.plan_version,
+        plan_content_hash=plan.content_hash(),
+        allow_config_drift=True,
     )
+    recovery_events: list[dict[str, Any]] = []
+    if loaded is not None:
+        state = loaded
+        recovery_events.append(
+            {
+                "event": "resume_from_checkpoint",
+                "active_plan_revision_id": state.active_plan_revision_id,
+                "state_version": state.state_version,
+                "at": datetime.now(UTC).isoformat(),
+            }
+        )
+    else:
+        state = TaskExecutionState.from_plan(
+            plan, artifact_store_ref=str(run_dir / "artifacts")
+        )
+        state.communication_plan = plan.communication_plan
+        # Execute s1 via the stub so Slow Loop runs after s1 commit and before
+        # the fork wave (s2||s3). Do not pre-commit s1.
+        for sid in ("s1", "s2", "s3", "s4"):
+            state.subtasks[sid].status = SubtaskStatus.PENDING
+        state.committed_subtask_count = 0
+        # Start with policy concurrency 1; runtime cap allows later increase.
+        state.scheduling_policy = TaskSchedulingPolicy(max_concurrent_subtasks=1)
+        if resolved.pareto_config.enabled:
+            state.pareto_state = ParetoSearchState(enabled=True)
+        now = datetime.now(UTC)
+        # Prior public evidence only (not s1 execution); durations live in plan metadata.
+        state.backend_usage_records = [
+            BackendUsageRecord(
+                usage_id="hist-codex",
+                task_id=plan.task_id,
+                subtask_id="seed",
+                node_id="n1",
+                backend_id="codex_sdk",
+                attempt_id=1,
+                started_at=now,
+                finished_at=now,
+                latency_seconds=FIXTURE_SUBTASK_DURATIONS["s1"],
+                prompt_tokens=40,
+                completion_tokens=12,
+                estimated_cost_usd=0.03,
+                cost_quality="exact",
+                accounting_source="hist",
+                status="success",
+                model_name="fake-test-model",
+            ),
+            BackendUsageRecord(
+                usage_id="hist-smol",
+                task_id=plan.task_id,
+                subtask_id="seed",
+                node_id="n2",
+                backend_id="smolagents_code",
+                attempt_id=1,
+                started_at=now,
+                finished_at=now,
+                latency_seconds=0.08,
+                prompt_tokens=20,
+                completion_tokens=8,
+                estimated_cost_usd=0.008,
+                cost_quality="exact",
+                accounting_source="hist",
+                status="success",
+                model_name="fake-test-model",
+            ),
+        ]
+        state.public_evaluation_records = [
+            PublicEvaluationRecord(
+                evaluation_id="pub1",
+                task_id=plan.task_id,
+                harness_id="repository_test_harness",
+                visibility=EvaluationVisibility.PUBLIC,
+                passed=True,
+                normalized_score=0.92,
+            ),
+            PublicEvaluationRecord(
+                evaluation_id="hidden1",
+                task_id=plan.task_id,
+                harness_id="private_harness",
+                visibility=EvaluationVisibility.HIDDEN,
+                passed=True,
+                normalized_score=0.01,
+            ),
+        ]
+
+    # Fixture focuses concurrency adaptation on the fork wave: keep catalog
+    # concurrency alternatives; drop serialization / budget noise that drowns it.
+    resolved.candidate_catalog.serialization_groups = []
+    resolved.candidate_catalog.context_budget_alternatives = {}
+    resolved.candidate_catalog.graph_templates = []
+    if resolved.pareto_config.max_candidates < 16:
+        resolved.pareto_config.max_candidates = 16
 
     slow_loop = build_slow_loop_controller(
         resolved,
@@ -245,12 +333,16 @@ async def run_stage2_fixture(
         repo_root=repo_root,
         checkpoint_store=ckpt,
         fail_closed=True,
+        runtime_concurrency_cap=runtime_cap,
     )
-    # Tighten trigger thresholds for deterministic fixture adaptation.
     slow_loop.config.budget.context_pressure_ratio = min(
         slow_loop.config.budget.context_pressure_ratio, 0.5
     )
     slow_loop.config.budget.min_commits_between_updates = 1
+    # One adaptation after s1 is enough to prove the fork-wave concurrency change.
+    slow_loop.config.budget.max_updates_per_task = min(
+        slow_loop.config.budget.max_updates_per_task, 1
+    )
 
     runtime = AsyncMock()
     runtime.artifact_store = store
@@ -261,15 +353,32 @@ async def run_stage2_fixture(
         contracts_dir="configs/contracts",
         slow_loop=slow_loop,
         slow_loop_config=resolved.slow_loop_config,
-        max_concurrent_subtasks=1,
+        max_concurrent_subtasks=runtime_cap,
+        allow_concurrent_subtasks=runtime_cap > 1,
     )
     sched.input_assembler = SubtaskInputAssembler(store)
 
+    wave_records: list[dict[str, Any]] = []
     produced: dict[str, object] = {}
+    # Shared clock for deterministic overlapping lease windows.
+    wave_clock = {"t": 0.0}
 
     async def _stub_run(**kwargs):  # noqa: ANN003
         sid = kwargs["subtask_id"]
         snapshot: TaskExecutionState = kwargs["state"]
+        pol = 1
+        if snapshot.scheduling_policy is not None:
+            pol = int(snapshot.scheduling_policy.max_concurrent_subtasks)
+        eff = effective_concurrency(
+            runtime_concurrency_cap=runtime_cap, policy_concurrency=pol
+        )
+        lease_start = wave_clock["t"]
+        duration = float(FIXTURE_SUBTASK_DURATIONS.get(sid, 0.1))
+        # Concurrent wave members share the same lease_start; advance clock by
+        # duration / effective so overlapping windows are observable.
+        wave_clock["t"] = lease_start + (duration / max(1, eff))
+        lease_end = lease_start + duration
+
         art = create_artifact(
             FinalAnswerArtifact(answer=f"out-{sid}", source_node=sid),
             producer_node_id=sid,
@@ -281,11 +390,10 @@ async def run_stage2_fixture(
         live.status = SubtaskStatus.AWAITING_CANONICAL_COMMIT
         live.final_output_artifact_id = art.artifact_id
         live.communication_block_reason = None
-        # Emit usage for realized horizon accounting.
         started_at = datetime.now(UTC)
         snapshot.backend_usage_records.append(
             BackendUsageRecord(
-                usage_id=f"wave-{sid}",
+                usage_id=f"wave-{sid}-{snapshot.state_version}",
                 task_id=plan.task_id,
                 subtask_id=sid,
                 node_id=f"n-{sid}",
@@ -293,7 +401,7 @@ async def run_stage2_fixture(
                 attempt_id=1,
                 started_at=started_at,
                 finished_at=started_at,
-                latency_seconds=0.5,
+                latency_seconds=duration,
                 prompt_tokens=8,
                 completion_tokens=4,
                 estimated_cost_usd=0.01,
@@ -302,6 +410,22 @@ async def run_stage2_fixture(
                 status="success",
             )
         )
+        wave_records.append(
+            {
+                "subtask_id": sid,
+                "lease_start": lease_start,
+                "lease_end": lease_end,
+                "duration_fixture_s": duration,
+                "policy_concurrency": pol,
+                "runtime_concurrency_cap": runtime_cap,
+                "effective_concurrency": eff,
+                "active_plan_revision_id": snapshot.active_plan_revision_id,
+                "state_version": snapshot.state_version,
+            }
+        )
+        if failpoint == "after_future_wave_started" and sid in {"s2", "s3"}:
+            await ckpt.save(snapshot)
+            raise RuntimeError("FAILPOINT:after_future_wave_started")
         return SubtaskExecutionResult(
             subtask_id=sid,
             expected_state_version=kwargs.get("expected_state_version", 0),
@@ -313,6 +437,23 @@ async def run_stage2_fixture(
 
     sched._run_subtask_isolated = _stub_run  # type: ignore[method-assign]
 
+    # Hook activation checkpoint failpoint via Slow Loop save.
+    if failpoint == "after_activation_checkpoint":
+        original_maybe = slow_loop.maybe_update
+
+        async def _wrapped_maybe(**kw):  # noqa: ANN003
+            result = await original_maybe(**kw)
+            if getattr(result, "updated", False):
+                await ckpt.save(kw["state"])
+                raise RuntimeError("FAILPOINT:after_activation_checkpoint")
+            return result
+
+        slow_loop.maybe_update = _wrapped_maybe  # type: ignore[method-assign]
+
+    initial_conc = concurrency_manifest_fields(
+        runtime_concurrency_cap=runtime_cap,
+        policy=state.scheduling_policy,
+    )
     manifest = {
         "runner": "stage2_fixture",
         "started_at": started.isoformat(),
@@ -320,18 +461,45 @@ async def run_stage2_fixture(
         "config_path": str(config_path),
         "stage2": raw.get("stage2") or {"mode": mode},
         "preference_profile_id": resolved.preference_profile.profile_id,
-        **control_plane_manifest_fields(resolved),
+        "backend_override": "deterministic_mock",
+        "mock_backends": True,
+        "fixture_latency_label": "fixture_estimate_not_real_model",
+        "failpoint": failpoint,
+        **control_plane_manifest_fields(
+            resolved,
+            runtime_concurrency_cap=runtime_cap,
+            policy_concurrency=initial_conc["policy_concurrency"],
+        ),
     }
     (run_dir / "run_manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
 
-    out = await sched.run_task(
-        plan,
-        state,
-        initial_artifacts=ArtifactBundle(),
-        context=_ctx(run_dir, plan.task_id),
-    )
+    try:
+        out = await sched.run_task(
+            plan,
+            state,
+            initial_artifacts=ArtifactBundle(),
+            context=_ctx(run_dir, plan.task_id, runtime_cap=runtime_cap),
+        )
+    except RuntimeError as exc:
+        if failpoint and str(exc).startswith("FAILPOINT:"):
+            (run_dir / "failpoint.json").write_text(
+                json.dumps(
+                    {
+                        "failpoint": failpoint,
+                        "error": str(exc),
+                        "wave_records": wave_records,
+                        "recovery_events": recovery_events,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            raise
+        raise
 
     # Finalize any pending realized decision after future commits.
     if (
@@ -339,50 +507,188 @@ async def run_stage2_fixture(
         and out.pareto_state.pending_decision is not None
         and hasattr(slow_loop.candidate_policy, "finalize_realized")
     ):
+        before_final = out.pareto_state.pending_decision.decision_id
         slow_loop.candidate_policy.finalize_realized(out)
         await ckpt.save(out)
-
+        if failpoint == "after_realization_persisted":
+            (run_dir / "failpoint.json").write_text(
+                json.dumps(
+                    {
+                        "failpoint": failpoint,
+                        "realization_decision_id": before_final,
+                        "wave_records": wave_records,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            raise RuntimeError("FAILPOINT:after_realization_persisted")
     decisions = 0
     selected_hash = None
     pending = False
+    activation_revision = None
     if out.pareto_state is not None:
         decisions = len(out.pareto_state.decision_history)
         pending = out.pareto_state.pending_decision is not None
         if out.pareto_state.decision_history:
-            selected_hash = out.pareto_state.decision_history[-1].selected_content_hash
+            last = out.pareto_state.decision_history[-1]
+            selected_hash = last.selected_content_hash
+            activation_revision = last.activated_revision_id
         elif out.pareto_state.pending_decision is not None:
             selected_hash = out.pareto_state.pending_decision.selected_content_hash
+            activation_revision = out.pareto_state.pending_decision.activated_revision_id
             decisions = max(decisions, 1)
 
+    if failpoint == "after_realization_persisted" and not (
+        out.pareto_state is not None and out.pareto_state.pending_decision is not None
+    ):
+        # Realization may already have been finalized inside the last Slow Loop
+        # tick; still inject the crash after persistence for resume tests.
+        (run_dir / "failpoint.json").write_text(
+            json.dumps(
+                {
+                    "failpoint": failpoint,
+                    "realization_decision_id": selected_hash,
+                    "wave_records": wave_records,
+                    "note": "already_finalized_in_scheduler",
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        raise RuntimeError("FAILPOINT:after_realization_persisted")
+
+    final_pol = 1
+    if out.scheduling_policy is not None:
+        final_pol = int(out.scheduling_policy.max_concurrent_subtasks)
+    final_eff = effective_concurrency(
+        runtime_concurrency_cap=runtime_cap, policy_concurrency=final_pol
+    )
+
+    # Detect concurrent fork wave: s2 and s3 overlapping lease windows under eff>=2.
+    # Use wave-time effective concurrency (not the final post-join policy).
+    fork_wave = [w for w in wave_records if w["subtask_id"] in {"s2", "s3"}]
+    concurrent_fork = False
+    fork_eff = 1
+    activation_for_fork = None
+    if len(fork_wave) >= 2:
+        s2 = next((w for w in fork_wave if w["subtask_id"] == "s2"), None)
+        s3 = next((w for w in fork_wave if w["subtask_id"] == "s3"), None)
+        if s2 and s3:
+            fork_eff = min(
+                int(s2["effective_concurrency"]), int(s3["effective_concurrency"])
+            )
+            activation_for_fork = s2.get("active_plan_revision_id")
+            concurrent_fork = (
+                s2["lease_start"] < s3["lease_end"]
+                and s3["lease_start"] < s2["lease_end"]
+                and fork_eff >= 2
+                and s2.get("active_plan_revision_id") == s3.get("active_plan_revision_id")
+                and bool(s2.get("active_plan_revision_id"))
+            )
+
+    usage_cost = sum(
+        float(r.estimated_cost_usd or 0.0)
+        for r in out.backend_usage_records
+        if r.estimated_cost_usd is not None
+    )
+    # Exclude oracle/hidden from online aggregates — cost from persisted usage only.
+    wall = sum(float(FIXTURE_SUBTASK_DURATIONS[s]) for s in ("s1", "s2", "s3", "s4"))
+    critical = (
+        FIXTURE_SUBTASK_DURATIONS["s1"]
+        + max(FIXTURE_SUBTASK_DURATIONS["s2"], FIXTURE_SUBTASK_DURATIONS["s3"])
+        + FIXTURE_SUBTASK_DURATIONS["s4"]
+        if concurrent_fork
+        else wall
+    )
+
+    evidence = {
+        "active_plan_revision_id": out.active_plan_revision_id,
+        "activation_revision": activation_revision,
+        "fork_activation_revision": activation_for_fork,
+        "selected_candidate_hash": selected_hash,
+        "runtime_concurrency_cap": runtime_cap,
+        "policy_concurrency": final_pol,
+        "effective_concurrency": final_eff,
+        "fork_wave_effective_concurrency": fork_eff,
+        "wave_records": wave_records,
+        "concurrent_fork_wave": concurrent_fork,
+        "recovery_events": recovery_events,
+        "fixture_subtask_durations_seconds": FIXTURE_SUBTASK_DURATIONS,
+        "fixture_latency_label": "fixture_estimate_not_real_model",
+    }
+    (run_dir / "concurrency_evidence.json").write_text(
+        json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    if recovery_events:
+        (run_dir / "recovery_events.json").write_text(
+            json.dumps(recovery_events, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    # Persist updated concurrency fields into manifest.
+    manifest.update(
+        concurrency_manifest_fields(
+            runtime_concurrency_cap=runtime_cap,
+            policy=out.scheduling_policy,
+        )
+    )
+    manifest["concurrent_fork_wave"] = concurrent_fork
+    (run_dir / "run_manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    committed = [
+        sid for sid, sub in out.subtasks.items() if sub.status is SubtaskStatus.COMMITTED
+    ]
     summary = {
         "mode": mode,
         "run_dir": str(run_dir),
         "task_id": plan.task_id,
         "pareto_enabled": resolved.pareto_config.enabled,
         "preference_profile": resolved.preference_profile.profile_id,
-        "committed": [
-            sid for sid, sub in out.subtasks.items() if sub.status is SubtaskStatus.COMMITTED
-        ],
+        "committed": committed,
         "active_plan_revision_id": out.active_plan_revision_id,
+        "activation_revision": activation_revision,
         "m5_revision_count": len(
-            [r for r in out.plan_revision_history if str(r.status).endswith("APPLIED")
-             or getattr(getattr(r, "status", None), "value", "") == "applied"]
+            [
+                r
+                for r in out.plan_revision_history
+                if str(r.status).endswith("APPLIED")
+                or getattr(getattr(r, "status", None), "value", "") == "applied"
+            ]
         ),
         "decisions": decisions,
         "pending_decision": pending,
         "selected_hash": selected_hash,
+        "runtime_concurrency_cap": runtime_cap,
+        "policy_concurrency": final_pol,
+        "effective_concurrency": final_eff,
+        "fork_wave_effective_concurrency": fork_eff,
+        "fork_activation_revision": activation_for_fork,
+        "concurrent_fork_wave": concurrent_fork,
         "execution_success_rate": (
-            1.0
-            if all(
-                out.subtasks[s].status is SubtaskStatus.COMMITTED for s in ("s2", "s3")
-            )
-            else 0.0
+            1.0 if set(committed) >= {"s1", "s2", "s3", "s4"} else 0.0
         ),
+        "avg_cost_usd": usage_cost / max(1, len(out.backend_usage_records)),
+        "total_cost_usd": usage_cost,
+        "cost_per_solved": (
+            usage_cost / len(committed) if committed else None
+        ),
+        "wall_latency_s": wall,
+        "critical_path_latency_s": critical,
+        "communication_overhead": None,
         "difficulty": "fixture",
-        "hidden_pass_at_1": "",  # evaluation-only; not claimed from fixture
-        "restart_recovery_counts": 0,
+        "hidden_pass_at_1": "",
+        "restart_recovery_counts": len(recovery_events),
         "control_plane_hash": resolved.control_plane_hash,
         "scheduler_path": "ReadySubtaskScheduler",
+        "fixture_latency_label": "fixture_estimate_not_real_model",
+        "cost_provenance": "persisted_usage_estimated_cost_usd",
     }
     (run_dir / "stage2_fixture_summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"

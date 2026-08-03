@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from orchestra.control.pareto.schemas import ParetoOrchestraCandidate
+from orchestra.control.scheduling_effect import (
+    assess_concurrency_edit,
+    concurrency_edit_from_candidate,
+)
 from orchestra.control.slow_loop.communication_safety import (
     active_required_communication_blocks,
     candidate_resolves_active_required_blocks,
@@ -12,8 +16,14 @@ from orchestra.control.task_state import TaskExecutionState
 
 
 class ParetoCandidateValidator:
-    def __init__(self, validator: FuturePlanValidator | None = None) -> None:
+    def __init__(
+        self,
+        validator: FuturePlanValidator | None = None,
+        *,
+        runtime_concurrency_cap: int = 1,
+    ) -> None:
         self.validator = validator or FuturePlanValidator()
+        self.runtime_concurrency_cap = max(1, int(runtime_concurrency_cap))
 
     def validate(
         self,
@@ -62,5 +72,26 @@ class ParetoCandidateValidator:
             if not ok:
                 result.ok = False
                 result.errors.extend(block_errors)
+
+        # Reject no-op concurrency adaptations before they consume a revision.
+        conc = concurrency_edit_from_candidate(list(global_candidate.edits))
+        if conc is not None:
+            assessment = assess_concurrency_edit(
+                plan=current_state.task_plan,
+                state=current_state,
+                current_policy=current_state.scheduling_policy,
+                proposed_concurrency=conc.max_concurrent_subtasks,
+                runtime_concurrency_cap=self.runtime_concurrency_cap,
+            )
+            if not assessment.ok:
+                result.ok = False
+                reason = (
+                    assessment.reason.value
+                    if assessment.reason is not None
+                    else "NO_EFFECTIVE_RUNTIME_CHANGE"
+                )
+                result.errors.append(f"{reason}: {assessment.detail}")
+                global_candidate.rejection_reason = reason
+
         candidate.validation_errors = list(result.errors)
         return result

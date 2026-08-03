@@ -25,7 +25,7 @@ from typing import Any
 import yaml
 
 from orchestra.adapters.livecodebench.loader import LiveCodeBenchLoader
-from orchestra.backends.factory import build_default_backend_registry
+from orchestra.backends.factory import resolve_backend_registry
 from orchestra.backends.health import healthcheck_used_backends
 from orchestra.cli.run_m5_codex_demo import (
     _dump_decomposition,
@@ -37,6 +37,7 @@ from orchestra.cli.run_m5_codex_demo import (
 from orchestra.cli.validate_graph import build_compiler
 from orchestra.control.fast_loop.schemas import FastLoopBudget
 from orchestra.control.ready_scheduler import ReadySubtaskScheduler
+from orchestra.control.slow_loop.controller import SlowLoopController
 from orchestra.control.slow_loop.schemas import SlowLoopBudget, SlowLoopConfig
 from orchestra.control.task_state import TaskExecutionState
 from orchestra.decomposition.decomposer import TaskDecomposer
@@ -47,13 +48,14 @@ from orchestra.executors.registry import NodeExecutorRegistry
 from orchestra.ir.artifacts import ArtifactBundle, create_artifact
 from orchestra.ir.contracts import load_contracts
 from orchestra.ir.graph import load_graph
-from orchestra.llm.mock_async import MockAsyncLLMClient
+from orchestra.llm.openai_compatible_async import OpenAICompatibleAsyncClient
 from orchestra.runtime.backend import RunContext
 from orchestra.runtime.checkpoint import CheckpointStore
 from orchestra.runtime.limits import RuntimeLimits, RuntimeSemaphores
 from orchestra.runtime.native_async import NativeAsyncRuntime
 from orchestra.runtime.task_checkpoint import TaskCheckpointStore
 from orchestra.sandbox.mock import MockSandbox
+from orchestra.schemas.artifacts import ProblemArtifact
 from orchestra.settings import load_env_file
 from orchestra.storage.artifacts import FileArtifactStore
 from orchestra.storage.events import AppendOnlyEventWriter
@@ -67,15 +69,44 @@ def _load_yaml(path: Path) -> dict[str, Any]:
     return raw
 
 
-def _load_lcb_problem(config: dict[str, Any]) -> Any:
+def _load_synthetic_problem(config: dict[str, Any]) -> ProblemArtifact:
     bench = config.get("benchmark") or {}
-    data_dir = str(bench.get("data_dir") or os.environ["LCB_DATA_DIR"])
+    path = Path(
+        bench.get("synthetic_problem")
+        or "tests/fixtures/lcb_abc309_a_synthetic_problem.json"
+    )
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    if not path.exists():
+        raise RuntimeError(
+            f"synthetic ProblemArtifact fixture missing: {path}. "
+            "Provide --synthetic-problem or restore the fixture file."
+        )
+    return ProblemArtifact.model_validate(json.loads(path.read_text(encoding="utf-8")))
+
+
+def _load_lcb_problem(config: dict[str, Any]) -> ProblemArtifact:
+    bench = config.get("benchmark") or {}
+    data_dir = bench.get("data_dir") or os.environ.get("LCB_DATA_DIR")
+    if not data_dir:
+        raise RuntimeError(
+            "Real LCB dataset path missing. Set benchmark.data_dir / LCB_DATA_DIR, "
+            "or pass --synthetic-problem for the API-free CI fixture. "
+            "Refusing silent fallback to synthetic data."
+        )
+    data_path = Path(str(data_dir))
+    if not data_path.exists():
+        raise RuntimeError(
+            f"Real LCB dataset path does not exist: {data_path}. "
+            "Install/mount the LiveCodeBench release, or pass --synthetic-problem "
+            "for the API-free CI fixture. Refusing silent fallback to synthetic data."
+        )
     release = str(bench.get("release_version") or "release_v6")
     task_id = str(bench.get("task_id") or "abc309_a")
-    loader = LiveCodeBenchLoader(data_dir=data_dir, release_version=release)
+    loader = LiveCodeBenchLoader(data_dir=str(data_path), release_version=release)
     tasks = loader.load(task_ids={task_id})
     if not tasks:
-        raise RuntimeError(f"LCB task not found: {task_id}")
+        raise RuntimeError(f"LCB task not found: {task_id} under {data_path}")
     return tasks[0].problem
 
 
@@ -119,7 +150,13 @@ async def _run(args: argparse.Namespace) -> int:
         metadata={"plan_config": plan_path, "demo": "lcb_formal_codex_three_subtask"},
     )
 
-    problem = _load_lcb_problem(config)
+    use_synthetic = bool(args.synthetic_problem)
+    if use_synthetic:
+        problem = _load_synthetic_problem(config)
+        problem_source = "synthetic_fixture"
+    else:
+        problem = _load_lcb_problem(config)
+        problem_source = "real_lcb"
 
     run_id = args.run_id or f"lcb_codex-{started_at.strftime('%Y%m%d%H%M%S')}"
     run_dir = (output_root / run_id).resolve()
@@ -136,11 +173,15 @@ async def _run(args: argparse.Namespace) -> int:
         ],
     )
     logger = logging.getLogger("lcb_codex_three_subtask")
+    mock_backends = bool(args.mock_backends or args.mock_llm)
     logger.info(
-        "run_dir=%s task=%s question_id=%s pareto=disabled sandbox_override=%s",
+        "run_dir=%s task=%s question_id=%s problem_source=%s mock_backends=%s "
+        "pareto=disabled sandbox_override=%s",
         run_dir,
         plan.task_id,
         problem.question_id,
+        problem_source,
+        mock_backends,
         os.getenv("ADAMAS_CODEX_SANDBOX_OVERRIDE"),
     )
 
@@ -157,6 +198,10 @@ async def _run(args: argparse.Namespace) -> int:
             "pareto_enabled": False,
             "slow_loop": config.get("slow_loop"),
             "fast_loop": config.get("fast_loop"),
+            "evaluation": config.get("evaluation"),
+            "sandbox": config.get("sandbox"),
+            "mock_backends": mock_backends,
+            "problem_source": problem_source,
             "env_model": os.getenv("CODEX_MODEL"),
             "lcb": {
                 "question_id": problem.question_id,
@@ -190,21 +235,34 @@ async def _run(args: argparse.Namespace) -> int:
         print(f"run_dir={run_dir}")
         return 0
 
-    llm = MockAsyncLLMClient({})
-    backend_registry = build_default_backend_registry(
-        llm, include_smolagents=False, include_codex=True
-    )
-    if not backend_registry.has("codex_sdk"):
-        raise RuntimeError(
-            "codex_sdk unavailable; install with: uv sync --extra codex"
+    if mock_backends:
+        backend_registry, backend_manifest = resolve_backend_registry(
+            mock_backends=True,
+            include_smolagents=False,
+            include_codex=True,
         )
+    else:
+        llm = OpenAICompatibleAsyncClient()
+        backend_registry, backend_manifest = resolve_backend_registry(
+            mock_backends=False,
+            client=llm,
+            include_smolagents=False,
+            include_codex=True,
+        )
+        if not backend_registry.has("codex_sdk"):
+            raise RuntimeError(
+                "codex_sdk unavailable; install with: uv sync --extra codex "
+                "or pass --mock-backends for API-free validation"
+            )
 
     runtime_cfg = config.get("runtime") or {}
+    runtime_cap = max(1, int(runtime_cfg.get("max_concurrent_subtasks", 1)))
     limits = RuntimeLimits(
         max_parallel_benchmark_tasks=int(runtime_cfg.get("max_parallel_benchmark_tasks", 1)),
         max_parallel_nodes_per_task=int(runtime_cfg.get("max_parallel_nodes_per_task", 2)),
         max_parallel_llm_calls=int(runtime_cfg.get("max_parallel_llm_calls", 2)),
         max_parallel_sandboxes=int(runtime_cfg.get("max_parallel_sandboxes", 1)),
+        max_concurrent_subtasks=runtime_cap,
     )
     artifact_store = FileArtifactStore(run_dir)
     checkpoint_store = CheckpointStore(run_dir)
@@ -274,6 +332,10 @@ async def _run(args: argparse.Namespace) -> int:
         max_total_backend_calls=int(fast_cfg.get("max_total_backend_calls", 6)),
     )
 
+    slow_loop = SlowLoopController(
+        config=slow_loop_config,
+        checkpoint_store=task_checkpoint_store,
+    )
     scheduler = ReadySubtaskScheduler(
         runtime=runtime,
         artifact_store=artifact_store,
@@ -281,8 +343,10 @@ async def _run(args: argparse.Namespace) -> int:
         contracts_dir=contracts_dir,
         source_repo=str(Path(source_repo).resolve()),
         budget=fast_budget,
+        slow_loop=slow_loop,
         slow_loop_config=slow_loop_config,
-        max_concurrent_subtasks=1,
+        max_concurrent_subtasks=runtime_cap,
+        allow_concurrent_subtasks=runtime_cap > 1,
     )
 
     initial = create_artifact(
@@ -352,10 +416,20 @@ async def _run(args: argparse.Namespace) -> int:
         "latency_ms": latency_ms,
         "pareto_enabled": False,
         "slow_loop_enabled": slow_loop_config.enabled,
+        "problem_source": problem_source,
+        "mock_backends": mock_backends,
+        "runtime_concurrency_cap": runtime_cap,
+        "backend_override": backend_manifest.get("backend_override"),
         "subtask_status": {
             sid: sub.status.value for sid, sub in state.subtasks.items()
         },
+        "committed": [
+            sid
+            for sid, sub in state.subtasks.items()
+            if sub.status.value == "committed"
+        ],
         "active_plan_revision_id": state.active_plan_revision_id,
+        "m5_revision_count": len(state.plan_revision_history or []),
         "slow_loop_updates": getattr(state.slow_loop_state, "updates_applied", 0)
         if state.slow_loop_state
         else 0,
@@ -372,6 +446,19 @@ async def _run(args: argparse.Namespace) -> int:
         },
     }
     _write_json(run_dir / "summary.json", summary)
+    _write_json(
+        run_dir / "run_manifest.json",
+        {
+            "runner": "run_lcb_codex_three_subtask",
+            "started_at": started_at.isoformat(),
+            "config_path": str(config_path),
+            "problem_source": problem_source,
+            **backend_manifest,
+            "runtime_concurrency_cap": runtime_cap,
+            "slow_loop_enabled": slow_loop_config.enabled,
+            "evaluation": config.get("evaluation"),
+        },
+    )
     _write_trace_md(run_dir=run_dir, plan=plan, state=state, summary=summary)
     # Rewrite TRACE header for this mode.
     trace = (run_dir / "TRACE.md").read_text(encoding="utf-8")
@@ -405,6 +492,21 @@ def main() -> int:
     parser.add_argument("--run-id")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--allow-config-drift", action="store_true")
+    parser.add_argument(
+        "--mock-backends",
+        action="store_true",
+        help="Fully API-free deterministic backends (no Codex/OpenAI clients).",
+    )
+    parser.add_argument(
+        "--mock-llm",
+        action="store_true",
+        help="Compatibility alias for --mock-backends.",
+    )
+    parser.add_argument(
+        "--synthetic-problem",
+        action="store_true",
+        help="Use the API-free synthetic ProblemArtifact fixture (CI).",
+    )
     args = parser.parse_args()
     return asyncio.run(_run(args))
 

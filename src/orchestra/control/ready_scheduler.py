@@ -361,6 +361,9 @@ class ReadySubtaskScheduler:
             await self.task_checkpoint_store.save(state)
 
         if state.scheduling_policy is None:
+            # Default policy matches the constructor runtime cap. Callers that
+            # need policy=1 with cap>1 (Stage-2 concurrency adaptation) must
+            # set scheduling_policy explicitly before run_task.
             state.scheduling_policy = TaskSchedulingPolicy(
                 max_concurrent_subtasks=self.max_concurrent_subtasks
             )
@@ -994,9 +997,11 @@ class ReadySubtaskScheduler:
             )
         )
 
+        # Isolate graph-level checkpoints per subtask so distinct local graphs
+        # (and Slow Loop materializations) cannot collide on CheckpointStore keys.
         run_context = RunContext(
             run_id=f"{context.run_id}:{subtask_id}:{attempt_id}",
-            task_id=context.task_id,
+            task_id=f"{context.task_id}__subtask__{subtask_id}",
             run_dir=context.run_dir,
             limits=context.limits,
             semaphores=context.semaphores,

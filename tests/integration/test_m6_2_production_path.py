@@ -16,7 +16,6 @@ from orchestra.control.pareto.controller import ParetoGlobalCandidatePolicy
 from orchestra.control.pareto.runtime_factory import (
     build_slow_loop_controller,
     resolve_from_mapping,
-    resolve_from_path,
 )
 from orchestra.control.pareto.schemas import (
     EvaluationVisibility,
@@ -86,9 +85,11 @@ async def test_pareto_enabled_uses_ready_scheduler_path(tmp_path: Path):
     assert summary["scheduler_path"] == "ReadySubtaskScheduler"
     assert summary["pareto_enabled"] is True
     # Real selection + future execution under the scheduler.
-    assert "s2" in summary["committed"]
-    assert "s3" in summary["committed"]
-    assert summary["selected_hash"] or summary["m5_revision_count"] >= 0
+    assert set(summary["committed"]) >= {"s1", "s2", "s3", "s4"}
+    assert summary["selected_hash"]
+    assert summary["m5_revision_count"] >= 1
+    assert summary.get("concurrent_fork_wave") is True
+    assert summary.get("fork_wave_effective_concurrency") == 2
     run_dir = Path(summary["run_dir"])
     assert (run_dir / "run_manifest.json").exists()
     manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
@@ -105,17 +106,18 @@ async def test_multi_subtask_fixture_selection_activation_realization(tmp_path: 
     )
     run_dir = Path(summary["run_dir"])
     # Prefer a selected Pareto decision when triggers fire; always require future commits.
-    assert set(summary["committed"]) >= {"s1", "s2", "s3"}
-    if summary["pareto_enabled"] and (run_dir / "pareto" / "decisions.jsonl").exists():
-        lines = [
-            ln
-            for ln in (run_dir / "pareto" / "decisions.jsonl").read_text().splitlines()
-            if ln.strip()
-        ]
-        assert lines
-        decision = json.loads(lines[-1])
-        if decision.get("selected_content_hash"):
-            assert decision.get("activated_revision_id") or summary["active_plan_revision_id"]
+    assert set(summary["committed"]) >= {"s1", "s2", "s3", "s4"}
+    assert summary["selected_hash"]
+    assert summary["active_plan_revision_id"] or summary["fork_activation_revision"]
+    lines = [
+        ln
+        for ln in (run_dir / "pareto" / "decisions.jsonl").read_text().splitlines()
+        if ln.strip()
+    ]
+    assert lines
+    decision = json.loads(lines[0])
+    assert decision.get("selected_content_hash")
+    assert decision.get("activated_revision_id")
 
 
 @pytest.mark.asyncio
@@ -123,7 +125,7 @@ async def test_pareto_disabled_stage2_m5_path(tmp_path: Path):
     cfg = REPO / "configs/experiments/stage2/m5_rule_based.yaml"
     summary = await run_stage2_fixture(cfg, output_root=tmp_path, run_id="m5-only")
     assert summary["pareto_enabled"] is False
-    assert set(summary["committed"]) >= {"s2", "s3"}
+    assert set(summary["committed"]) >= {"s1", "s2", "s3", "s4"}
 
 
 def test_graph_template_cannot_touch_leased_or_completed():
@@ -437,61 +439,73 @@ def test_hidden_private_cannot_affect_estimates_or_hashes(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_resume_no_duplicate_decision_revision_realization(tmp_path: Path):
     cfg = REPO / "configs/experiments/stage2/m6_balanced_knee.yaml"
-    summary = await run_stage2_fixture(cfg, output_root=tmp_path, run_id="resume1")
-    run_dir = Path(summary["run_dir"])
+    with pytest.raises(RuntimeError, match="FAILPOINT:after_realization_persisted"):
+        await run_stage2_fixture(
+            cfg,
+            output_root=tmp_path,
+            run_id="resume1",
+            failpoint="after_realization_persisted",
+        )
+    run_dir = tmp_path / "resume1"
     decisions_path = run_dir / "pareto" / "decisions.jsonl"
-    before = 0
-    if decisions_path.exists():
-        before = len([ln for ln in decisions_path.read_text().splitlines() if ln.strip()])
-    # Resume: re-finalize should not duplicate history.
-    resolved = resolve_from_path(cfg, repo_root=REPO)
+    before = len(
+        [ln for ln in decisions_path.read_text().splitlines() if ln.strip()]
+    ) if decisions_path.exists() else 0
+    summary = await run_stage2_fixture(
+        cfg, output_root=tmp_path, run_id="resume1", failpoint=None
+    )
+    after = len(
+        [ln for ln in decisions_path.read_text().splitlines() if ln.strip()]
+    ) if decisions_path.exists() else 0
+    assert after == before or after == before + 0
+    assert summary["restart_recovery_counts"] >= 1
+    applied_ids = []
     ckpt = TaskCheckpointStore(run_dir)
     plan = stage2_fixture_plan(summary["task_id"])
     loaded = await ckpt.load(
         summary["task_id"],
         plan_version=plan.plan_version,
-        plan_content_hash=None,
+        plan_content_hash=plan.content_hash(),
         allow_config_drift=True,
     )
-    if loaded is None:
-        pytest.skip("fixture did not persist checkpoint")
-    ctrl = build_slow_loop_controller(
-        resolved, run_dir=run_dir, repo_root=REPO, checkpoint_store=ckpt
-    )
-    if loaded.pareto_state and loaded.pareto_state.pending_decision:
-        ctrl.candidate_policy.finalize_realized(loaded)
-        await ckpt.save(loaded)
-    if decisions_path.exists():
-        after = len([ln for ln in decisions_path.read_text().splitlines() if ln.strip()])
-        assert after == before or after == before  # no growth from re-finalize alone
-    applied = [
-        r
-        for r in (loaded.plan_revision_history if loaded else [])
-        if r.status is GlobalPlanRevisionStatus.APPLIED
-    ]
-    ids = [r.revision_id for r in applied]
-    assert len(ids) == len(set(ids))
+    assert loaded is not None
+    for r in loaded.plan_revision_history:
+        if r.status is GlobalPlanRevisionStatus.APPLIED:
+            applied_ids.append(r.revision_id)
+    assert len(applied_ids) == len(set(applied_ids))
 
 
 @pytest.mark.asyncio
 async def test_post_activation_crash_resumes_from_activated_checkpoint(tmp_path: Path):
     cfg = REPO / "configs/experiments/stage2/m6_balanced_knee.yaml"
-    summary = await run_stage2_fixture(cfg, output_root=tmp_path, run_id="crash")
+    with pytest.raises(RuntimeError, match="FAILPOINT:after_activation_checkpoint"):
+        await run_stage2_fixture(
+            cfg,
+            output_root=tmp_path,
+            run_id="crash",
+            failpoint="after_activation_checkpoint",
+        )
+    summary = await run_stage2_fixture(
+        cfg, output_root=tmp_path, run_id="crash", failpoint=None
+    )
+    assert summary["restart_recovery_counts"] >= 1
+    assert summary["fork_activation_revision"]
+    assert set(summary["committed"]) >= {"s1", "s2", "s3", "s4"}
     run_dir = Path(summary["run_dir"])
     ckpt = TaskCheckpointStore(run_dir)
     plan = stage2_fixture_plan(summary["task_id"])
     loaded = await ckpt.load(
         summary["task_id"],
         plan_version=plan.plan_version,
-        plan_content_hash=None,
+        plan_content_hash=plan.content_hash(),
         allow_config_drift=True,
     )
     assert loaded is not None
-    if loaded.active_plan_revision_id is not None:
-        assert any(
-            r.revision_id == loaded.active_plan_revision_id
-            for r in loaded.plan_revision_history
-        )
+    assert loaded.active_plan_revision_id is not None
+    assert any(
+        r.revision_id == loaded.active_plan_revision_id
+        for r in loaded.plan_revision_history
+    )
 
 
 def test_catalog_compiles_allowlisted_graphs_only():

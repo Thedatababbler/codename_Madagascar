@@ -546,6 +546,17 @@ Copy the template below after each run (evaluate + summarize when applicable):
   - `outputs/stage1/m1-smoke-b{0,1,2}` — early smokes
 - **Notes:** `--mock-llm` / fixture paths only; not for accuracy claims.
 
+### EXP-20260803 — M6.2 correctness closure (fixture / API-free)
+- **Status:** engineering validation (not a real-model experiment)
+- **Branch base:** `origin/agnostic` @ `46ba11e`
+- **Coverage:** fork/join Stage-2 fixture proving selected concurrency changes a
+  future scheduler wave; `--mock-backends` API-free override; calibration freeze
+  + held-out fail-closed gate; crash/resume failpoints; formal Codex sample with
+  M5 enabled under synthetic ProblemArtifact.
+- **Notes:** Do **not** claim real quality/cost/latency gains from fixture numbers.
+  Real M6 development / held-out experiments remain unauthorized until explicitly
+  requested.
+
 ### EXP-pending — Stage1 B2 CodeAgent MAS (not yet run as canonical)
 - **Status:** incomplete (code shipped on `agnostic` @ `1dda045`, no canonical LCB-dev numbers yet)
 - **Graph:** `configs/graphs/b2_fixed_mas.yaml` now uses `smolagents_code` + `final_answer` (structured archive: `b2_fixed_mas_structured.yaml`)

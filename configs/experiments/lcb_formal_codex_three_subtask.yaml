@@ -1,6 +1,6 @@
-# Formal LiveCodeBench abc309_a × 3 Codex subtasks (public pytest fixture).
-# Pareto disabled. Requires: uv sync --extra codex, OPENAI_API_KEY,
-# and usually ADAMAS_CODEX_SANDBOX_OVERRIDE=full_access on this host.
+# Formal LiveCodeBench abc309_a × 3 Codex subtasks.
+# CI / API-free: --mock-backends --synthetic-problem
+# Real LCB: omit --synthetic-problem and provide benchmark.data_dir.
 experiment:
   name: lcb_formal_codex_three_subtask
   seed: 42
@@ -17,8 +17,9 @@ benchmark:
   language: python
   task_id: abc309_a
   manifest: configs/manifests/lcb_smoke.json
-  data_dir: /root/data/livecodebench/code_generation_lite
-  repository_path: /root/projects/LiveCodeBench
+  data_dir: ${LCB_DATA_DIR:-/root/data/livecodebench/code_generation_lite}
+  repository_path: ${LCB_REPOSITORY_PATH:-/root/projects/LiveCodeBench}
+  synthetic_problem: tests/fixtures/lcb_abc309_a_synthetic_problem.json
 
 runtime:
   backend: native_async
@@ -26,22 +27,40 @@ runtime:
   max_parallel_nodes_per_task: 2
   max_parallel_llm_calls: 2
   max_parallel_sandboxes: 1
+  max_concurrent_subtasks: 1
+
+sandbox:
+  backend: mock
+  per_test_timeout_seconds: 6
+  worker_grace_seconds: 5
+  max_worker_wall_seconds: 60
+  num_process_evaluate: 1
+  limits:
+    memory_mb: 2048
+    max_processes: 32
+    max_open_files: 128
+    max_file_size_mb: 16
+
+evaluation:
+  max_repair_attempts: 0
+  final_samples_per_task: 1
+  total_task_budget_usd: 1.0
+  timeout_seconds: 180
 
 fast_loop:
   enabled: true
   max_candidates: 2
   max_total_backend_calls: 6
 
-# Disabled for the formal Codex sample: Slow Loop plan edits caused
-# CheckpointDriftError / subtask short-circuit on later stages.
+# M5 Slow Loop enabled; graph checkpoints are isolated per subtask.
 slow_loop:
-  enabled: false
+  enabled: true
   failure_policy: keep_previous_plan
   every_n_committed_subtasks: 1
   context_pressure_ratio: 0.5
   budget_pressure_ratio: 0.35
-  max_updates_per_task: 0
-  max_candidates_per_update: 1
+  max_updates_per_task: 3
+  max_candidates_per_update: 2
   min_commits_between_updates: 1
   allowed_backend_assignments:
     coding:
@@ -55,3 +74,7 @@ pareto:
 
 logging:
   level: INFO
+  save_prompts: true
+  save_raw_responses: true
+  save_artifacts: true
+  redact_environment: true

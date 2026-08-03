@@ -286,10 +286,27 @@ async def test_canonical_harness_reruns_after_winner_apply(tmp_path):
     assert passed is True
 
 
+class _PropagationCodex:
+    """Writes a unique file each call so downstream stages always have a diff."""
+
+    def __init__(self) -> None:
+        self._n = 0
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):  # noqa: ANN002
+        return None
+
+    async def thread_start(self, **kwargs):  # noqa: ANN003
+        self._n += 1
+        return _SiblingFileThread(kwargs["cwd"], f"t-{self._n}", f"p{self._n}")
+
+
 @pytest.mark.asyncio
 async def test_downstream_subtask_receives_upstream_repository_changes(tmp_path):
     pytest.importorskip("openai_codex")
-    client = _CountingCodex()
+    client = _PropagationCodex()
     registry = AgentBackendRegistry()
     registry.register(CodexSDKBackend(client_factory=lambda: client))
     runtime = _runtime(tmp_path, registry)
@@ -594,7 +611,9 @@ class _SiblingFileThread:
 class _SiblingCodex:
     def __init__(self) -> None:
         self._n = 0
-        self._tags = ["a", "b"]
+        # Include a third tag so join-subtask s3 still produces a non-empty diff
+        # after s1/s2 files are already present in the forked workspace.
+        self._tags = ["a", "b", "c"]
 
     async def __aenter__(self):
         return self

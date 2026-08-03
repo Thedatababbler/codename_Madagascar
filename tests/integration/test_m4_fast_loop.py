@@ -527,10 +527,39 @@ async def test_f_infra_failure_no_prompt_edit(tmp_path):
     assert fl.candidates[0].metadata.get("infrastructure_related") is True
 
 
+class _AlwaysFixCodex:
+    """Always writes a correct calculator plus a unique file (non-empty diffs)."""
+
+    def __init__(self) -> None:
+        self._n = 0
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *a):  # noqa: ANN002
+        return None
+
+    async def thread_start(self, **kwargs):  # noqa: ANN003
+        self._n += 1
+        workspace = kwargs["cwd"]
+        tid = f"thread-{self._n}"
+
+        class _T:
+            id = tid
+
+            async def run(self, prompt: str, **kw):  # noqa: ANN003
+                del prompt, kw
+                _write_calc(workspace, "def add(a, b):\n    return a + b\n")
+                Path(workspace, f"stage_{tid}.txt").write_text(f"{tid}\n", encoding="utf-8")
+                return _FakeTurn()
+
+        return _T()
+
+
 @pytest.mark.asyncio
 async def test_g_multi_subtask_scheduler_dag(tmp_path):
     pytest.importorskip("openai_codex")
-    client = _CountingCodex()
+    client = _AlwaysFixCodex()
     registry = AgentBackendRegistry()
     registry.register(CodexSDKBackend(client_factory=lambda: client))
     runtime = _runtime(tmp_path, registry)

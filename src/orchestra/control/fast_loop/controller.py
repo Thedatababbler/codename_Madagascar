@@ -429,7 +429,7 @@ class FastLoopController:
             sub.workspace_ref = workspace_ref
         run_context = RunContext(
             run_id=f"{context.run_id}:infra_retry",
-            task_id=f"{context.task_id}__infra_retry",
+            task_id=f"{context.task_id}__subtask__{subtask_id}__infra_retry",
             run_dir=context.run_dir,
             limits=context.limits,
             semaphores=context.semaphores,

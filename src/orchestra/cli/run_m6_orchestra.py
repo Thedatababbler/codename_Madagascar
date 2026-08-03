@@ -17,9 +17,8 @@ from typing import Any
 
 import yaml
 
-from orchestra.backends.factory import build_default_backend_registry
+from orchestra.backends.factory import resolve_backend_registry
 from orchestra.backends.health import healthcheck_used_backends
-from orchestra.cli.run import _mock_client
 from orchestra.cli.validate_graph import build_compiler
 from orchestra.config import load_experiment_config, load_experiment_raw
 from orchestra.control.fast_loop.schemas import FastLoopBudget
@@ -29,6 +28,7 @@ from orchestra.control.pareto.runtime_factory import (
     resolve_from_mapping,
 )
 from orchestra.control.ready_scheduler import ReadySubtaskScheduler
+from orchestra.control.slow_loop.schemas import TaskSchedulingPolicy
 from orchestra.control.task_state import TaskExecutionState
 from orchestra.decomposition.decomposer import TaskDecomposer
 from orchestra.decomposition.schemas import TaskPlan
@@ -128,37 +128,49 @@ async def _run(args: argparse.Namespace) -> int:
     run_dir = Path(config.experiment.output_root) / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    llm = _mock_client() if args.mock_llm else OpenAICompatibleAsyncClient()
-    if args.mock_llm or config.sandbox.backend == "mock":
+    mock_backends = bool(args.mock_backends or args.mock_llm)
+    if mock_backends:
+        llm = None
         sandbox = MockSandbox()
-    elif config.sandbox.backend == "lcb_official":
-        try:
-            sandbox = OfficialLCBSandbox(
-                repository_path=config.benchmark.repository_path,
-                limits=config.sandbox.limits,
-                num_process_evaluate=config.sandbox.num_process_evaluate,
-                worker_grace_seconds=config.sandbox.worker_grace_seconds,
-                max_worker_wall_seconds=config.sandbox.max_worker_wall_seconds,
-            )
-        except OfficialLCBSandboxUnavailable as exc:
-            raise RuntimeError(
-                "OfficialLCBSandbox is unavailable; refusing subprocess fallback."
-            ) from exc
-    elif config.sandbox.backend == "docker":
-        try:
-            sandbox = DockerSandbox(
-                image=config.sandbox.image,
-                timeout_seconds=config.sandbox.per_test_timeout_seconds,
-                memory_mb=config.sandbox.limits.memory_mb,
-            )
-        except DockerUnavailableError as exc:
-            raise RuntimeError("Docker backend is unavailable.") from exc
     else:
-        raise RuntimeError("unsupported sandbox backend for M6 orchestra runner")
+        llm = OpenAICompatibleAsyncClient()
+        if config.sandbox.backend == "mock":
+            raise RuntimeError(
+                "sandbox.backend=mock is permitted only with --mock-backends "
+                "(or compatibility alias --mock-llm)"
+            )
+        if config.sandbox.backend == "lcb_official":
+            try:
+                sandbox = OfficialLCBSandbox(
+                    repository_path=config.benchmark.repository_path,
+                    limits=config.sandbox.limits,
+                    num_process_evaluate=config.sandbox.num_process_evaluate,
+                    worker_grace_seconds=config.sandbox.worker_grace_seconds,
+                    max_worker_wall_seconds=config.sandbox.max_worker_wall_seconds,
+                )
+            except OfficialLCBSandboxUnavailable as exc:
+                raise RuntimeError(
+                    "OfficialLCBSandbox is unavailable; refusing subprocess fallback."
+                ) from exc
+        elif config.sandbox.backend == "docker":
+            try:
+                sandbox = DockerSandbox(
+                    image=config.sandbox.image,
+                    timeout_seconds=config.sandbox.per_test_timeout_seconds,
+                    memory_mb=config.sandbox.limits.memory_mb,
+                )
+            except DockerUnavailableError as exc:
+                raise RuntimeError("Docker backend is unavailable.") from exc
+        else:
+            raise RuntimeError("unsupported sandbox backend for M6 orchestra runner")
 
-    backend_registry = build_default_backend_registry(
-        llm, include_smolagents=True, include_codex=True
+    backend_registry, backend_manifest = resolve_backend_registry(
+        mock_backends=mock_backends,
+        client=llm if not mock_backends else None,
+        include_smolagents=True,
+        include_codex=True,
     )
+    runtime_cap = max(1, int(config.runtime.max_concurrent_subtasks))
     semaphores = RuntimeSemaphores(config.runtime)
     artifact_store = FileArtifactStore(run_dir)
     checkpoint_store = CheckpointStore(run_dir)
@@ -195,6 +207,7 @@ async def _run(args: argparse.Namespace) -> int:
         repo_root=repo_root,
         checkpoint_store=task_checkpoint_store,
         fail_closed=True,
+        runtime_concurrency_cap=runtime_cap,
     )
 
     source_repo = (
@@ -211,7 +224,8 @@ async def _run(args: argparse.Namespace) -> int:
         budget=FastLoopBudget(max_candidates=2, max_total_backend_calls=6),
         slow_loop=slow_loop,
         slow_loop_config=resolved.slow_loop_config,
-        max_concurrent_subtasks=1,
+        max_concurrent_subtasks=runtime_cap,
+        allow_concurrent_subtasks=runtime_cap > 1,
     )
 
     problem = ProblemArtifact(
@@ -236,6 +250,8 @@ async def _run(args: argparse.Namespace) -> int:
     state = TaskExecutionState.from_plan(
         plan, artifact_store_ref=str(run_dir / "artifacts")
     )
+    if state.scheduling_policy is None:
+        state.scheduling_policy = TaskSchedulingPolicy(max_concurrent_subtasks=1)
     # Resume from checkpoint when present.
     loaded = await task_checkpoint_store.load(
         plan.task_id,
@@ -246,6 +262,9 @@ async def _run(args: argparse.Namespace) -> int:
     if loaded is not None:
         state = loaded
 
+    policy_conc = 1
+    if state.scheduling_policy is not None:
+        policy_conc = int(state.scheduling_policy.max_concurrent_subtasks)
     manifest: dict[str, Any] = {
         "runner": "run_m6_orchestra",
         "started_at": started_at.isoformat(),
@@ -260,7 +279,12 @@ async def _run(args: argparse.Namespace) -> int:
         ).hexdigest(),
         "graph_catalog_hash": _graph_catalog_hash(plan),
         "contract_hash": contract_hash,
-        **control_plane_manifest_fields(resolved),
+        **backend_manifest,
+        **control_plane_manifest_fields(
+            resolved,
+            runtime_concurrency_cap=runtime_cap,
+            policy_concurrency=policy_conc,
+        ),
     }
     (run_dir / "run_manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -318,7 +342,16 @@ def main() -> None:
     parser.add_argument("--run-id", default=None)
     parser.add_argument("--output-root", default=None)
     parser.add_argument("--source-repo", default=None)
-    parser.add_argument("--mock-llm", action="store_true")
+    parser.add_argument(
+        "--mock-backends",
+        action="store_true",
+        help="Fully API-free deterministic backends (no external clients).",
+    )
+    parser.add_argument(
+        "--mock-llm",
+        action="store_true",
+        help="Compatibility alias for --mock-backends.",
+    )
     parser.add_argument("--allow-config-drift", action="store_true")
     parser.add_argument("--skip-healthcheck", action="store_true")
     args = parser.parse_args()

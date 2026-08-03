@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "question_id": "abc309_a",
+  "title": "Conflict",
+  "statement": "Synthetic CI ProblemArtifact for abc309_a (Nine / Conflict).\nSeats 1..9 are arranged in a 3x3 grid. Given A and B, answer Yes iff they are horizontally adjacent.\nNot the real LCB private dataset.\n",
+  "starter_code": "",
+  "difficulty": "easy",
+  "platform": "atcoder",
+  "contest_date": "2023-07-08",
+  "public_examples": [
+    {"input": "7 8\n", "output": "Yes\n", "testtype": "stdin"},
+    {"input": "1 9\n", "output": "No\n", "testtype": "stdin"},
+    {"input": "3 4\n", "output": "No\n", "testtype": "stdin"}
+  ],
+  "function_name": null
+}

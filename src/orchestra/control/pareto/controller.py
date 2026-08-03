@@ -52,16 +52,23 @@ class ParetoGlobalCandidatePolicy:
         preference_profile: PreferenceProfile | None = None,
         run_dir: str | None = None,
         catalog=None,
+        *,
+        runtime_concurrency_cap: int = 1,
     ) -> None:
         self.config = config or ParetoConfig(enabled=True)
         self.profile = preference_profile or PreferenceProfile()
         self.archive = ParetoArchive(self.config)
         self.catalog = catalog
+        self.runtime_concurrency_cap = max(1, int(runtime_concurrency_cap))
         self.generator = ParetoCandidateGenerator(
             self.config, self.archive, catalog=catalog
         )
-        self.estimator = ParetoObjectiveEstimator()
-        self.validator = ParetoCandidateValidator()
+        self.estimator = ParetoObjectiveEstimator(
+            runtime_concurrency_cap=self.runtime_concurrency_cap
+        )
+        self.validator = ParetoCandidateValidator(
+            runtime_concurrency_cap=self.runtime_concurrency_cap
+        )
         self.selector = DeterministicParetoSelector()
         self._candidates_by_hash: dict[str, object] = {}
         self._contexts: dict[str, object] = {}

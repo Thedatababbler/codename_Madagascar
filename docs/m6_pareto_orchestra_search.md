@@ -206,10 +206,10 @@ TaskPlan → ReadySubtaskScheduler → M5 Slow Loop → M6 Pareto policy
 ```
 
 ```bash
-# Production multi-subtask runner (not SingleSubtaskCompatibilityRunner)
+# Production multi-subtask runner (fully API-free backends)
 uv run python -m orchestra.cli.run_m6_orchestra \
   --config configs/experiments/stage2/m6_balanced_knee.yaml \
-  --mock-llm
+  --mock-backends
 
 # Stage-2 CLI (no paid API by default)
 uv run python -m orchestra.cli.stage2_pareto_experiments validate \
@@ -218,8 +218,37 @@ uv run python -m orchestra.cli.stage2_pareto_experiments run-fixture \
   --config configs/experiments/stage2/m6_balanced_knee.yaml
 uv run python -m orchestra.cli.stage2_pareto_experiments report \
   --run-dir <fixture-run-dir>
+uv run python -m orchestra.cli.stage2_pareto_experiments freeze-calibration \
+  --config configs/experiments/stage2/m6_balanced_knee.yaml \
+  --run-dir <fixture-run-dir> \
+  --output outputs/stage2_pareto/calibration/dev_calibration.json
 ```
+
+### Runtime concurrency semantics (M6.2)
+
+```text
+effective_concurrency = min(runtime_concurrency_cap, policy_concurrency)
+```
+
+- `runtime.max_concurrent_subtasks` is the typed scheduler cap (manifest field).
+- `TaskSchedulingPolicy.max_concurrent_subtasks` is the active policy.
+- No-op concurrency candidates are rejected before consuming a revision:
+  `NO_EFFECTIVE_RUNTIME_CHANGE`, `NO_FUTURE_PARALLEL_WAVE`, `RUNTIME_CAP_DOMINATED`.
+
+### Fork/join fixture
+
+Stage-2 fixture DAG is `s1 → {s2,s3} → s4`. It starts at effective concurrency 1,
+adapts after `s1`, then runs `s2||s3` as one wave. Evidence is persisted in
+`concurrency_evidence.json`. Fixture latency numbers are labeled
+`fixture_estimate_not_real_model`.
+
+### API-free backends
+
+`--mock-backends` replaces every configured execution backend with deterministic
+local implementations (no OpenAI/Codex/smolagents client init). `--mock-llm` is a
+compatibility alias with the same full override semantics.
 
 Protocol: `docs/stage2_pareto_experiment_protocol.md`.
 
-Fixture/smoke results must not be claimed as real-model quality improvement.
+Fixture/smoke results must not be claimed as real-model quality, cost, or latency
+improvement.
