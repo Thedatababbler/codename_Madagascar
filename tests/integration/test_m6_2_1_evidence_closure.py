@@ -42,11 +42,13 @@ CFG = REPO / "configs/experiments/stage2/m6_balanced_knee.yaml"
 LABEL_A = REPO / "tests/fixtures/private_labels_a.json"
 LABEL_B = REPO / "tests/fixtures/private_labels_b.json"
 
+# Selection-relevant frozen fields checked against control-plane recomputation.
+# Source/run provenance (source_run_id, source_manifest_hash, config_hash,
+# dataset_split_identity) is persisted separately and must not contaminate
+# selection_config_hash; those fields are covered by held-out identity tests.
 FROZEN_FIELDS = [
     "schema_version",
     "source_split",
-    "source_run_id",
-    "source_manifest_hash",
     "git_sha",
     "selection_config_hash",
     "preference_hash",
@@ -57,13 +59,11 @@ FROZEN_FIELDS = [
     "candidate_catalog_hash",
     "graph_catalog_hash",
     "resolved_graph_hash",
-    "config_hash",
     "benchmark_manifest_hash",
     "backend_kinds",
     "model_identifiers",
     "backend_model_settings",
     "seed_policy",
-    "dataset_split_identity",
     "private_data_policy",
     "public_evaluator_id",
     "public_evaluator_version",

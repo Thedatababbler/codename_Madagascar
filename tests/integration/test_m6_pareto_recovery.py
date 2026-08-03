@@ -432,25 +432,6 @@ async def test_restart_after_activation_recovers_candidate(tmp_path: Path):
     )
     assert restarted.archive.entries(snap.context_id, ParetoEvaluationKind.ESTIMATED)
     # Finalize after restart.
-    loaded.backend_usage_records.append(
-        BackendUsageRecord(
-            usage_id="post",
-            task_id="m61",
-            subtask_id="s2",
-            node_id="n",
-            backend_id="codex_sdk",
-            attempt_id=1,
-            started_at=datetime.now(UTC),
-            finished_at=datetime.now(UTC),
-            latency_seconds=0.2,
-            prompt_tokens=1,
-            completion_tokens=1,
-            estimated_cost_usd=0.001,
-            cost_quality="exact",
-            accounting_source="post",
-            status="success",
-        )
-    )
     loaded.public_evaluation_records.append(
         PublicEvaluationRecord(
             evaluation_id="e2",
@@ -459,7 +440,7 @@ async def test_restart_after_activation_recovers_candidate(tmp_path: Path):
             normalized_score=0.85,
         )
     )
-    # Behavioral realization requires wave binding + terminal execution evidence.
+    # Behavioral realization requires wave + attempt + commit + usage evidence.
     pending = loaded.pareto_state.pending_decision
     affected = list(pending.affected_subtask_ids or ["s2", "s3"])
     wave_id = "wave-test-affected"
@@ -479,19 +460,71 @@ async def test_restart_after_activation_recovers_candidate(tmp_path: Path):
             decision_id=pending.decision_id,
         )
     ]
+    from orchestra.control.task_state import WorkspaceCommitRecord, WorkspaceCommitStatus
+
+    now = datetime.now(UTC)
+    loaded.workspace_commit_records = list(loaded.workspace_commit_records or [])
     for sid in affected:
-        if sid in loaded.subtasks:
-            loaded.subtasks[sid].status = SubtaskStatus.COMMITTED
-            loaded.subtasks[sid].attempts = [
-                SubtaskAttempt(
-                    attempt_id=1,
-                    status=SubtaskStatus.COMMITTED,
-                    wave_id=wave_id,
-                    execution_plan_revision=pending.activated_revision_id,
-                    scheduler_incarnation=1,
-                    usage_ids=[f"usage-{sid}"],
-                )
-            ]
+        if sid not in loaded.subtasks:
+            continue
+        uid = f"usage-{sid}"
+        lease_id = f"lease-{sid}"
+        loaded.backend_usage_records.append(
+            BackendUsageRecord(
+                usage_id=uid,
+                task_id="m61",
+                subtask_id=sid,
+                node_id="n",
+                backend_id="codex_sdk",
+                attempt_id=1,
+                run_id=loaded.task_id,
+                decision_id=pending.decision_id,
+                plan_revision=pending.activated_revision_id,
+                wave_id=wave_id,
+                scheduler_incarnation=1,
+                phase="post_activation",
+                started_at=now,
+                finished_at=now,
+                latency_seconds=0.2,
+                prompt_tokens=1,
+                completion_tokens=1,
+                estimated_cost_usd=0.001,
+                cost_quality="exact",
+                accounting_source="post",
+                status="success",
+            )
+        )
+        loaded.subtasks[sid].status = SubtaskStatus.COMMITTED
+        loaded.subtasks[sid].lease_id = lease_id
+        loaded.subtasks[sid].attempts = [
+            SubtaskAttempt(
+                attempt_id=1,
+                status=SubtaskStatus.COMMITTED,
+                lease_id=lease_id,
+                wave_id=wave_id,
+                execution_plan_revision=pending.activated_revision_id,
+                scheduler_incarnation=1,
+                usage_ids=[uid],
+            )
+        ]
+        loaded.workspace_commit_records.append(
+            WorkspaceCommitRecord(
+                record_id=f"commit-{sid}",
+                task_id=loaded.task_id,
+                subtask_id=sid,
+                attempt_id=1,
+                status=WorkspaceCommitStatus.COMMITTED,
+                run_id=loaded.task_id,
+                lease_id=lease_id,
+                wave_id=wave_id,
+                execution_plan_revision=pending.activated_revision_id,
+                scheduler_incarnation=1,
+                decision_id=pending.decision_id,
+                usage_ids=[uid],
+                terminal_state="committed",
+                committed_at=now,
+            )
+        )
     restarted.finalize_realized(loaded)
     assert loaded.pareto_state.pending_decision is None
     assert loaded.pareto_state.decision_history

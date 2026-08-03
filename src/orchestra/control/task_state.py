@@ -69,6 +69,18 @@ class WorkspaceCommitRecord(BaseModel):
     conflict_files: list[str] = Field(default_factory=list)
     harness_artifact_id: str | None = None
     error_message: str | None = None
+    # Execution-identity fields stamped at commit time (M6.2.2 evidence).
+    run_id: str = ""
+    lease_id: str | None = None
+    wave_id: str | None = None
+    execution_plan_revision: str | None = None
+    scheduler_incarnation: int | None = None
+    decision_id: str | None = None
+    usage_ids: list[str] = Field(default_factory=list)
+    evaluation_ids: list[str] = Field(default_factory=list)
+    committed_at: datetime | None = None
+    provenance: str = "ready_scheduler_commit"
+    terminal_state: str | None = None
 
 
 class BackendSessionRecord(BaseModel):

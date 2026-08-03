@@ -848,7 +848,10 @@ class ReadySubtaskScheduler:
 
         # SUCCESS_PENDING_COMMIT
         sub = result.local_subtask_state.model_copy(deep=True)
-        attempt_id = len(sub.attempts) or 1
+        attempt = sub.attempts[-1] if sub.attempts else None
+        attempt_id = int(attempt.attempt_id) if attempt is not None else (len(sub.attempts) or 1)
+        pending = getattr(getattr(state, "pareto_state", None), "pending_decision", None)
+        decision_id = getattr(pending, "decision_id", None) if pending is not None else None
         record = WorkspaceCommitRecord(
             record_id=f"{state.task_id}:{sid}:{attempt_id}:{uuid.uuid4().hex[:8]}",
             task_id=state.task_id,
@@ -859,6 +862,29 @@ class ReadySubtaskScheduler:
             change_set_hash=cs_hash,
             applied_artifact_ids=[a.artifact_id for a in result.produced_artifacts],
             status=WorkspaceCommitStatus.PENDING,
+            run_id=str(context.run_id or ""),
+            lease_id=(
+                getattr(attempt, "lease_id", None) if attempt is not None else sub.lease_id
+            ),
+            wave_id=(
+                getattr(attempt, "wave_id", None)
+                if attempt is not None
+                else state.current_wave_id
+            ),
+            execution_plan_revision=(
+                getattr(attempt, "execution_plan_revision", None)
+                if attempt is not None
+                else state.active_plan_revision_id
+            ),
+            scheduler_incarnation=(
+                getattr(attempt, "scheduler_incarnation", None)
+                if attempt is not None
+                else int(state.scheduler_incarnation or 0)
+            ),
+            decision_id=decision_id,
+            usage_ids=list(getattr(attempt, "usage_ids", None) or []),
+            evaluation_ids=list(getattr(attempt, "evaluation_ids", None) or []),
+            provenance="ready_scheduler_commit",
         )
         state.workspace_commit_records.append(record)
 
@@ -877,10 +903,13 @@ class ReadySubtaskScheduler:
                 sub.committed_artifacts = list(sub.candidate_artifacts)
             record.status = WorkspaceCommitStatus.COMMITTED
             record.committed_revision = state.canonical_revision
+            record.terminal_state = "committed"
+            record.committed_at = datetime.now(UTC)
             sub.last_commit_record_id = record.record_id
             state.subtasks[sid] = sub
             state.committed_subtask_count += 1
             self._merge_fast_loop(state, result)
+            self._stamp_commit_identity_from_attempt(state, sid, record)
             state.clear_communication_blocks()
             state.mark_ready_from_dependencies()
             state.state_version += 1
@@ -958,6 +987,8 @@ class ReadySubtaskScheduler:
         record.status = WorkspaceCommitStatus.COMMITTED
         record.committed_revision = new_rev or promoted.base_revision
         record.actual_parent_revision = state.canonical_revision
+        record.terminal_state = "committed"
+        record.committed_at = datetime.now(UTC)
         state.canonical_workspace_ref = promoted.path
         state.canonical_revision = record.committed_revision
         sub.status = SubtaskStatus.COMMITTED
@@ -984,10 +1015,37 @@ class ReadySubtaskScheduler:
         sub.last_commit_record_id = record.record_id
         state.subtasks[sid] = sub
         self._merge_fast_loop(state, result)
+        self._stamp_commit_identity_from_attempt(state, sid, record)
         state.clear_communication_blocks()
         state.mark_ready_from_dependencies()
         state.state_version += 1
         self._record_public_evaluation(state, result, context)
+
+    @staticmethod
+    def _stamp_commit_identity_from_attempt(
+        state: TaskExecutionState,
+        subtask_id: str,
+        record: WorkspaceCommitRecord,
+    ) -> None:
+        """Mirror attempt execution identity onto the commit after usage merge."""
+        sub = state.subtasks.get(subtask_id)
+        if sub is None or not sub.attempts:
+            return
+        att = sub.attempts[-1]
+        if att.usage_ids:
+            record.usage_ids = list(att.usage_ids)
+        if att.evaluation_ids:
+            record.evaluation_ids = list(att.evaluation_ids)
+        if att.lease_id:
+            record.lease_id = att.lease_id
+        if att.wave_id:
+            record.wave_id = att.wave_id
+        if att.execution_plan_revision:
+            record.execution_plan_revision = att.execution_plan_revision
+        if att.scheduler_incarnation is not None:
+            record.scheduler_incarnation = att.scheduler_incarnation
+        if record.terminal_state is None and record.status is WorkspaceCommitStatus.COMMITTED:
+            record.terminal_state = "committed"
 
     def _record_public_evaluation(
         self,

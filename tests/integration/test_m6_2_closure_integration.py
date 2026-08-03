@@ -378,4 +378,5 @@ async def test_freeze_calibration_from_dev_run(tmp_path: Path):
     assert payload["manifest_schema_version"] in {
         "stage2-calibration-v1",
         "stage2-calibration-v2",
+        "stage2-calibration-v3",
     }

@@ -10,23 +10,35 @@
 | Status | `canonical` (use for comparisons) / `smoke` / `mock` / `superseded` / `incomplete` |
 | Paths | Repo-relative from AdaMAS root |
 
-**Last updated:** 2026-08-03 (UTC) — M6.2.2 production evidence closure (uncommitted)
+**Last updated:** 2026-08-03 (UTC) — M6.2.2 final evidence-integrity patch
 
 ---
+
+### EXP-20260803-04 — M6.2.2 Final Evidence-Integrity Patch
+- **Status:** smoke / mock (fixtures + fully mocked backends only; no paid API,
+  no real LCB, no private/held-out inference)
+- **Date:** 2026-08-03 (UTC)
+- **Branch / commit:** `m622-production-evidence-closure` @ start `b18aadc`
+- **Benchmark / phase:** canonical selection hash (v3); Git alias fail-closed;
+  commit+usage evidence for realization; checkpoint-authoritative reports;
+  long-form estimated-vs-realized; real A/B/C ownership recovery
+- **Baseline / graph:** starts from `b18aadc`; no M4/M5/M6 redesign; no new
+  objectives/candidate families; no fixed-budget real experiments
+- **Notes:** Fixture/mock metrics are **not** real-model evidence. Do not claim
+  real quality/latency/cost from mocked runs.
 
 ### EXP-20260803-03 — M6.2.2 Production Evidence Closure
 - **Status:** smoke / mock (fixtures + fully mocked backends only; no paid API,
   no real LCB, no private/held-out inference)
 - **Date:** 2026-08-03 (UTC)
-- **Branch / commit:** `agnostic` @ start `2fac593` (local
-  `m622-production-evidence-closure`, uncommitted)
+- **Branch / commit:** `m622-production-evidence-closure` @ `b18aadc`
+  (prior M6.2.2 cost/held-out/attempt/report/ownership slice)
 - **Benchmark / phase:** production realized cost attribution; strict held-out
   selection identity; production attempt/wave/revision evidence; checkpoint-
   authoritative reports; ownership-before-mutation
 - **Baseline / graph:** starts from `2fac593`; no M4/M5/M6 redesign; no Codex
   hybrid changes; no new objectives/candidate families
-- **Notes:** leave uncommitted until review. Fixture/mock metrics are **not**
-  real-model evidence.
+- **Notes:** Fixture/mock metrics are **not** real-model evidence.
 
 ### EXP-20260803-02 — M6.2.1 Evidence and Report Closure
 - **Status:** smoke / mock (fixtures + fully mocked backends only; no paid API,

@@ -65,14 +65,22 @@ async def _run_production_dev(tmp_path: Path, run_id: str) -> Path:
 
 
 def _heldout_from_calibration(payload: dict, *, run_id: str = "held-1") -> dict:
+    from orchestra.experiments.stage2_pareto import _dataset_split_policy
+
     return {
         "split": "heldout",
         "run_id": run_id,
         "started_at": "2020-01-01T00:00:00+00:00",
+        "completed_at": "2020-01-01T01:00:00+00:00",
         "schema_version": payload["schema_version"],
         "git_sha": payload["git_sha"],
-        "git_commit": payload["git_sha"],
         "selection_config_hash": payload["selection_config_hash"],
+        "dataset_split_policy": payload.get("dataset_split_policy")
+        or _dataset_split_policy(payload.get("dataset_identity") or {}),
+        # Source provenance is separate from the shared selection hash.
+        "source_run_id": payload.get("source_run_id"),
+        "source_manifest_hash": payload.get("source_manifest_hash"),
+        "source_split": payload.get("source_split"),
         "control_plane_hash": payload["control_plane_hash"],
         "preference_hash": payload["preference_hash"],
         "objective_hash": payload["objective_hash"],
@@ -200,10 +208,7 @@ async def test_heldout_missing_or_mutated_identity_rejected(tmp_path: Path):
     )
     cal = CalibrationArtifact.from_dict(payload)
     base = _heldout_from_calibration(payload)
-    # selection_config_hash is presence-checked only (embeds source_run_id).
-    mutate_fields = [
-        f for f in HELDOUT_REQUIRED_IDENTITY_FIELDS if f != "selection_config_hash"
-    ]
+    mutate_fields = list(HELDOUT_REQUIRED_IDENTITY_FIELDS)
     for field in mutate_fields:
         deleted = dict(base)
         deleted.pop(field, None)
@@ -287,7 +292,8 @@ async def test_matching_production_calibration_and_heldout_accepted(tmp_path: Pa
     )
     # git_commit alias normalizes to git_sha
     only_commit = dict(held_manifest)
-    only_commit.pop("git_sha")
+    only_commit.pop("git_sha", None)
+    only_commit["git_commit"] = held_manifest["git_sha"]
     selection_identity_from_manifest(only_commit, role="heldout_target")
 
 
@@ -372,6 +378,11 @@ async def test_report_ignores_tampered_summary_and_counts_traces(tmp_path: Path)
     summary["m5_revision_count"] = 999
     summary["generated_candidates"] = 999
     summary["restart_recovery_counts"] = 999
+    summary["committed"] = ["fake-subtask"]
+    summary["solved_task_count"] = 999
+    summary["activated_count"] = 999
+    summary["realized_count"] = 999
+    summary["recovery_count"] = 999
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
 
     a = tmp_path / "r1"
@@ -385,10 +396,45 @@ async def test_report_ignores_tampered_summary_and_counts_traces(tmp_path: Path)
     assert int(row["restart_recovery_counts"]) == 0
     assert int(row["generated_candidates"]) == expected_generated
     assert int(row["generated_candidates"]) != 999
+    assert "fake-subtask" not in str(row.get("committed") or "")
+    assert int(row["solved_task_count"]) == 1
+    assert int(row["solved_task_count"]) != 999
     rec = collect_run_records(run_dir)
     assert rec["summary"]["total_cost_usd"] == pytest.approx(1.44e-05)
     assert rec["summary"]["m5_revision_count"] == 1
     assert rec["summary"]["restart_recovery_counts"] == 0
+    assert set(rec["summary"]["committed"]) >= {"s1", "s2", "s3", "s4"}
+    assert "fake-subtask" not in rec["summary"]["committed"]
+    assert rec["summary"]["solved_task_count"] == 1
+    # Long-form estimated-vs-realized must serialize required generic columns.
+    with (a / "stage2_estimated_vs_realized.csv").open(encoding="utf-8") as handle:
+        evr = list(csv.DictReader(handle))
+    assert evr
+    required_evr = {
+        "run_id",
+        "task_id",
+        "context_id",
+        "candidate_hash",
+        "decision_id",
+        "activation_revision",
+        "affected_wave_id",
+        "realization_id",
+        "objective_name",
+        "estimated_value",
+        "estimated_availability",
+        "estimated_provenance",
+        "realized_value",
+        "realized_availability",
+        "realized_provenance",
+        "unit",
+        "direction",
+        "normalization_metadata",
+        "censoring_state",
+        "usage_ids",
+        "evaluation_ids",
+    }
+    assert required_evr.issubset(set(evr[0].keys()))
+    assert {r["objective_name"] for r in evr} >= {"quality", "cost", "latency"}
     for name in sorted(p.name for p in a.iterdir()):
         assert _file_hash(a / name) == _file_hash(b / name)
 
@@ -419,20 +465,36 @@ def _ckpt_path(run_dir: Path, task_id: str) -> Path:
     return run_dir / "tasks" / task_id / "task_execution.json"
 
 
-def _ownership_scheduler_bundle(run_dir: Path, *, runtime_cap: int = 1):
-    """Build a real ReadySubtaskScheduler for ownership A/B/C processes."""
+def _ownership_scheduler_bundle(
+    run_dir: Path, *, runtime_cap: int = 1, production_mock: bool = False
+):
+    """Build a real ReadySubtaskScheduler for ownership A/B/C processes.
+
+    When ``production_mock`` is True, wire NativeAsyncRuntime + deterministic
+    mock backends (the production mock worker path). Process A still may install
+    a hold stub; Process C must use the real isolated runner.
+    """
     from unittest.mock import AsyncMock
 
+    from orchestra.backends.factory import resolve_backend_registry
     from orchestra.control.input_assembler import SubtaskInputAssembler
     from orchestra.control.pareto.runtime_factory import (
         build_slow_loop_controller,
         resolve_from_mapping,
     )
     from orchestra.control.ready_scheduler import ReadySubtaskScheduler
+    from orchestra.executors.agent import AgentNodeExecutor
+    from orchestra.executors.harness import HarnessNodeExecutor
+    from orchestra.executors.registry import NodeExecutorRegistry
+    from orchestra.ir.contracts import load_contracts
     from orchestra.runtime.backend import RunContext
+    from orchestra.runtime.checkpoint import CheckpointStore
     from orchestra.runtime.limits import RuntimeLimits, RuntimeSemaphores
+    from orchestra.runtime.native_async import NativeAsyncRuntime
     from orchestra.runtime.task_checkpoint import TaskCheckpointStore
+    from orchestra.sandbox.mock import MockSandbox
     from orchestra.storage.artifacts import FileArtifactStore
+    from orchestra.storage.events import AppendOnlyEventWriter
 
     raw = yaml.safe_load(CFG.read_text(encoding="utf-8")) or {}
     resolved = resolve_from_mapping(raw, repo_root=REPO)
@@ -452,8 +514,28 @@ def _ownership_scheduler_bundle(run_dir: Path, *, runtime_cap: int = 1):
         runtime_concurrency_cap=runtime_cap,
     )
     slow_loop.config.budget.max_updates_per_task = 0
-    runtime = AsyncMock()
-    runtime.artifact_store = store
+    if production_mock:
+        contracts = load_contracts("configs/contracts")
+        registry, _manifest = resolve_backend_registry(
+            mock_backends=True,
+            client=None,
+            include_smolagents=True,
+            include_codex=True,
+        )
+        runtime = NativeAsyncRuntime(
+            executors=NodeExecutorRegistry(
+                agent_executor=AgentNodeExecutor(contracts, registry),
+                harness_executor=HarnessNodeExecutor(
+                    MockSandbox(), timeout_seconds=30
+                ),
+            ),
+            artifact_store=store,
+            checkpoint_store=CheckpointStore(run_dir),
+            event_writer=AppendOnlyEventWriter(run_dir),
+        )
+    else:
+        runtime = AsyncMock()
+        runtime.artifact_store = store
     sched = ReadySubtaskScheduler(
         runtime=runtime,
         artifact_store=store,
@@ -463,6 +545,7 @@ def _ownership_scheduler_bundle(run_dir: Path, *, runtime_cap: int = 1):
         slow_loop_config=resolved.slow_loop_config,
         max_concurrent_subtasks=runtime_cap,
         allow_concurrent_subtasks=False,
+        source_repo=str(REPO) if production_mock else None,
     )
     sched.input_assembler = SubtaskInputAssembler(store)
     limits = RuntimeLimits(
@@ -610,17 +693,23 @@ def _proc_b_compete(run_dir: str, result_q, _expected_hash: str) -> None:
 def _proc_c_recover(run_dir: str, result_q) -> None:
     import asyncio
     import traceback
+    from datetime import UTC, datetime
 
+    from orchestra.control.backend_usage import BackendUsageRecord
     from orchestra.control.ready_scheduler import (
         SubtaskExecutionResult,
         SubtaskExecutionStatus,
     )
+    from orchestra.control.task_state import SubtaskAttempt
     from orchestra.ir.artifacts import create_artifact
     from orchestra.schemas.artifacts import FinalAnswerArtifact
 
     async def _main() -> None:
         rd = Path(run_dir)
-        plan, store, ckpt, sched, context = _ownership_scheduler_bundle(rd)
+        # Production mock backend registry + NativeAsyncRuntime.
+        plan, store, ckpt, sched, context = _ownership_scheduler_bundle(
+            rd, production_mock=True
+        )
         state = await ckpt.load(
             plan.task_id,
             plan_version=plan.plan_version,
@@ -629,8 +718,17 @@ def _proc_c_recover(run_dir: str, result_q) -> None:
         )
         assert state is not None
         before_inc = state.scheduler_incarnation
+        s1_attempts_before = len(state.subtasks["s1"].attempts or [])
+        s1_commit_ids_before = {
+            c.record_id
+            for c in (state.workspace_commit_records or [])
+            if c.subtask_id == "s1"
+        }
 
-        async def _stub(**kwargs):  # noqa: ANN003
+        # Fixture-plan graphs need communication scaffolding that the isolated
+        # ownership seed does not provide; use the production-mock runtime with a
+        # deterministic worker that still flows through real commit/usage stamping.
+        async def _mock_worker(**kwargs):  # noqa: ANN003
             sid = kwargs["subtask_id"]
             snapshot = kwargs["state"]
             art = create_artifact(
@@ -643,6 +741,52 @@ def _proc_c_recover(run_dir: str, result_q) -> None:
             live.status = SubtaskStatus.AWAITING_CANONICAL_COMMIT
             live.final_output_artifact_id = art.artifact_id
             live.communication_block_reason = None
+            now = datetime.now(UTC)
+            attempt_id = max(1, len(live.attempts) + 1)
+            lease_token = live.lease_id or f"inc{snapshot.scheduler_incarnation}"
+            uid = f"{plan.task_id}:{sid}:mock:{attempt_id}:{lease_token}"
+            usage = BackendUsageRecord(
+                usage_id=uid,
+                run_id=rd.name,
+                task_id=plan.task_id,
+                subtask_id=sid,
+                node_id="codex_implementer",
+                backend_id="codex_sdk",
+                backend_kind="codex_sdk",
+                attempt_id=attempt_id,
+                started_at=now,
+                finished_at=now,
+                latency_seconds=0.01,
+                prompt_tokens=1,
+                completion_tokens=1,
+                total_tokens=2,
+                estimated_cost_usd=0.0,
+                cost_quality="exact",
+                accounting_source="ownership_c_mock",
+                status="success",
+                model_name="fake-test-model",
+                wave_id=snapshot.current_wave_id,
+                plan_revision=snapshot.active_plan_revision_id,
+                scheduler_incarnation=snapshot.scheduler_incarnation,
+                phase=(
+                    "post_activation"
+                    if snapshot.active_plan_revision_id
+                    else "pre_activation"
+                ),
+            )
+            live.attempts.append(
+                SubtaskAttempt(
+                    attempt_id=attempt_id,
+                    status=SubtaskStatus.AWAITING_CANONICAL_COMMIT,
+                    started_at=now,
+                    finished_at=now,
+                    lease_id=live.lease_id,
+                    wave_id=snapshot.current_wave_id,
+                    execution_plan_revision=snapshot.active_plan_revision_id,
+                    scheduler_incarnation=snapshot.scheduler_incarnation,
+                    usage_ids=[uid],
+                )
+            )
             return SubtaskExecutionResult(
                 subtask_id=sid,
                 expected_state_version=kwargs.get("expected_state_version", 0),
@@ -650,9 +794,10 @@ def _proc_c_recover(run_dir: str, result_q) -> None:
                 produced_artifacts=[art],
                 execution_status=SubtaskExecutionStatus.SUCCESS_PENDING_COMMIT,
                 candidate_harness_passed=True,
+                backend_usage_append=[usage],
             )
 
-        sched._run_subtask_isolated = _stub  # type: ignore[method-assign]
+        sched._run_subtask_isolated = _mock_worker  # type: ignore[method-assign]
         out = await sched.run_task(
             plan, state, initial_artifacts=ArtifactBundle(), context=context
         )
@@ -661,6 +806,10 @@ def _proc_c_recover(run_dir: str, result_q) -> None:
             for e in (out.scheduler_recovery_events or [])
             if e.get("recovery_id")
         ]
+        commit_ids = sorted(c.record_id for c in (out.workspace_commit_records or []))
+        usage_ids = sorted(
+            u.usage_id for u in (out.backend_usage_records or []) if u.usage_id
+        )
         result_q.put(
             {
                 "ok": True,
@@ -673,6 +822,14 @@ def _proc_c_recover(run_dir: str, result_q) -> None:
                 "incarnation": out.scheduler_incarnation,
                 "before_inc": before_inc,
                 "s2_lease": out.subtasks["s2"].lease_status,
+                "s1_attempts_before": s1_attempts_before,
+                "s1_attempts_after": len(out.subtasks["s1"].attempts or []),
+                "s1_commit_ids_before": sorted(s1_commit_ids_before),
+                "commit_ids": commit_ids,
+                "usage_ids": usage_ids,
+                "attempt_counts": {
+                    sid: len(sub.attempts or []) for sid, sub in out.subtasks.items()
+                },
             }
         )
 
@@ -738,3 +895,374 @@ def test_real_scheduler_ownership_abc_processes(tmp_path: Path):
     assert len(c_info["recovery_ids"]) == 1
     assert c_info["incarnation"] > c_info["before_inc"]
     assert c_info["s2_lease"] != "leased"
+    # Exact-once: committed s1 is not re-executed; recovered work has commits/usage.
+    assert c_info["s1_attempts_after"] == c_info["s1_attempts_before"]
+    assert len(c_info["commit_ids"]) >= 3  # s2/s3/s4 at minimum
+    assert len(c_info["usage_ids"]) >= 3
+    assert len(c_info["usage_ids"]) == len(set(c_info["usage_ids"]))
+    for sid in ("s2", "s3", "s4"):
+        assert c_info["attempt_counts"][sid] == 1
+
+
+@pytest.mark.asyncio
+async def test_canonical_selection_hash_excludes_run_provenance(tmp_path: Path):
+    from orchestra.experiments.stage2_pareto import (
+        canonical_selection_projection,
+        compute_selection_config_hash,
+        selection_identity_from_manifest,
+    )
+
+    run_a = await _run_production_dev(tmp_path, "hash-a")
+    run_b = await _run_production_dev(tmp_path, "hash-b")
+    man_a = json.loads((run_a / "run_manifest.json").read_text(encoding="utf-8"))
+    man_b = json.loads((run_b / "run_manifest.json").read_text(encoding="utf-8"))
+    assert man_a["run_id"] != man_b["run_id"]
+    assert man_a["selection_config_hash"] == man_b["selection_config_hash"]
+    assert man_a["source_run_id"] != man_b["source_run_id"]
+    proj = canonical_selection_projection(man_a)
+    assert "source_run_id" not in proj
+    assert "run_id" not in proj
+    assert "started_at" not in proj
+    assert "dataset_split_identity" not in proj
+    assert "source_manifest_hash" not in proj
+    assert proj.get("dataset_split_policy")
+    # Changing only run-scoped fields does not change the hash.
+    mutated = dict(man_a)
+    mutated["run_id"] = "other-run"
+    mutated["started_at"] = "1999-01-01T00:00:00+00:00"
+    mutated["completed_at"] = "1999-01-01T01:00:00+00:00"
+    mutated["source_run_id"] = "other-source"
+    assert compute_selection_config_hash(mutated) == man_a["selection_config_hash"]
+    # Declared hash must equal recomputed projection hash.
+    ident = selection_identity_from_manifest(man_a, role="development")
+    assert compute_selection_config_hash(ident) == man_a["selection_config_hash"]
+
+
+@pytest.mark.asyncio
+async def test_heldout_selection_hash_matrix(tmp_path: Path):
+    from orchestra.experiments.stage2_pareto import compute_selection_config_hash
+
+    run_dir = await _run_production_dev(tmp_path, "hash-matrix")
+    cal_path = tmp_path / "cal.json"
+    assert (
+        cmd_freeze_calibration(
+            SimpleNamespace(config=str(CFG), run_dir=[str(run_dir)], output=str(cal_path))
+        )
+        == 0
+    )
+    payload = json.loads(cal_path.read_text(encoding="utf-8"))
+    control = load_control_plane_mapping(
+        yaml.safe_load(CFG.read_text(encoding="utf-8")) or {}
+    )
+    cal = CalibrationArtifact.from_dict(payload)
+    base = _heldout_from_calibration(payload)
+    assert_calibration_matches(
+        cal, control, require_held_out_split=True, run_manifest=base
+    )
+
+    wrong_hash = dict(base)
+    wrong_hash["selection_config_hash"] = "f" * 64
+    with pytest.raises(CalibrationMismatchError, match="selection_config_hash"):
+        assert_calibration_matches(
+            cal, control, require_held_out_split=True, run_manifest=wrong_hash
+        )
+
+    missing = dict(base)
+    missing.pop("selection_config_hash")
+    with pytest.raises(CalibrationMismatchError):
+        assert_calibration_matches(
+            cal, control, require_held_out_split=True, run_manifest=missing
+        )
+
+    nulled = dict(base)
+    nulled["selection_config_hash"] = None
+    with pytest.raises(CalibrationMismatchError):
+        assert_calibration_matches(
+            cal, control, require_held_out_split=True, run_manifest=nulled
+        )
+
+    # Mutate a canonical component and recompute target hash — still rejected vs cal.
+    component = dict(base)
+    component["preference_hash"] = "0" * 16
+    component["selection_config_hash"] = compute_selection_config_hash(component)
+    with pytest.raises(CalibrationMismatchError):
+        assert_calibration_matches(
+            cal, control, require_held_out_split=True, run_manifest=component
+        )
+
+    # Mutate component without updating hash — rejected.
+    stale = dict(base)
+    stale["objective_hash"] = "1" * 16
+    with pytest.raises(CalibrationMismatchError):
+        assert_calibration_matches(
+            cal, control, require_held_out_split=True, run_manifest=stale
+        )
+
+
+@pytest.mark.asyncio
+async def test_git_alias_conflict_matrix(tmp_path: Path):
+    from orchestra.experiments.stage2_pareto import manifest_git_sha
+
+    run_dir = await _run_production_dev(tmp_path, "git-matrix")
+    cal_path = tmp_path / "cal.json"
+    assert (
+        cmd_freeze_calibration(
+            SimpleNamespace(config=str(CFG), run_dir=[str(run_dir)], output=str(cal_path))
+        )
+        == 0
+    )
+    payload = json.loads(cal_path.read_text(encoding="utf-8"))
+    control = load_control_plane_mapping(
+        yaml.safe_load(CFG.read_text(encoding="utf-8")) or {}
+    )
+    cal = CalibrationArtifact.from_dict(payload)
+    good = payload["git_sha"]
+    bad = "0" * 40
+
+    base = _heldout_from_calibration(payload)
+    # valid git_sha only
+    assert manifest_git_sha({"git_sha": good}) == good
+    # legacy git_commit only
+    assert manifest_git_sha({"git_commit": good}) == good
+    # identical aliases
+    assert manifest_git_sha({"git_sha": good, "git_commit": good}) == good
+
+    conflict = dict(base)
+    conflict["git_sha"] = good
+    conflict["git_commit"] = bad
+    with pytest.raises(CalibrationMismatchError, match="git_identity_alias_conflict"):
+        assert_calibration_matches(
+            cal, control, require_held_out_split=True, run_manifest=conflict
+        )
+
+    conflict2 = dict(base)
+    conflict2["git_sha"] = bad
+    conflict2["git_commit"] = good
+    with pytest.raises(CalibrationMismatchError, match="git_identity_alias_conflict"):
+        assert_calibration_matches(
+            cal, control, require_held_out_split=True, run_manifest=conflict2
+        )
+
+    with pytest.raises(CalibrationMismatchError):
+        manifest_git_sha({"git_sha": "not-a-sha"})
+    with pytest.raises(CalibrationMismatchError):
+        manifest_git_sha({"git_commit": "@@@"})
+    with pytest.raises(CalibrationMismatchError):
+        manifest_git_sha({"git_sha": None})
+    with pytest.raises(CalibrationMismatchError):
+        manifest_git_sha({"git_commit": None})
+
+
+@pytest.mark.asyncio
+async def test_commit_and_usage_evidence_mutation_matrix(tmp_path: Path):
+    from orchestra.control.task_state import WorkspaceCommitStatus
+
+    run_dir = await _run_production_dev(tmp_path, "commit-usage")
+    ckpt_path = next((run_dir / "tasks").rglob("task_execution.json"))
+    ckpt = json.loads(ckpt_path.read_text(encoding="utf-8"))
+    state = TaskExecutionState.model_validate(ckpt)
+    hist = list(state.pareto_state.decision_history or [])
+    pending = hist[-1].model_copy(
+        update={"realization_status": "pending", "realization_id": None}
+    )
+    state.pareto_state.pending_decision = pending
+    state.pareto_state.decision_history = []
+    policy = ParetoGlobalCandidatePolicy(
+        config=ParetoConfig(enabled=True),
+        preference_profile=PreferenceProfile(profile_id="balanced_knee"),
+        run_dir=str(run_dir),
+    )
+
+    def ready_after(mutate):
+        local = state.model_copy(deep=True)
+        mutate(local)
+        return policy._behavioral_realization_ready(
+            local, local.pareto_state.pending_decision
+        )
+
+    ready, _ = ready_after(lambda s: None)
+    assert ready is True
+
+    # Production commits carry full identity.
+    for sid in ("s2", "s3", "s4"):
+        commits = [
+            c
+            for c in state.workspace_commit_records
+            if c.subtask_id == sid and c.status is WorkspaceCommitStatus.COMMITTED
+        ]
+        assert len(commits) == 1
+        c = commits[0]
+        att = state.subtasks[sid].attempts[-1]
+        assert c.attempt_id == att.attempt_id
+        assert c.lease_id == att.lease_id
+        assert c.wave_id == att.wave_id
+        assert c.execution_plan_revision == att.execution_plan_revision
+        assert c.scheduler_incarnation == att.scheduler_incarnation
+        assert sorted(c.usage_ids) == sorted(att.usage_ids)
+        assert c.decision_id == pending.decision_id
+
+    cases = []
+
+    def remove_all(s):
+        s.workspace_commit_records = []
+
+    cases.append((remove_all, "required_commit_missing"))
+
+    def remove_one(s):
+        s.workspace_commit_records = [
+            c for c in s.workspace_commit_records if c.subtask_id != "s2"
+        ]
+
+    cases.append((remove_one, "required_commit_missing"))
+
+    def duplicate(s):
+        c = next(x for x in s.workspace_commit_records if x.subtask_id == "s2")
+        s.workspace_commit_records.append(
+            c.model_copy(update={"record_id": c.record_id + "-dup"})
+        )
+
+    cases.append((duplicate, "required_commit_ambiguous"))
+
+    def change_attempt(s):
+        for i, c in enumerate(s.workspace_commit_records):
+            if c.subtask_id == "s2":
+                s.workspace_commit_records[i] = c.model_copy(update={"attempt_id": 99})
+
+    cases.append((change_attempt, "required_commit_missing"))
+
+    def change_lease(s):
+        for i, c in enumerate(s.workspace_commit_records):
+            if c.subtask_id == "s3":
+                s.workspace_commit_records[i] = c.model_copy(update={"lease_id": "x"})
+
+    cases.append((change_lease, "commit_attempt_mismatch"))
+
+    def change_wave(s):
+        for i, c in enumerate(s.workspace_commit_records):
+            if c.subtask_id == "s2":
+                s.workspace_commit_records[i] = c.model_copy(update={"wave_id": "w-x"})
+
+    cases.append((change_wave, "commit_wave_mismatch"))
+
+    def change_rev(s):
+        for i, c in enumerate(s.workspace_commit_records):
+            if c.subtask_id == "s2":
+                s.workspace_commit_records[i] = c.model_copy(
+                    update={"execution_plan_revision": "rev-x"}
+                )
+
+    cases.append((change_rev, "commit_revision_mismatch"))
+
+    def change_inc(s):
+        for i, c in enumerate(s.workspace_commit_records):
+            if c.subtask_id == "s4":
+                s.workspace_commit_records[i] = c.model_copy(
+                    update={"scheduler_incarnation": 99}
+                )
+
+    cases.append((change_inc, "commit_incarnation_mismatch"))
+
+    def change_decision(s):
+        for i, c in enumerate(s.workspace_commit_records):
+            if c.subtask_id == "s2":
+                s.workspace_commit_records[i] = c.model_copy(
+                    update={"decision_id": "decision-x"}
+                )
+
+    cases.append((change_decision, "commit_attempt_mismatch"))
+
+    def change_usage_ids(s):
+        for i, c in enumerate(s.workspace_commit_records):
+            if c.subtask_id == "s2":
+                s.workspace_commit_records[i] = c.model_copy(
+                    update={"usage_ids": ["missing-usage-id"]}
+                )
+
+    cases.append((change_usage_ids, "usage_set_mismatch"))
+
+    def nonterminal(s):
+        for i, c in enumerate(s.workspace_commit_records):
+            if c.subtask_id == "s2":
+                s.workspace_commit_records[i] = c.model_copy(
+                    update={
+                        "status": WorkspaceCommitStatus.PENDING,
+                        "terminal_state": "pending",
+                    }
+                )
+
+    cases.append((nonterminal, "required_commit_missing"))
+
+    def missing_usage(s):
+        att = s.subtasks["s2"].attempts[-1]
+        s.subtasks["s2"].attempts[-1] = att.model_copy(
+            update={"usage_ids": ["missing-usage-id"]}
+        )
+        for i, c in enumerate(s.workspace_commit_records):
+            if c.subtask_id == "s2":
+                s.workspace_commit_records[i] = c.model_copy(
+                    update={"usage_ids": ["missing-usage-id"]}
+                )
+
+    cases.append((missing_usage, "usage_missing"))
+
+    def wrong_attempt_usage(s):
+        uid = s.subtasks["s2"].attempts[-1].usage_ids[0]
+        for i, u in enumerate(s.backend_usage_records):
+            if u.usage_id == uid:
+                s.backend_usage_records[i] = u.model_copy(update={"attempt_id": 99})
+
+    cases.append((wrong_attempt_usage, "usage_attempt_mismatch"))
+
+    def wrong_wave_usage(s):
+        uid = s.subtasks["s3"].attempts[-1].usage_ids[0]
+        for i, u in enumerate(s.backend_usage_records):
+            if u.usage_id == uid:
+                s.backend_usage_records[i] = u.model_copy(update={"wave_id": "w-bad"})
+
+    cases.append((wrong_wave_usage, "usage_wave_mismatch"))
+
+    def wrong_rev_usage(s):
+        uid = s.subtasks["s3"].attempts[-1].usage_ids[0]
+        for i, u in enumerate(s.backend_usage_records):
+            if u.usage_id == uid:
+                s.backend_usage_records[i] = u.model_copy(update={"plan_revision": "bad"})
+
+    cases.append((wrong_rev_usage, "usage_revision_mismatch"))
+
+    def wrong_inc_usage(s):
+        uid = s.subtasks["s4"].attempts[-1].usage_ids[0]
+        for i, u in enumerate(s.backend_usage_records):
+            if u.usage_id == uid:
+                s.backend_usage_records[i] = u.model_copy(
+                    update={"scheduler_incarnation": 99}
+                )
+
+    cases.append((wrong_inc_usage, "usage_incarnation_mismatch"))
+
+    def wrong_decision_usage(s):
+        uid = s.subtasks["s2"].attempts[-1].usage_ids[0]
+        for i, u in enumerate(s.backend_usage_records):
+            if u.usage_id == uid:
+                s.backend_usage_records[i] = u.model_copy(update={"decision_id": "d-x"})
+
+    cases.append((wrong_decision_usage, "usage_decision_mismatch"))
+
+    def attempt_commit_usage_disagree(s):
+        att = s.subtasks["s2"].attempts[-1]
+        s.subtasks["s2"].attempts[-1] = att.model_copy(
+            update={"usage_ids": list(att.usage_ids) + ["extra-id"]}
+        )
+
+    cases.append((attempt_commit_usage_disagree, "usage_set_mismatch"))
+
+    def duplicate_usage(s):
+        uid = s.subtasks["s2"].attempts[-1].usage_ids[0]
+        rec = next(u for u in s.backend_usage_records if u.usage_id == uid)
+        s.backend_usage_records.append(rec.model_copy())
+
+    cases.append((duplicate_usage, "usage_duplicate"))
+
+    for mutate, expected in cases:
+        ready, ev = ready_after(mutate)
+        assert ready is False, expected
+        assert ev["reason"] == expected, (expected, ev)

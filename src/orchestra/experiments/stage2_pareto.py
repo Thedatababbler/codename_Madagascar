@@ -382,7 +382,7 @@ class CalibrationArtifact:
             schema_version=str(
                 payload.get("schema_version")
                 or payload.get("manifest_schema_version")
-                or "stage2-calibration-v2"
+                or "stage2-calibration-v3"
             ),
             control_plane_hash=str(payload["control_plane_hash"]),
             preference_hash=str(payload["preference_hash"]),
@@ -415,7 +415,7 @@ class CalibrationArtifact:
             source_run_id=str(payload.get("source_run_id") or ""),
             source_manifest_hash=str(payload.get("source_manifest_hash") or ""),
             manifest_schema_version=str(
-                payload.get("manifest_schema_version") or "stage2-calibration-v2"
+                payload.get("manifest_schema_version") or "stage2-calibration-v3"
             ),
             normalization=dict(payload.get("normalization") or {}),
             normalization_source_record_ids=dict(
@@ -538,6 +538,72 @@ def _build_normalization_from_evidence(
     return norms, reference, provenance
 
 
+def _dataset_split_policy(dataset_identity: dict[str, Any]) -> dict[str, Any]:
+    """Shared split-policy identity (excludes run_id / development|heldout labels)."""
+    return {
+        "policy": "stage2_explicit_split",
+        "dataset_identity_keys": sorted(str(k) for k in (dataset_identity or {})),
+    }
+
+
+CANONICAL_SELECTION_PROJECTION_KEYS: tuple[str, ...] = (
+    "schema_version",
+    "git_sha",
+    "control_plane_hash",
+    "preference_hash",
+    "objective_hash",
+    "objectives",
+    "objective_directions",
+    "objective_required",
+    "preference_profile_id",
+    "preference_profile",
+    "pricing_version",
+    "pricing_registry_hash",
+    "candidate_catalog_hash",
+    "graph_catalog_hash",
+    "resolved_graph_hash",
+    "public_evaluator_id",
+    "public_evaluator_version",
+    "backend_kinds",
+    "model_identifiers",
+    "backend_model_settings",
+    "seed_policy",
+    "benchmark_manifest_hash",
+    "dataset_identity",
+    "dataset_split_policy",
+    "private_data_policy",
+)
+
+
+def canonical_selection_projection(identity: dict[str, Any]) -> dict[str, Any]:
+    """Project selection-relevant configuration only (no run/source provenance)."""
+    projected: dict[str, Any] = {}
+    for key in CANONICAL_SELECTION_PROJECTION_KEYS:
+        if key == "dataset_split_policy":
+            if "dataset_split_policy" in identity and identity.get("dataset_split_policy"):
+                projected[key] = dict(identity.get("dataset_split_policy") or {})
+            else:
+                projected[key] = _dataset_split_policy(
+                    dict(identity.get("dataset_identity") or {})
+                )
+            continue
+        if key not in identity:
+            continue
+        value = identity.get(key)
+        if isinstance(value, dict):
+            projected[key] = dict(value)
+        elif isinstance(value, list):
+            projected[key] = list(value)
+        else:
+            projected[key] = value
+    return projected
+
+
+def compute_selection_config_hash(identity: dict[str, Any]) -> str:
+    """Deterministic hash of the canonical selection projection."""
+    return _stable_hash(canonical_selection_projection(identity))
+
+
 def _selection_identity_from_resolved(
     resolved: Any,
     *,
@@ -589,8 +655,6 @@ def _selection_identity_from_resolved(
     backend_kinds = sorted(
         (resolved.slow_loop_config.allowed_backend_assignments or {}).keys()
     )
-    # Prefer explicit pools; otherwise project priced model IDs so selection
-    # identity cannot be vacuously empty when pools are unset.
     model_identifiers = dict(resolved.slow_loop_config.backend_model_pools or {})
     if not model_identifiers:
         from orchestra.control.backend_usage import load_pricing_registry
@@ -607,8 +671,10 @@ def _selection_identity_from_resolved(
     }
     objective_required = {name: True for name in required_objectives}
     preference_profile = resolved.preference_profile.model_dump(mode="json")
+    dataset_identity = dict(dataset_identity or {})
+    # Canonical selection projection — excludes run/source provenance.
     selection_payload = {
-        "schema_version": "stage2-calibration-v2",
+        "schema_version": "stage2-calibration-v3",
         "control_plane_hash": resolved.control_plane_hash,
         "preference_hash": resolved.preference_hash,
         "objective_hash": resolved.objective_hash,
@@ -627,19 +693,27 @@ def _selection_identity_from_resolved(
         "model_identifiers": model_identifiers,
         "seed_policy": seed_policy,
         "git_sha": git_sha,
-        "config_hash": config_hash,
         "benchmark_manifest_hash": benchmark_manifest_hash,
         "dataset_identity": dataset_identity,
-        "dataset_split_identity": dataset_split_identity,
+        "dataset_split_policy": _dataset_split_policy(dataset_identity),
         "private_data_policy": private_data_policy,
         "public_evaluator_id": public_evaluator_id,
         "public_evaluator_version": public_evaluator_version,
-        "source_split": source_split,
-        "source_run_id": source_run_id,
-        "source_manifest_hash": source_manifest_hash,
     }
-    selection_payload["selection_config_hash"] = _stable_hash(selection_payload)
+    selection_config_hash = compute_selection_config_hash(selection_payload)
+    # Provenance and run-scoped fields are persisted separately.
+    selection_payload.update(
+        {
+            "selection_config_hash": selection_config_hash,
+            "config_hash": config_hash,
+            "dataset_split_identity": dict(dataset_split_identity or {}),
+            "source_split": source_split,
+            "source_run_id": source_run_id,
+            "source_manifest_hash": source_manifest_hash,
+        }
+    )
     return selection_payload
+
 
 
 def write_calibration_artifact(
@@ -782,7 +856,7 @@ def write_calibration_artifact(
         public_evaluator_version=public_evaluator_version,
         source_run_id=source_run_id,
         source_manifest_hash=source_manifest_hash,
-        manifest_schema_version="stage2-calibration-v2",
+        manifest_schema_version="stage2-calibration-v3",
         normalization=norms,
         normalization_source_record_ids=provenance,
         reference_point=reference,
@@ -807,9 +881,73 @@ def _expect_equal(field: str, expected: Any, observed: Any) -> None:
         )
 
 
+def _valid_git_hex(value: str) -> bool:
+    """Accept full or abbreviated lowercase/uppercase hex SHAs."""
+    if not value or not isinstance(value, str):
+        return False
+    if len(value) < 7 or len(value) > 64:
+        return False
+    try:
+        int(value, 16)
+    except ValueError:
+        return False
+    return True
+
+
 def manifest_git_sha(manifest: dict[str, Any]) -> str:
-    """Canonical Git identity reader (git_sha preferred; git_commit accepted)."""
-    return str(manifest.get("git_sha") or manifest.get("git_commit") or "")
+    """Canonical Git identity reader.
+
+    ``git_sha`` is canonical. Legacy ``git_commit`` is accepted only when
+    ``git_sha`` is absent. If both exist and differ, fail closed.
+    Null or malformed values fail closed (no silent preference).
+    """
+    has_sha = "git_sha" in manifest
+    has_commit = "git_commit" in manifest
+    sha_raw = manifest.get("git_sha") if has_sha else None
+    commit_raw = manifest.get("git_commit") if has_commit else None
+
+    if has_sha and sha_raw is None:
+        raise CalibrationMismatchError(
+            "git_sha",
+            expected="non-null git identity",
+            observed=None,
+        )
+    if has_commit and commit_raw is None:
+        raise CalibrationMismatchError(
+            "git_commit",
+            expected="non-null git identity",
+            observed=None,
+        )
+
+    sha = None if sha_raw is None else str(sha_raw)
+    commit = None if commit_raw is None else str(commit_raw)
+
+    if sha is not None and not _valid_git_hex(sha):
+        raise CalibrationMismatchError(
+            "git_sha",
+            expected="hex git object id",
+            observed=sha,
+        )
+    if commit is not None and not _valid_git_hex(commit):
+        raise CalibrationMismatchError(
+            "git_commit",
+            expected="hex git object id",
+            observed=commit,
+        )
+
+    if sha is not None and commit is not None:
+        if sha != commit:
+            raise CalibrationMismatchError(
+                "git_identity_alias_conflict",
+                expected=sha,
+                observed=commit,
+            )
+        return sha
+    if sha is not None:
+        return sha
+    if commit is not None:
+        return commit
+    return ""
 
 
 HELDOUT_REQUIRED_IDENTITY_FIELDS: tuple[str, ...] = (
@@ -932,6 +1070,11 @@ def selection_identity_from_manifest(
         "benchmark_manifest_hash": benchmark_manifest_hash,
         "dataset_identity": dict(manifest.get("dataset_identity") or {}),
         "dataset_split_identity": dict(manifest.get("dataset_split_identity") or {}),
+        "dataset_split_policy": (
+            dict(manifest.get("dataset_split_policy") or {})
+            if manifest.get("dataset_split_policy")
+            else _dataset_split_policy(dict(manifest.get("dataset_identity") or {}))
+        ),
         "private_data_policy": str(manifest.get("private_data_policy") or ""),
         "reference_point": dict(manifest.get("reference_point") or {}),
     }
@@ -977,8 +1120,7 @@ def build_run_selection_identity(
             or {"split": split, "run_id": run_id}
         ),
     )
-    # Persist both canonical git_sha and legacy git_commit alias.
-    identity["git_commit"] = git_sha
+    # Canonical Git field only; legacy git_commit is accepted at the reader.
     return identity
 
 
@@ -1052,7 +1194,7 @@ def assert_calibration_matches(
     }
     _expect_equal(
         "schema_version",
-        "stage2-calibration-v2",
+        "stage2-calibration-v3",
         artifact.schema_version,
     )
     _expect_equal(
@@ -1217,13 +1359,31 @@ def assert_calibration_matches(
         # on the target and match the frozen calibration artifact.
         target = selection_identity_from_manifest(run_manifest, role="heldout_target")
         _expect_equal("target_split", "heldout", str(run_manifest.get("split") or ""))
-        # selection_config_hash may embed source_run_id; require presence only.
-        # Component fields below are the authoritative shared selection identity.
-        if not target.get("selection_config_hash"):
+        declared_hash = str(target.get("selection_config_hash") or "")
+        if not declared_hash:
             raise CalibrationMismatchError(
                 "selection_config_hash",
-                expected="non-empty",
-                observed=target.get("selection_config_hash"),
+                expected="non-empty recomputable hash",
+                observed=declared_hash,
+            )
+        # Target may omit dataset_split_policy; derive from dataset_identity.
+        target_for_hash = dict(target)
+        if not target_for_hash.get("dataset_split_policy"):
+            target_for_hash["dataset_split_policy"] = _dataset_split_policy(
+                dict(target_for_hash.get("dataset_identity") or {})
+            )
+        recomputed = compute_selection_config_hash(target_for_hash)
+        if declared_hash != recomputed:
+            raise CalibrationMismatchError(
+                "selection_config_hash",
+                expected=recomputed,
+                observed=declared_hash,
+            )
+        if declared_hash != artifact.selection_config_hash:
+            raise CalibrationMismatchError(
+                "selection_config_hash",
+                expected=artifact.selection_config_hash,
+                observed=declared_hash,
             )
         comparisons = {
             "schema_version": artifact.schema_version,
@@ -1514,19 +1674,17 @@ def collect_run_records(run_dir: Path) -> dict[str, Any]:
     # Canonical checkpoint/derived evidence is authoritative. A mutable summary
     # may supply non-derivable labels only; it never overrides conflicting
     # evidence-derived values.
-    committed = list(
-        summary.get("committed")
-        or [
-            sid
-            for sid, sub in (checkpoint.get("subtasks") or {}).items()
-            if str(
-                (sub.get("status") if isinstance(sub, dict) else getattr(sub, "status", ""))
-                or ""
-            )
-            .lower()
-            .endswith("committed")
-        ]
-    )
+    # Checkpoint-authoritative: ignore mutable summary committed/solved values.
+    committed = [
+        sid
+        for sid, sub in sorted((checkpoint.get("subtasks") or {}).items())
+        if str(
+            (sub.get("status") if isinstance(sub, dict) else getattr(sub, "status", ""))
+            or ""
+        )
+        .lower()
+        .endswith("committed")
+    ]
     revisions = checkpoint.get("plan_revision_history") or []
     applied = [
         r
@@ -1538,13 +1696,58 @@ def collect_run_records(run_dir: Path) -> dict[str, Any]:
         .lower()
         .endswith("applied")
     ]
-    solved = 1 if committed else int(summary.get("solved_task_count") or 0)
-    if committed and set(map(str, committed)) >= {"s1", "s2", "s3", "s4"}:
+    # One root task solved iff the full fork/join DAG committed.
+    if set(map(str, committed)) >= {"s1", "s2", "s3", "s4"}:
         solved = 1
-    elif committed and summary.get("solved_task_count") is not None:
-        solved = int(summary.get("solved_task_count") or 0)
-    elif committed:
+    elif committed and not (checkpoint.get("subtasks") or {}):
         solved = 1
+    else:
+        solved = 1 if (
+            committed
+            and len(committed) == len(checkpoint.get("subtasks") or {})
+            and (checkpoint.get("subtasks") or {})
+        ) else 0
+        if not (checkpoint.get("subtasks") or {}) and committed:
+            solved = 1
+    subtasks_map = checkpoint.get("subtasks") or {}
+    prompt_tokens = sum(
+        int(u["prompt_tokens"])
+        for u in usage_records
+        if u.get("prompt_tokens") is not None
+    )
+    completion_tokens = sum(
+        int(u["completion_tokens"])
+        for u in usage_records
+        if u.get("completion_tokens") is not None
+    )
+    total_tokens = sum(
+        int(u["total_tokens"])
+        for u in usage_records
+        if u.get("total_tokens") is not None
+    )
+    phase_usage_counts = {
+        phase: len([u for u in usage_records if str(u.get("phase") or "") == phase])
+        for phase in (
+            "pre_activation",
+            "control_plane",
+            "post_activation",
+            "recovery",
+            "historical",
+        )
+    }
+    realized_decisions = [
+        d
+        for d in decisions
+        if str(d.get("realization_status") or "").lower() == "realized"
+    ]
+    activated = [
+        d for d in decisions if d.get("activated_revision_id")
+    ]
+    censored = [
+        d
+        for d in decisions
+        if "censor" in str(d.get("realization_status") or "").lower()
+    ]
     derived: dict[str, Any] = {
         "usage_record_count": len(usage_records),
         "usage_ids": usage_ids,
@@ -1552,11 +1755,26 @@ def collect_run_records(run_dir: Path) -> dict[str, Any]:
         "recovery_ids": sorted(
             {str(e.get("recovery_id")) for e in recovery_events if e.get("recovery_id")}
         ),
+        "recovery_event_count": len(recovery_events),
         "m5_revision_count": len(applied),
         "committed": committed,
+        "committed_subtask_count": len(committed),
+        "subtask_count": len(subtasks_map),
+        "root_task_count": 1 if subtasks_map or committed else 0,
         "solved_task_count": solved,
+        "solved_root_task_count": solved,
         "cost_provenance": "persisted_usage_estimated_cost_usd",
         "phase_costs": phase_costs,
+        "phase_usage_counts": phase_usage_counts,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+        "activated_count": len(activated),
+        "realized_count": len(realized_decisions),
+        "censored_count": len(censored),
+        "selected_count": len(
+            [d for d in decisions if d.get("selected_content_hash")]
+        ),
     }
     if checkpoint.get("active_plan_revision_id"):
         derived["active_plan_revision_id"] = checkpoint.get("active_plan_revision_id")
@@ -1753,87 +1971,93 @@ def write_stage2_report(
             usage_join = list(evidence.get("usage_ids") or [])
             eval_join = list(evidence.get("evaluation_ids") or [])
             est_kind = str(d.get("evaluation_kind") or "estimated")
-            est_vs_real.append(
-                {
-                    "run_dir": str(run_dir),
-                    "run_id": manifest.get("run_id") or Path(run_dir).name,
-                    "task_id": summary.get("task_id") or manifest.get("task_id"),
-                    "decision_id": d.get("decision_id"),
-                    "candidate_hash": d.get("selected_content_hash"),
-                    "context_id": (d.get("context") or {}).get("context_id"),
-                    "plan_revision": d.get("activated_revision_id")
-                    or summary.get("active_plan_revision_id"),
-                    "activation_revision": d.get("activated_revision_id"),
-                    "affected_wave_id": d.get("affected_wave_id"),
-                    "wave_id": d.get("affected_wave_id"),
-                    "realization_id": d.get("realization_id"),
-                    "objective_name": "multi",
-                    "usage_ids": ",".join(str(u) for u in usage_join),
-                    "evaluation_ids": ",".join(str(e) for e in eval_join),
-                    "estimated_value_quality": _objective_value(objs.get("quality")),
-                    "estimated_value_cost": _objective_value(objs.get("cost")),
-                    "estimated_value_latency": _objective_value(objs.get("latency")),
-                    "quality_est": _objective_value(objs.get("quality")),
-                    "cost_est": _objective_value(objs.get("cost")),
-                    "latency_est": _objective_value(objs.get("latency")),
-                    "realized_value_quality": realized_vals.get("quality"),
-                    "realized_value_cost": realized_vals.get("cost"),
-                    "realized_value_latency": realized_vals.get("latency"),
-                    "quality_real": realized_vals.get("quality"),
-                    "cost_real": realized_vals.get("cost"),
-                    "latency_real": realized_vals.get("latency"),
-                    "estimated_availability_quality": (objs.get("quality") or {}).get(
-                        "available"
-                    ),
-                    "estimated_availability_cost": (objs.get("cost") or {}).get(
-                        "available"
-                    ),
-                    "estimated_availability_latency": (objs.get("latency") or {}).get(
-                        "available"
-                    ),
-                    "quality_est_available": (objs.get("quality") or {}).get("available"),
-                    "cost_est_available": (objs.get("cost") or {}).get("available"),
-                    "latency_est_available": (objs.get("latency") or {}).get("available"),
-                    "realized_availability_quality": realized_vals.get("quality")
-                    is not None,
-                    "realized_availability_cost": realized_vals.get("cost") is not None,
-                    "realized_availability_latency": realized_vals.get("latency")
-                    is not None,
-                    "quality_real_available": realized_vals.get("quality") is not None,
-                    "cost_real_available": realized_vals.get("cost") is not None,
-                    "latency_real_available": realized_vals.get("latency") is not None,
-                    "unit_quality": "normalized_score",
-                    "unit_cost": "usd",
-                    "unit_latency": "seconds",
-                    "quality_units": "normalized_score",
-                    "cost_units": "usd",
-                    "latency_units": "seconds",
-                    "estimated_provenance": (objs.get("quality") or {}).get("detail")
-                    or "persisted_estimated_objectives",
-                    "realized_provenance": d.get("realization_status")
-                    or "persisted_realized_archive",
-                    "estimator_provenance": (objs.get("quality") or {}).get("detail")
-                    or "persisted_estimated_objectives",
-                    "realization_provenance": d.get("realization_status")
-                    or "persisted_realized_archive",
-                    "direction_quality": "maximize",
-                    "direction_cost": "minimize",
-                    "direction_latency": "minimize",
-                    "normalization_metadata": json.dumps(
-                        calibration.normalization if calibration else {},
-                        sort_keys=True,
-                        separators=(",", ":"),
-                    ),
-                    "censoring_state": d.get("realization_status") or "",
-                    "metric_provenance": "persisted_pareto_archives",
-                    "evaluation_kind": est_kind,
-                    "label": (
-                        "diagnostic_oracle"
-                        if est_kind == "oracle"
-                        else "online_policy"
-                    ),
-                }
+            objective_meta = {
+                "quality": {
+                    "unit": "normalized_score",
+                    "direction": "maximize",
+                },
+                "cost": {"unit": "usd", "direction": "minimize"},
+                "latency": {"unit": "seconds", "direction": "minimize"},
+                "risk": {"unit": "score", "direction": "minimize"},
+            }
+            norm_meta = json.dumps(
+                calibration.normalization if calibration else {},
+                sort_keys=True,
+                separators=(",", ":"),
             )
+            base_ids = {
+                "run_dir": str(run_dir),
+                "run_id": manifest.get("run_id") or Path(run_dir).name,
+                "task_id": summary.get("task_id") or manifest.get("task_id"),
+                "decision_id": d.get("decision_id"),
+                "candidate_hash": d.get("selected_content_hash"),
+                "context_id": (d.get("context") or {}).get("context_id"),
+                "plan_revision": d.get("activated_revision_id")
+                or summary.get("active_plan_revision_id"),
+                "activation_revision": d.get("activated_revision_id"),
+                "affected_wave_id": d.get("affected_wave_id"),
+                "wave_id": d.get("affected_wave_id"),
+                "realization_id": d.get("realization_id"),
+                "usage_ids": ",".join(str(u) for u in usage_join),
+                "evaluation_ids": ",".join(str(e) for e in eval_join),
+                "normalization_metadata": norm_meta,
+                "censoring_state": d.get("realization_status") or "",
+                "failure_state": d.get("reason") or "",
+                "metric_provenance": "persisted_pareto_archives",
+                "evaluation_kind": est_kind,
+                "label": (
+                    "diagnostic_oracle" if est_kind == "oracle" else "online_policy"
+                ),
+            }
+            obj_names = sorted(
+                set(objs.keys())
+                | set(realized_vals.keys())
+                | {"quality", "cost", "latency"}
+            )
+            for obj_name in obj_names:
+                est_obj = objs.get(obj_name) or {}
+                est_val = _objective_value(est_obj)
+                real_val = realized_vals.get(obj_name)
+                meta = objective_meta.get(
+                    obj_name, {"unit": "", "direction": ""}
+                )
+                est_vs_real.append(
+                    {
+                        **base_ids,
+                        "objective_name": obj_name,
+                        "estimated_value": est_val,
+                        "estimated_availability": (
+                            est_obj.get("available")
+                            if isinstance(est_obj, dict)
+                            else est_val is not None
+                        ),
+                        "estimated_provenance": (
+                            (est_obj.get("detail") if isinstance(est_obj, dict) else None)
+                            or "persisted_estimated_objectives"
+                        ),
+                        "realized_value": real_val,
+                        "realized_availability": real_val is not None,
+                        "realized_provenance": d.get("realization_status")
+                        or "persisted_realized_archive",
+                        "unit": meta["unit"],
+                        "direction": meta["direction"],
+                        # Legacy wide columns retained for compatibility.
+                        "quality_est": _objective_value(objs.get("quality")),
+                        "cost_est": _objective_value(objs.get("cost")),
+                        "latency_est": _objective_value(objs.get("latency")),
+                        "quality_real": realized_vals.get("quality"),
+                        "cost_real": realized_vals.get("cost"),
+                        "latency_real": realized_vals.get("latency"),
+                        "estimator_provenance": (
+                            (est_obj.get("detail") if isinstance(est_obj, dict) else None)
+                            or "persisted_estimated_objectives"
+                        ),
+                        "realization_provenance": d.get("realization_status")
+                        or "persisted_realized_archive",
+                        f"estimated_value_{obj_name}": est_val,
+                        f"realized_value_{obj_name}": real_val,
+                    }
+                )
 
         # Frontier points from estimated archive (complete + dominated partials labeled).
         est = rec["estimated_archive"]
@@ -1926,6 +2150,22 @@ def write_stage2_report(
         total_cost = summary.get("total_cost_usd", "")
         if total_cost == "" and summary.get("cost_provenance"):
             total_cost = summary.get("total_cost_usd")
+        realized_decisions = [
+            d
+            for d in decisions
+            if str(d.get("realization_status") or "").lower() == "realized"
+        ]
+        realized_cost = ""
+        if realized_decisions:
+            cost_obj = (
+                (realized_decisions[0].get("selected_candidate_snapshot") or {})
+                .get("objectives", {})
+                .get("values", {})
+                .get("cost")
+                or {}
+            )
+            if cost_obj.get("value") is not None:
+                realized_cost = cost_obj.get("value")
         main_rows.append(
             {
                 "run_dir": str(run_dir),
@@ -1981,6 +2221,23 @@ def write_stage2_report(
                 "usage_record_count": len(rec.get("usage_records") or []),
                 "usage_ids": ",".join(rec.get("usage_ids") or []),
                 "solved_task_count": summary.get("solved_task_count", ""),
+                "solved_root_task_count": summary.get("solved_root_task_count", ""),
+                "root_task_count": summary.get("root_task_count", ""),
+                "subtask_count": summary.get("subtask_count", ""),
+                "committed_subtask_count": summary.get("committed_subtask_count", ""),
+                "committed": ",".join(str(x) for x in (summary.get("committed") or [])),
+                "prompt_tokens": summary.get("prompt_tokens", ""),
+                "completion_tokens": summary.get("completion_tokens", ""),
+                "total_tokens": summary.get("total_tokens", ""),
+                "complete_attributed_run_cost": (
+                    total_cost if total_cost is not None else ""
+                ),
+                "candidate_attributed_realized_cost": realized_cost,
+                "activated_count": summary.get("activated_count", ""),
+                "realized_count": summary.get("realized_count", ""),
+                "censored_count": summary.get("censored_count", ""),
+                "selected_count": summary.get("selected_count", ""),
+                "complete_candidates": sum(len(v) for v in complete_map.values()),
                 "split": manifest.get("split") or summary.get("split") or "",
                 "label": "online_policy",
                 "note": "fixture metrics are not real API performance",
@@ -2020,6 +2277,21 @@ def write_stage2_report(
             "total_cost_usd",
             "cost_per_solved",
             "solved_task_count",
+            "solved_root_task_count",
+            "root_task_count",
+            "subtask_count",
+            "committed_subtask_count",
+            "committed",
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+            "complete_attributed_run_cost",
+            "candidate_attributed_realized_cost",
+            "activated_count",
+            "realized_count",
+            "censored_count",
+            "selected_count",
+            "complete_candidates",
             "wall_latency_s",
             "critical_path_latency_s",
             "communication_overhead",
@@ -2068,56 +2340,37 @@ def write_stage2_report(
             "run_dir",
             "run_id",
             "task_id",
-            "decision_id",
-            "candidate_hash",
             "context_id",
-            "plan_revision",
+            "candidate_hash",
+            "decision_id",
             "activation_revision",
             "affected_wave_id",
-            "wave_id",
             "realization_id",
             "objective_name",
+            "estimated_value",
+            "estimated_availability",
+            "estimated_provenance",
+            "realized_value",
+            "realized_availability",
+            "realized_provenance",
+            "unit",
+            "direction",
+            "normalization_metadata",
+            "censoring_state",
+            "failure_state",
             "usage_ids",
             "evaluation_ids",
+            # Legacy wide columns (compatibility).
+            "plan_revision",
+            "wave_id",
             "quality_est",
             "cost_est",
             "latency_est",
             "quality_real",
             "cost_real",
             "latency_real",
-            "quality_est_available",
-            "cost_est_available",
-            "latency_est_available",
-            "quality_real_available",
-            "cost_real_available",
-            "latency_real_available",
-            "estimated_value_quality",
-            "estimated_value_cost",
-            "estimated_value_latency",
-            "realized_value_quality",
-            "realized_value_cost",
-            "realized_value_latency",
-            "estimated_availability_quality",
-            "estimated_availability_cost",
-            "estimated_availability_latency",
-            "realized_availability_quality",
-            "realized_availability_cost",
-            "realized_availability_latency",
-            "quality_units",
-            "cost_units",
-            "latency_units",
-            "unit_quality",
-            "unit_cost",
-            "unit_latency",
             "estimator_provenance",
             "realization_provenance",
-            "estimated_provenance",
-            "realized_provenance",
-            "direction_quality",
-            "direction_cost",
-            "direction_latency",
-            "normalization_metadata",
-            "censoring_state",
             "metric_provenance",
             "label",
         ],

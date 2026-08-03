@@ -192,8 +192,12 @@ CSV/JSON/Markdown/SVG. Reports use persisted run `started_at` (never wall-clock
 
 * Deterministic fixtures and mocked backends do **not** claim real quality,
   latency, cost, or recovery performance.
-* Real development / held-out inference remains out of scope until explicitly
-  authorized after M6.2.1 is green.
+* Real fixed-budget development / held-out inference remains out of scope until
+  explicitly authorized after M6.2.2 evidence-integrity closure is green.
+* Canonical selection hash (`stage2-calibration-v3`) excludes run/source
+  provenance; held-out identity validation is recomputation-strict.
+* Realization is blocked without matching commit + usage evidence; reports are
+  checkpoint-authoritative.
 
 ## Commands
 

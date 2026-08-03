@@ -31,6 +31,8 @@ from orchestra.control.task_state import (
     SubtaskAttempt,
     SubtaskStatus,
     TaskExecutionState,
+    WorkspaceCommitRecord,
+    WorkspaceCommitStatus,
 )
 from orchestra.decomposition.schemas import BudgetSpec, SubtaskSpec, TaskPlan
 from orchestra.runtime.backend import RunContext
@@ -272,45 +274,6 @@ async def _run(output: Path, config_path: Path) -> dict:
     # Decision-local realized finalization after a synthetic next wave.
     if state.pareto_state and state.pareto_state.pending_decision:
         started = state.pareto_state.pending_decision.started_at or now
-        state.backend_usage_records.extend(
-            [
-                BackendUsageRecord(
-                    usage_id="wave-a",
-                    task_id=plan.task_id,
-                    subtask_id="s2",
-                    node_id="na",
-                    backend_id="codex_sdk",
-                    attempt_id=1,
-                    started_at=started,
-                    finished_at=datetime.fromtimestamp(started.timestamp() + 1.0, tz=UTC),
-                    latency_seconds=1.0,
-                    prompt_tokens=8,
-                    completion_tokens=4,
-                    estimated_cost_usd=0.01,
-                    cost_quality="exact",
-                    accounting_source="wave",
-                    status="success",
-                ),
-                BackendUsageRecord(
-                    usage_id="wave-b",
-                    task_id=plan.task_id,
-                    subtask_id="s3",
-                    node_id="nb",
-                    backend_id="codex_sdk",
-                    attempt_id=1,
-                    started_at=started,
-                    finished_at=datetime.fromtimestamp(started.timestamp() + 1.0, tz=UTC),
-                    latency_seconds=1.0,
-                    prompt_tokens=8,
-                    completion_tokens=4,
-                    estimated_cost_usd=0.01,
-                    cost_quality="exact",
-                    accounting_source="wave",
-                    status="success",
-                ),
-            ]
-        )
-        # Behavioral realization requires wave binding + terminal execution.
         pending = state.pareto_state.pending_decision
         affected = list(
             pending.affected_subtask_ids
@@ -320,6 +283,40 @@ async def _run(output: Path, config_path: Path) -> dict:
         wave_id = "smoke-affected-wave"
         pending.affected_wave_id = wave_id
         pending.affected_subtask_ids = list(affected)
+        usage_by_sid = {
+            "s2": "wave-a",
+            "s3": "wave-b",
+        }
+        state.backend_usage_records.extend(
+            [
+                BackendUsageRecord(
+                    usage_id=usage_by_sid.get(sid, f"wave-{sid}"),
+                    task_id=plan.task_id,
+                    subtask_id=sid,
+                    node_id=f"n-{sid}",
+                    backend_id="codex_sdk",
+                    attempt_id=1,
+                    run_id=plan.task_id,
+                    decision_id=pending.decision_id,
+                    plan_revision=pending.activated_revision_id,
+                    wave_id=wave_id,
+                    scheduler_incarnation=1,
+                    phase="post_activation",
+                    started_at=started,
+                    finished_at=datetime.fromtimestamp(started.timestamp() + 1.0, tz=UTC),
+                    latency_seconds=1.0,
+                    prompt_tokens=8,
+                    completion_tokens=4,
+                    estimated_cost_usd=0.01,
+                    cost_quality="exact",
+                    accounting_source="wave",
+                    status="success",
+                )
+                for sid in affected
+                if sid in state.subtasks
+            ]
+        )
+        # Behavioral realization requires wave + attempt + commit + usage evidence.
         state.scheduler_wave_records = [
             SchedulerWaveRecord(
                 wave_id=wave_id,
@@ -334,19 +331,43 @@ async def _run(output: Path, config_path: Path) -> dict:
                 decision_id=pending.decision_id,
             )
         ]
+        state.workspace_commit_records = []
         for sid in affected:
-            if sid in state.subtasks:
-                state.subtasks[sid].status = SubtaskStatus.COMMITTED
-                state.subtasks[sid].attempts = [
-                    SubtaskAttempt(
-                        attempt_id=1,
-                        status=SubtaskStatus.COMMITTED,
-                        wave_id=wave_id,
-                        execution_plan_revision=pending.activated_revision_id,
-                        scheduler_incarnation=1,
-                        usage_ids=[f"smoke-usage-{sid}"],
-                    )
-                ]
+            if sid not in state.subtasks:
+                continue
+            uid = usage_by_sid.get(sid, f"wave-{sid}")
+            lease_id = f"lease-{sid}"
+            state.subtasks[sid].status = SubtaskStatus.COMMITTED
+            state.subtasks[sid].lease_id = lease_id
+            state.subtasks[sid].attempts = [
+                SubtaskAttempt(
+                    attempt_id=1,
+                    status=SubtaskStatus.COMMITTED,
+                    lease_id=lease_id,
+                    wave_id=wave_id,
+                    execution_plan_revision=pending.activated_revision_id,
+                    scheduler_incarnation=1,
+                    usage_ids=[uid],
+                )
+            ]
+            state.workspace_commit_records.append(
+                WorkspaceCommitRecord(
+                    record_id=f"commit-{sid}",
+                    task_id=plan.task_id,
+                    subtask_id=sid,
+                    attempt_id=1,
+                    status=WorkspaceCommitStatus.COMMITTED,
+                    run_id=plan.task_id,
+                    lease_id=lease_id,
+                    wave_id=wave_id,
+                    execution_plan_revision=pending.activated_revision_id,
+                    scheduler_incarnation=1,
+                    decision_id=pending.decision_id,
+                    usage_ids=[uid],
+                    terminal_state="committed",
+                    committed_at=now,
+                )
+            )
         # Restart recovery before finalize.
         store = TaskCheckpointStore(output)
         await store.save(state)

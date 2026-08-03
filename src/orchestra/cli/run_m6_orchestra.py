@@ -301,7 +301,6 @@ async def _run(args: argparse.Namespace) -> int:
         "run_id": run_id,
         "started_at": started_at.isoformat(),
         "git_sha": git_sha,
-        "git_commit": git_sha,
         "config_path": str(args.config),
         "plan_config": str(plan_path),
         "split": split,

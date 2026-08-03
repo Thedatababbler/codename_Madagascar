@@ -21,12 +21,15 @@ from orchestra.control.pareto.schemas import (
     RealizationStatus,
 )
 from orchestra.control.pareto.selector import DeterministicParetoSelector
-from orchestra.control.pareto.telemetry import realized_horizon_objectives
+from orchestra.control.pareto.telemetry import (
+    join_attempt_commit_usage,
+    realized_horizon_objectives,
+)
 from orchestra.control.pareto.trace_export import ParetoTraceExporter
 from orchestra.control.pareto.validation import ParetoCandidateValidator
 from orchestra.control.slow_loop.candidate_generator import RuleBasedGlobalCandidateGenerator
 from orchestra.control.slow_loop.selector import DeterministicGlobalCandidateSelector
-from orchestra.control.task_state import SubtaskStatus
+from orchestra.control.task_state import SubtaskStatus, WorkspaceCommitStatus
 
 
 class GlobalCandidatePolicy(Protocol):
@@ -248,13 +251,12 @@ class ParetoGlobalCandidatePolicy:
 
     @staticmethod
     def _behavioral_realization_ready(state, decision: ParetoDecisionRecord) -> tuple[bool, dict]:
-        """Require wave binding plus per-attempt execution identity.
+        """Require wave binding, attempt identity, commit identity, and usage joins.
 
         Terminal subtask status or a terminal wave record alone is insufficient.
-        Each affected subtask must have a terminal attempt with non-null wave_id,
-        matching execution_plan_revision, scheduler_incarnation, and usage_ids.
-        Downstream subtasks (e.g. s4) may belong to later waves than the bound
-        first eligible wave, but must still execute under the activation revision.
+        Each affected subtask must have a terminal attempt and a matching
+        WorkspaceCommitRecord under the activation revision, with strict usage
+        joins. Downstream subtasks (e.g. s4) may belong to later waves.
         """
         affected = list(decision.affected_subtask_ids or [])
         if not affected:
@@ -316,6 +318,7 @@ class ParetoGlobalCandidatePolicy:
         statuses: dict[str, str] = {}
         incomplete: list[str] = []
         attempt_evidence: dict[str, dict] = {}
+        commit_evidence: dict[str, dict] = {}
         for sid in affected:
             sub = state.subtasks.get(sid)
             if sub is None:
@@ -342,11 +345,13 @@ class ParetoGlobalCandidatePolicy:
             att_wave = getattr(last, "wave_id", None)
             att_inc = getattr(last, "scheduler_incarnation", None)
             att_usage = list(getattr(last, "usage_ids", None) or [])
+            att_lease = getattr(last, "lease_id", None)
             attempt_evidence[sid] = {
                 "attempt_id": last.attempt_id,
                 "wave_id": att_wave,
                 "execution_plan_revision": last.execution_plan_revision,
                 "scheduler_incarnation": att_inc,
+                "lease_id": att_lease,
                 "usage_ids": att_usage,
                 "terminal_state": statuses[sid],
             }
@@ -379,15 +384,109 @@ class ParetoGlobalCandidatePolicy:
                 evidence["failed_subtask_id"] = sid
                 evidence["attempt_evidence"] = attempt_evidence
                 return False, evidence
+            # Authoritative commit evidence for the attempt.
+            commits = [
+                c
+                for c in (state.workspace_commit_records or [])
+                if c.subtask_id == sid and int(c.attempt_id) == int(last.attempt_id)
+            ]
+            committed = [
+                c
+                for c in commits
+                if c.status is WorkspaceCommitStatus.COMMITTED
+                or str(getattr(c.status, "value", c.status)).lower() == "committed"
+            ]
+            if not committed:
+                evidence["reason"] = "required_commit_missing"
+                evidence["failed_subtask_id"] = sid
+                evidence["attempt_evidence"] = attempt_evidence
+                return False, evidence
+            if len(committed) > 1:
+                evidence["reason"] = "required_commit_ambiguous"
+                evidence["failed_subtask_id"] = sid
+                evidence["commit_ids"] = [c.record_id for c in committed]
+                evidence["attempt_evidence"] = attempt_evidence
+                return False, evidence
+            commit = committed[0]
+            commit_evidence[sid] = {
+                "record_id": commit.record_id,
+                "attempt_id": commit.attempt_id,
+                "lease_id": commit.lease_id,
+                "wave_id": commit.wave_id,
+                "execution_plan_revision": commit.execution_plan_revision,
+                "scheduler_incarnation": commit.scheduler_incarnation,
+                "decision_id": commit.decision_id,
+                "usage_ids": list(commit.usage_ids or []),
+                "terminal_state": commit.terminal_state or str(
+                    getattr(commit.status, "value", commit.status)
+                ),
+            }
+            if str(commit.terminal_state or "").lower() not in {
+                "committed",
+                "terminal",
+                "",
+            } and commit.status is not WorkspaceCommitStatus.COMMITTED:
+                evidence["reason"] = "commit_attempt_mismatch"
+                evidence["failed_subtask_id"] = sid
+                evidence["detail"] = "commit_nonterminal"
+                return False, evidence
+            if commit.subtask_id != sid or int(commit.attempt_id) != int(last.attempt_id):
+                evidence["reason"] = "commit_attempt_mismatch"
+                evidence["failed_subtask_id"] = sid
+                return False, evidence
+            if (commit.lease_id or None) != (att_lease or None):
+                evidence["reason"] = "commit_attempt_mismatch"
+                evidence["failed_subtask_id"] = sid
+                evidence["detail"] = "lease_id"
+                return False, evidence
+            if commit.wave_id != att_wave:
+                evidence["reason"] = "commit_wave_mismatch"
+                evidence["failed_subtask_id"] = sid
+                return False, evidence
+            if commit.execution_plan_revision != decision.activated_revision_id:
+                evidence["reason"] = "commit_revision_mismatch"
+                evidence["failed_subtask_id"] = sid
+                return False, evidence
+            if commit.scheduler_incarnation != att_inc:
+                evidence["reason"] = "commit_incarnation_mismatch"
+                evidence["failed_subtask_id"] = sid
+                return False, evidence
+            if (
+                commit.decision_id
+                and decision.decision_id
+                and commit.decision_id != decision.decision_id
+            ):
+                evidence["reason"] = "commit_attempt_mismatch"
+                evidence["failed_subtask_id"] = sid
+                evidence["detail"] = "decision_id"
+                return False, evidence
+            if sorted(commit.usage_ids or []) != sorted(att_usage):
+                evidence["reason"] = "usage_set_mismatch"
+                evidence["failed_subtask_id"] = sid
+                return False, evidence
         evidence["terminal_states"] = statuses
         evidence["incomplete_subtask_ids"] = incomplete
         evidence["attempt_evidence"] = attempt_evidence
+        evidence["commit_evidence"] = commit_evidence
         if incomplete:
             evidence["reason"] = "affected_subtasks_incomplete"
             return False, evidence
         if decision.activated_revision_id != state.active_plan_revision_id:
             evidence["reason"] = "activation_revision_mismatch"
             return False, evidence
+        # Strict usage join across all affected attempts/commits.
+        _records, join_meta = join_attempt_commit_usage(
+            state,
+            decision_id=decision.decision_id,
+            activated_revision_id=decision.activated_revision_id,
+            affected_subtask_ids=affected,
+            usage_start=int(getattr(decision, "baseline_usage_index", 0) or 0),
+        )
+        if join_meta.get("ok") is False:
+            evidence["reason"] = str(join_meta.get("reason") or "usage_missing")
+            evidence["usage_join"] = join_meta
+            return False, evidence
+        evidence["usage_ids"] = join_meta.get("usage_ids") or []
         evidence["reason"] = "affected_wave_terminal"
         evidence["binding_status"] = "realized"
         return True, evidence

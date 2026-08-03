@@ -13,7 +13,7 @@ from orchestra.control.pareto.schemas import (
     ParetoConfig,
     RawFailureCounts,
 )
-from orchestra.control.task_state import TaskExecutionState
+from orchestra.control.task_state import TaskExecutionState, WorkspaceCommitStatus
 
 _SUCCESS = {"ok", "success", "completed"}
 _BACKEND_FAILURE = {
@@ -34,6 +34,233 @@ def horizon_usage_records(state: TaskExecutionState, start_index: int) -> list[B
     ]
 
 
+
+def _usage_counts(records: list[BackendUsageRecord]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for rec in records:
+        if not rec.usage_id:
+            continue
+        counts[rec.usage_id] = counts.get(rec.usage_id, 0) + 1
+    return counts
+
+
+def join_attempt_commit_usage(
+    state: TaskExecutionState,
+    *,
+    decision_id: str | None,
+    activated_revision_id: str | None,
+    affected_subtask_ids: list[str],
+    usage_start: int = 0,
+) -> tuple[list[BackendUsageRecord], dict[str, Any]]:
+    """Strict attempt/commit/usage join. Never silently drop missing IDs."""
+    all_records = horizon_usage_records(state, usage_start)
+    counts = _usage_counts(all_records)
+    by_id = {r.usage_id: r for r in all_records if r.usage_id}
+    attempt_evidence: dict[str, Any] = {}
+    selected_ids: list[str] = []
+
+    for sid in affected_subtask_ids:
+        sub = state.subtasks.get(sid)
+        if sub is None:
+            return [], {
+                "ok": False,
+                "reason": "usage_attempt_mismatch",
+                "failed_subtask_id": sid,
+                "detail": "subtask_missing",
+                "usage_ids": [],
+            }
+        matching = [
+            a
+            for a in (sub.attempts or [])
+            if getattr(a, "execution_plan_revision", None) == activated_revision_id
+            and getattr(a, "wave_id", None)
+        ]
+        if not matching:
+            return [], {
+                "ok": False,
+                "reason": "usage_attempt_mismatch",
+                "failed_subtask_id": sid,
+                "detail": "attempt_missing",
+                "usage_ids": [],
+            }
+        last = matching[-1]
+        ids = list(getattr(last, "usage_ids", None) or [])
+        attempt_evidence[sid] = {
+            "attempt_id": last.attempt_id,
+            "wave_id": last.wave_id,
+            "execution_plan_revision": last.execution_plan_revision,
+            "scheduler_incarnation": last.scheduler_incarnation,
+            "lease_id": last.lease_id,
+            "usage_ids": ids,
+        }
+        if not ids:
+            return [], {
+                "ok": False,
+                "reason": "usage_missing",
+                "failed_subtask_id": sid,
+                "detail": "attempt_usage_ids_empty",
+                "usage_ids": [],
+                "attempt_evidence": attempt_evidence,
+            }
+        commits = [
+            c
+            for c in (state.workspace_commit_records or [])
+            if c.subtask_id == sid and int(c.attempt_id) == int(last.attempt_id)
+        ]
+        committed = [
+            c
+            for c in commits
+            if c.status is WorkspaceCommitStatus.COMMITTED
+            or str(getattr(c.status, "value", c.status)).lower() == "committed"
+        ]
+        if not committed:
+            return [], {
+                "ok": False,
+                "reason": "required_commit_missing",
+                "failed_subtask_id": sid,
+                "attempt_id": last.attempt_id,
+                "usage_ids": [],
+                "attempt_evidence": attempt_evidence,
+            }
+        if len(committed) > 1:
+            return [], {
+                "ok": False,
+                "reason": "required_commit_ambiguous",
+                "failed_subtask_id": sid,
+                "commit_ids": [c.record_id for c in committed],
+                "usage_ids": [],
+                "attempt_evidence": attempt_evidence,
+            }
+        commit = committed[0]
+        commit_usage = list(commit.usage_ids or [])
+        if sorted(commit_usage) != sorted(ids):
+            return [], {
+                "ok": False,
+                "reason": "usage_set_mismatch",
+                "failed_subtask_id": sid,
+                "attempt_usage_ids": ids,
+                "commit_usage_ids": commit_usage,
+                "usage_ids": [],
+                "attempt_evidence": attempt_evidence,
+            }
+        selected_ids.extend(ids)
+
+    joined: list[BackendUsageRecord] = []
+    seen: set[str] = set()
+    for uid in selected_ids:
+        if counts.get(uid, 0) == 0:
+            return [], {
+                "ok": False,
+                "reason": "usage_missing",
+                "usage_id": uid,
+                "usage_ids": [],
+                "attempt_evidence": attempt_evidence,
+            }
+        if counts.get(uid, 0) > 1:
+            return [], {
+                "ok": False,
+                "reason": "usage_duplicate",
+                "usage_id": uid,
+                "count": counts[uid],
+                "usage_ids": [],
+                "attempt_evidence": attempt_evidence,
+            }
+        if uid in seen:
+            continue
+        seen.add(uid)
+        rec = by_id[uid]
+        owner_sid = None
+        owner = None
+        for sid, ev in attempt_evidence.items():
+            if uid in (ev.get("usage_ids") or []):
+                owner_sid = sid
+                owner = ev
+                break
+        if owner is None or owner_sid is None:
+            return [], {
+                "ok": False,
+                "reason": "usage_attempt_mismatch",
+                "usage_id": uid,
+                "detail": "no_owning_attempt",
+                "usage_ids": [],
+            }
+        if rec.task_id and rec.task_id != state.task_id:
+            return [], {
+                "ok": False,
+                "reason": "usage_attempt_mismatch",
+                "usage_id": uid,
+                "expected_task_id": state.task_id,
+                "observed_task_id": rec.task_id,
+                "usage_ids": [],
+            }
+        if rec.subtask_id != owner_sid:
+            return [], {
+                "ok": False,
+                "reason": "usage_attempt_mismatch",
+                "usage_id": uid,
+                "expected_subtask_id": owner_sid,
+                "observed_subtask_id": rec.subtask_id,
+                "usage_ids": [],
+            }
+        if int(rec.attempt_id) != int(owner["attempt_id"]):
+            return [], {
+                "ok": False,
+                "reason": "usage_attempt_mismatch",
+                "usage_id": uid,
+                "expected_attempt_id": owner["attempt_id"],
+                "observed_attempt_id": rec.attempt_id,
+                "usage_ids": [],
+            }
+        if rec.wave_id != owner["wave_id"]:
+            return [], {
+                "ok": False,
+                "reason": "usage_wave_mismatch",
+                "usage_id": uid,
+                "expected_wave_id": owner["wave_id"],
+                "observed_wave_id": rec.wave_id,
+                "usage_ids": [],
+            }
+        if rec.plan_revision != owner["execution_plan_revision"]:
+            return [], {
+                "ok": False,
+                "reason": "usage_revision_mismatch",
+                "usage_id": uid,
+                "expected_plan_revision": owner["execution_plan_revision"],
+                "observed_plan_revision": rec.plan_revision,
+                "usage_ids": [],
+            }
+        if (
+            owner.get("scheduler_incarnation") is not None
+            and rec.scheduler_incarnation is not None
+            and int(rec.scheduler_incarnation) != int(owner["scheduler_incarnation"])
+        ):
+            return [], {
+                "ok": False,
+                "reason": "usage_incarnation_mismatch",
+                "usage_id": uid,
+                "expected_incarnation": owner["scheduler_incarnation"],
+                "observed_incarnation": rec.scheduler_incarnation,
+                "usage_ids": [],
+            }
+        if decision_id and rec.decision_id and rec.decision_id != decision_id:
+            return [], {
+                "ok": False,
+                "reason": "usage_decision_mismatch",
+                "usage_id": uid,
+                "expected_decision_id": decision_id,
+                "observed_decision_id": rec.decision_id,
+                "usage_ids": [],
+            }
+        joined.append(rec)
+
+    return joined, {
+        "ok": True,
+        "attribution": "attempt_usage_ids",
+        "usage_ids": sorted({r.usage_id for r in joined if r.usage_id}),
+        "attempt_evidence": attempt_evidence,
+    }
+
+
 def attributed_usage_for_decision(
     state: TaskExecutionState,
     *,
@@ -45,51 +272,32 @@ def attributed_usage_for_decision(
 ) -> tuple[list[BackendUsageRecord], dict[str, Any]]:
     """Select usage belonging to the decision's attributed execution evidence.
 
-    Preference order:
-    1. usage_ids recorded on terminal attempts of affected subtasks under the
-       activation revision;
-    2. usage stamped with decision_id / matching plan_revision for affected
-       subtasks;
-    3. usage on the bound wave and later waves that share the activation
-       revision for affected subtasks.
-
-    Historical / unrelated pre-decision usage is never included.
+    When affected attempts declare usage_ids, joins are strict (missing/mismatched
+    IDs fail closed). Historical / unrelated pre-decision usage is never included.
     """
-    all_records = horizon_usage_records(state, usage_start)
-    by_id = {r.usage_id: r for r in all_records if r.usage_id}
-    selected_ids: list[str] = []
-    attempt_evidence: dict[str, Any] = {}
+    del affected_wave_id
+    has_attempt_usage = False
     for sid in affected_subtask_ids:
         sub = state.subtasks.get(sid)
         if sub is None:
             continue
-        matching = [
-            a
-            for a in (sub.attempts or [])
-            if getattr(a, "execution_plan_revision", None) == activated_revision_id
-            and getattr(a, "wave_id", None)
-        ]
-        if not matching:
-            continue
-        last = matching[-1]
-        ids = list(getattr(last, "usage_ids", None) or [])
-        attempt_evidence[sid] = {
-            "attempt_id": last.attempt_id,
-            "wave_id": last.wave_id,
-            "execution_plan_revision": last.execution_plan_revision,
-            "scheduler_incarnation": last.scheduler_incarnation,
-            "usage_ids": ids,
-        }
-        selected_ids.extend(ids)
+        for a in sub.attempts or []:
+            if (
+                getattr(a, "execution_plan_revision", None) == activated_revision_id
+                and getattr(a, "usage_ids", None)
+            ):
+                has_attempt_usage = True
+                break
+    if has_attempt_usage and activated_revision_id:
+        return join_attempt_commit_usage(
+            state,
+            decision_id=decision_id,
+            activated_revision_id=activated_revision_id,
+            affected_subtask_ids=list(affected_subtask_ids),
+            usage_start=usage_start,
+        )
 
-    if selected_ids:
-        records = [by_id[i] for i in selected_ids if i in by_id]
-        return records, {
-            "attribution": "attempt_usage_ids",
-            "usage_ids": sorted({r.usage_id for r in records}),
-            "attempt_evidence": attempt_evidence,
-        }
-
+    all_records = horizon_usage_records(state, usage_start)
     filtered: list[BackendUsageRecord] = []
     for rec in all_records:
         if rec.subtask_id not in set(affected_subtask_ids):
@@ -103,19 +311,16 @@ def attributed_usage_for_decision(
             and str(rec.phase or "") in {"post_activation", "recovery", ""}
         ):
             filtered.append(rec)
-            continue
-        if affected_wave_id and rec.wave_id == affected_wave_id:
-            filtered.append(rec)
     if filtered:
         return filtered, {
+            "ok": True,
             "attribution": "decision_wave_revision_filter",
             "usage_ids": sorted({r.usage_id for r in filtered if r.usage_id}),
-            "attempt_evidence": attempt_evidence,
         }
     return [], {
+        "ok": False,
         "attribution": "none",
         "usage_ids": [],
-        "attempt_evidence": attempt_evidence,
         "reason": "missing_decision_wave_attribution",
     }
 
@@ -220,14 +425,16 @@ def realized_horizon_objectives(
     cost = vector.values.get("cost")
     if cost is not None:
         detail = cost.detail
-        if attribution.get("attribution") == "none":
+        if attribution.get("ok") is False or attribution.get("attribution") == "none":
             vector.values["cost"] = ObjectiveValue(
                 value=None,
                 available=False,
                 source=ObjectiveSource.REALIZED,
                 evaluation_visibility=EvaluationVisibility.PUBLIC,
                 evidence_count=0,
-                detail="missing_decision_wave_attribution",
+                detail=str(
+                    attribution.get("reason") or "missing_decision_wave_attribution"
+                ),
             )
         elif cost.available:
             vector.values["cost"] = cost.model_copy(

@@ -248,15 +248,26 @@ Protocol: `docs/stage2_pareto_experiment_protocol.md`. Design:
 `docs/m6_pareto_orchestra_search.md`. Fixture results are not real-model gains.
 `--mock-backends` is the fully API-free override; `--mock-llm` is a compatibility alias.
 
-M6.2.2 production evidence closure notes: genuine production development runs
-produce available realized cost from decision/wave-attributed usage (non-billable
-nodes contribute exact zero; missing pricing/tokens stay unavailable); held-out
-targets must carry the full canonical selection-identity schema (fail-closed on
-missing/null/mismatch, including `dataset_identity` / `dataset_split_identity`,
-with `git_sha` as the canonical Git field); production attempts persist
-wave/revision/incarnation/usage identity and realization requires that evidence;
-reports are checkpoint-authoritative (tampered summaries cannot override
-derived metrics); the scheduler acquires run ownership before prepare/mutate.
+M6.2.2 production evidence-integrity notes (mock-only validation):
+
+* `selection_config_hash` is the SHA of a run-independent canonical selection
+  projection (`stage2-calibration-v3`). Source/run provenance
+  (`source_run_id`, `source_manifest_hash`, `source_split`, `run_id`,
+  timestamps, output paths, `dataset_split_identity`) is persisted separately
+  and must not contaminate the shared hash. Held-out validation recomputes the
+  target hash and requires `declared == recomputed == frozen`.
+* `git_sha` is canonical; legacy `git_commit` normalizes only when alone or
+  identical. Conflicting/null/malformed aliases fail closed.
+* Realization requires matching authoritative workspace commit records plus
+  strict attempt/commit/usage joins (missing/mismatched evidence is non-ready).
+* Reports ignore mutable summary overrides for every derivable field
+  (checkpoint-authoritative regenerate policy). Estimated-vs-realized CSV is
+  long-form (one row per objective) with explicit generic columns.
+* Ownership A/B/C: live process B cannot mutate A's run; abandoned work recovers
+  exactly once under a new incarnation.
+* Fixture/mock metrics are **not** real model quality, latency, robustness, or
+  cost. Do not start fixed-budget real development or held-out inference from
+  this closure alone.
 
 ## Stage 1 experiments
 

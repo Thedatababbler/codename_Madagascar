@@ -243,7 +243,28 @@ The smoke loads the YAML, runs TaskExecutionState → Slow Loop → frontier
 selection → M5 commit → realized finalization → restart recovery, and asserts
 search traces plus archive persistence.
 
-## 15. M6.2 production and Stage-2 experiments
+## 15. M6.2.2 evidence integrity (canonical selection / commits / reports)
+
+* **Canonical selection projection (`stage2-calibration-v3`):** one shared
+  projection builds, hashes, freezes, and validates `selection_config_hash`.
+  It includes selection-relevant identity (schema, `git_sha`, objectives,
+  preference, pricing, catalogs/graphs, evaluator, backends/models, seed policy,
+  benchmark/dataset identity, `dataset_split_policy`, private-data policy) and
+  **excludes** run/source provenance (`run_id`, `source_run_id`,
+  `source_manifest_hash`, `source_split`, timestamps, paths,
+  `dataset_split_identity`). Held-out validation requires
+  `declared == recomputed(target) == frozen`.
+* **Git identity:** persist `git_sha`. Legacy `git_commit` normalizes only when
+  alone or identical; conflicts/null/malformed values fail closed.
+* **Realization evidence:** each affected attempt needs exactly one matching
+  terminal `WorkspaceCommitRecord` under the activation revision, with strict
+  attempt/commit/usage joins. Downstream `s4` may use a later wave id.
+* **Reports:** ignore-and-regenerate conflicting summary fields from checkpoint
+  evidence. Estimated-vs-realized export is long-form (one row per objective).
+* **Ownership:** live secondary processes fail before mutation; abandoned leases
+  recover exactly once. Mock/fixture numbers are not real-model claims.
+
+## 16. M6.2 production and Stage-2 experiments
 
 M6.2 adds an opt-in, configuration-driven production path and a Stage-2
 experiment/reporting layer. Shared typed loader:
