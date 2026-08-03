@@ -98,13 +98,12 @@ async def test_after_future_wave_started_reclaims_and_completes(tmp_path: Path):
     )
     assert set(summary["committed"]) >= {"s1", "s2", "s3", "s4"}
     assert summary["execution_success_rate"] == 1.0
-    assert summary["restart_recovery_counts"] >= 1
+    assert summary["restart_recovery_counts"] == 1
     recovery = json.loads((run_dir / "recovery_events.json").read_text(encoding="utf-8"))
-    reclaim = [
-        e for e in recovery if e.get("event") == "scheduler_incarnation_recovery"
-    ]
-    assert reclaim
-    assert reclaim[-1].get("reclaimed_lease_ids") is not None
+    reclaim = [e for e in recovery if e.get("event") == "scheduler_recovery"]
+    assert len(reclaim) == 1
+    assert reclaim[0].get("recovery_id")
+    assert reclaim[0].get("reclaimed_lease_ids") is not None
     decisions = [
         json.loads(line)
         for line in (run_dir / "pareto" / "decisions.jsonl").read_text().splitlines()
@@ -147,11 +146,10 @@ def test_stale_lease_reclaim_skips_live_incarnation():
     state.subtasks["s2"].lease_status = "leased"
     state.subtasks["s2"].lease_id = "live-lease"
     state.subtasks["s2"].lease_owner_incarnation = 4  # future/live relative to begin
-    # begin bumps to 4; owner >= new should not reclaim... wait begin sets new=4,
-    # owner=4 >= 4 → skip. Good.
+    # begin bumps to 4; owner >= new should not reclaim → no recovery event.
     event = begin_scheduler_incarnation(state, reason="test")
     assert state.scheduler_incarnation == 4
-    assert "s2" not in event["affected_subtasks"]
+    assert event is None
     assert state.subtasks["s2"].lease_status == "leased"
 
 
@@ -165,7 +163,9 @@ def test_stale_lease_reclaim_previous_incarnation():
     state.subtasks["s2"].lease_owner_incarnation = 1
     event = begin_scheduler_incarnation(state, reason="resume")
     assert state.scheduler_incarnation == 2
-    assert "s2" in event["affected_subtasks"]
+    assert event is not None
+    assert event["recovery_id"]
+    assert "s2" in event["affected_subtask_ids"]
     assert "stale-lease" in event["reclaimed_lease_ids"]
     assert state.subtasks["s2"].lease_status == "unleased"
 
@@ -223,31 +223,33 @@ async def test_fixture_and_development_rejected_by_held_out_report(tmp_path: Pat
     with pytest.raises(RuntimeError, match="held-out runs only"):
         assert_run_split_for_held_out(run_dir)
 
+    # Fixture targets are rejected by held-out reporting even with a calibration file.
+    import shutil
+
+    from orchestra.experiments.stage2_pareto import _development_observation_rows
+
+    dev = tmp_path / "dev-for-cal"
+    shutil.copytree(run_dir, dev)
+    man = json.loads((dev / "run_manifest.json").read_text(encoding="utf-8"))
+    man["split"] = "development"
+    man["private_data_policy"] = "private_labels_offline_only"
+    man["public_evaluator_id"] = "public_harness"
+    man["public_evaluator_version"] = "public-harness-v1"
+    (dev / "run_manifest.json").write_text(
+        json.dumps(man, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     cal_path = tmp_path / "cal.json"
     control = load_control_plane_mapping(
         yaml.safe_load(CFG.read_text(encoding="utf-8")) or {}
     )
+    points, provenance = _development_observation_rows(dev)
     write_calibration_artifact(
         cal_path,
         control=control,
-        development_points=[
-            {
-                "quality": 0.9,
-                "cost": 0.05,
-                "latency": 1.0,
-                "risk": 0.1,
-                "communication_overhead": 10.0,
-            },
-            {
-                "quality": 0.7,
-                "cost": 0.02,
-                "latency": 0.5,
-                "risk": 0.2,
-                "communication_overhead": 5.0,
-            },
-        ],
-        run_dir=run_dir,
+        development_points=points,
+        run_dir=dev,
         config_path=CFG,
+        source_record_ids=provenance,
     )
 
     fixture_run = str(run_dir)
@@ -288,24 +290,51 @@ def test_calibration_missing_normalization_rejected(tmp_path: Path):
         yaml.safe_load(CFG.read_text(encoding="utf-8")) or {}
     )
     path = tmp_path / "cal.json"
+    run = tmp_path / "dev"
+    run.mkdir()
+    (run / "run_manifest.json").write_text(
+        json.dumps(
+            {
+                "split": "development",
+                "run_id": "dev-norm",
+                "started_at": "2020-01-01T00:00:00+00:00",
+                "private_data_policy": "private_labels_offline_only",
+                "public_evaluator_id": "public_harness",
+                "public_evaluator_version": "public-harness-v1",
+            }
+        ),
+        encoding="utf-8",
+    )
+    points = [
+        {
+            "quality": 0.9,
+            "cost": 0.1,
+            "latency": 1.0,
+            "risk": 0.1,
+            "communication_overhead": 1.0,
+        }
+    ]
+    provenance = {k: ["dec-1"] for k in points[0]}
     art = write_calibration_artifact(
         path,
         control=control,
-        development_points=[
-            {
-                "quality": 0.9,
-                "cost": 0.1,
-                "latency": 1.0,
-                "risk": 0.1,
-                "communication_overhead": 1.0,
-            }
-        ],
+        development_points=points,
+        run_dir=run,
         config_path=CFG,
+        source_record_ids=provenance,
     )
     bad = art.to_dict()
-    bad["normalization"] = {"quality": {"min": 0.0, "max": 1.0}}
+    bad["normalization"] = {
+        "quality": {
+            "min": 0.0,
+            "max": 1.0,
+            "source_record_ids": ["dec-1"],
+            "observation_count": 1,
+            "constant_objective": False,
+        }
+    }
     cal = CalibrationArtifact.from_dict(bad)
-    with pytest.raises(RuntimeError, match="missing_normalization"):
+    with pytest.raises(RuntimeError, match="normalization"):
         assert_calibration_matches(cal, control, require_held_out_split=False)
 
 

@@ -144,22 +144,26 @@ via M5. Staging / checkpoint / wall-time failure leaves **no** live pending
 decision. Finalization requires:
 
 1. `decision.activated_revision_id == state.active_plan_revision_id`
-2. **Behavioral realization**: every `affected_subtask_ids` entry reaches a
-   terminal state under that activation (activation alone, wave start alone, or
-   scheduler return alone are insufficient). Incomplete waves keep the decision
-   `pending`; resume finalizes exactly once. If no eligible future wave exists,
-   record `censored_no_eligible_wave` rather than fabricating improvement.
+2. **Behavioral realization**: the decision is bound to a non-null
+   `affected_wave_id`; that wave executed under the activation revision and
+   reached `terminal`; every `affected_subtask_ids` entry is terminal; attempt
+   records persist `execution_plan_revision` / `wave_id`. Activation alone, wave
+   start alone, or scheduler return alone are insufficient. Incomplete waves
+   keep the decision `pending`; resume finalizes exactly once. If no eligible
+   future wave exists, record `censored_no_eligible_wave`.
 
-### Scheduler incarnation and stale-lease recovery
+### Scheduler ownership and recovery
 
 ```text
-run_id + scheduler_incarnation + lease_id + lease_owner_incarnation
+run_dir/.scheduler.lock  (fcntl exclusive) + scheduler_incarnation + lease_id
 ```
 
-Each `run_task` starts a new persisted incarnation and reclaims only
-noncommitted leases owned by previous inactive incarnations. Committed subtasks
-never re-execute. Recovery events are persisted (`recovery_events.json`) and
-drive report recovery counts.
+At most one live scheduler may own a run. A second process fails closed without
+reclaiming leases. Ownership is released when the owning process terminates.
+Each `run_task` starts a new incarnation; a **recovery event** is persisted only
+when interrupted state is reconciled (stale leases reclaimed or an incomplete
+activated decision resumed). A clean first start is not a recovery. Reports
+count unique `recovery_id` values (`0` clean / `1` per logical resume).
 
 ## 8. Persistence and search traces
 

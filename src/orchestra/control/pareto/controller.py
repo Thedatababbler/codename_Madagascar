@@ -248,7 +248,7 @@ class ParetoGlobalCandidatePolicy:
 
     @staticmethod
     def _behavioral_realization_ready(state, decision: ParetoDecisionRecord) -> tuple[bool, dict]:
-        """Require affected future work to reach a terminal state under activation.
+        """Require persisted wave binding + terminal execution under activation.
 
         Activation alone, wave start alone, or scheduler return alone are insufficient.
         """
@@ -268,6 +268,47 @@ class ParetoGlobalCandidatePolicy:
                 "reason": "no_eligible_future_wave",
                 "censored": True,
             }
+        wave_id = getattr(decision, "affected_wave_id", None)
+        evidence = {
+            "decision_id": decision.decision_id,
+            "candidate_hash": decision.selected_content_hash,
+            "activation_revision": decision.activated_revision_id,
+            "affected_wave_id": wave_id,
+            "affected_subtask_ids": affected,
+            "active_plan_revision_id": state.active_plan_revision_id,
+        }
+        if not wave_id:
+            evidence["reason"] = "affected_wave_unbound"
+            return False, evidence
+        waves = list(getattr(state, "scheduler_wave_records", None) or [])
+        bound = None
+        for wave in waves:
+            wid = getattr(wave, "wave_id", None) or (
+                wave.get("wave_id") if isinstance(wave, dict) else None
+            )
+            if wid == wave_id:
+                bound = wave
+                break
+        if bound is None:
+            evidence["reason"] = "affected_wave_missing"
+            return False, evidence
+        plan_rev = getattr(bound, "plan_revision", None) or (
+            bound.get("plan_revision") if isinstance(bound, dict) else None
+        )
+        term = getattr(bound, "terminal_state", None) or (
+            bound.get("terminal_state") if isinstance(bound, dict) else None
+        )
+        evidence["wave_plan_revision"] = plan_rev
+        evidence["wave_terminal_state"] = term
+        evidence["effective_concurrency"] = getattr(
+            bound, "effective_concurrency", None
+        ) or (bound.get("effective_concurrency") if isinstance(bound, dict) else None)
+        if plan_rev != decision.activated_revision_id:
+            evidence["reason"] = "wave_revision_mismatch"
+            return False, evidence
+        if term != "terminal":
+            evidence["reason"] = "affected_wave_incomplete"
+            return False, evidence
         statuses: dict[str, str] = {}
         incomplete: list[str] = []
         for sid in affected:
@@ -276,25 +317,21 @@ class ParetoGlobalCandidatePolicy:
                 incomplete.append(sid)
                 statuses[sid] = "missing"
                 continue
-            statuses[sid] = str(sub.status.value if hasattr(sub.status, "value") else sub.status)
+            statuses[sid] = str(
+                sub.status.value if hasattr(sub.status, "value") else sub.status
+            )
             if sub.status not in terminal:
                 incomplete.append(sid)
-        evidence = {
-            "decision_id": decision.decision_id,
-            "candidate_hash": decision.selected_content_hash,
-            "activation_revision": decision.activated_revision_id,
-            "affected_subtask_ids": affected,
-            "terminal_states": statuses,
-            "incomplete_subtask_ids": incomplete,
-            "active_plan_revision_id": state.active_plan_revision_id,
-        }
+        evidence["terminal_states"] = statuses
+        evidence["incomplete_subtask_ids"] = incomplete
         if incomplete:
+            evidence["reason"] = "affected_subtasks_incomplete"
             return False, evidence
-        # Require that the activated revision is still the live plan (wave ran under it).
         if decision.activated_revision_id != state.active_plan_revision_id:
             evidence["reason"] = "activation_revision_mismatch"
             return False, evidence
         evidence["reason"] = "affected_wave_terminal"
+        evidence["binding_status"] = "realized"
         return True, evidence
 
     def finalize_realized(self, state) -> None:

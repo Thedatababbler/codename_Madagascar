@@ -136,11 +136,39 @@ def test_smoke_and_stage2_share_loader():
 
 
 def test_calibration_mismatch_blocks_held_out(tmp_path: Path):
+    import json
+
     control = load_control_plane_mapping(build_mode_config("m6_balanced_knee"))
+    run = tmp_path / "dev"
+    run.mkdir()
+    (run / "run_manifest.json").write_text(
+        json.dumps(
+            {
+                "split": "development",
+                "run_id": "dev-cal",
+                "started_at": "2020-01-01T00:00:00+00:00",
+                "private_data_policy": "private_labels_offline_only",
+                "public_evaluator_id": "public_harness",
+                "public_evaluator_version": "public-harness-v1",
+            }
+        ),
+        encoding="utf-8",
+    )
+    points = [
+        {
+            "quality": 1.0,
+            "cost": 0.1,
+            "latency": 1.0,
+            "risk": 0.1,
+            "communication_overhead": 1.0,
+        }
+    ]
     artifact = write_calibration_artifact(
         tmp_path / "cal.json",
         control=control,
-        development_points=[{"quality": 1.0, "cost": 0.1, "latency": 1.0, "risk": 0.1}],
+        development_points=points,
+        run_dir=run,
+        source_record_ids={k: ["dec-1"] for k in points[0]},
     )
     other = load_control_plane_mapping(build_mode_config("m6_quality_first"))
     with pytest.raises(RuntimeError, match="calibration mismatch"):

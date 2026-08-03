@@ -7,7 +7,6 @@ import hashlib
 import json
 import math
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
@@ -241,7 +240,32 @@ def validate_stage2_config(path: str | Path) -> dict[str, Any]:
     }
 
 
-@dataclass(frozen=True)
+class CalibrationMismatchError(RuntimeError):
+    """Typed fail-closed error for frozen calibration / held-out gate mismatches."""
+
+    def __init__(
+        self,
+        field: str,
+        *,
+        expected: Any,
+        observed: Any,
+        detail: str | None = None,
+    ) -> None:
+        self.field = field
+        self.expected = expected
+        self.observed = observed
+        self.detail = detail or (
+            f"frozen calibration mismatch on {field}: "
+            f"expected={expected!r} observed={observed!r}"
+        )
+        super().__init__(self.detail)
+
+
+class CalibrationFreezeError(RuntimeError):
+    """Typed fail-closed error for freeze-calibration refusals."""
+
+
+@dataclass
 class CalibrationArtifact:
     schema_version: str
     control_plane_hash: str
@@ -255,21 +279,26 @@ class CalibrationArtifact:
     preference_profile_id: str
     objectives: dict[str, str]
     objective_directions: dict[str, str]
+    objective_required: dict[str, bool]
     backend_model_settings: dict[str, Any]
     backend_kinds: list[str]
     model_identifiers: dict[str, Any]
     seed_policy: dict[str, Any]
     git_sha: str
     config_hash: str
+    selection_config_hash: str
     benchmark_manifest_hash: str
+    dataset_identity: dict[str, Any]
     dataset_split_identity: dict[str, Any]
     private_data_policy: str
     public_evaluator_id: str
     public_evaluator_version: str
     preference_profile: dict[str, Any]
     source_run_id: str
+    source_manifest_hash: str
     manifest_schema_version: str
-    normalization: dict[str, dict[str, float]]
+    normalization: dict[str, dict[str, Any]]
+    normalization_source_record_ids: dict[str, list[str]]
     reference_point: dict[str, float]
     created_at: str
     source_split: str = "development"
@@ -291,20 +320,25 @@ class CalibrationArtifact:
             "preference_profile": self.preference_profile,
             "objectives": self.objectives,
             "objective_directions": self.objective_directions,
+            "objective_required": self.objective_required,
             "backend_model_settings": self.backend_model_settings,
             "backend_kinds": self.backend_kinds,
             "model_identifiers": self.model_identifiers,
             "seed_policy": self.seed_policy,
             "git_sha": self.git_sha,
             "config_hash": self.config_hash,
+            "selection_config_hash": self.selection_config_hash,
             "benchmark_manifest_hash": self.benchmark_manifest_hash,
+            "dataset_identity": self.dataset_identity,
             "dataset_split_identity": self.dataset_split_identity,
             "private_data_policy": self.private_data_policy,
             "public_evaluator_id": self.public_evaluator_id,
             "public_evaluator_version": self.public_evaluator_version,
             "source_run_id": self.source_run_id,
+            "source_manifest_hash": self.source_manifest_hash,
             "manifest_schema_version": self.manifest_schema_version,
             "normalization": self.normalization,
+            "normalization_source_record_ids": self.normalization_source_record_ids,
             "reference_point": self.reference_point,
             "created_at": self.created_at,
             "source_split": self.source_split,
@@ -324,7 +358,11 @@ class CalibrationArtifact:
             raise RuntimeError(
                 f"malformed calibration artifact: missing fields {missing}"
             )
-        split = str(payload.get("source_split") or payload.get("split") or "development")
+        split = str(payload.get("source_split") or payload.get("split") or "")
+        if not split:
+            raise RuntimeError(
+                "malformed calibration artifact: missing source_split"
+            )
         objectives = {
             str(k): str(v) for k, v in dict(payload.get("objectives") or {}).items()
         }
@@ -334,6 +372,12 @@ class CalibrationArtifact:
                 payload.get("objective_directions") or payload.get("objectives") or {}
             ).items()
         }
+        required_map = {
+            str(k): bool(v)
+            for k, v in dict(payload.get("objective_required") or {}).items()
+        }
+        if not required_map and objectives:
+            required_map = {k: True for k in objectives}
         return cls(
             schema_version=str(
                 payload.get("schema_version")
@@ -352,28 +396,31 @@ class CalibrationArtifact:
             preference_profile=dict(payload.get("preference_profile") or {}),
             objectives=objectives,
             objective_directions=directions,
+            objective_required=required_map,
             backend_model_settings=dict(payload.get("backend_model_settings") or {}),
             backend_kinds=list(payload.get("backend_kinds") or []),
             model_identifiers=dict(payload.get("model_identifiers") or {}),
             seed_policy=dict(payload.get("seed_policy") or {}),
             git_sha=str(payload.get("git_sha") or ""),
             config_hash=str(payload.get("config_hash") or ""),
+            selection_config_hash=str(payload.get("selection_config_hash") or ""),
             benchmark_manifest_hash=str(payload.get("benchmark_manifest_hash") or ""),
+            dataset_identity=dict(payload.get("dataset_identity") or {}),
             dataset_split_identity=dict(payload.get("dataset_split_identity") or {}),
-            private_data_policy=str(
-                payload.get("private_data_policy") or "private_labels_offline_only"
-            ),
-            public_evaluator_id=str(
-                payload.get("public_evaluator_id") or "public_harness"
-            ),
+            private_data_policy=str(payload.get("private_data_policy") or ""),
+            public_evaluator_id=str(payload.get("public_evaluator_id") or ""),
             public_evaluator_version=str(
-                payload.get("public_evaluator_version") or "public-harness-v1"
+                payload.get("public_evaluator_version") or ""
             ),
             source_run_id=str(payload.get("source_run_id") or ""),
+            source_manifest_hash=str(payload.get("source_manifest_hash") or ""),
             manifest_schema_version=str(
                 payload.get("manifest_schema_version") or "stage2-calibration-v2"
             ),
             normalization=dict(payload.get("normalization") or {}),
+            normalization_source_record_ids=dict(
+                payload.get("normalization_source_record_ids") or {}
+            ),
             reference_point=dict(payload.get("reference_point") or {}),
             created_at=str(payload.get("created_at") or ""),
             source_split=split,
@@ -386,33 +433,127 @@ def _stable_hash(payload: Any) -> str:
     return hashlib.sha256(blob.encode()).hexdigest()
 
 
-def write_calibration_artifact(
-    path: str | Path,
+def _canonical_json(payload: Any) -> str:
+    return json.dumps(payload, sort_keys=True, default=str, separators=(",", ":"))
+
+
+def _finite_float(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
+        return None
+    return number
+
+
+def _development_observation_rows(
+    run_dir: Path,
+) -> tuple[list[dict[str, float]], dict[str, list[str]]]:
+    """Extract finite objective observations and provenance IDs from a run."""
+    rec = collect_run_records(run_dir)
+    rows: list[dict[str, float]] = []
+    source_ids: dict[str, list[str]] = {}
+    for d in rec["decisions"]:
+        snap = d.get("selected_candidate_snapshot") or {}
+        vals = (snap.get("objectives") or {}).get("values") or {}
+        row: dict[str, float] = {}
+        decision_id = str(d.get("decision_id") or "")
+        for name in (
+            "quality",
+            "cost",
+            "latency",
+            "risk",
+            "communication_overhead",
+        ):
+            number = _finite_float((vals.get(name) or {}).get("value"))
+            available = (vals.get(name) or {}).get("available")
+            if number is None or available is False:
+                continue
+            row[name] = number
+            if decision_id:
+                source_ids.setdefault(name, []).append(decision_id)
+        if row:
+            rows.append(row)
+    for name, ids in list(source_ids.items()):
+        source_ids[name] = sorted(set(ids))
+    return rows, source_ids
+
+
+def _build_normalization_from_evidence(
     *,
-    control: ControlPlaneConfig,
+    objectives: dict[str, ObjectiveDirection],
     development_points: list[dict[str, float | None]],
-    run_dir: str | Path | None = None,
-    config_path: str | Path | None = None,
-) -> CalibrationArtifact:
-    from orchestra.experiments.metadata import git_commit_hash
+    source_record_ids: dict[str, list[str]],
+) -> tuple[dict[str, dict[str, Any]], dict[str, float], dict[str, list[str]]]:
+    """Derive normalization only from persisted development evidence.
 
-    resolved = resolve_pareto_runtime(control, repo_root=_repo_root())
-    norms: dict[str, dict[str, float]] = {}
+    Constant-objective policy: when all finite observations for a required
+    objective share the same value (min == max), freeze ``min == max == value``
+    and mark ``constant_objective=true``. Do not invent a wider range.
+    """
+    norms: dict[str, dict[str, Any]] = {}
     reference: dict[str, float] = {}
-    for name, direction in resolved.pareto_config.objectives.items():
-        values = [
-            float(p[name])
-            for p in development_points
-            if p.get(name) is not None and not isinstance(p.get(name), bool)
-        ]
+    provenance: dict[str, list[str]] = {}
+    missing: list[str] = []
+    for name, direction in objectives.items():
+        values: list[float] = []
+        for point in development_points:
+            number = _finite_float(point.get(name))
+            if number is not None:
+                values.append(number)
+        ids = list(source_record_ids.get(name) or [])
         if not values:
+            missing.append(name)
             continue
+        if not ids:
+            raise CalibrationFreezeError(
+                f"calibration freeze refused: missing normalization provenance "
+                f"for required objective {name!r}"
+            )
         lo, hi = min(values), max(values)
+        entry: dict[str, Any] = {
+            "min": lo,
+            "max": hi,
+            "source_record_ids": sorted(set(ids)),
+            "observation_count": len(values),
+        }
         if math.isclose(lo, hi):
-            hi = lo + 1.0
-        norms[name] = {"min": lo, "max": hi}
+            entry["constant_objective"] = True
+            entry["constant_objective_policy"] = (
+                "min_equals_max_from_development_evidence"
+            )
+        else:
+            entry["constant_objective"] = False
+        norms[name] = entry
         reference[name] = hi if direction is ObjectiveDirection.MINIMIZE else lo
+        provenance[name] = sorted(set(ids))
+    if missing:
+        raise CalibrationFreezeError(
+            "calibration freeze refused: missing development evidence for "
+            f"required objectives {missing}"
+        )
+    return norms, reference, provenance
 
+
+def _selection_identity_from_resolved(
+    resolved: Any,
+    *,
+    seed: int,
+    git_sha: str,
+    config_hash: str,
+    benchmark_manifest_hash: str,
+    source_split: str,
+    source_run_id: str,
+    source_manifest_hash: str,
+    private_data_policy: str,
+    public_evaluator_id: str,
+    public_evaluator_version: str,
+    dataset_identity: dict[str, Any],
+    dataset_split_identity: dict[str, Any],
+) -> dict[str, Any]:
     catalog_dump = resolved.candidate_catalog.model_dump(mode="json")
     graph_paths = sorted(
         {
@@ -436,121 +577,202 @@ def write_calibration_artifact(
         if pricing_path.exists()
         else ""
     )
+    backend_model_settings = {
+        "allowed_backend_assignments": dict(
+            resolved.slow_loop_config.allowed_backend_assignments or {}
+        ),
+        "backend_model_pools": dict(
+            resolved.slow_loop_config.backend_model_pools or {}
+        ),
+        "pricing_registry": resolved.pricing_registry,
+    }
+    backend_kinds = sorted(
+        (resolved.slow_loop_config.allowed_backend_assignments or {}).keys()
+    )
+    model_identifiers = dict(resolved.slow_loop_config.backend_model_pools or {})
+    seed_policy = {"seed": seed, "deterministic_reports": True}
+    required_objectives = {
+        name: direction.value
+        for name, direction in resolved.pareto_config.objectives.items()
+    }
+    objective_required = {name: True for name in required_objectives}
+    preference_profile = resolved.preference_profile.model_dump(mode="json")
+    selection_payload = {
+        "schema_version": "stage2-calibration-v2",
+        "control_plane_hash": resolved.control_plane_hash,
+        "preference_hash": resolved.preference_hash,
+        "objective_hash": resolved.objective_hash,
+        "pricing_version": resolved.pricing_version,
+        "pricing_registry_hash": pricing_registry_hash,
+        "candidate_catalog_hash": _stable_hash(catalog_dump),
+        "graph_catalog_hash": _stable_hash(graph_hashes),
+        "resolved_graph_hash": _stable_hash(graph_hashes),
+        "preference_profile_id": resolved.preference_profile.profile_id,
+        "preference_profile": preference_profile,
+        "objectives": required_objectives,
+        "objective_directions": required_objectives,
+        "objective_required": objective_required,
+        "backend_model_settings": backend_model_settings,
+        "backend_kinds": backend_kinds,
+        "model_identifiers": model_identifiers,
+        "seed_policy": seed_policy,
+        "git_sha": git_sha,
+        "config_hash": config_hash,
+        "benchmark_manifest_hash": benchmark_manifest_hash,
+        "dataset_identity": dataset_identity,
+        "dataset_split_identity": dataset_split_identity,
+        "private_data_policy": private_data_policy,
+        "public_evaluator_id": public_evaluator_id,
+        "public_evaluator_version": public_evaluator_version,
+        "source_split": source_split,
+        "source_run_id": source_run_id,
+        "source_manifest_hash": source_manifest_hash,
+    }
+    selection_payload["selection_config_hash"] = _stable_hash(selection_payload)
+    return selection_payload
+
+
+def write_calibration_artifact(
+    path: str | Path,
+    *,
+    control: ControlPlaneConfig,
+    development_points: list[dict[str, float | None]],
+    run_dir: str | Path | None = None,
+    config_path: str | Path | None = None,
+    source_record_ids: dict[str, list[str]] | None = None,
+) -> CalibrationArtifact:
+    """Freeze calibration from a persisted development run only.
+
+    The run manifest split is authoritative: fixture/heldout sources are refused,
+    and ``source_split`` is copied (never rewritten). Normalization is derived
+    only from finite development observations with provenance IDs — never from
+    fabricated defaults.
+    """
+    from orchestra.experiments.metadata import git_commit_hash
+
+    if run_dir is None:
+        raise CalibrationFreezeError(
+            "freeze-calibration requires --run-dir with a persisted development run"
+        )
+    run_path = Path(run_dir)
+    manifest_path = run_path / "run_manifest.json"
+    if not manifest_path.exists():
+        raise CalibrationFreezeError(
+            f"freeze-calibration requires run_manifest.json under {run_path}"
+        )
+    manifest_bytes = manifest_path.read_bytes()
+    manifest = json.loads(manifest_bytes.decode("utf-8"))
+    source_split = str(manifest.get("split") or "")
+    if source_split != "development":
+        raise CalibrationFreezeError(
+            "freeze-calibration may consume development runs only; "
+            f"refusing split={source_split!r} under {run_path}. "
+            "A CLI command must never relabel a run's persisted split."
+        )
+    source_run_id = str(manifest.get("run_id") or run_path.name)
+    source_manifest_hash = hashlib.sha256(manifest_bytes).hexdigest()
+    resolved = resolve_pareto_runtime(control, repo_root=_repo_root())
+    provenance = dict(source_record_ids or {})
+    norms, reference, provenance = _build_normalization_from_evidence(
+        objectives=dict(resolved.pareto_config.objectives),
+        development_points=development_points,
+        source_record_ids=provenance,
+    )
+
     seed = 42
+    config_hash = str(manifest.get("control_plane_hash") or "")
+    benchmark_manifest_hash = str(manifest.get("manifest_hash") or "")
     if config_path is not None:
         raw = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
         seed = int((raw.get("experiment") or {}).get("seed") or 42)
-    if run_dir is not None and (Path(run_dir) / "run_manifest.json").exists():
-        manifest = json.loads(
-            (Path(run_dir) / "run_manifest.json").read_text(encoding="utf-8")
-        )
-        seed = int(
-            ((manifest.get("experiment") or {}).get("seed"))
-            or ((manifest.get("stage2") or {}).get("seed"))
-            or seed
-        )
-
-    source_run_id = ""
-    source_split = "development"
-    config_hash = ""
-    benchmark_manifest_hash = ""
-    if run_dir is not None and (Path(run_dir) / "run_manifest.json").exists():
-        manifest = json.loads(
-            (Path(run_dir) / "run_manifest.json").read_text(encoding="utf-8")
-        )
-        source_run_id = str(manifest.get("run_id") or Path(run_dir).name)
-        run_split = str(manifest.get("split") or "development")
-        if run_split not in {"development", "fixture"}:
-            raise RuntimeError(
-                "freeze-calibration may consume development (or fixture-as-dev) "
-                f"runs only; got split={run_split!r}"
-            )
-        # Fixture runs may seed development calibration for synthetic gates only.
-        source_split = "development"
-        config_hash = str(manifest.get("control_plane_hash") or "")
-        benchmark_manifest_hash = str(manifest.get("manifest_hash") or "")
-    if config_path is not None:
         config_hash = config_hash or hashlib.sha256(
             Path(config_path).read_bytes()
         ).hexdigest()
-        raw_cfg = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
-        bench_manifest = (raw_cfg.get("benchmark") or {}).get("manifest")
+        bench_manifest = (raw.get("benchmark") or {}).get("manifest")
         if bench_manifest:
             bm = Path(bench_manifest)
             if not bm.is_absolute():
                 bm = _repo_root() / bm
             if bm.exists():
                 benchmark_manifest_hash = hashlib.sha256(bm.read_bytes()).hexdigest()
-    required_objectives = {
-        name: direction.value
-        for name, direction in resolved.pareto_config.objectives.items()
-    }
-    # Fill missing normalization ranges from explicit development fallbacks so
-    # every required objective is covered (fail closed later if still missing).
-    fallback_defaults = {
-        "quality": {"min": 0.0, "max": 1.0},
-        "cost": {"min": 0.0, "max": 1.0},
-        "latency": {"min": 0.0, "max": 10.0},
-        "risk": {"min": 0.0, "max": 1.0},
-        "communication_overhead": {"min": 0.0, "max": 1000.0},
-    }
-    for name, direction in resolved.pareto_config.objectives.items():
-        if name in norms:
-            continue
-        fb = fallback_defaults.get(name, {"min": 0.0, "max": 1.0})
-        norms[name] = dict(fb)
-        reference[name] = (
-            fb["max"] if direction is ObjectiveDirection.MINIMIZE else fb["min"]
-        )
-    missing_norms = [n for n in required_objectives if n not in norms]
-    if missing_norms:
-        raise RuntimeError(
-            "calibration freeze refused: missing normalization for required "
-            f"objectives {missing_norms}"
-        )
-    artifact = CalibrationArtifact(
-        schema_version="stage2-calibration-v2",
-        control_plane_hash=resolved.control_plane_hash,
-        preference_hash=resolved.preference_hash,
-        objective_hash=resolved.objective_hash,
-        pricing_version=resolved.pricing_version,
-        pricing_registry_hash=pricing_registry_hash,
-        candidate_catalog_hash=_stable_hash(catalog_dump),
-        graph_catalog_hash=_stable_hash(graph_hashes),
-        resolved_graph_hash=_stable_hash(graph_hashes),
-        preference_profile_id=resolved.preference_profile.profile_id,
-        preference_profile=resolved.preference_profile.model_dump(mode="json"),
-        objectives=required_objectives,
-        objective_directions=required_objectives,
-        backend_model_settings={
-            "allowed_backend_assignments": dict(
-                resolved.slow_loop_config.allowed_backend_assignments or {}
-            ),
-            "backend_model_pools": dict(
-                resolved.slow_loop_config.backend_model_pools or {}
-            ),
-            "pricing_registry": resolved.pricing_registry,
-        },
-        backend_kinds=sorted(
-            (resolved.slow_loop_config.allowed_backend_assignments or {}).keys()
-        ),
-        model_identifiers=dict(resolved.slow_loop_config.backend_model_pools or {}),
-        seed_policy={"seed": seed, "deterministic_reports": True},
-        git_sha=git_commit_hash(_repo_root()) or "",
-        config_hash=config_hash,
-        benchmark_manifest_hash=benchmark_manifest_hash,
-        dataset_split_identity={
+    seed = int(
+        ((manifest.get("experiment") or {}).get("seed"))
+        or ((manifest.get("stage2") or {}).get("seed"))
+        or seed
+    )
+    private_data_policy = str(
+        manifest.get("private_data_policy") or "private_labels_offline_only"
+    )
+    public_evaluator_id = str(manifest.get("public_evaluator_id") or "public_harness")
+    public_evaluator_version = str(
+        manifest.get("public_evaluator_version") or "public-harness-v1"
+    )
+    dataset_identity = dict(manifest.get("dataset_identity") or {})
+    dataset_split_identity = dict(
+        manifest.get("dataset_split_identity")
+        or {
             "source_split": source_split,
             "source_run_id": source_run_id,
-        },
-        private_data_policy="private_labels_offline_only",
-        public_evaluator_id="public_harness",
-        public_evaluator_version="public-harness-v1",
+            "source_manifest_hash": source_manifest_hash,
+        }
+    )
+    git_sha = str(manifest.get("git_sha") or git_commit_hash(_repo_root()) or "")
+    identity = _selection_identity_from_resolved(
+        resolved,
+        seed=seed,
+        git_sha=git_sha,
+        config_hash=config_hash,
+        benchmark_manifest_hash=benchmark_manifest_hash,
+        source_split=source_split,
         source_run_id=source_run_id,
+        source_manifest_hash=source_manifest_hash,
+        private_data_policy=private_data_policy,
+        public_evaluator_id=public_evaluator_id,
+        public_evaluator_version=public_evaluator_version,
+        dataset_identity=dataset_identity,
+        dataset_split_identity=dataset_split_identity,
+    )
+    # Deterministic created_at from source evidence (never wall-clock now).
+    created_at = str(
+        manifest.get("started_at")
+        or manifest.get("created_at")
+        or source_manifest_hash[:16]
+    )
+    artifact = CalibrationArtifact(
+        schema_version=str(identity["schema_version"]),
+        control_plane_hash=str(identity["control_plane_hash"]),
+        preference_hash=str(identity["preference_hash"]),
+        objective_hash=str(identity["objective_hash"]),
+        pricing_version=str(identity["pricing_version"]),
+        pricing_registry_hash=str(identity["pricing_registry_hash"]),
+        candidate_catalog_hash=str(identity["candidate_catalog_hash"]),
+        graph_catalog_hash=str(identity["graph_catalog_hash"]),
+        resolved_graph_hash=str(identity["resolved_graph_hash"]),
+        preference_profile_id=str(identity["preference_profile_id"]),
+        preference_profile=dict(identity["preference_profile"]),
+        objectives=dict(identity["objectives"]),
+        objective_directions=dict(identity["objective_directions"]),
+        objective_required=dict(identity["objective_required"]),
+        backend_model_settings=dict(identity["backend_model_settings"]),
+        backend_kinds=list(identity["backend_kinds"]),
+        model_identifiers=dict(identity["model_identifiers"]),
+        seed_policy=dict(identity["seed_policy"]),
+        git_sha=git_sha,
+        config_hash=config_hash,
+        selection_config_hash=str(identity["selection_config_hash"]),
+        benchmark_manifest_hash=benchmark_manifest_hash,
+        dataset_identity=dataset_identity,
+        dataset_split_identity=dataset_split_identity,
+        private_data_policy=private_data_policy,
+        public_evaluator_id=public_evaluator_id,
+        public_evaluator_version=public_evaluator_version,
+        source_run_id=source_run_id,
+        source_manifest_hash=source_manifest_hash,
         manifest_schema_version="stage2-calibration-v2",
         normalization=norms,
+        normalization_source_record_ids=provenance,
         reference_point=reference,
-        created_at=datetime.now(UTC).isoformat(),
+        created_at=created_at,
         source_split=source_split,
         split=source_split,
     )
@@ -562,6 +784,15 @@ def write_calibration_artifact(
     return artifact
 
 
+def _expect_equal(field: str, expected: Any, observed: Any) -> None:
+    if expected != observed:
+        raise CalibrationMismatchError(
+            field,
+            expected=expected,
+            observed=observed,
+        )
+
+
 def assert_calibration_matches(
     artifact: CalibrationArtifact,
     control: ControlPlaneConfig,
@@ -569,39 +800,55 @@ def assert_calibration_matches(
     require_held_out_split: bool = False,
     run_manifest: dict[str, Any] | None = None,
 ) -> None:
+    """Compare every selection-relevant frozen field by value (fail closed)."""
     resolved = resolve_pareto_runtime(control, repo_root=_repo_root())
-    mismatches: list[str] = []
-    if artifact.source_split not in {"development"}:
-        mismatches.append("calibration_not_sourced_from_development")
+    if artifact.source_split != "development":
+        raise CalibrationMismatchError(
+            "source_split",
+            expected="development",
+            observed=artifact.source_split,
+        )
     if require_held_out_split:
         if run_manifest is None:
-            mismatches.append("missing_run_manifest_for_heldout_gate")
-        else:
-            run_split = str(run_manifest.get("split") or "")
-            if run_split != "heldout":
-                mismatches.append(f"target_run_not_heldout(split={run_split!r})")
-    if artifact.control_plane_hash != resolved.control_plane_hash:
-        mismatches.append("control_plane_hash")
-    if artifact.preference_hash != resolved.preference_hash:
-        mismatches.append("preference_hash")
-    if artifact.objective_hash != resolved.objective_hash:
-        mismatches.append("objective_hash")
-    if artifact.pricing_version != resolved.pricing_version:
-        mismatches.append("pricing_version")
-    expected_objectives = {
-        name: direction.value
-        for name, direction in resolved.pareto_config.objectives.items()
-    }
-    if artifact.objectives != expected_objectives:
-        mismatches.append("objectives")
-    if artifact.objective_directions and artifact.objective_directions != expected_objectives:
-        mismatches.append("objective_directions")
-    for name in expected_objectives:
-        if name not in (artifact.normalization or {}):
-            mismatches.append(f"missing_normalization:{name}")
+            raise CalibrationMismatchError(
+                "run_manifest",
+                expected="heldout run_manifest",
+                observed=None,
+            )
+        run_split = str(run_manifest.get("split") or "")
+        if run_split != "heldout":
+            raise CalibrationMismatchError(
+                "target_split",
+                expected="heldout",
+                observed=run_split,
+            )
+
+    seed = 42
+    if run_manifest is not None:
+        seed = int(
+            ((run_manifest.get("experiment") or {}).get("seed"))
+            or ((run_manifest.get("stage2") or {}).get("seed"))
+            or seed
+        )
+    expected_identity = _selection_identity_from_resolved(
+        resolved,
+        seed=seed if run_manifest is not None else int(
+            (artifact.seed_policy or {}).get("seed") or 42
+        ),
+        git_sha=artifact.git_sha,
+        config_hash=artifact.config_hash,
+        benchmark_manifest_hash=artifact.benchmark_manifest_hash,
+        source_split=artifact.source_split,
+        source_run_id=artifact.source_run_id,
+        source_manifest_hash=artifact.source_manifest_hash,
+        private_data_policy=artifact.private_data_policy,
+        public_evaluator_id=artifact.public_evaluator_id,
+        public_evaluator_version=artifact.public_evaluator_version,
+        dataset_identity=dict(artifact.dataset_identity or {}),
+        dataset_split_identity=dict(artifact.dataset_split_identity or {}),
+    )
+    # Always recompute selection-relevant hashes from current control plane.
     catalog_hash = _stable_hash(resolved.candidate_catalog.model_dump(mode="json"))
-    if artifact.candidate_catalog_hash and artifact.candidate_catalog_hash != catalog_hash:
-        mismatches.append("candidate_catalog_hash")
     pricing_path = Path(resolved.pricing_registry)
     if not pricing_path.is_absolute():
         pricing_path = _repo_root() / pricing_path
@@ -610,45 +857,213 @@ def assert_calibration_matches(
         if pricing_path.exists()
         else ""
     )
-    if (
-        artifact.pricing_registry_hash
-        and pricing_hash
-        and artifact.pricing_registry_hash != pricing_hash
-    ):
-        mismatches.append("pricing_registry_hash")
-    if (
-        artifact.preference_profile_id
-        and artifact.preference_profile_id != resolved.preference_profile.profile_id
-    ):
-        mismatches.append("preference_profile_id")
-    if artifact.public_evaluator_version and artifact.public_evaluator_version != (
-        "public-harness-v1"
-    ):
-        mismatches.append("evaluator_version")
-    if run_manifest is not None:
-        if (
-            artifact.graph_catalog_hash
-            and run_manifest.get("graph_catalog_hash")
-            and artifact.graph_catalog_hash != run_manifest.get("graph_catalog_hash")
-            and artifact.resolved_graph_hash != run_manifest.get("graph_catalog_hash")
-        ):
-            # Only fail when both sides present and disagree with resolved hash too.
-            if artifact.resolved_graph_hash and artifact.resolved_graph_hash != str(
-                run_manifest.get("graph_catalog_hash")
-            ):
-                mismatches.append("graph_catalog_hash")
-        if (
-            artifact.benchmark_manifest_hash
-            and run_manifest.get("manifest_hash")
-            and artifact.benchmark_manifest_hash != run_manifest.get("manifest_hash")
-        ):
-            mismatches.append("benchmark_manifest_hash")
-    if mismatches:
-        raise RuntimeError(
-            "frozen calibration mismatch: refusing held-out reporting "
-            f"(mismatches={mismatches}; artifact={artifact.control_plane_hash}; "
-            f"current={resolved.control_plane_hash})"
+    expected_objectives = {
+        name: direction.value
+        for name, direction in resolved.pareto_config.objectives.items()
+    }
+    _expect_equal(
+        "schema_version",
+        "stage2-calibration-v2",
+        artifact.schema_version,
+    )
+    _expect_equal(
+        "control_plane_hash",
+        resolved.control_plane_hash,
+        artifact.control_plane_hash,
+    )
+    _expect_equal(
+        "preference_hash", resolved.preference_hash, artifact.preference_hash
+    )
+    _expect_equal(
+        "objective_hash", resolved.objective_hash, artifact.objective_hash
+    )
+    _expect_equal(
+        "pricing_version", resolved.pricing_version, artifact.pricing_version
+    )
+    _expect_equal(
+        "pricing_registry_hash", pricing_hash, artifact.pricing_registry_hash
+    )
+    _expect_equal(
+        "candidate_catalog_hash", catalog_hash, artifact.candidate_catalog_hash
+    )
+    _expect_equal(
+        "preference_profile_id",
+        resolved.preference_profile.profile_id,
+        artifact.preference_profile_id,
+    )
+    _expect_equal(
+        "preference_profile",
+        expected_identity["preference_profile"],
+        artifact.preference_profile,
+    )
+    _expect_equal("objectives", expected_objectives, artifact.objectives)
+    _expect_equal(
+        "objective_directions",
+        expected_objectives,
+        artifact.objective_directions or artifact.objectives,
+    )
+    _expect_equal(
+        "objective_required",
+        {name: True for name in expected_objectives},
+        artifact.objective_required or {name: True for name in artifact.objectives},
+    )
+    _expect_equal(
+        "backend_model_settings",
+        expected_identity["backend_model_settings"],
+        artifact.backend_model_settings,
+    )
+    _expect_equal(
+        "backend_kinds", expected_identity["backend_kinds"], artifact.backend_kinds
+    )
+    _expect_equal(
+        "model_identifiers",
+        expected_identity["model_identifiers"],
+        artifact.model_identifiers,
+    )
+    _expect_equal(
+        "seed_policy", expected_identity["seed_policy"], artifact.seed_policy
+    )
+    _expect_equal(
+        "selection_config_hash",
+        expected_identity["selection_config_hash"],
+        artifact.selection_config_hash,
+    )
+    _expect_equal(
+        "graph_catalog_hash",
+        expected_identity["graph_catalog_hash"],
+        artifact.graph_catalog_hash,
+    )
+    _expect_equal(
+        "resolved_graph_hash",
+        expected_identity["resolved_graph_hash"],
+        artifact.resolved_graph_hash,
+    )
+    if not artifact.git_sha:
+        raise CalibrationMismatchError(
+            "git_sha", expected="non-empty", observed=artifact.git_sha
         )
+    if not artifact.config_hash and not artifact.selection_config_hash:
+        raise CalibrationMismatchError(
+            "config_hash",
+            expected="non-empty config_hash or selection_config_hash",
+            observed=artifact.config_hash,
+        )
+    if not artifact.source_run_id:
+        raise CalibrationMismatchError(
+            "source_run_id", expected="non-empty", observed=artifact.source_run_id
+        )
+    if not artifact.source_manifest_hash:
+        raise CalibrationMismatchError(
+            "source_manifest_hash",
+            expected="non-empty",
+            observed=artifact.source_manifest_hash,
+        )
+    _expect_equal(
+        "private_data_policy",
+        artifact.private_data_policy,
+        artifact.private_data_policy,
+    )
+    if not artifact.private_data_policy:
+        raise CalibrationMismatchError(
+            "private_data_policy",
+            expected="non-empty",
+            observed=artifact.private_data_policy,
+        )
+    if not artifact.public_evaluator_id:
+        raise CalibrationMismatchError(
+            "public_evaluator_id",
+            expected="non-empty",
+            observed=artifact.public_evaluator_id,
+        )
+    if not artifact.public_evaluator_version:
+        raise CalibrationMismatchError(
+            "public_evaluator_version",
+            expected="non-empty",
+            observed=artifact.public_evaluator_version,
+        )
+
+    for name in expected_objectives:
+        entry = (artifact.normalization or {}).get(name)
+        if not entry:
+            raise CalibrationMismatchError(
+                f"normalization.{name}",
+                expected="present development-derived range",
+                observed=None,
+            )
+        lo = _finite_float(entry.get("min"))
+        hi = _finite_float(entry.get("max"))
+        if lo is None or hi is None:
+            raise CalibrationMismatchError(
+                f"normalization.{name}",
+                expected="finite min/max",
+                observed=entry,
+            )
+        if hi < lo:
+            raise CalibrationMismatchError(
+                f"normalization.{name}",
+                expected="max >= min",
+                observed=entry,
+            )
+        ids = list(
+            entry.get("source_record_ids")
+            or (artifact.normalization_source_record_ids or {}).get(name)
+            or []
+        )
+        if not ids:
+            raise CalibrationMismatchError(
+                f"normalization_source_record_ids.{name}",
+                expected="non-empty provenance ids",
+                observed=ids,
+            )
+        # Reject fabricated fixture/default ranges with no provenance chain.
+        if entry.get("fabricated") or entry.get("fallback_default"):
+            raise CalibrationMismatchError(
+                f"normalization.{name}",
+                expected="development-derived",
+                observed=entry,
+            )
+
+    if run_manifest is not None:
+        # Compare selection-relevant identity fields present on both sides.
+        for field, art_key, man_key in (
+            ("resolved_graph_hash", "resolved_graph_hash", "resolved_graph_hash"),
+            ("graph_catalog_hash", "graph_catalog_hash", "graph_catalog_hash"),
+            ("benchmark_manifest_hash", "benchmark_manifest_hash", "manifest_hash"),
+            ("git_sha", "git_sha", "git_sha"),
+            ("config_hash", "config_hash", "control_plane_hash"),
+            # dataset_split_identity is frozen on the development calibration
+            # artifact; held-out targets intentionally differ by split.
+            ("private_data_policy", "private_data_policy", "private_data_policy"),
+            ("public_evaluator_id", "public_evaluator_id", "public_evaluator_id"),
+            (
+                "public_evaluator_version",
+                "public_evaluator_version",
+                "public_evaluator_version",
+            ),
+            ("backend_kinds", "backend_kinds", "backend_kinds"),
+            ("model_identifiers", "model_identifiers", "model_identifiers"),
+            (
+                "backend_model_settings",
+                "backend_model_settings",
+                "backend_model_settings",
+            ),
+            ("seed_policy", "seed_policy", "seed_policy"),
+        ):
+            observed = run_manifest.get(man_key)
+            expected = getattr(artifact, art_key, None)
+            if observed in (None, "", {}, []) or expected in (None, "", {}, []):
+                continue
+            if _canonical_json(expected) != _canonical_json(observed):
+                raise CalibrationMismatchError(
+                    field, expected=expected, observed=observed
+                )
+        # Always enforce split identity for held-out targets.
+        if require_held_out_split:
+            _expect_equal(
+                "target_split",
+                "heldout",
+                str(run_manifest.get("split") or ""),
+            )
 
 
 def assert_run_split_for_held_out(run_dir: Path) -> dict[str, Any]:
@@ -718,8 +1133,73 @@ def _realized_objectives_for_decision(
     return {"quality": None, "cost": None, "latency": None}
 
 
+def _load_canonical_checkpoint(run_dir: Path) -> dict[str, Any]:
+    """Load the canonical task checkpoint if present (shared evidence source)."""
+    tasks_dir = run_dir / "tasks"
+    if not tasks_dir.exists():
+        return {}
+    # Prefer task_execution.json (full state), then any *checkpoint*.json.
+    candidates = sorted(tasks_dir.rglob("task_execution.json"))
+    if not candidates:
+        candidates = sorted(tasks_dir.rglob("*checkpoint*.json"))
+    if not candidates:
+        return {}
+    try:
+        return _read_json(candidates[0])
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _usage_records_from_checkpoint(checkpoint: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = checkpoint.get("backend_usage_records") or []
+    out: list[dict[str, Any]] = []
+    for item in raw:
+        if hasattr(item, "model_dump"):
+            out.append(item.model_dump(mode="json"))
+        elif isinstance(item, dict):
+            out.append(item)
+    return out
+
+
+def _sum_available_cost(usage_records: list[dict[str, Any]]) -> float | None:
+    total = 0.0
+    any_available = False
+    for rec in usage_records:
+        cost = rec.get("estimated_cost_usd")
+        if cost is None:
+            continue
+        number = _finite_float(cost)
+        if number is None:
+            continue
+        total += number
+        any_available = True
+    return total if any_available else None
+
+
+def _unique_recovery_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Deduplicate by recovery_id; ignore incarnation-only markers without reclaim."""
+    seen: set[str] = set()
+    unique: list[dict[str, Any]] = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        rid = event.get("recovery_id")
+        if not rid:
+            # Legacy markers without recovery_id do not count as recoveries.
+            continue
+        if rid in seen:
+            continue
+        seen.add(str(rid))
+        unique.append(event)
+    return unique
+
+
 def collect_run_records(run_dir: Path) -> dict[str, Any]:
-    """Build report inputs from durable artifacts (never console output)."""
+    """Build report inputs from durable artifacts (never console output).
+
+    Production, fixture, resume, and reporting share one canonical evidence path:
+    run manifest + checkpoint/task state + append-only pareto stores.
+    """
     run_dir = Path(run_dir)
     manifest = {}
     if (run_dir / "run_manifest.json").exists():
@@ -733,12 +1213,25 @@ def collect_run_records(run_dir: Path) -> dict[str, Any]:
         if (run_dir / name).exists():
             summary = _read_json(run_dir / name)
             break
+    checkpoint = _load_canonical_checkpoint(run_dir)
+    usage_records = _usage_records_from_checkpoint(checkpoint)
+    if not usage_records and summary.get("usage_records"):
+        # Summary may embed usage when checkpoint layout differs.
+        embedded = summary.get("usage_records")
+        if isinstance(embedded, list):
+            usage_records = [u for u in embedded if isinstance(u, dict)]
     decisions: list[dict[str, Any]] = []
     decisions_path = run_dir / "pareto" / "decisions.jsonl"
     if decisions_path.exists():
         for line in decisions_path.read_text(encoding="utf-8").splitlines():
             if line.strip():
                 decisions.append(json.loads(line))
+    if not decisions and checkpoint.get("pareto_state"):
+        hist = (checkpoint.get("pareto_state") or {}).get("decision_history") or []
+        pending = (checkpoint.get("pareto_state") or {}).get("pending_decision")
+        decisions = list(hist)
+        if pending:
+            decisions.append(pending)
     traces: list[dict[str, Any]] = []
     traces_path = run_dir / "pareto" / "search_traces.jsonl"
     if traces_path.exists():
@@ -756,10 +1249,84 @@ def collect_run_records(run_dir: Path) -> dict[str, Any]:
         raw_rec = _read_json(run_dir / "recovery_events.json")
         if isinstance(raw_rec, list):
             recovery_events = raw_rec
+    if not recovery_events:
+        recovery_events = list(checkpoint.get("scheduler_recovery_events") or [])
+    if not recovery_events and summary.get("scheduler_recovery_events"):
+        recovery_events = list(summary.get("scheduler_recovery_events") or [])
+    recovery_events = _unique_recovery_events(recovery_events)
+    usage_ids = sorted(
+        {
+            str(u.get("usage_id"))
+            for u in usage_records
+            if u.get("usage_id")
+        }
+    )
+    total_cost = _sum_available_cost(usage_records)
+    phase_costs: dict[str, float | None] = {}
+    for phase in (
+        "pre_activation",
+        "control_plane",
+        "post_activation",
+        "recovery",
+        "historical",
+    ):
+        phase_costs[phase] = _sum_available_cost(
+            [u for u in usage_records if str(u.get("phase") or "") == phase]
+        )
+    # Evidence-derived overrides for report fields when summary is incomplete.
+    evidence_summary = dict(summary)
+    if total_cost is not None:
+        evidence_summary.setdefault("total_cost_usd", total_cost)
+        solved = evidence_summary.get("solved_task_count")
+        if solved is None:
+            committed = evidence_summary.get("committed") or []
+            # Root-task denominator: one task when any commit succeeded.
+            solved = 1 if committed else 0
+            evidence_summary.setdefault("solved_task_count", solved)
+        if solved and int(solved) > 0:
+            evidence_summary.setdefault(
+                "cost_per_solved", total_cost / float(int(solved))
+            )
+        evidence_summary.setdefault(
+            "cost_provenance", "persisted_usage_estimated_cost_usd"
+        )
+    evidence_summary.setdefault("usage_record_count", len(usage_records))
+    evidence_summary.setdefault("usage_ids", usage_ids)
+    evidence_summary.setdefault("restart_recovery_counts", len(recovery_events))
+    evidence_summary.setdefault(
+        "recovery_ids",
+        sorted({str(e.get("recovery_id")) for e in recovery_events if e.get("recovery_id")}),
+    )
+    if checkpoint.get("active_plan_revision_id"):
+        evidence_summary.setdefault(
+            "active_plan_revision_id", checkpoint.get("active_plan_revision_id")
+        )
+    m5_revisions = evidence_summary.get("m5_revision_count")
+    if m5_revisions is None:
+        revisions = checkpoint.get("plan_revision_history") or []
+        applied = [
+            r
+            for r in revisions
+            if str(
+                (r.get("status") if isinstance(r, dict) else getattr(r, "status", ""))
+                or ""
+            )
+            .lower()
+            .endswith("applied")
+        ]
+        evidence_summary["m5_revision_count"] = len(applied)
+    wave_records = list(checkpoint.get("scheduler_wave_records") or [])
+    public_evals = list(checkpoint.get("public_evaluation_records") or [])
     return {
         "run_dir": str(run_dir),
         "manifest": manifest,
-        "summary": summary,
+        "summary": evidence_summary,
+        "checkpoint": checkpoint,
+        "usage_records": usage_records,
+        "usage_ids": usage_ids,
+        "phase_costs": phase_costs,
+        "public_evaluation_records": public_evals,
+        "scheduler_wave_records": wave_records,
         "decisions": decisions,
         "traces": traces,
         "estimated_archive": estimated,
@@ -925,23 +1492,51 @@ def write_stage2_report(
                     "plan_revision": d.get("activated_revision_id")
                     or summary.get("active_plan_revision_id"),
                     "activation_revision": d.get("activated_revision_id"),
+                    "wave_id": d.get("affected_wave_id"),
                     "realization_id": d.get("realization_id"),
                     "objective_name": "multi",
+                    "estimated_value_quality": _objective_value(objs.get("quality")),
+                    "estimated_value_cost": _objective_value(objs.get("cost")),
+                    "estimated_value_latency": _objective_value(objs.get("latency")),
                     "quality_est": _objective_value(objs.get("quality")),
                     "cost_est": _objective_value(objs.get("cost")),
                     "latency_est": _objective_value(objs.get("latency")),
+                    "realized_value_quality": realized_vals.get("quality"),
+                    "realized_value_cost": realized_vals.get("cost"),
+                    "realized_value_latency": realized_vals.get("latency"),
                     "quality_real": realized_vals.get("quality"),
                     "cost_real": realized_vals.get("cost"),
                     "latency_real": realized_vals.get("latency"),
+                    "estimated_availability_quality": (objs.get("quality") or {}).get(
+                        "available"
+                    ),
+                    "estimated_availability_cost": (objs.get("cost") or {}).get(
+                        "available"
+                    ),
+                    "estimated_availability_latency": (objs.get("latency") or {}).get(
+                        "available"
+                    ),
                     "quality_est_available": (objs.get("quality") or {}).get("available"),
                     "cost_est_available": (objs.get("cost") or {}).get("available"),
                     "latency_est_available": (objs.get("latency") or {}).get("available"),
+                    "realized_availability_quality": realized_vals.get("quality")
+                    is not None,
+                    "realized_availability_cost": realized_vals.get("cost") is not None,
+                    "realized_availability_latency": realized_vals.get("latency")
+                    is not None,
                     "quality_real_available": realized_vals.get("quality") is not None,
                     "cost_real_available": realized_vals.get("cost") is not None,
                     "latency_real_available": realized_vals.get("latency") is not None,
+                    "unit_quality": "normalized_score",
+                    "unit_cost": "usd",
+                    "unit_latency": "seconds",
                     "quality_units": "normalized_score",
                     "cost_units": "usd",
                     "latency_units": "seconds",
+                    "estimated_provenance": (objs.get("quality") or {}).get("detail")
+                    or "persisted_estimated_objectives",
+                    "realized_provenance": d.get("realization_status")
+                    or "persisted_realized_archive",
                     "estimator_provenance": (objs.get("quality") or {}).get("detail")
                     or "persisted_estimated_objectives",
                     "realization_provenance": d.get("realization_status")
@@ -949,6 +1544,9 @@ def write_stage2_report(
                     "direction_quality": "maximize",
                     "direction_cost": "minimize",
                     "direction_latency": "minimize",
+                    "normalization_metadata": (
+                        calibration.normalization if calibration else {}
+                    ),
                     "censoring_state": d.get("realization_status") or "",
                     "metric_provenance": "persisted_pareto_archives",
                     "evaluation_kind": est_kind,
@@ -1095,11 +1693,18 @@ def write_stage2_report(
                 "archive_frontier_size": sum(len(v) for v in complete_map.values()),
                 "m5_revision_count": revisions,
                 "control_plane_cost_usd": summary.get("control_plane_cost_usd", ""),
-                "restart_recovery_counts": (
-                    len(rec.get("recovery_events") or [])
-                    if rec.get("recovery_events") is not None
-                    else summary.get("restart_recovery_counts", 0)
+                "restart_recovery_counts": len(rec.get("recovery_events") or []),
+                "recovery_ids": ",".join(
+                    sorted(
+                        {
+                            str(e.get("recovery_id"))
+                            for e in (rec.get("recovery_events") or [])
+                            if e.get("recovery_id")
+                        }
+                    )
                 ),
+                "usage_record_count": len(rec.get("usage_records") or []),
+                "usage_ids": ",".join(rec.get("usage_ids") or []),
                 "solved_task_count": summary.get("solved_task_count", ""),
                 "split": manifest.get("split") or summary.get("split") or "",
                 "label": "online_policy",
@@ -1187,6 +1792,7 @@ def write_stage2_report(
             "context_id",
             "plan_revision",
             "activation_revision",
+            "wave_id",
             "realization_id",
             "quality_est",
             "cost_est",
@@ -1200,11 +1806,28 @@ def write_stage2_report(
             "quality_real_available",
             "cost_real_available",
             "latency_real_available",
+            "estimated_value_quality",
+            "estimated_value_cost",
+            "estimated_value_latency",
+            "realized_value_quality",
+            "realized_value_cost",
+            "realized_value_latency",
+            "estimated_availability_quality",
+            "estimated_availability_cost",
+            "estimated_availability_latency",
+            "realized_availability_quality",
+            "realized_availability_cost",
+            "realized_availability_latency",
             "quality_units",
             "cost_units",
             "latency_units",
+            "unit_quality",
+            "unit_cost",
+            "unit_latency",
             "estimator_provenance",
             "realization_provenance",
+            "estimated_provenance",
+            "realized_provenance",
             "direction_quality",
             "direction_cost",
             "direction_latency",

@@ -1,0 +1,11 @@
+{
+  "schema_version": "private-labels-v1",
+  "artifact_id": "private_labels_a",
+  "tasks": {
+    "stage2-fixture": {
+      "private_score": 0.11,
+      "private_label": "fail_soft",
+      "notes": "synthetic private labels A — must not affect online control"
+    }
+  }
+}

@@ -43,7 +43,7 @@ from orchestra.control.scheduling_effect import (
     effective_concurrency,
 )
 from orchestra.control.slow_loop.schemas import TaskSchedulingPolicy
-from orchestra.control.task_state import SubtaskStatus, TaskExecutionState
+from orchestra.control.task_state import SubtaskAttempt, SubtaskStatus, TaskExecutionState
 from orchestra.decomposition.schemas import BudgetSpec, SubtaskSpec, TaskPlan
 from orchestra.experiments.metadata import git_commit_hash
 from orchestra.ir.artifacts import ArtifactBundle, create_artifact
@@ -202,6 +202,7 @@ async def run_stage2_fixture(
     output_root: str | Path | None = None,
     run_id: str | None = None,
     failpoint: str | None = None,
+    private_labels_path: str | Path | None = None,
 ) -> dict[str, Any]:
     repo_root = _repo_root()
     raw = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
@@ -234,18 +235,10 @@ async def run_stage2_fixture(
         plan_content_hash=plan.content_hash(),
         allow_config_drift=True,
     )
-    recovery_events: list[dict[str, Any]] = []
     if loaded is not None:
         state = loaded
-        recovery_events.append(
-            {
-                "event": "resume_from_checkpoint",
-                "active_plan_revision_id": state.active_plan_revision_id,
-                "state_version": state.state_version,
-                "scheduler_incarnation": state.scheduler_incarnation,
-                "at": datetime.now(UTC).isoformat(),
-            }
-        )
+        # Resume marker is diagnostic only; canonical recovery counts come from
+        # scheduler_recovery_events with recovery_id (emitted only on reclaim).
     else:
         state = TaskExecutionState.from_plan(
             plan, artifact_store_ref=str(run_dir / "artifacts")
@@ -265,37 +258,47 @@ async def run_stage2_fixture(
         state.backend_usage_records = [
             BackendUsageRecord(
                 usage_id="hist-codex",
+                run_id=rid,
                 task_id=plan.task_id,
                 subtask_id="seed",
                 node_id="n1",
                 backend_id="codex_sdk",
+                backend_kind="codex_sdk",
                 attempt_id=1,
                 started_at=now,
                 finished_at=now,
                 latency_seconds=FIXTURE_SUBTASK_DURATIONS["s1"],
                 prompt_tokens=40,
                 completion_tokens=12,
+                total_tokens=52,
                 estimated_cost_usd=0.03,
                 cost_quality="exact",
                 accounting_source="hist",
+                phase="historical",
+                provenance="fixture_seed_history",
                 status="success",
                 model_name="fake-test-model",
             ),
             BackendUsageRecord(
                 usage_id="hist-smol",
+                run_id=rid,
                 task_id=plan.task_id,
                 subtask_id="seed",
                 node_id="n2",
                 backend_id="smolagents_code",
+                backend_kind="smolagents_code",
                 attempt_id=1,
                 started_at=now,
                 finished_at=now,
                 latency_seconds=0.08,
                 prompt_tokens=20,
                 completion_tokens=8,
+                total_tokens=28,
                 estimated_cost_usd=0.008,
                 cost_quality="exact",
                 accounting_source="hist",
+                phase="historical",
+                provenance="fixture_seed_history",
                 status="success",
                 model_name="fake-test-model",
             ),
@@ -392,23 +395,54 @@ async def run_stage2_fixture(
         live.final_output_artifact_id = art.artifact_id
         live.communication_block_reason = None
         started_at = datetime.now(UTC)
-        snapshot.backend_usage_records.append(
-            BackendUsageRecord(
-                usage_id=f"wave-{sid}-{snapshot.state_version}",
-                task_id=plan.task_id,
-                subtask_id=sid,
-                node_id=f"n-{sid}",
-                backend_id="codex_sdk",
-                attempt_id=1,
+        # Stable usage identity: lease-scoped so resume re-execution after reclaim
+        # gets a new id, while exact-once merge still deduplicates identical ids.
+        lease_token = live.lease_id or (
+            f"inc{snapshot.scheduler_incarnation}-a{len(live.attempts) + 1}"
+        )
+        usage = BackendUsageRecord(
+            usage_id=f"wave-{sid}-{lease_token}",
+            run_id=rid,
+            task_id=plan.task_id,
+            subtask_id=sid,
+            node_id=f"n-{sid}",
+            backend_id="codex_sdk",
+            backend_kind="codex_sdk",
+            attempt_id=max(1, len(live.attempts) + 1),
+            started_at=started_at,
+            finished_at=started_at,
+            latency_seconds=duration,
+            prompt_tokens=8,
+            completion_tokens=4,
+            total_tokens=12,
+            estimated_cost_usd=0.01,
+            cost_quality="exact",
+            accounting_source="wave",
+            phase=(
+                "post_activation"
+                if snapshot.active_plan_revision_id
+                else "pre_activation"
+            ),
+            plan_revision=snapshot.active_plan_revision_id,
+            wave_id=snapshot.current_wave_id,
+            scheduler_incarnation=snapshot.scheduler_incarnation,
+            provenance="fixture_wave_stub",
+            status="success",
+            model_name="fake-test-model",
+        )
+        # Must return via backend_usage_append so the coordinator merges into
+        # the canonical checkpoint (snapshot mutations alone are discarded).
+        live.attempts.append(
+            SubtaskAttempt(
+                attempt_id=max(1, len(live.attempts) + 1),
+                status=SubtaskStatus.AWAITING_CANONICAL_COMMIT,
                 started_at=started_at,
                 finished_at=started_at,
-                latency_seconds=duration,
-                prompt_tokens=8,
-                completion_tokens=4,
-                estimated_cost_usd=0.01,
-                cost_quality="exact",
-                accounting_source="wave",
-                status="success",
+                lease_id=live.lease_id,
+                wave_id=snapshot.current_wave_id,
+                execution_plan_revision=snapshot.active_plan_revision_id,
+                scheduler_incarnation=snapshot.scheduler_incarnation,
+                usage_ids=[usage.usage_id],
             )
         )
         wave_records.append(
@@ -421,10 +455,15 @@ async def run_stage2_fixture(
                 "runtime_concurrency_cap": runtime_cap,
                 "effective_concurrency": eff,
                 "active_plan_revision_id": snapshot.active_plan_revision_id,
+                "wave_id": snapshot.current_wave_id,
                 "state_version": snapshot.state_version,
             }
         )
         if failpoint == "after_future_wave_started" and sid in {"s2", "s3"}:
+            # Crash after the wave is leased. Do not retain usage for incomplete
+            # work — resume reclaims the lease and records usage on completion.
+            snap_sub = snapshot.subtasks[sid]
+            snap_sub.attempts = list(live.attempts)
             await ckpt.save(snapshot)
             raise RuntimeError("FAILPOINT:after_future_wave_started")
         return SubtaskExecutionResult(
@@ -434,6 +473,7 @@ async def run_stage2_fixture(
             produced_artifacts=[art],
             execution_status=SubtaskExecutionStatus.SUCCESS_PENDING_COMMIT,
             candidate_harness_passed=True,
+            backend_usage_append=[usage],
         )
 
     sched._run_subtask_isolated = _stub_run  # type: ignore[method-assign]
@@ -492,7 +532,9 @@ async def run_stage2_fixture(
                         "failpoint": failpoint,
                         "error": str(exc),
                         "wave_records": wave_records,
-                        "recovery_events": recovery_events,
+                        "recovery_events": list(
+                            getattr(state, "scheduler_recovery_events", None) or []
+                        ),
                     },
                     indent=2,
                     sort_keys=True,
@@ -619,18 +661,26 @@ async def run_stage2_fixture(
         "fork_wave_effective_concurrency": fork_eff,
         "wave_records": wave_records,
         "concurrent_fork_wave": concurrent_fork,
-        "recovery_events": recovery_events,
+        "recovery_events": list(out.scheduler_recovery_events or []),
         "scheduler_recovery_events": list(out.scheduler_recovery_events or []),
+        "scheduler_wave_records": [
+            w.model_dump(mode="json") if hasattr(w, "model_dump") else w
+            for w in (out.scheduler_wave_records or [])
+        ],
         "fixture_subtask_durations_seconds": FIXTURE_SUBTASK_DURATIONS,
         "fixture_latency_label": "fixture_estimate_not_real_model",
     }
     (run_dir / "concurrency_evidence.json").write_text(
         json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
-    all_recovery = list(recovery_events) + list(out.scheduler_recovery_events or [])
-    if all_recovery:
+    recovery_ids = {
+        e.get("recovery_id")
+        for e in (out.scheduler_recovery_events or [])
+        if isinstance(e, dict) and e.get("recovery_id")
+    }
+    if out.scheduler_recovery_events:
         (run_dir / "recovery_events.json").write_text(
-            json.dumps(all_recovery, indent=2, sort_keys=True) + "\n",
+            json.dumps(out.scheduler_recovery_events, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
 
@@ -655,7 +705,6 @@ async def run_stage2_fixture(
     cost_per_solved_task = (
         usage_cost / solved_task_count if solved_task_count > 0 else None
     )
-    all_recovery = list(recovery_events) + list(out.scheduler_recovery_events or [])
     summary = {
         "mode": mode,
         "run_dir": str(run_dir),
@@ -697,14 +746,41 @@ async def run_stage2_fixture(
         "communication_overhead": None,
         "difficulty": "fixture",
         "hidden_pass_at_1": "",
-        "restart_recovery_counts": len(all_recovery),
+        "restart_recovery_counts": len(recovery_ids),
+        "recovery_ids": sorted(recovery_ids),
         "control_plane_hash": resolved.control_plane_hash,
         "scheduler_path": "ReadySubtaskScheduler",
         "scheduler_incarnation": out.scheduler_incarnation,
         "fixture_latency_label": "fixture_estimate_not_real_model",
         "cost_provenance": "persisted_usage_estimated_cost_usd",
         "public_evaluation_count": len(out.public_evaluation_records or []),
+        "usage_record_count": len(out.backend_usage_records or []),
+        "usage_ids": sorted(
+            {
+                getattr(u, "usage_id", None) or u.get("usage_id")
+                for u in (out.backend_usage_records or [])
+                if getattr(u, "usage_id", None) or (isinstance(u, dict) and u.get("usage_id"))
+            }
+        ),
+        "private_labels_path": str(private_labels_path) if private_labels_path else None,
+        "offline_private_score": None,
     }
+    # Offline private-label read happens only after online control completes.
+    if private_labels_path is not None:
+        from orchestra.experiments.private_labels import (
+            load_private_labels,
+            project_offline_private_score,
+        )
+
+        labels = load_private_labels(
+            private_labels_path,
+            purpose="offline_post_execution_report",
+            allow_online=False,
+        )
+        summary["offline_private_score"] = project_offline_private_score(
+            labels, task_id="stage2-fixture"
+        )
+        summary["private_label_artifact_id"] = labels.get("artifact_id")
     (run_dir / "stage2_fixture_summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )

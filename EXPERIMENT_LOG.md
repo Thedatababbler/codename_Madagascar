@@ -10,9 +10,25 @@
 | Status | `canonical` (use for comparisons) / `smoke` / `mock` / `superseded` / `incomplete` |
 | Paths | Repo-relative from AdaMAS root |
 
-**Last updated:** 2026-08-03 (UTC) — M6.2 final correctness closure (uncommitted)
+**Last updated:** 2026-08-03 (UTC) — M6.2.1 evidence and report closure (uncommitted)
 
 ---
+
+### EXP-20260803-02 — M6.2.1 Evidence and Report Closure
+- **Status:** smoke / mock (fixtures + fully mocked backends only; no paid API,
+  no real LCB, no private/held-out inference)
+- **Date:** 2026-08-03 (UTC)
+- **Branch / commit:** `agnostic` @ start `175f98d` (local
+  `m621-evidence-report-closure`, uncommitted)
+- **Benchmark / phase:** development-only fail-closed calibration freeze;
+  complete frozen-field held-out validation; canonical checkpoint evidence for
+  reports; usage retention/merge; run-level scheduler ownership; exact recovery
+  counts; wave-bound realization; non-vacuous private-label isolation
+- **Baseline / graph:** starts from `175f98d`; no Codex hybrid changes; no new
+  Pareto objectives/candidate types; no protocol broadening
+- **Notes:** leave uncommitted until review. Fixture metrics are **not**
+  real-model evidence. Fixed-budget real M6 development experiments require
+  explicit authorization after this closure is green.
 
 ### EXP-20260803-01 — M6.2 Final Correctness Closure
 - **Status:** smoke / mock (fixtures + fully mocked backends only; no paid API,

@@ -234,10 +234,10 @@ uv run python -m orchestra.cli.stage2_pareto_experiments run-fixture \
   --config configs/experiments/stage2/m6_balanced_knee.yaml
 uv run python -m orchestra.cli.stage2_pareto_experiments freeze-calibration \
   --config configs/experiments/stage2/m6_balanced_knee.yaml \
-  --run-dir <fixture-run-dir> \
+  --run-dir <development-run-dir> \
   --output outputs/stage2_pareto/calibration/dev_calibration.json
 uv run python -m orchestra.cli.stage2_pareto_experiments report \
-  --run-dir <fixture-run-dir>
+  --run-dir <fixture-or-dev-run-dir>
 
 # Formal Codex three-subtask sample (M5 on; API-free CI path)
 uv run python -m orchestra.cli.run_lcb_codex_three_subtask \
@@ -248,12 +248,16 @@ Protocol: `docs/stage2_pareto_experiment_protocol.md`. Design:
 `docs/m6_pareto_orchestra_search.md`. Fixture results are not real-model gains.
 `--mock-backends` is the fully API-free override; `--mock-llm` is a compatibility alias.
 
-M6.2 final closure notes: production commits persist `PublicEvaluationRecord`s for
-Pareto quality; scheduler incarnations reclaim stale leases on resume; decisions
-finalize only after behavioral realization; run manifests carry typed
-`split=fixture|development|heldout` (held-out reporting never relabels); reports use
-task-level `cost_per_solved` and are byte-deterministic; synthetic formal runs resolve
-settings without mutating `LCB_REPOSITORY_PATH`.
+M6.2.1 evidence/report closure notes: `freeze-calibration` accepts
+`split=development` only (fixture/heldout refused; `source_split` is copied, never
+rewritten); normalization is derived only from persisted development evidence
+(constant-objective when min==max; no fabricated defaults); held-out reporting
+fail-closes on any selection-relevant frozen-field mismatch; production/fixture
+reports read complete canonical checkpoint usage; clean runs report zero
+recoveries and one crash/resume reports exactly one `recovery_id`; run-level
+`fcntl` ownership prevents a second live scheduler from reclaiming leases;
+realization requires a non-null `affected_wave_id` plus attempt execution
+revision evidence; private-label artifacts are offline-only.
 
 ## Stage 1 experiments
 

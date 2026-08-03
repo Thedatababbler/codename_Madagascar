@@ -103,15 +103,20 @@ split: fixture | development | heldout
 * `run-fixture` → `split=fixture`
 * Development runs → `split=development`
 * Held-out runs must explicitly persist `split=heldout`
-* `freeze-calibration` consumes development (synthetic fixture-as-dev allowed)
+* `freeze-calibration` accepts `split=development` only; fixture/heldout sources
+  are refused. `source_split` is copied from the persisted run (never rewritten).
+* Normalization ranges come only from finite development observations with
+  provenance record IDs. Missing evidence fails closed (no fabricated defaults).
+  When min==max, freeze a constant-objective entry (`min=max=value`).
 * `report --held-out` consumes held-out runs only; fixture/development are rejected
 * A report flag must never relabel a run’s persisted split
 
-Frozen calibration validates every selection-relevant field (hashes, objectives/
-directions, normalization for each required objective, preference, pricing,
-candidate/graph catalogs, backend/model settings, evaluator identity/version,
-benchmark manifest, dataset/split identity, private-data policy). Fail closed on
-any mismatch.
+Frozen calibration validates every selection-relevant field by value (hashes,
+objectives/directions/required status, normalization + provenance, preference,
+pricing, candidate/graph catalogs, backend/model settings, seed policy, evaluator
+identity/version, benchmark manifest, dataset/split identity, private-data
+policy, git/config hashes). Fail closed on any mismatch with a typed error naming
+the field and expected/observed values. No partial held-out report.
 
 * Public/development evidence may inform estimation and selection.
 * Held-out results are evaluation-only.
@@ -140,9 +145,12 @@ outputs/stage2_pareto/reports/
   pareto_quality_latency.svg
 ```
 
-Reports are built from run manifests, checkpoints, usage records, delivery
-ledgers, Pareto decisions, archives, and `search_traces.jsonl` — never from
-console output.
+Reports are built from one canonical evidence path shared by production, fixture,
+resume, and reporting: run manifest + task checkpoint (usage, waves, attempts,
+evaluations, recovery events) + append-only Pareto stores (`decisions.jsonl`,
+archives, `search_traces.jsonl`). Never from console output. Wave and resumed
+usage is retained via idempotent `usage_id` merge; missing tokens/cost stay
+unavailable (never coerced to zero).
 
 ## Cost-per-solved (task-level)
 
@@ -158,17 +166,28 @@ is unavailable (not 0 / infinity).
 
 Repeated report generation from identical persisted inputs is byte-identical for
 CSV/JSON/Markdown/SVG. Reports use persisted run `started_at` (never wall-clock
-`now`). Recovery counts come from persisted recovery events.
+`now`). Recovery counts come from unique persisted `recovery_id` values.
 
 ## Failure and restart semantics
 
 * Finalize a decision only when activation matches **and** the affected wave is
-  behaviorally realized (all affected subtasks terminal under that revision).
-* Resume reclaims stale leases via scheduler incarnation ownership.
-* Resume must not duplicate decisions, realization records, usage, evaluations,
-  or applied revisions.
-* Post-activation / mid-wave / post-realization failpoints exercise exact-once.
+  bound, terminal, and behaviorally realized under that revision.
+* Run-level `fcntl` ownership: a live scheduler cannot have its leases reclaimed
+  by another process; a dead owner’s stale leases can be reclaimed after transfer.
+* Resume must not duplicate decisions, realization records, wave bindings, usage,
+  evaluations, or applied revisions.
+* Post-activation / mid-wave / post-realization failpoints exercise exact-once
+  (`0` recovery on clean; `1` recovery per crash+resume that reconciles state).
+* Private-label artifacts are offline/post-execution only; online control must
+  never read them.
 * Pareto requested but runtime init failure → fail closed.
+
+### Remaining limitations
+
+* Deterministic fixtures and mocked backends do **not** claim real quality,
+  latency, cost, or recovery performance.
+* Real development / held-out inference remains out of scope until explicitly
+  authorized after M6.2.1 is green.
 
 ## Commands
 

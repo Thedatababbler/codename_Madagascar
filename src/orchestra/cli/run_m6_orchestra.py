@@ -339,17 +339,74 @@ async def _run(args: argparse.Namespace) -> int:
         getattr(r, "evaluation_id", None)
         for r in (state.public_evaluation_records or [])
     ]
+    usage_records = list(state.backend_usage_records or [])
+    usage_cost_values = [
+        float(r.estimated_cost_usd)
+        for r in usage_records
+        if getattr(r, "estimated_cost_usd", None) is not None
+    ]
+    total_cost = sum(usage_cost_values) if usage_cost_values else None
+    committed = [
+        sid for sid, sub in state.subtasks.items() if sub.status.value == "committed"
+    ]
+    solved_task_count = 1 if committed else 0
+    recovery_ids = sorted(
+        {
+            str(e.get("recovery_id"))
+            for e in (state.scheduler_recovery_events or [])
+            if isinstance(e, dict) and e.get("recovery_id")
+        }
+    )
+    usage_ids = sorted(
+        {
+            str(getattr(r, "usage_id", "") or "")
+            for r in usage_records
+            if getattr(r, "usage_id", None)
+        }
+    )
+    m5_revision_count = len(
+        [
+            r
+            for r in (state.plan_revision_history or [])
+            if str(getattr(getattr(r, "status", None), "value", getattr(r, "status", "")))
+            .lower()
+            .endswith("applied")
+        ]
+    )
+    affected_wave_id = None
+    activation_revision = None
+    if state.pareto_state is not None:
+        for d in list(state.pareto_state.decision_history or []):
+            if getattr(d, "affected_wave_id", None):
+                affected_wave_id = d.affected_wave_id
+            if getattr(d, "activated_revision_id", None):
+                activation_revision = d.activated_revision_id
+        pending = state.pareto_state.pending_decision
+        if pending is not None:
+            affected_wave_id = getattr(pending, "affected_wave_id", None) or affected_wave_id
+            activation_revision = (
+                getattr(pending, "activated_revision_id", None) or activation_revision
+            )
+    latencies = [
+        float(r.latency_seconds)
+        for r in usage_records
+        if getattr(r, "latency_seconds", None) is not None
+    ]
+    comm = [
+        float(r.communication_tokens)
+        for r in usage_records
+        if getattr(r, "communication_tokens", None) is not None
+    ]
     summary = {
         "run_dir": str(run_dir),
         "task_id": plan.task_id,
         "split": split,
         "pareto_enabled": resolved.pareto_config.enabled,
         "active_plan_revision_id": state.active_plan_revision_id,
-        "committed": [
-            sid
-            for sid, sub in state.subtasks.items()
-            if sub.status.value == "committed"
-        ],
+        "activation_revision": activation_revision,
+        "affected_wave_id": affected_wave_id,
+        "committed": committed,
+        "solved_task_count": solved_task_count,
         "decisions": (
             len(state.pareto_state.decision_history)
             if state.pareto_state is not None
@@ -363,7 +420,33 @@ async def _run(args: argparse.Namespace) -> int:
         "public_evaluation_count": len(state.public_evaluation_records or []),
         "public_evaluation_ids": [e for e in public_eval_ids if e],
         "scheduler_incarnation": state.scheduler_incarnation,
-        "recovery_event_count": len(state.scheduler_recovery_events or []),
+        "recovery_event_count": len(recovery_ids),
+        "restart_recovery_counts": len(recovery_ids),
+        "recovery_ids": recovery_ids,
+        "scheduler_recovery_events": list(state.scheduler_recovery_events or []),
+        "usage_record_count": len(usage_records),
+        "usage_ids": usage_ids,
+        "usage_records": [
+            r.model_dump(mode="json") if hasattr(r, "model_dump") else r
+            for r in usage_records
+        ],
+        "total_cost_usd": total_cost,
+        "avg_cost_usd": (
+            (total_cost / len(usage_cost_values)) if usage_cost_values else None
+        ),
+        "cost_per_solved": (
+            (total_cost / float(solved_task_count))
+            if total_cost is not None and solved_task_count > 0
+            else None
+        ),
+        "cost_provenance": "persisted_usage_estimated_cost_usd",
+        "wall_latency_s": sum(latencies) if latencies else None,
+        "communication_overhead": sum(comm) if comm else None,
+        "m5_revision_count": m5_revision_count,
+        "scheduler_wave_records": [
+            w.model_dump(mode="json") if hasattr(w, "model_dump") else w
+            for w in (state.scheduler_wave_records or [])
+        ],
         "control_plane_hash": resolved.control_plane_hash,
     }
     (run_dir / "m6_orchestra_summary.json").write_text(

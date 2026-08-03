@@ -1,0 +1,11 @@
+{
+  "schema_version": "private-labels-v1",
+  "artifact_id": "private_labels_b",
+  "tasks": {
+    "stage2-fixture": {
+      "private_score": 0.97,
+      "private_label": "pass_hard",
+      "notes": "synthetic private labels B — sufficiently different from A"
+    }
+  }
+}

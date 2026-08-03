@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -34,7 +35,11 @@ from orchestra.control.input_assembler import (
     SubtaskInputAssemblyError,
 )
 from orchestra.control.pareto.public_evaluation import record_commit_public_evaluations
-from orchestra.control.scheduler_recovery import acquire_lease, begin_scheduler_incarnation
+from orchestra.control.run_ownership import RunOwnership, RunOwnershipError
+from orchestra.control.scheduler_recovery import (
+    acquire_lease,
+    begin_scheduler_session,
+)
 from orchestra.control.slow_loop.controller import SlowLoopController
 from orchestra.control.slow_loop.evidence import active_block_evidence_key
 from orchestra.control.slow_loop.graph_materializer import FutureGraphMaterializer
@@ -48,6 +53,7 @@ from orchestra.control.slow_loop.task_budget import TaskBudgetTracker
 from orchestra.control.task_state import (
     BackendSessionRecord,
     GlobalUpdateRecord,
+    SchedulerWaveRecord,
     SubtaskAttempt,
     SubtaskFailureReason,
     SubtaskState,
@@ -329,6 +335,108 @@ class ReadySubtaskScheduler:
     def _ready_ids(self, state: TaskExecutionState) -> list[str]:
         return self._ordered_ready_candidates(state, apply_limit=True)
 
+    def _open_wave(
+        self,
+        *,
+        state: TaskExecutionState,
+        context: RunContext,
+        subtask_ids: list[str],
+        policy_concurrency: int,
+        effective_concurrency: int,
+    ) -> SchedulerWaveRecord:
+        wave_id = (
+            f"wave-{state.task_id}-inc{state.scheduler_incarnation}-"
+            f"v{state.state_version}-{'-'.join(subtask_ids)}"
+        )
+        decision_id = None
+        pending = getattr(getattr(state, "pareto_state", None), "pending_decision", None)
+        if (
+            pending is not None
+            and getattr(pending, "activated_revision_id", None)
+            == state.active_plan_revision_id
+            and state.active_plan_revision_id is not None
+        ):
+            decision_id = pending.decision_id
+            affected = list(pending.affected_subtask_ids or [])
+            if not affected:
+                affected = list(subtask_ids)
+            intersects = bool(set(subtask_ids) & set(affected))
+            existing_wave_id = getattr(pending, "affected_wave_id", None)
+            if intersects and not existing_wave_id:
+                # Bind the first eligible post-activation wave exactly once.
+                pending.affected_wave_id = wave_id
+                pending.affected_subtask_ids = sorted(set(affected) | set(subtask_ids))
+                pending.realization_evidence = {
+                    **dict(getattr(pending, "realization_evidence", None) or {}),
+                    "binding_status": "bound",
+                    "affected_wave_id": wave_id,
+                    "bound_subtask_ids": sorted(subtask_ids),
+                }
+            elif intersects and existing_wave_id:
+                # Crash/resume continuation: previous bound wave may still be
+                # non-terminal. Explicitly rebind to the recovery wave.
+                prev = None
+                for wave in state.scheduler_wave_records:
+                    wid = getattr(wave, "wave_id", None) or (
+                        wave.get("wave_id") if isinstance(wave, dict) else None
+                    )
+                    if wid == existing_wave_id:
+                        prev = wave
+                        break
+                prev_terminal = None
+                if prev is not None:
+                    prev_terminal = getattr(prev, "terminal_state", None) or (
+                        prev.get("terminal_state") if isinstance(prev, dict) else None
+                    )
+                if prev_terminal != "terminal":
+                    if isinstance(prev, SchedulerWaveRecord):
+                        prev.terminal_state = "interrupted_recovered"
+                    elif isinstance(prev, dict):
+                        prev["terminal_state"] = "interrupted_recovered"
+                    pending.affected_wave_id = wave_id
+                    pending.affected_subtask_ids = sorted(set(affected) | set(subtask_ids))
+                    pending.realization_evidence = {
+                        **dict(getattr(pending, "realization_evidence", None) or {}),
+                        "binding_status": "rebound_recovery_continuation",
+                        "previous_affected_wave_id": existing_wave_id,
+                        "affected_wave_id": wave_id,
+                        "bound_subtask_ids": sorted(subtask_ids),
+                    }
+        wave = SchedulerWaveRecord(
+            wave_id=wave_id,
+            run_id=str(getattr(context, "run_id", "") or state.task_id),
+            scheduler_incarnation=int(state.scheduler_incarnation),
+            plan_revision=state.active_plan_revision_id,
+            policy_concurrency=policy_concurrency,
+            runtime_cap=int(self.max_concurrent_subtasks),
+            effective_concurrency=effective_concurrency,
+            subtask_ids=list(subtask_ids),
+            started_at=datetime.now(UTC),
+            terminal_state="running",
+            decision_id=decision_id,
+        )
+        state.scheduler_wave_records.append(wave)
+        state.current_wave_id = wave_id
+        return wave
+
+    def _close_wave(self, state: TaskExecutionState, wave_id: str) -> None:
+        for idx, wave in enumerate(state.scheduler_wave_records):
+            wid = getattr(wave, "wave_id", None) or (
+                wave.get("wave_id") if isinstance(wave, dict) else None
+            )
+            if wid != wave_id:
+                continue
+            if isinstance(wave, SchedulerWaveRecord):
+                wave.completed_at = datetime.now(UTC)
+                wave.terminal_state = "terminal"
+                state.scheduler_wave_records[idx] = wave
+            elif isinstance(wave, dict):
+                wave["completed_at"] = datetime.now(UTC).isoformat()
+                wave["terminal_state"] = "terminal"
+            break
+        if state.current_wave_id == wave_id:
+            state.current_wave_id = None
+
     def _deps_failed(self, state: TaskExecutionState, subtask_id: str) -> bool:
         sub = state.subtasks[subtask_id]
         for dep in sub.spec.dependencies:
@@ -370,11 +478,41 @@ class ReadySubtaskScheduler:
                 max_concurrent_subtasks=self.max_concurrent_subtasks
             )
 
-        # New scheduler incarnation: reclaim stale leases from prior inactive owners.
-        begin_scheduler_incarnation(
+        # Exclusive run ownership: a second live scheduler must fail closed.
+        ownership = RunOwnership(
+            context.run_dir,
+            owner_id=f"{context.run_id}:{os.getpid()}",
+        )
+        try:
+            ownership.acquire()
+        except RunOwnershipError:
+            raise
+        try:
+            return await self._run_task_owned(
+                task_plan=task_plan,
+                state=state,
+                initial_artifacts=initial_artifacts,
+                context=context,
+                repo=repo,
+            )
+        finally:
+            ownership.release()
+
+    async def _run_task_owned(
+        self,
+        *,
+        task_plan: TaskPlan,
+        state: TaskExecutionState,
+        initial_artifacts: ArtifactBundle,
+        context: RunContext,
+        repo: str | None,
+    ) -> TaskExecutionState:
+        del task_plan
+        # New incarnation; recovery event only when interrupted state is reconciled.
+        begin_scheduler_session(
             state,
-            reason="run_task_start",
-            checkpoint_revision_id=state.active_plan_revision_id,
+            reason="resume_reclaim" if state.scheduler_incarnation else "run_task_start",
+            checkpoint_id=state.active_plan_revision_id,
         )
         state.state_version += 1
         await self.task_checkpoint_store.save(state)
@@ -411,12 +549,22 @@ class ReadySubtaskScheduler:
             leased = set(deliverable)
             for sid in leased:
                 acquire_lease(state, sid)
+            concurrency = self._effective_concurrency(state)
+            policy_conc = 1
+            if state.scheduling_policy is not None:
+                policy_conc = int(state.scheduling_policy.max_concurrent_subtasks)
+            wave = self._open_wave(
+                state=state,
+                context=context,
+                subtask_ids=sorted(leased),
+                policy_concurrency=policy_conc,
+                effective_concurrency=concurrency,
+            )
             state.state_version += 1
             await self.task_checkpoint_store.save(state)
 
             # Snapshot for workers (deep copy) so they never mutate shared state.
             state_snapshot = state.model_copy(deep=True)
-            concurrency = self._effective_concurrency(state)
             ready = deliverable
             if concurrency <= 1:
                 for sid in ready:
@@ -459,11 +607,12 @@ class ReadySubtaskScheduler:
                         context=context,
                     )
 
-            # Release leases after wave commits.
+            # Release leases after wave commits and close wave evidence.
             for sid in leased:
                 sub = state.subtasks[sid]
                 if sub.lease_status == "leased":
                     sub.lease_status = "released"
+            self._close_wave(state, wave.wave_id)
             await self.task_checkpoint_store.save(state)
 
             # Slow Loop only at safe checkpoint between waves.
@@ -867,9 +1016,36 @@ class ReadySubtaskScheduler:
             state.fast_loop_history.append(item)
         for rec in result.delivery_records_append:
             state.delivery_ledger.append(rec)
+        stamped: list[BackendUsageRecord] = []
+        phase = (
+            "post_activation"
+            if state.active_plan_revision_id
+            else "pre_activation"
+        )
+        for rec in list(result.backend_usage_append or []):
+            if not isinstance(rec, BackendUsageRecord):
+                rec = BackendUsageRecord.model_validate(rec)
+            updates: dict[str, Any] = {}
+            if not rec.wave_id:
+                updates["wave_id"] = state.current_wave_id
+            if not rec.plan_revision:
+                updates["plan_revision"] = state.active_plan_revision_id
+            if rec.scheduler_incarnation is None:
+                updates["scheduler_incarnation"] = state.scheduler_incarnation
+            if not rec.phase or rec.phase == "pre_activation":
+                updates["phase"] = phase
+            if not rec.backend_kind:
+                updates["backend_kind"] = rec.backend_id
+            if rec.total_tokens is None and (
+                rec.prompt_tokens is not None or rec.completion_tokens is not None
+            ):
+                updates["total_tokens"] = int(rec.prompt_tokens or 0) + int(
+                    rec.completion_tokens or 0
+                )
+            stamped.append(rec.model_copy(update=updates) if updates else rec)
         state.backend_usage_records = append_usage_records(
             list(state.backend_usage_records or []),
-            list(result.backend_usage_append or []),
+            stamped,
         )
 
     async def _run_subtask_isolated(

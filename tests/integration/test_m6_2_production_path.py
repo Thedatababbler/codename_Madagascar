@@ -458,7 +458,8 @@ async def test_resume_no_duplicate_decision_revision_realization(tmp_path: Path)
         [ln for ln in decisions_path.read_text().splitlines() if ln.strip()]
     ) if decisions_path.exists() else 0
     assert after == before or after == before + 0
-    assert summary["restart_recovery_counts"] >= 1
+    # Realization already persisted: resume reconciles nothing → zero recoveries.
+    assert summary["restart_recovery_counts"] == 0
     applied_ids = []
     ckpt = TaskCheckpointStore(run_dir)
     plan = stage2_fixture_plan(summary["task_id"])
@@ -488,7 +489,7 @@ async def test_post_activation_crash_resumes_from_activated_checkpoint(tmp_path:
     summary = await run_stage2_fixture(
         cfg, output_root=tmp_path, run_id="crash", failpoint=None
     )
-    assert summary["restart_recovery_counts"] >= 1
+    assert summary["restart_recovery_counts"] == 1
     assert summary["fork_activation_revision"]
     assert set(summary["committed"]) >= {"s1", "s2", "s3", "s4"}
     run_dir = Path(summary["run_dir"])

@@ -26,7 +26,11 @@ from orchestra.control.pareto.schemas import (
 )
 from orchestra.control.slow_loop.controller import SlowLoopController
 from orchestra.control.slow_loop.schemas import SlowLoopBudget, SlowLoopConfig
-from orchestra.control.task_state import SubtaskStatus, TaskExecutionState
+from orchestra.control.task_state import (
+    SchedulerWaveRecord,
+    SubtaskStatus,
+    TaskExecutionState,
+)
 from orchestra.decomposition.schemas import BudgetSpec, SubtaskSpec, TaskPlan
 from orchestra.runtime.backend import RunContext
 from orchestra.runtime.limits import RuntimeLimits, RuntimeSemaphores
@@ -305,12 +309,30 @@ async def _run(output: Path, config_path: Path) -> dict:
                 ),
             ]
         )
-        # Behavioral realization requires affected futures to reach terminal states.
+        # Behavioral realization requires wave binding + terminal execution.
+        pending = state.pareto_state.pending_decision
         affected = list(
-            state.pareto_state.pending_decision.affected_subtask_ids
-            or state.pareto_state.pending_decision.context.eligible_future_subtask_ids
+            pending.affected_subtask_ids
+            or pending.context.eligible_future_subtask_ids
             or []
         )
+        wave_id = "smoke-affected-wave"
+        pending.affected_wave_id = wave_id
+        pending.affected_subtask_ids = list(affected)
+        state.scheduler_wave_records = [
+            SchedulerWaveRecord(
+                wave_id=wave_id,
+                run_id=plan.task_id,
+                scheduler_incarnation=1,
+                plan_revision=pending.activated_revision_id,
+                policy_concurrency=2,
+                runtime_cap=2,
+                effective_concurrency=2,
+                subtask_ids=list(affected),
+                terminal_state="terminal",
+                decision_id=pending.decision_id,
+            )
+        ]
         for sid in affected:
             if sid in state.subtasks:
                 state.subtasks[sid].status = SubtaskStatus.COMMITTED

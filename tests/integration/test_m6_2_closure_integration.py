@@ -154,18 +154,35 @@ def test_missing_calibration_blocks_held_out(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_calibration_hash_mismatch_blocks_held_out(tmp_path: Path):
+    import shutil
+
     summary = await run_stage2_fixture(
         CFG, output_root=tmp_path, run_id="cal-match"
+    )
+    src = Path(summary["run_dir"])
+    dev = tmp_path / "cal-dev"
+    shutil.copytree(src, dev)
+    manifest = json.loads((dev / "run_manifest.json").read_text(encoding="utf-8"))
+    manifest["split"] = "development"
+    manifest["private_data_policy"] = "private_labels_offline_only"
+    manifest["public_evaluator_id"] = "public_harness"
+    manifest["public_evaluator_version"] = "public-harness-v1"
+    (dev / "run_manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     raw = yaml.safe_load(CFG.read_text(encoding="utf-8")) or {}
     control = load_control_plane_mapping(raw)
     cal_path = tmp_path / "cal.json"
+    from orchestra.experiments.stage2_pareto import _development_observation_rows
+
+    points, provenance = _development_observation_rows(dev)
     write_calibration_artifact(
         cal_path,
         control=control,
-        development_points=[{"quality": 0.9, "cost": 0.1, "latency": 1.0, "risk": 0.1}],
-        run_dir=summary["run_dir"],
+        development_points=points,
+        run_dir=dev,
         config_path=CFG,
+        source_record_ids=provenance,
     )
     # Mutate preference in both top-level and pareto sections (YAML has both).
     bad = yaml.safe_load(CFG.read_text(encoding="utf-8")) or {}
@@ -178,22 +195,6 @@ async def test_calibration_hash_mismatch_blocks_held_out(tmp_path: Path):
     cal = CalibrationArtifact.from_dict(artifact)
     with pytest.raises(RuntimeError, match="calibration mismatch"):
         assert_calibration_matches(cal, bad_control)
-
-
-@pytest.mark.asyncio
-async def test_private_label_mutation_cannot_affect_selection(tmp_path: Path):
-    summary_a = await run_stage2_fixture(
-        CFG, output_root=tmp_path, run_id="priv-a"
-    )
-    # Re-run is deterministic; hidden scores are ignored by estimator/selector.
-    summary_b = await run_stage2_fixture(
-        CFG, output_root=tmp_path, run_id="priv-b"
-    )
-    assert summary_a["selected_hash"] == summary_b["selected_hash"]
-    assert summary_a["fork_wave_effective_concurrency"] == summary_b[
-        "fork_wave_effective_concurrency"
-    ]
-    # Revision ids may embed plan content hashes; selection hash is the stable join key.
 
 
 @pytest.mark.asyncio
@@ -211,7 +212,7 @@ async def test_post_activation_crash_resumes_from_activated_revision(tmp_path: P
     summary = await run_stage2_fixture(
         CFG, output_root=tmp_path, run_id="crash-act", failpoint=None
     )
-    assert summary["restart_recovery_counts"] >= 1
+    assert summary["restart_recovery_counts"] == 1
     assert set(summary["committed"]) >= {"s1", "s2", "s3", "s4"}
     decisions = [
         json.loads(line)
@@ -344,20 +345,36 @@ def test_missing_real_lcb_data_explicit_error(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_freeze_calibration_from_dev_run(tmp_path: Path):
+    # Fixture split must be rejected; synthesize an authoritative development run.
     summary = await run_stage2_fixture(
-        CFG, output_root=tmp_path, run_id="freeze-dev"
+        CFG, output_root=tmp_path, run_id="freeze-src"
+    )
+    src = Path(summary["run_dir"])
+    dev = tmp_path / "freeze-dev"
+    import shutil
+
+    shutil.copytree(src, dev)
+    manifest = json.loads((dev / "run_manifest.json").read_text(encoding="utf-8"))
+    manifest["split"] = "development"
+    manifest["private_data_policy"] = "private_labels_offline_only"
+    manifest["public_evaluator_id"] = "public_harness"
+    manifest["public_evaluator_version"] = "public-harness-v1"
+    (dev / "run_manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
 
     class NS:
         config = str(CFG)
-        run_dir = [summary["run_dir"]]
+        run_dir = [str(dev)]
         output = str(tmp_path / "dev_cal.json")
 
     assert cmd_freeze_calibration(NS()) == 0
     payload = json.loads(Path(NS.output).read_text(encoding="utf-8"))
     assert payload["source_split"] == "development"
+    assert payload["source_split"] == manifest["split"]
     assert payload["candidate_catalog_hash"]
     assert payload["preference_hash"]
+    assert payload["normalization_source_record_ids"]
     assert payload["manifest_schema_version"] in {
         "stage2-calibration-v1",
         "stage2-calibration-v2",

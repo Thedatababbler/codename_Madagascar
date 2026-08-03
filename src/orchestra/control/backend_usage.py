@@ -41,6 +41,15 @@ def session_ref_identity(session_ref: BackendSessionRef | dict[str, Any] | None)
     return f"sess-{digest[:12]}"
 
 
+UsagePhase = Literal[
+    "pre_activation",
+    "control_plane",
+    "post_activation",
+    "recovery",
+    "historical",
+]
+
+
 class BackendUsageRecord(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -51,6 +60,12 @@ class BackendUsageRecord(BaseModel):
     backend_id: str
     attempt_id: int
     candidate_id: str | None = None
+    run_id: str = ""
+    decision_id: str | None = None
+    plan_revision: str | None = None
+    wave_id: str | None = None
+    scheduler_incarnation: int | None = None
+    phase: UsagePhase | str = "pre_activation"
 
     started_at: datetime
     finished_at: datetime
@@ -61,8 +76,10 @@ class BackendUsageRecord(BaseModel):
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     cached_tokens: int | None = None
+    total_tokens: int | None = None
     tool_calls: int | None = None
     sandbox_seconds: float | None = None
+    communication_tokens: float | None = None
 
     estimated_cost_usd: float | None = None
     cost_quality: CostQuality = "unavailable"
@@ -70,6 +87,8 @@ class BackendUsageRecord(BaseModel):
     status: str
     session_ref_identity: str = ""
     model_name: str | None = None
+    backend_kind: str | None = None
+    provenance: str = "backend_execution"
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

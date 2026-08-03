@@ -92,7 +92,32 @@ class SubtaskAttempt(BaseModel):
     finished_at: datetime | None = None
     graph_hash: str | None = None
     error: str | None = None
+    lease_id: str | None = None
+    wave_id: str | None = None
+    execution_plan_revision: str | None = None
+    scheduler_incarnation: int | None = None
+    usage_ids: list[str] = Field(default_factory=list)
+    evaluation_ids: list[str] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SchedulerWaveRecord(BaseModel):
+    """Persisted scheduler wave identity for behavioral realization evidence."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    wave_id: str
+    run_id: str = ""
+    scheduler_incarnation: int = 0
+    plan_revision: str | None = None
+    policy_concurrency: int = 1
+    runtime_cap: int = 1
+    effective_concurrency: int = 1
+    subtask_ids: list[str] = Field(default_factory=list)
+    started_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    completed_at: datetime | None = None
+    terminal_state: str = "running"
+    decision_id: str | None = None
 
 
 class LocalUpdateRecord(BaseModel):
@@ -233,6 +258,9 @@ class TaskExecutionState(BaseModel):
     # Scheduler incarnation / lease ownership (stale-lease recovery).
     scheduler_incarnation: int = 0
     scheduler_recovery_events: list[dict[str, Any]] = Field(default_factory=list)
+    # Persisted wave evidence for behavioral realization.
+    scheduler_wave_records: list[Any] = Field(default_factory=list)
+    current_wave_id: str | None = None
 
     @model_validator(mode="after")
     def _coerce_fast_loop_states(self) -> TaskExecutionState:

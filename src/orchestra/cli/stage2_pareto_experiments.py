@@ -17,6 +17,9 @@ from orchestra.experiments.stage2_fixture import run_stage2_fixture
 from orchestra.experiments.stage2_pareto import (
     MODE_ORDER,
     CalibrationArtifact,
+    CalibrationFreezeError,
+    CalibrationMismatchError,
+    _development_observation_rows,
     assert_calibration_matches,
     validate_stage2_config,
     write_all_stage2_configs,
@@ -125,7 +128,7 @@ def cmd_report(args: argparse.Namespace) -> int:
                     require_held_out_split=True,
                     run_manifest=manifest,
                 )
-            except RuntimeError as exc:
+            except (CalibrationMismatchError, RuntimeError) as exc:
                 raise SystemExit(str(exc)) from exc
     elif args.calibration:
         calibration = CalibrationArtifact.from_dict(
@@ -134,7 +137,10 @@ def cmd_report(args: argparse.Namespace) -> int:
         if args.config:
             raw = yaml.safe_load(Path(args.config).read_text(encoding="utf-8")) or {}
             control = load_control_plane_mapping(raw)
-            assert_calibration_matches(calibration, control)
+            try:
+                assert_calibration_matches(calibration, control)
+            except (CalibrationMismatchError, RuntimeError) as exc:
+                raise SystemExit(str(exc)) from exc
     payload = write_stage2_report(
         run_dirs,
         output_dir=output,
@@ -149,67 +155,51 @@ def cmd_report(args: argparse.Namespace) -> int:
 def cmd_freeze_calibration(args: argparse.Namespace) -> int:
     raw = yaml.safe_load(Path(args.config).read_text(encoding="utf-8")) or {}
     control = load_control_plane_mapping(raw)
+    if not args.run_dir:
+        raise SystemExit(
+            "freeze-calibration requires --run-dir with a persisted development run"
+        )
     points: list[dict[str, float | None]] = []
-    # Prefer development-run aggregates when --run-dir is provided.
-    if args.run_dir:
-        from orchestra.experiments.stage2_pareto import collect_run_records
-
-        for run_dir in args.run_dir:
-            rec = collect_run_records(Path(run_dir))
-            split = str((rec.get("manifest") or {}).get("split") or "")
-            if split not in {"development", "fixture", ""}:
-                raise SystemExit(
-                    "freeze-calibration may consume development runs only; "
-                    f"refusing split={split!r} under {run_dir}"
-                )
-            for d in rec["decisions"]:
-                snap = d.get("selected_candidate_snapshot") or {}
-                vals = (snap.get("objectives") or {}).get("values") or {}
-                row: dict[str, float | None] = {}
-                for name in (
-                    "quality",
-                    "cost",
-                    "latency",
-                    "risk",
-                    "communication_overhead",
-                ):
-                    obj = vals.get(name) or {}
-                    if obj.get("available") and obj.get("value") is not None:
-                        row[name] = float(obj["value"])
-                if row:
-                    points.append(row)
+    provenance: dict[str, list[str]] = {}
+    primary = Path(args.run_dir[0])
+    for run_dir in args.run_dir:
+        try:
+            rows, source_ids = _development_observation_rows(Path(run_dir))
+        except CalibrationFreezeError as exc:
+            raise SystemExit(str(exc)) from exc
+        split = ""
+        manifest_path = Path(run_dir) / "run_manifest.json"
+        if manifest_path.exists():
+            split = str(
+                json.loads(manifest_path.read_text(encoding="utf-8")).get("split") or ""
+            )
+        if split != "development":
+            raise SystemExit(
+                "freeze-calibration may consume development runs only; "
+                f"refusing split={split!r} under {run_dir}. "
+                "A CLI command must never relabel a run's persisted split."
+            )
+        points.extend(rows)
+        for name, ids in source_ids.items():
+            provenance.setdefault(name, []).extend(ids)
+    for name, ids in list(provenance.items()):
+        provenance[name] = sorted(set(ids))
     if not points:
-        # Deterministic development-only fallback points (never held-out/private).
-        points = [
-            {
-                "quality": 0.9,
-                "cost": 0.05,
-                "latency": 1.0,
-                "risk": 0.1,
-                "communication_overhead": 100.0,
-            },
-            {
-                "quality": 0.7,
-                "cost": 0.02,
-                "latency": 0.5,
-                "risk": 0.2,
-                "communication_overhead": 50.0,
-            },
-            {
-                "quality": 0.8,
-                "cost": 0.03,
-                "latency": 0.8,
-                "risk": 0.15,
-                "communication_overhead": 80.0,
-            },
-        ]
-    artifact = write_calibration_artifact(
-        args.output,
-        control=control,
-        development_points=points,
-        run_dir=(args.run_dir[0] if args.run_dir else None),
-        config_path=args.config,
-    )
+        raise SystemExit(
+            "freeze-calibration refused: no finite development objective observations "
+            "with provenance; refusing fabricated normalization defaults"
+        )
+    try:
+        artifact = write_calibration_artifact(
+            args.output,
+            control=control,
+            development_points=points,
+            run_dir=primary,
+            config_path=args.config,
+            source_record_ids=provenance,
+        )
+    except (CalibrationFreezeError, RuntimeError) as exc:
+        raise SystemExit(str(exc)) from exc
     print(json.dumps(artifact.to_dict(), indent=2, sort_keys=True))
     return 0
 

@@ -30,7 +30,11 @@ from orchestra.control.slow_loop.schemas import (
     SlowLoopConfig,
     TaskSchedulingPolicy,
 )
-from orchestra.control.task_state import SubtaskStatus, TaskExecutionState
+from orchestra.control.task_state import (
+    SchedulerWaveRecord,
+    SubtaskStatus,
+    TaskExecutionState,
+)
 from orchestra.decomposition.schemas import BudgetSpec, SubtaskSpec, TaskPlan
 from orchestra.runtime.backend import RunContext
 from orchestra.runtime.limits import RuntimeLimits, RuntimeSemaphores
@@ -454,8 +458,27 @@ async def test_restart_after_activation_recovers_candidate(tmp_path: Path):
             normalized_score=0.85,
         )
     )
-    # Behavioral realization requires affected futures to reach a terminal state.
-    for sid in loaded.pareto_state.pending_decision.affected_subtask_ids or ["s2", "s3"]:
+    # Behavioral realization requires wave binding + terminal execution evidence.
+    pending = loaded.pareto_state.pending_decision
+    affected = list(pending.affected_subtask_ids or ["s2", "s3"])
+    wave_id = "wave-test-affected"
+    pending.affected_wave_id = wave_id
+    pending.affected_subtask_ids = affected
+    loaded.scheduler_wave_records = [
+        SchedulerWaveRecord(
+            wave_id=wave_id,
+            run_id=loaded.task_id,
+            scheduler_incarnation=1,
+            plan_revision=pending.activated_revision_id,
+            policy_concurrency=2,
+            runtime_cap=2,
+            effective_concurrency=2,
+            subtask_ids=list(affected),
+            terminal_state="terminal",
+            decision_id=pending.decision_id,
+        )
+    ]
+    for sid in affected:
         if sid in loaded.subtasks:
             loaded.subtasks[sid].status = SubtaskStatus.COMMITTED
     restarted.finalize_realized(loaded)
