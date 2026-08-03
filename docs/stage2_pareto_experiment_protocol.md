@@ -111,12 +111,18 @@ split: fixture | development | heldout
 * `report --held-out` consumes held-out runs only; fixture/development are rejected
 * A report flag must never relabel a run’s persisted split
 
-Frozen calibration validates every selection-relevant field by value (hashes,
-objectives/directions/required status, normalization + provenance, preference,
-pricing, candidate/graph catalogs, backend/model settings, seed policy, evaluator
-identity/version, benchmark manifest, dataset/split identity, private-data
-policy, git/config hashes). Fail closed on any mismatch with a typed error naming
-the field and expected/observed values. No partial held-out report.
+Frozen calibration and held-out targets share one canonical selection-identity
+projection (`git_sha` preferred; `git_commit` normalized at the reader boundary).
+Held-out manifests must include every required identity field
+(`dataset_identity`, `dataset_split_identity`, backends/models, catalogs,
+evaluator, seed policy, hashes, …). Missing, null, or mismatched fields fail
+closed with a typed error naming expected/observed values. Minimal manifests
+are rejected. No partial held-out report.
+
+Realized candidate `cost` is decision/wave-attributed from attempt `usage_ids`
+under the activation revision (not complete-run totals or unrelated history).
+Non-billable nodes with measured zero tokens contribute exact `$0`; missing
+tokens/pricing remain unavailable.
 
 * Public/development evidence may inform estimation and selection.
 * Held-out results are evaluation-only.

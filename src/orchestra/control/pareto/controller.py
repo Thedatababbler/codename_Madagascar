@@ -248,9 +248,13 @@ class ParetoGlobalCandidatePolicy:
 
     @staticmethod
     def _behavioral_realization_ready(state, decision: ParetoDecisionRecord) -> tuple[bool, dict]:
-        """Require persisted wave binding + terminal execution under activation.
+        """Require wave binding plus per-attempt execution identity.
 
-        Activation alone, wave start alone, or scheduler return alone are insufficient.
+        Terminal subtask status or a terminal wave record alone is insufficient.
+        Each affected subtask must have a terminal attempt with non-null wave_id,
+        matching execution_plan_revision, scheduler_incarnation, and usage_ids.
+        Downstream subtasks (e.g. s4) may belong to later waves than the bound
+        first eligible wave, but must still execute under the activation revision.
         """
         affected = list(decision.affected_subtask_ids or [])
         if not affected:
@@ -281,14 +285,14 @@ class ParetoGlobalCandidatePolicy:
             evidence["reason"] = "affected_wave_unbound"
             return False, evidence
         waves = list(getattr(state, "scheduler_wave_records", None) or [])
-        bound = None
+        wave_by_id: dict[str, object] = {}
         for wave in waves:
             wid = getattr(wave, "wave_id", None) or (
                 wave.get("wave_id") if isinstance(wave, dict) else None
             )
-            if wid == wave_id:
-                bound = wave
-                break
+            if wid:
+                wave_by_id[str(wid)] = wave
+        bound = wave_by_id.get(str(wave_id))
         if bound is None:
             evidence["reason"] = "affected_wave_missing"
             return False, evidence
@@ -311,6 +315,7 @@ class ParetoGlobalCandidatePolicy:
             return False, evidence
         statuses: dict[str, str] = {}
         incomplete: list[str] = []
+        attempt_evidence: dict[str, dict] = {}
         for sid in affected:
             sub = state.subtasks.get(sid)
             if sub is None:
@@ -322,8 +327,61 @@ class ParetoGlobalCandidatePolicy:
             )
             if sub.status not in terminal:
                 incomplete.append(sid)
+                continue
+            matching = [
+                a
+                for a in (sub.attempts or [])
+                if getattr(a, "execution_plan_revision", None)
+                == decision.activated_revision_id
+            ]
+            if not matching:
+                evidence["reason"] = "attempt_execution_revision_missing"
+                evidence["failed_subtask_id"] = sid
+                return False, evidence
+            last = matching[-1]
+            att_wave = getattr(last, "wave_id", None)
+            att_inc = getattr(last, "scheduler_incarnation", None)
+            att_usage = list(getattr(last, "usage_ids", None) or [])
+            attempt_evidence[sid] = {
+                "attempt_id": last.attempt_id,
+                "wave_id": att_wave,
+                "execution_plan_revision": last.execution_plan_revision,
+                "scheduler_incarnation": att_inc,
+                "usage_ids": att_usage,
+                "terminal_state": statuses[sid],
+            }
+            if not att_wave:
+                evidence["reason"] = "attempt_wave_id_missing"
+                evidence["failed_subtask_id"] = sid
+                evidence["attempt_evidence"] = attempt_evidence
+                return False, evidence
+            if att_inc is None:
+                evidence["reason"] = "attempt_scheduler_incarnation_missing"
+                evidence["failed_subtask_id"] = sid
+                evidence["attempt_evidence"] = attempt_evidence
+                return False, evidence
+            if not att_usage:
+                evidence["reason"] = "attempt_usage_ids_missing"
+                evidence["failed_subtask_id"] = sid
+                evidence["attempt_evidence"] = attempt_evidence
+                return False, evidence
+            wave_rec = wave_by_id.get(str(att_wave))
+            if wave_rec is None:
+                evidence["reason"] = "attempt_wave_record_missing"
+                evidence["failed_subtask_id"] = sid
+                evidence["attempt_evidence"] = attempt_evidence
+                return False, evidence
+            wave_plan = getattr(wave_rec, "plan_revision", None) or (
+                wave_rec.get("plan_revision") if isinstance(wave_rec, dict) else None
+            )
+            if wave_plan != decision.activated_revision_id:
+                evidence["reason"] = "attempt_wave_revision_mismatch"
+                evidence["failed_subtask_id"] = sid
+                evidence["attempt_evidence"] = attempt_evidence
+                return False, evidence
         evidence["terminal_states"] = statuses
         evidence["incomplete_subtask_ids"] = incomplete
+        evidence["attempt_evidence"] = attempt_evidence
         if incomplete:
             evidence["reason"] = "affected_subtasks_incomplete"
             return False, evidence
@@ -370,7 +428,8 @@ class ParetoGlobalCandidatePolicy:
             # Incomplete wave: keep pending (do not finalize on scheduler return).
             return
         completed_at = datetime.now(UTC)
-        vector, failures = realized_horizon_objectives(
+        affected = list(evidence.get("affected_subtask_ids") or pending.affected_subtask_ids or [])
+        vector, failures, attribution = realized_horizon_objectives(
             state,
             usage_start=pending.baseline_usage_index,
             delivery_start=pending.baseline_delivery_index,
@@ -379,6 +438,10 @@ class ParetoGlobalCandidatePolicy:
             started_at=pending.started_at,
             completed_at=completed_at,
             public_evaluation_start=pending.baseline_public_evaluation_index,
+            decision_id=pending.decision_id,
+            activated_revision_id=pending.activated_revision_id,
+            affected_subtask_ids=affected,
+            affected_wave_id=getattr(pending, "affected_wave_id", None),
         )
         candidate = pending.selected_candidate_snapshot
         realization_id = f"real:{pending.decision_id}:{pending.activated_revision_id}"
@@ -394,6 +457,7 @@ class ParetoGlobalCandidatePolicy:
                         "content_hash": candidate.content_hash,
                         "context_id": candidate.context_id,
                         "decision_id": pending.decision_id,
+                        "usage_ids": attribution.get("usage_ids") or [],
                     }
                 )
         policy = getattr(state, "scheduling_policy", None)
@@ -401,6 +465,8 @@ class ParetoGlobalCandidatePolicy:
             {
                 "policy_concurrency": getattr(policy, "max_concurrent_subtasks", None),
                 "wave_completion": True,
+                "cost_attribution": attribution,
+                "usage_ids": attribution.get("usage_ids") or [],
             }
         )
         finalized = pending.model_copy(

@@ -495,10 +495,12 @@ async def run_stage2_fixture(
         runtime_concurrency_cap=runtime_cap,
         policy=state.scheduling_policy,
     )
+    git_sha = git_commit_hash(repo_root) or ""
     manifest = {
         "runner": "stage2_fixture",
         "started_at": started.isoformat(),
-        "git_commit": git_commit_hash(repo_root),
+        "git_sha": git_sha,
+        "git_commit": git_sha,
         "config_path": str(config_path),
         "split": "fixture",
         "stage2": raw.get("stage2") or {"mode": mode},
@@ -507,6 +509,8 @@ async def run_stage2_fixture(
         "mock_backends": True,
         "fixture_latency_label": "fixture_estimate_not_real_model",
         "failpoint": failpoint,
+        "dataset_identity": {"benchmark": "livecodebench"},
+        "dataset_split_identity": {"split": "fixture", "run_id": rid},
         **control_plane_manifest_fields(
             resolved,
             runtime_concurrency_cap=runtime_cap,

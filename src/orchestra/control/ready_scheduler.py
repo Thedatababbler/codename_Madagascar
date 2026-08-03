@@ -458,27 +458,7 @@ class ReadySubtaskScheduler:
         context: RunContext,
         source_repo: str | None = None,
     ) -> TaskExecutionState:
-        repo = source_repo or self.source_repo
-        if repo and not state.canonical_workspace_ref:
-            canonical = await self.canonical.prepare(
-                source_repo=repo,
-                run_dir=str(context.run_dir),
-                task_id=state.task_id,
-            )
-            state.canonical_workspace_ref = canonical.path
-            state.canonical_revision = canonical.base_revision
-            state.state_version += 1
-            await self.task_checkpoint_store.save(state)
-
-        if state.scheduling_policy is None:
-            # Default policy matches the constructor runtime cap. Callers that
-            # need policy=1 with cap>1 (Stage-2 concurrency adaptation) must
-            # set scheduling_policy explicitly before run_task.
-            state.scheduling_policy = TaskSchedulingPolicy(
-                max_concurrent_subtasks=self.max_concurrent_subtasks
-            )
-
-        # Exclusive run ownership: a second live scheduler must fail closed.
+        # Acquire ownership before any prepare/mutate/checkpoint write.
         ownership = RunOwnership(
             context.run_dir,
             owner_id=f"{context.run_id}:{os.getpid()}",
@@ -488,6 +468,26 @@ class ReadySubtaskScheduler:
         except RunOwnershipError:
             raise
         try:
+            repo = source_repo or self.source_repo
+            if repo and not state.canonical_workspace_ref:
+                canonical = await self.canonical.prepare(
+                    source_repo=repo,
+                    run_dir=str(context.run_dir),
+                    task_id=state.task_id,
+                )
+                state.canonical_workspace_ref = canonical.path
+                state.canonical_revision = canonical.base_revision
+                state.state_version += 1
+                await self.task_checkpoint_store.save(state)
+
+            if state.scheduling_policy is None:
+                # Default policy matches the constructor runtime cap. Callers that
+                # need policy=1 with cap>1 (Stage-2 concurrency adaptation) must
+                # set scheduling_policy explicitly before run_task.
+                state.scheduling_policy = TaskSchedulingPolicy(
+                    max_concurrent_subtasks=self.max_concurrent_subtasks
+                )
+
             return await self._run_task_owned(
                 task_plan=task_plan,
                 state=state,
@@ -1022,16 +1022,30 @@ class ReadySubtaskScheduler:
             if state.active_plan_revision_id
             else "pre_activation"
         )
+        pending = getattr(getattr(state, "pareto_state", None), "pending_decision", None)
+        decision_id = None
+        if (
+            pending is not None
+            and getattr(pending, "activated_revision_id", None)
+            == state.active_plan_revision_id
+            and state.active_plan_revision_id is not None
+        ):
+            decision_id = getattr(pending, "decision_id", None)
+        run_id = str(getattr(state, "task_id", "") or "")
         for rec in list(result.backend_usage_append or []):
             if not isinstance(rec, BackendUsageRecord):
                 rec = BackendUsageRecord.model_validate(rec)
             updates: dict[str, Any] = {}
+            if not rec.run_id:
+                updates["run_id"] = run_id
             if not rec.wave_id:
                 updates["wave_id"] = state.current_wave_id
             if not rec.plan_revision:
                 updates["plan_revision"] = state.active_plan_revision_id
             if rec.scheduler_incarnation is None:
                 updates["scheduler_incarnation"] = state.scheduler_incarnation
+            if not rec.decision_id and decision_id:
+                updates["decision_id"] = decision_id
             if not rec.phase or rec.phase == "pre_activation":
                 updates["phase"] = phase
             if not rec.backend_kind:
@@ -1047,6 +1061,25 @@ class ReadySubtaskScheduler:
             list(state.backend_usage_records or []),
             stamped,
         )
+        # Mirror usage identity onto the committed attempt when present.
+        sub = state.subtasks.get(result.subtask_id)
+        if sub is not None and sub.attempts and stamped:
+            last = sub.attempts[-1]
+            usage_ids = sorted({r.usage_id for r in stamped if r.usage_id})
+            updates_att: dict[str, Any] = {}
+            if not last.usage_ids:
+                updates_att["usage_ids"] = usage_ids
+            if not last.wave_id:
+                updates_att["wave_id"] = state.current_wave_id
+            if not last.execution_plan_revision:
+                updates_att["execution_plan_revision"] = state.active_plan_revision_id
+            if last.scheduler_incarnation is None:
+                updates_att["scheduler_incarnation"] = state.scheduler_incarnation
+            if not last.lease_id:
+                updates_att["lease_id"] = sub.lease_id
+            if updates_att:
+                sub.attempts[-1] = last.model_copy(update=updates_att)
+                state.subtasks[result.subtask_id] = sub
 
     async def _run_subtask_isolated(
         self,
@@ -1198,6 +1231,10 @@ class ReadySubtaskScheduler:
                 status=SubtaskStatus.RUNNING,
                 started_at=started,
                 graph_hash=graph.content_hash,
+                lease_id=sub.lease_id,
+                wave_id=state.current_wave_id,
+                execution_plan_revision=state.active_plan_revision_id,
+                scheduler_incarnation=int(state.scheduler_incarnation or 0),
             )
         )
 
@@ -1286,9 +1323,38 @@ class ReadySubtaskScheduler:
             status="executed",
             accounting_source="ready_scheduler",
         )
+        # Stamp scheduler identity onto worker-local usage before merge.
+        pending = getattr(getattr(state, "pareto_state", None), "pending_decision", None)
+        decision_id = None
+        if (
+            pending is not None
+            and getattr(pending, "activated_revision_id", None)
+            == state.active_plan_revision_id
+        ):
+            decision_id = getattr(pending, "decision_id", None)
+        stamped_usage: list[BackendUsageRecord] = []
+        for rec in usage_records:
+            stamped_usage.append(
+                rec.model_copy(
+                    update={
+                        "run_id": str(getattr(context, "run_id", "") or state.task_id),
+                        "wave_id": state.current_wave_id,
+                        "plan_revision": state.active_plan_revision_id,
+                        "scheduler_incarnation": int(state.scheduler_incarnation or 0),
+                        "decision_id": decision_id,
+                        "phase": (
+                            "post_activation"
+                            if state.active_plan_revision_id
+                            else "pre_activation"
+                        ),
+                        "backend_kind": rec.backend_kind or rec.backend_id,
+                    }
+                )
+            )
         local_state.backend_usage_records = append_usage_records(
-            list(local_state.backend_usage_records or []), usage_records
+            list(local_state.backend_usage_records or []), stamped_usage
         )
+        sub.attempts[-1].usage_ids = [r.usage_id for r in stamped_usage]
         status, reason, message = await classify_subtask_outcome(
             result=result,
             artifact_store=self.artifact_store,

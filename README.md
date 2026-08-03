@@ -248,16 +248,15 @@ Protocol: `docs/stage2_pareto_experiment_protocol.md`. Design:
 `docs/m6_pareto_orchestra_search.md`. Fixture results are not real-model gains.
 `--mock-backends` is the fully API-free override; `--mock-llm` is a compatibility alias.
 
-M6.2.1 evidence/report closure notes: `freeze-calibration` accepts
-`split=development` only (fixture/heldout refused; `source_split` is copied, never
-rewritten); normalization is derived only from persisted development evidence
-(constant-objective when min==max; no fabricated defaults); held-out reporting
-fail-closes on any selection-relevant frozen-field mismatch; production/fixture
-reports read complete canonical checkpoint usage; clean runs report zero
-recoveries and one crash/resume reports exactly one `recovery_id`; run-level
-`fcntl` ownership prevents a second live scheduler from reclaiming leases;
-realization requires a non-null `affected_wave_id` plus attempt execution
-revision evidence; private-label artifacts are offline-only.
+M6.2.2 production evidence closure notes: genuine production development runs
+produce available realized cost from decision/wave-attributed usage (non-billable
+nodes contribute exact zero; missing pricing/tokens stay unavailable); held-out
+targets must carry the full canonical selection-identity schema (fail-closed on
+missing/null/mismatch, including `dataset_identity` / `dataset_split_identity`,
+with `git_sha` as the canonical Git field); production attempts persist
+wave/revision/incarnation/usage identity and realization requires that evidence;
+reports are checkpoint-authoritative (tampered summaries cannot override
+derived metrics); the scheduler acquires run ownership before prepare/mutate.
 
 ## Stage 1 experiments
 

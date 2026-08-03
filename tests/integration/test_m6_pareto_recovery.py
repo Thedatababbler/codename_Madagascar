@@ -32,6 +32,7 @@ from orchestra.control.slow_loop.schemas import (
 )
 from orchestra.control.task_state import (
     SchedulerWaveRecord,
+    SubtaskAttempt,
     SubtaskStatus,
     TaskExecutionState,
 )
@@ -481,6 +482,16 @@ async def test_restart_after_activation_recovers_candidate(tmp_path: Path):
     for sid in affected:
         if sid in loaded.subtasks:
             loaded.subtasks[sid].status = SubtaskStatus.COMMITTED
+            loaded.subtasks[sid].attempts = [
+                SubtaskAttempt(
+                    attempt_id=1,
+                    status=SubtaskStatus.COMMITTED,
+                    wave_id=wave_id,
+                    execution_plan_revision=pending.activated_revision_id,
+                    scheduler_incarnation=1,
+                    usage_ids=[f"usage-{sid}"],
+                )
+            ]
     restarted.finalize_realized(loaded)
     assert loaded.pareto_state.pending_decision is None
     assert loaded.pareto_state.decision_history

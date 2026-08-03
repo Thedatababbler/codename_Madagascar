@@ -147,6 +147,10 @@ def derive_cost_usd(
         return float(provider_cost_usd), "exact"
     if prompt_tokens is None or completion_tokens is None:
         return None, "unavailable"
+    # Non-billable tool/harness nodes report measured zero tokens with no model.
+    # That is exact zero cost, not an unavailable pricing lookup.
+    if not model_name and prompt_tokens == 0 and completion_tokens == 0:
+        return 0.0, "exact"
     registry = pricing or load_pricing_registry()
     if not model_name or model_name not in registry.models:
         return None, "unavailable"

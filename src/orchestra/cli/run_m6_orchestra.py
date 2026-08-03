@@ -35,7 +35,9 @@ from orchestra.decomposition.schemas import TaskPlan
 from orchestra.executors.agent import AgentNodeExecutor
 from orchestra.executors.harness import HarnessNodeExecutor
 from orchestra.executors.registry import NodeExecutorRegistry
+from orchestra.experiments.control_plane import load_control_plane_mapping
 from orchestra.experiments.metadata import git_commit_hash
+from orchestra.experiments.stage2_pareto import build_run_selection_identity
 from orchestra.ir.artifacts import ArtifactBundle, create_artifact
 from orchestra.ir.contracts import load_contracts
 from orchestra.ir.graph import load_graph
@@ -269,19 +271,43 @@ async def _run(args: argparse.Namespace) -> int:
     if state.scheduling_policy is not None:
         policy_conc = int(state.scheduling_policy.max_concurrent_subtasks)
     split = str(getattr(config.experiment, "split", None) or "development")
+    git_sha = git_commit_hash(repo_root) or ""
+    bench_path = Path(config.benchmark.manifest)
+    if not bench_path.is_absolute():
+        bench_path = repo_root / bench_path
+    benchmark_manifest_hash = (
+        hashlib.sha256(bench_path.read_bytes()).hexdigest() if bench_path.exists() else ""
+    )
+    seed = int(getattr(config.experiment, "seed", None) or 42)
+    raw_for_identity = yaml.safe_load(Path(args.config).read_text(encoding="utf-8")) or {}
+    control_for_identity = load_control_plane_mapping(raw_for_identity)
+    selection_identity = build_run_selection_identity(
+        control=control_for_identity,
+        split=split,
+        run_id=run_id,
+        seed=seed,
+        git_sha=git_sha,
+        benchmark_manifest_hash=benchmark_manifest_hash,
+        dataset_identity={
+            "benchmark": str(getattr(config.benchmark, "name", None) or "livecodebench"),
+            "release_version": str(
+                getattr(config.benchmark, "release_version", None) or ""
+            ),
+        },
+        dataset_split_identity={"split": split, "run_id": run_id},
+    )
     manifest: dict[str, Any] = {
         "runner": "run_m6_orchestra",
+        "run_id": run_id,
         "started_at": started_at.isoformat(),
-        "git_commit": git_commit_hash(repo_root),
+        "git_sha": git_sha,
+        "git_commit": git_sha,
         "config_path": str(args.config),
         "plan_config": str(plan_path),
         "split": split,
         "experiment": config.model_dump(mode="json"),
-        "manifest_hash": hashlib.sha256(
-            Path(config.benchmark.manifest).read_bytes()
-            if Path(config.benchmark.manifest).exists()
-            else b""
-        ).hexdigest(),
+        "manifest_hash": benchmark_manifest_hash,
+        "benchmark_manifest_hash": benchmark_manifest_hash,
         "graph_catalog_hash": _graph_catalog_hash(plan),
         "contract_hash": contract_hash,
         **backend_manifest,
@@ -290,7 +316,13 @@ async def _run(args: argparse.Namespace) -> int:
             runtime_concurrency_cap=runtime_cap,
             policy_concurrency=policy_conc,
         ),
+        **selection_identity,
     }
+    # Prefer the catalog hash from selection identity (stable with calibration).
+    manifest["graph_catalog_hash"] = selection_identity.get(
+        "graph_catalog_hash"
+    ) or manifest.get("graph_catalog_hash")
+    manifest["resolved_graph_hash"] = selection_identity.get("resolved_graph_hash")
     (run_dir / "run_manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )

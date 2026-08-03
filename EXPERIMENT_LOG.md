@@ -10,9 +10,23 @@
 | Status | `canonical` (use for comparisons) / `smoke` / `mock` / `superseded` / `incomplete` |
 | Paths | Repo-relative from AdaMAS root |
 
-**Last updated:** 2026-08-03 (UTC) — M6.2.1 evidence and report closure (uncommitted)
+**Last updated:** 2026-08-03 (UTC) — M6.2.2 production evidence closure (uncommitted)
 
 ---
+
+### EXP-20260803-03 — M6.2.2 Production Evidence Closure
+- **Status:** smoke / mock (fixtures + fully mocked backends only; no paid API,
+  no real LCB, no private/held-out inference)
+- **Date:** 2026-08-03 (UTC)
+- **Branch / commit:** `agnostic` @ start `2fac593` (local
+  `m622-production-evidence-closure`, uncommitted)
+- **Benchmark / phase:** production realized cost attribution; strict held-out
+  selection identity; production attempt/wave/revision evidence; checkpoint-
+  authoritative reports; ownership-before-mutation
+- **Baseline / graph:** starts from `2fac593`; no M4/M5/M6 redesign; no Codex
+  hybrid changes; no new objectives/candidate families
+- **Notes:** leave uncommitted until review. Fixture/mock metrics are **not**
+  real-model evidence.
 
 ### EXP-20260803-02 — M6.2.1 Evidence and Report Closure
 - **Status:** smoke / mock (fixtures + fully mocked backends only; no paid API,

@@ -28,6 +28,7 @@ from orchestra.control.slow_loop.controller import SlowLoopController
 from orchestra.control.slow_loop.schemas import SlowLoopBudget, SlowLoopConfig
 from orchestra.control.task_state import (
     SchedulerWaveRecord,
+    SubtaskAttempt,
     SubtaskStatus,
     TaskExecutionState,
 )
@@ -336,6 +337,16 @@ async def _run(output: Path, config_path: Path) -> dict:
         for sid in affected:
             if sid in state.subtasks:
                 state.subtasks[sid].status = SubtaskStatus.COMMITTED
+                state.subtasks[sid].attempts = [
+                    SubtaskAttempt(
+                        attempt_id=1,
+                        status=SubtaskStatus.COMMITTED,
+                        wave_id=wave_id,
+                        execution_plan_revision=pending.activated_revision_id,
+                        scheduler_incarnation=1,
+                        usage_ids=[f"smoke-usage-{sid}"],
+                    )
+                ]
         # Restart recovery before finalize.
         store = TaskCheckpointStore(output)
         await store.save(state)

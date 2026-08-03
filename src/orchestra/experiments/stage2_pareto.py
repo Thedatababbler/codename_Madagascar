@@ -589,7 +589,17 @@ def _selection_identity_from_resolved(
     backend_kinds = sorted(
         (resolved.slow_loop_config.allowed_backend_assignments or {}).keys()
     )
+    # Prefer explicit pools; otherwise project priced model IDs so selection
+    # identity cannot be vacuously empty when pools are unset.
     model_identifiers = dict(resolved.slow_loop_config.backend_model_pools or {})
+    if not model_identifiers:
+        from orchestra.control.backend_usage import load_pricing_registry
+
+        priced = load_pricing_registry(str(pricing_path) if pricing_path.exists() else None)
+        model_identifiers = {
+            "pricing_version": priced.pricing_version,
+            "registry_models": sorted(priced.models.keys()),
+        }
     seed_policy = {"seed": seed, "deterministic_reports": True}
     required_objectives = {
         name: direction.value
@@ -708,6 +718,8 @@ def write_calibration_artifact(
         manifest.get("public_evaluator_version") or "public-harness-v1"
     )
     dataset_identity = dict(manifest.get("dataset_identity") or {})
+    if not dataset_identity:
+        dataset_identity = {"benchmark": "livecodebench"}
     dataset_split_identity = dict(
         manifest.get("dataset_split_identity")
         or {
@@ -716,7 +728,9 @@ def write_calibration_artifact(
             "source_manifest_hash": source_manifest_hash,
         }
     )
-    git_sha = str(manifest.get("git_sha") or git_commit_hash(_repo_root()) or "")
+    git_sha = manifest_git_sha(manifest) or (
+        git_commit_hash(_repo_root()) or ""
+    )
     identity = _selection_identity_from_resolved(
         resolved,
         seed=seed,
@@ -791,6 +805,181 @@ def _expect_equal(field: str, expected: Any, observed: Any) -> None:
             expected=expected,
             observed=observed,
         )
+
+
+def manifest_git_sha(manifest: dict[str, Any]) -> str:
+    """Canonical Git identity reader (git_sha preferred; git_commit accepted)."""
+    return str(manifest.get("git_sha") or manifest.get("git_commit") or "")
+
+
+HELDOUT_REQUIRED_IDENTITY_FIELDS: tuple[str, ...] = (
+    "schema_version",
+    "git_sha",
+    "selection_config_hash",
+    "control_plane_hash",
+    "preference_hash",
+    "objective_hash",
+    "objectives",
+    "objective_directions",
+    "objective_required",
+    "preference_profile_id",
+    "preference_profile",
+    "pricing_version",
+    "pricing_registry_hash",
+    "candidate_catalog_hash",
+    "graph_catalog_hash",
+    "resolved_graph_hash",
+    "public_evaluator_id",
+    "public_evaluator_version",
+    "backend_kinds",
+    "model_identifiers",
+    "backend_model_settings",
+    "seed_policy",
+    "benchmark_manifest_hash",
+    "dataset_identity",
+    "dataset_split_identity",
+    "private_data_policy",
+)
+
+
+def selection_identity_from_manifest(
+    manifest: dict[str, Any],
+    *,
+    role: str,
+) -> dict[str, Any]:
+    """Project a persisted run manifest into the canonical selection identity.
+
+    Fail closed when required fields are missing/null/empty. Accepts legacy
+    ``git_commit`` by normalizing it to ``git_sha`` at this boundary.
+    Held-out targets must carry the canonical keys themselves (no silent
+    fallback that would skip a deleted required field).
+    """
+    strict = role == "heldout_target"
+    if strict:
+        for field in HELDOUT_REQUIRED_IDENTITY_FIELDS:
+            if field == "git_sha":
+                if manifest.get("git_sha") is None and manifest.get("git_commit") is None:
+                    raise CalibrationMismatchError(
+                        "git_sha",
+                        expected="present git_sha or git_commit",
+                        observed=None,
+                    )
+                continue
+            if field not in manifest or manifest.get(field) is None:
+                raise CalibrationMismatchError(
+                    field,
+                    expected="present non-null selection-identity field",
+                    observed=manifest.get(field) if field in manifest else "<missing>",
+                )
+    git_sha = manifest_git_sha(manifest)
+    if strict:
+        schema_version = str(manifest.get("schema_version") or "")
+        control_plane_hash = str(manifest.get("control_plane_hash") or "")
+        objective_directions = dict(manifest.get("objective_directions") or {})
+        preference_profile_id = str(manifest.get("preference_profile_id") or "")
+        resolved_graph_hash = str(manifest.get("resolved_graph_hash") or "")
+        benchmark_manifest_hash = str(manifest.get("benchmark_manifest_hash") or "")
+    else:
+        schema_version = str(
+            manifest.get("schema_version")
+            or manifest.get("selection_schema_version")
+            or ""
+        )
+        control_plane_hash = str(
+            manifest.get("control_plane_hash") or manifest.get("config_hash") or ""
+        )
+        objective_directions = dict(
+            manifest.get("objective_directions") or manifest.get("objectives") or {}
+        )
+        preference_profile_id = str(
+            manifest.get("preference_profile_id")
+            or (manifest.get("pareto_config") or {}).get("preference_profile")
+            or ""
+        )
+        resolved_graph_hash = str(
+            manifest.get("resolved_graph_hash")
+            or manifest.get("graph_catalog_hash")
+            or ""
+        )
+        benchmark_manifest_hash = str(
+            manifest.get("benchmark_manifest_hash")
+            or manifest.get("manifest_hash")
+            or ""
+        )
+    projected = {
+        "schema_version": schema_version,
+        "git_sha": git_sha,
+        "selection_config_hash": str(manifest.get("selection_config_hash") or ""),
+        "control_plane_hash": control_plane_hash,
+        "preference_hash": str(manifest.get("preference_hash") or ""),
+        "objective_hash": str(manifest.get("objective_hash") or ""),
+        "objectives": dict(manifest.get("objectives") or {}),
+        "objective_directions": objective_directions,
+        "objective_required": dict(manifest.get("objective_required") or {}),
+        "preference_profile_id": preference_profile_id,
+        "preference_profile": dict(manifest.get("preference_profile") or {}),
+        "pricing_version": str(manifest.get("pricing_version") or ""),
+        "pricing_registry_hash": str(manifest.get("pricing_registry_hash") or ""),
+        "candidate_catalog_hash": str(manifest.get("candidate_catalog_hash") or ""),
+        "graph_catalog_hash": str(manifest.get("graph_catalog_hash") or ""),
+        "resolved_graph_hash": resolved_graph_hash,
+        "public_evaluator_id": str(manifest.get("public_evaluator_id") or ""),
+        "public_evaluator_version": str(manifest.get("public_evaluator_version") or ""),
+        "backend_kinds": list(manifest.get("backend_kinds") or []),
+        "model_identifiers": dict(manifest.get("model_identifiers") or {}),
+        "backend_model_settings": dict(manifest.get("backend_model_settings") or {}),
+        "seed_policy": dict(manifest.get("seed_policy") or {}),
+        "benchmark_manifest_hash": benchmark_manifest_hash,
+        "dataset_identity": dict(manifest.get("dataset_identity") or {}),
+        "dataset_split_identity": dict(manifest.get("dataset_split_identity") or {}),
+        "private_data_policy": str(manifest.get("private_data_policy") or ""),
+        "reference_point": dict(manifest.get("reference_point") or {}),
+    }
+    for field in HELDOUT_REQUIRED_IDENTITY_FIELDS:
+        value = projected.get(field)
+        if value in (None, "", {}, []):
+            raise CalibrationMismatchError(
+                field,
+                expected="non-empty selection-identity value",
+                observed=value,
+            )
+    return projected
+
+
+def build_run_selection_identity(
+    *,
+    control: ControlPlaneConfig,
+    split: str,
+    run_id: str,
+    seed: int,
+    git_sha: str,
+    benchmark_manifest_hash: str,
+    dataset_identity: dict[str, Any] | None = None,
+    dataset_split_identity: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the canonical selection-identity block for persistence."""
+    resolved = resolve_pareto_runtime(control, repo_root=_repo_root())
+    identity = _selection_identity_from_resolved(
+        resolved,
+        seed=seed,
+        git_sha=git_sha,
+        config_hash=resolved.control_plane_hash,
+        benchmark_manifest_hash=benchmark_manifest_hash,
+        source_split=split,
+        source_run_id=run_id,
+        source_manifest_hash="",
+        private_data_policy="private_labels_offline_only",
+        public_evaluator_id="public_harness",
+        public_evaluator_version="public-harness-v1",
+        dataset_identity=dict(dataset_identity or {"benchmark": "livecodebench"}),
+        dataset_split_identity=dict(
+            dataset_split_identity
+            or {"split": split, "run_id": run_id}
+        ),
+    )
+    # Persist both canonical git_sha and legacy git_commit alias.
+    identity["git_commit"] = git_sha
+    return identity
 
 
 def assert_calibration_matches(
@@ -1023,46 +1212,95 @@ def assert_calibration_matches(
                 observed=entry,
             )
 
-    if run_manifest is not None:
-        # Compare selection-relevant identity fields present on both sides.
-        for field, art_key, man_key in (
-            ("resolved_graph_hash", "resolved_graph_hash", "resolved_graph_hash"),
-            ("graph_catalog_hash", "graph_catalog_hash", "graph_catalog_hash"),
-            ("benchmark_manifest_hash", "benchmark_manifest_hash", "manifest_hash"),
-            ("git_sha", "git_sha", "git_sha"),
-            ("config_hash", "config_hash", "control_plane_hash"),
-            # dataset_split_identity is frozen on the development calibration
-            # artifact; held-out targets intentionally differ by split.
-            ("private_data_policy", "private_data_policy", "private_data_policy"),
-            ("public_evaluator_id", "public_evaluator_id", "public_evaluator_id"),
-            (
-                "public_evaluator_version",
-                "public_evaluator_version",
-                "public_evaluator_version",
-            ),
-            ("backend_kinds", "backend_kinds", "backend_kinds"),
-            ("model_identifiers", "model_identifiers", "model_identifiers"),
-            (
-                "backend_model_settings",
-                "backend_model_settings",
-                "backend_model_settings",
-            ),
-            ("seed_policy", "seed_policy", "seed_policy"),
-        ):
-            observed = run_manifest.get(man_key)
-            expected = getattr(artifact, art_key, None)
-            if observed in (None, "", {}, []) or expected in (None, "", {}, []):
-                continue
+    if run_manifest is not None and require_held_out_split:
+        # Fail-closed: every required selection-identity field must be present
+        # on the target and match the frozen calibration artifact.
+        target = selection_identity_from_manifest(run_manifest, role="heldout_target")
+        _expect_equal("target_split", "heldout", str(run_manifest.get("split") or ""))
+        # selection_config_hash may embed source_run_id; require presence only.
+        # Component fields below are the authoritative shared selection identity.
+        if not target.get("selection_config_hash"):
+            raise CalibrationMismatchError(
+                "selection_config_hash",
+                expected="non-empty",
+                observed=target.get("selection_config_hash"),
+            )
+        comparisons = {
+            "schema_version": artifact.schema_version,
+            "git_sha": artifact.git_sha,
+            "control_plane_hash": artifact.control_plane_hash,
+            "preference_hash": artifact.preference_hash,
+            "objective_hash": artifact.objective_hash,
+            "objectives": artifact.objectives,
+            "objective_directions": artifact.objective_directions or artifact.objectives,
+            "objective_required": artifact.objective_required
+            or {name: True for name in artifact.objectives},
+            "preference_profile_id": artifact.preference_profile_id,
+            "preference_profile": artifact.preference_profile,
+            "pricing_version": artifact.pricing_version,
+            "pricing_registry_hash": artifact.pricing_registry_hash,
+            "candidate_catalog_hash": artifact.candidate_catalog_hash,
+            "graph_catalog_hash": artifact.graph_catalog_hash,
+            "resolved_graph_hash": artifact.resolved_graph_hash,
+            "public_evaluator_id": artifact.public_evaluator_id,
+            "public_evaluator_version": artifact.public_evaluator_version,
+            "backend_kinds": artifact.backend_kinds,
+            "model_identifiers": artifact.model_identifiers,
+            "backend_model_settings": artifact.backend_model_settings,
+            "seed_policy": artifact.seed_policy,
+            "benchmark_manifest_hash": artifact.benchmark_manifest_hash,
+            "private_data_policy": artifact.private_data_policy,
+        }
+        for field, expected in comparisons.items():
+            observed = target.get(field)
             if _canonical_json(expected) != _canonical_json(observed):
                 raise CalibrationMismatchError(
                     field, expected=expected, observed=observed
                 )
-        # Always enforce split identity for held-out targets.
-        if require_held_out_split:
-            _expect_equal(
-                "target_split",
-                "heldout",
-                str(run_manifest.get("split") or ""),
+        # dataset_identity must be present and equal for shared dataset family.
+        if _canonical_json(artifact.dataset_identity) != _canonical_json(
+            target.get("dataset_identity")
+        ):
+            # Allow held-out to carry split-specific extras only when core keys match.
+            art_ds = dict(artifact.dataset_identity or {})
+            tgt_ds = dict(target.get("dataset_identity") or {})
+            for key in sorted(set(art_ds) | set(tgt_ds)):
+                if key in {"split", "run_id", "source_run_id"}:
+                    continue
+                if _canonical_json(art_ds.get(key)) != _canonical_json(tgt_ds.get(key)):
+                    raise CalibrationMismatchError(
+                        f"dataset_identity.{key}",
+                        expected=art_ds.get(key),
+                        observed=tgt_ds.get(key),
+                    )
+        tgt_split_id = dict(target.get("dataset_split_identity") or {})
+        if str(tgt_split_id.get("split") or run_manifest.get("split") or "") != "heldout":
+            raise CalibrationMismatchError(
+                "dataset_split_identity.split",
+                expected="heldout",
+                observed=tgt_split_id.get("split"),
+            )
+        if not str(tgt_split_id.get("run_id") or "").strip():
+            raise CalibrationMismatchError(
+                "dataset_split_identity.run_id",
+                expected="non-empty held-out run_id",
+                observed=tgt_split_id.get("run_id"),
+            )
+        # Reject unexpected keys so nested mutations cannot silently pass.
+        allowed_split_keys = {"split", "run_id"}
+        extra = sorted(set(tgt_split_id) - allowed_split_keys)
+        if extra:
+            raise CalibrationMismatchError(
+                "dataset_split_identity",
+                expected=f"only keys {sorted(allowed_split_keys)}",
+                observed=tgt_split_id,
+            )
+    elif run_manifest is not None:
+        # Non-held-out callers may still compare optional overlapping fields.
+        observed_git = manifest_git_sha(run_manifest)
+        if observed_git and artifact.git_sha and observed_git != artifact.git_sha:
+            raise CalibrationMismatchError(
+                "git_sha", expected=artifact.git_sha, observed=observed_git
             )
 
 
@@ -1273,48 +1511,66 @@ def collect_run_records(run_dir: Path) -> dict[str, Any]:
         phase_costs[phase] = _sum_available_cost(
             [u for u in usage_records if str(u.get("phase") or "") == phase]
         )
-    # Evidence-derived overrides for report fields when summary is incomplete.
-    evidence_summary = dict(summary)
-    if total_cost is not None:
-        evidence_summary.setdefault("total_cost_usd", total_cost)
-        solved = evidence_summary.get("solved_task_count")
-        if solved is None:
-            committed = evidence_summary.get("committed") or []
-            # Root-task denominator: one task when any commit succeeded.
-            solved = 1 if committed else 0
-            evidence_summary.setdefault("solved_task_count", solved)
-        if solved and int(solved) > 0:
-            evidence_summary.setdefault(
-                "cost_per_solved", total_cost / float(int(solved))
-            )
-        evidence_summary.setdefault(
-            "cost_provenance", "persisted_usage_estimated_cost_usd"
-        )
-    evidence_summary.setdefault("usage_record_count", len(usage_records))
-    evidence_summary.setdefault("usage_ids", usage_ids)
-    evidence_summary.setdefault("restart_recovery_counts", len(recovery_events))
-    evidence_summary.setdefault(
-        "recovery_ids",
-        sorted({str(e.get("recovery_id")) for e in recovery_events if e.get("recovery_id")}),
-    )
-    if checkpoint.get("active_plan_revision_id"):
-        evidence_summary.setdefault(
-            "active_plan_revision_id", checkpoint.get("active_plan_revision_id")
-        )
-    m5_revisions = evidence_summary.get("m5_revision_count")
-    if m5_revisions is None:
-        revisions = checkpoint.get("plan_revision_history") or []
-        applied = [
-            r
-            for r in revisions
+    # Canonical checkpoint/derived evidence is authoritative. A mutable summary
+    # may supply non-derivable labels only; it never overrides conflicting
+    # evidence-derived values.
+    committed = list(
+        summary.get("committed")
+        or [
+            sid
+            for sid, sub in (checkpoint.get("subtasks") or {}).items()
             if str(
-                (r.get("status") if isinstance(r, dict) else getattr(r, "status", ""))
+                (sub.get("status") if isinstance(sub, dict) else getattr(sub, "status", ""))
                 or ""
             )
             .lower()
-            .endswith("applied")
+            .endswith("committed")
         ]
-        evidence_summary["m5_revision_count"] = len(applied)
+    )
+    revisions = checkpoint.get("plan_revision_history") or []
+    applied = [
+        r
+        for r in revisions
+        if str(
+            (r.get("status") if isinstance(r, dict) else getattr(r, "status", ""))
+            or ""
+        )
+        .lower()
+        .endswith("applied")
+    ]
+    solved = 1 if committed else int(summary.get("solved_task_count") or 0)
+    if committed and set(map(str, committed)) >= {"s1", "s2", "s3", "s4"}:
+        solved = 1
+    elif committed and summary.get("solved_task_count") is not None:
+        solved = int(summary.get("solved_task_count") or 0)
+    elif committed:
+        solved = 1
+    derived: dict[str, Any] = {
+        "usage_record_count": len(usage_records),
+        "usage_ids": usage_ids,
+        "restart_recovery_counts": len(recovery_events),
+        "recovery_ids": sorted(
+            {str(e.get("recovery_id")) for e in recovery_events if e.get("recovery_id")}
+        ),
+        "m5_revision_count": len(applied),
+        "committed": committed,
+        "solved_task_count": solved,
+        "cost_provenance": "persisted_usage_estimated_cost_usd",
+        "phase_costs": phase_costs,
+    }
+    if checkpoint.get("active_plan_revision_id"):
+        derived["active_plan_revision_id"] = checkpoint.get("active_plan_revision_id")
+    # Always stamp cost from canonical usage (None when unavailable) so a
+    # tampered summary cannot leak a fabricated total.
+    derived["total_cost_usd"] = total_cost
+    if total_cost is not None and solved > 0:
+        derived["cost_per_solved"] = total_cost / float(solved)
+        derived["cost_per_solved_task"] = total_cost / float(solved)
+    else:
+        derived["cost_per_solved"] = None
+        derived["cost_per_solved_task"] = None
+    # Summary first, then derived overwrites every conflicting key.
+    evidence_summary = {**summary, **derived}
     wave_records = list(checkpoint.get("scheduler_wave_records") or [])
     public_evals = list(checkpoint.get("public_evaluation_records") or [])
     return {
@@ -1446,8 +1702,21 @@ def write_stage2_report(
         mode = (manifest.get("stage2") or {}).get("mode") or summary.get("mode") or "run"
         decisions = rec["decisions"]
         traces = rec["traces"]
-        generated = sum(int(t.get("generated_count") or 0) for t in traces)
-        rejected = sum(int(t.get("rejected_count") or 0) for t in traces)
+        # One search-trace row per candidate; count distinct hashes / statuses.
+        cand_traces = [
+            t
+            for t in traces
+            if t.get("candidate_content_hash")
+            and str(t.get("pareto_status") or "") != "realized"
+        ]
+        generated = len(
+            {str(t.get("candidate_content_hash")) for t in cand_traces}
+        )
+        rejected = sum(
+            1
+            for t in cand_traces
+            if str(t.get("feasibility_status") or "") not in {"ok", ""}
+        )
         selected_status = {}
         for d in decisions:
             status = str(d.get("selection_status") or "unknown")
@@ -1480,6 +1749,9 @@ def write_stage2_report(
             realized_vals = _realized_objectives_for_decision(
                 rec["realized_archive"], d
             )
+            evidence = d.get("realization_evidence") or {}
+            usage_join = list(evidence.get("usage_ids") or [])
+            eval_join = list(evidence.get("evaluation_ids") or [])
             est_kind = str(d.get("evaluation_kind") or "estimated")
             est_vs_real.append(
                 {
@@ -1492,9 +1764,12 @@ def write_stage2_report(
                     "plan_revision": d.get("activated_revision_id")
                     or summary.get("active_plan_revision_id"),
                     "activation_revision": d.get("activated_revision_id"),
+                    "affected_wave_id": d.get("affected_wave_id"),
                     "wave_id": d.get("affected_wave_id"),
                     "realization_id": d.get("realization_id"),
                     "objective_name": "multi",
+                    "usage_ids": ",".join(str(u) for u in usage_join),
+                    "evaluation_ids": ",".join(str(e) for e in eval_join),
                     "estimated_value_quality": _objective_value(objs.get("quality")),
                     "estimated_value_cost": _objective_value(objs.get("cost")),
                     "estimated_value_latency": _objective_value(objs.get("latency")),
@@ -1544,8 +1819,10 @@ def write_stage2_report(
                     "direction_quality": "maximize",
                     "direction_cost": "minimize",
                     "direction_latency": "minimize",
-                    "normalization_metadata": (
-                        calibration.normalization if calibration else {}
+                    "normalization_metadata": json.dumps(
+                        calibration.normalization if calibration else {},
+                        sort_keys=True,
+                        separators=(",", ":"),
                     ),
                     "censoring_state": d.get("realization_status") or "",
                     "metric_provenance": "persisted_pareto_archives",
@@ -1681,12 +1958,10 @@ def write_stage2_report(
                     if summary.get("communication_overhead") is not None
                     else ""
                 ),
-                "generated_candidates": generated or summary.get("generated_candidates", ""),
-                "rejected_candidates": rejected or summary.get("rejected_candidates", ""),
-                "partial_candidates": summary.get("partial_candidates", len(partial_map)),
-                "dominated_candidates": summary.get(
-                    "dominated_candidates", dominated_count
-                ),
+                "generated_candidates": generated,
+                "rejected_candidates": rejected,
+                "partial_candidates": len(partial_map),
+                "dominated_candidates": dominated_count,
                 "selected_candidates": len(
                     [d for d in decisions if d.get("selected_content_hash")]
                 ),
@@ -1734,6 +2009,9 @@ def write_stage2_report(
         main_rows,
         [
             "run_dir",
+            "run_id",
+            "task_id",
+            "split",
             "mode",
             "profile",
             "hidden_pass_at_1",
@@ -1741,6 +2019,7 @@ def write_stage2_report(
             "avg_cost_usd",
             "total_cost_usd",
             "cost_per_solved",
+            "solved_task_count",
             "wall_latency_s",
             "critical_path_latency_s",
             "communication_overhead",
@@ -1753,6 +2032,8 @@ def write_stage2_report(
             "m5_revision_count",
             "control_plane_cost_usd",
             "restart_recovery_counts",
+            "usage_record_count",
+            "usage_ids",
             "label",
         ],
     )
@@ -1792,8 +2073,12 @@ def write_stage2_report(
             "context_id",
             "plan_revision",
             "activation_revision",
+            "affected_wave_id",
             "wave_id",
             "realization_id",
+            "objective_name",
+            "usage_ids",
+            "evaluation_ids",
             "quality_est",
             "cost_est",
             "latency_est",
@@ -1831,6 +2116,7 @@ def write_stage2_report(
             "direction_quality",
             "direction_cost",
             "direction_latency",
+            "normalization_metadata",
             "censoring_state",
             "metric_provenance",
             "label",

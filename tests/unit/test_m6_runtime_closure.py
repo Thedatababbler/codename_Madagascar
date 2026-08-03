@@ -498,7 +498,7 @@ def test_backend_failures_are_usage_slice_local():
         ),
         _usage(usage_id="new", status="success", estimated_cost_usd=0.0),
     ]
-    _, failures = realized_horizon_objectives(
+    _, failures, _attr = realized_horizon_objectives(
         state,
         usage_start=1,
         delivery_start=0,
@@ -522,7 +522,7 @@ def test_old_backend_failure_not_counted():
             cost_quality="unavailable",
         )
     ]
-    _, failures = realized_horizon_objectives(
+    _, failures, _attr = realized_horizon_objectives(
         state,
         usage_start=1,
         delivery_start=0,
@@ -540,7 +540,7 @@ def test_harness_failure_counted():
     state = TaskExecutionState.from_plan(plan)
     now = datetime.now(UTC)
     state.backend_usage_records = [_usage(usage_id="h", status="harness_failure")]
-    _, failures = realized_horizon_objectives(
+    _, failures, _attr = realized_horizon_objectives(
         state,
         usage_start=0,
         delivery_start=0,
@@ -557,7 +557,7 @@ def test_timeout_counted():
     state = TaskExecutionState.from_plan(plan)
     now = datetime.now(UTC)
     state.backend_usage_records = [_usage(usage_id="t", status="timeout")]
-    _, failures = realized_horizon_objectives(
+    _, failures, _attr = realized_horizon_objectives(
         state,
         usage_start=0,
         delivery_start=0,
@@ -577,7 +577,7 @@ def test_parallel_nodes_use_wall_latency_not_sum():
     state.backend_usage_records = [
         _usage(usage_id=f"u{i}", latency_seconds=1.0, estimated_cost_usd=0.0) for i in range(2)
     ]
-    vector, _ = realized_horizon_objectives(
+    vector, _, _attr = realized_horizon_objectives(
         state,
         usage_start=0,
         delivery_start=0,
@@ -602,7 +602,7 @@ def test_partial_cost_is_unavailable():
             node_id="n2",
         ),
     ]
-    vector, _ = realized_horizon_objectives(
+    vector, _, _attr = realized_horizon_objectives(
         state,
         usage_start=0,
         delivery_start=0,
@@ -632,7 +632,7 @@ def test_communication_uses_actual_tokens():
             projected_token_count=128,
         )
     ]
-    vector, _ = realized_horizon_objectives(
+    vector, _, _attr = realized_horizon_objectives(
         state,
         usage_start=0,
         delivery_start=0,
@@ -651,7 +651,7 @@ def test_realized_quality_uses_public_harness():
     state = TaskExecutionState.from_plan(plan)
     now = datetime.now(UTC)
     _seed_public(state, score=0.75)
-    vector, _ = realized_horizon_objectives(
+    vector, _, _attr = realized_horizon_objectives(
         state,
         usage_start=0,
         delivery_start=0,

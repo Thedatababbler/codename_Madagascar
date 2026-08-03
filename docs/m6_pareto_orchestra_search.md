@@ -158,12 +158,20 @@ decision. Finalization requires:
 run_dir/.scheduler.lock  (fcntl exclusive) + scheduler_incarnation + lease_id
 ```
 
-At most one live scheduler may own a run. A second process fails closed without
-reclaiming leases. Ownership is released when the owning process terminates.
+At most one live scheduler may own a run. Ownership is acquired **before**
+canonical prepare, checkpoint writes, lease/incarnation mutation, or wave
+execution. A second process fails closed without reclaiming leases or changing
+checkpoint bytes. Ownership is released when the owning process terminates.
 Each `run_task` starts a new incarnation; a **recovery event** is persisted only
 when interrupted state is reconciled (stale leases reclaimed or an incomplete
 activated decision resumed). A clean first start is not a recovery. Reports
 count unique `recovery_id` values (`0` clean / `1` per logical resume).
+
+Production attempts persist `wave_id`, `execution_plan_revision`,
+`scheduler_incarnation`, and `usage_ids` from the live scheduler context.
+Realization requires those attempt fields (terminal status or wave records alone
+are insufficient). Downstream join subtasks (e.g. `s4`) keep their own later-wave
+identity while still executing under the activation revision.
 
 ## 8. Persistence and search traces
 
