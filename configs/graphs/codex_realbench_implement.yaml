@@ -1,0 +1,43 @@
+graph_id: codex_realbench_implement
+version: "1.0"
+initial_artifact_slots:
+  problem: ProblemArtifact
+final_output_slot: final_change
+metadata:
+  role: implement
+  topology: single_codex_harden
+  benchmark: realbench
+  baseline: task_decomp_subgraph_oneshot
+nodes:
+  - node_id: codex_implementer
+    node_kind: agent
+    contract_id: codex_realbench_implementer
+    backend:
+      type: codex_sdk
+      thread_policy: fresh
+      sandbox: workspace_write
+      approval_policy: never
+      require_git_diff: true
+    model:
+      provider: openai_compatible
+      name: ${CODEX_MODEL:-gpt-5.4}
+      temperature: 0.0
+      max_tokens: 8192
+    output_contract:
+      parser_id: repository_change
+      output_schema: RepositoryChangeArtifact
+    input_slots: {problem: ProblemArtifact}
+    output_slots: {repository_change: RepositoryChangeArtifact}
+    timeout_seconds: 1200
+  - node_id: freeze_change
+    node_kind: transform
+    transform_id: freeze_repository_change
+    input_slots:
+      repository_change: RepositoryChangeArtifact
+    output_slots: {final_change: RepositoryChangeArtifact}
+edges:
+  - edge_id: implementer_to_freeze
+    source_node: codex_implementer
+    source_output: repository_change
+    destination_node: freeze_change
+    destination_input: repository_change

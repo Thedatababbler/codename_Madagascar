@@ -10,9 +10,28 @@
 | Status | `canonical` (use for comparisons) / `smoke` / `mock` / `superseded` / `incomplete` |
 | Paths | Repo-relative from AdaMAS root |
 
-**Last updated:** 2026-08-03 (UTC) — M6.2.2 final evidence-integrity patch
+**Last updated:** 2026-08-05 (UTC) — RealBench dynamic TaskPlan + public harness
 
 ---
+
+### EXP-20260805-01 — RealBench Dynamic TaskPlan + Public Harness Wiring
+- **Status:** incomplete (engineering delivery; full 5-task Codex rerun not yet
+  recorded in this entry)
+- **Date:** 2026-08-05 (UTC)
+- **Branch / commit:** `m622-production-evidence-closure` (pending push)
+- **Benchmark / phase:** RealBench level2 selected-5 path upgraded from fixed
+  A/I/V (`keystone=none`) to dynamic milestone TaskPlan + role-graded public
+  `repository_test_harness` graphs executed by `ReadySubtaskScheduler`
+- **Baseline / graph:**
+  - docs: `docs/realbench_dynamic_taskplan_harness.md`
+  - plan builder: `src/orchestra/decomposition/realbench_plan.py`
+  - public harness: `src/orchestra/realbench/public_harness.py`
+  - graphs: `configs/graphs/codex_realbench_public_{discovery,implementation,integration}.yaml`
+  - runner: `src/orchestra/cli/run_realbench_codex_decomp_baseline.py`
+- **Notes:** Public harness ≠ hidden RealBench tests. Offline eval remains
+  `scripts/eval_realbench_codex_decomp_baseline.py`. Prior fixed-plan run
+  `rb-decomp-20260803T142700Z` is superseded as the AdaMAS RealBench protocol
+  once a new dynamic-plan batch is completed and logged.
 
 ### EXP-20260803-04 — M6.2.2 Final Evidence-Integrity Patch
 - **Status:** smoke / mock (fixtures + fully mocked backends only; no paid API,

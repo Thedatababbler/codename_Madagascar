@@ -1,0 +1,63 @@
+graph_id: codex_realbench_public_implementation
+version: "1.0"
+initial_artifact_slots:
+  problem: ProblemArtifact
+final_output_slot: final_change
+metadata:
+  role: implementation
+  topology: codex_public_harness_gate
+  benchmark: realbench
+  public_harness_level: implementation
+nodes:
+  - node_id: codex_implementer
+    node_kind: agent
+    contract_id: codex_realbench_milestone
+    backend:
+      type: codex_sdk
+      thread_policy: fresh
+      sandbox: workspace_write
+      approval_policy: never
+      require_git_diff: true
+    model:
+      provider: openai_compatible
+      name: ${CODEX_MODEL:-gpt-5.4}
+      temperature: 0.0
+      max_tokens: 8192
+    output_contract:
+      parser_id: repository_change
+      output_schema: RepositoryChangeArtifact
+    input_slots: {problem: ProblemArtifact}
+    output_slots: {repository_change: RepositoryChangeArtifact}
+    timeout_seconds: 1200
+  - node_id: repository_tests
+    node_kind: harness
+    harness_id: repository_test_harness
+    visibility: public
+    command: [python, scripts/adamas_public_check.py, --level, implementation]
+    timeout_seconds: 180
+    input_slots: {repository_change: RepositoryChangeArtifact}
+    output_slots: {result: RepositoryHarnessResultArtifact}
+  - node_id: freeze_change
+    node_kind: transform
+    transform_id: freeze_repository_change
+    input_slots:
+      repository_change: RepositoryChangeArtifact
+      gate: RepositoryHarnessResultArtifact
+    output_slots: {final_change: RepositoryChangeArtifact}
+edges:
+  - edge_id: agent_to_tests
+    source_node: codex_implementer
+    source_output: repository_change
+    destination_node: repository_tests
+    destination_input: repository_change
+  - edge_id: agent_to_freeze
+    source_node: codex_implementer
+    source_output: repository_change
+    destination_node: freeze_change
+    destination_input: repository_change
+  - edge_id: tests_pass_to_freeze
+    source_node: repository_tests
+    source_output: result
+    destination_node: freeze_change
+    destination_input: gate
+    condition: {source_field: passed, operator: is_true}

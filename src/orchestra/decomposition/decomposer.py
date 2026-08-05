@@ -31,12 +31,14 @@ class TaskDecomposer:
         keystone_harness_id: str = "public_code_harness",
         limits: DecompositionLimits | None = None,
         require_graph_files: bool = True,
+        require_public_keystone_harness: bool = False,
     ) -> None:
         self.enabled = enabled
         self.default_graph_template = default_graph_template
         self.keystone_harness_id = keystone_harness_id
         self.limits = limits or DecompositionLimits()
         self.require_graph_files = require_graph_files
+        self.require_public_keystone_harness = require_public_keystone_harness
 
     def decompose(
         self,
@@ -78,6 +80,7 @@ class TaskDecomposer:
                 plan,
                 limits=self.limits,
                 require_graph_files=self.require_graph_files,
+                require_public_keystone_harness=self.require_public_keystone_harness,
             )
             return plan.model_copy(
                 update={

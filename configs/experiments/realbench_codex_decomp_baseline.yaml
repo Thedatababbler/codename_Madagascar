@@ -1,0 +1,60 @@
+# RealBench × AdaMAS: dynamic TaskPlan + public harness graphs + scheduler.
+# One-shot only — fast_loop and slow_loop adaptation disabled.
+# Hidden RealBench tests are NOT used online; evaluate offline after freeze.
+experiment:
+  name: realbench_dynamic_taskplan_public_harness
+  seed: 42
+  graph_config: configs/graphs/codex_realbench_public_integration.yaml
+  contracts_dir: configs/contracts
+  output_root: outputs/realbench_codex_decomp_baseline
+  dataset_root: data/realbench/datasets/projs_filtered_uml/level2
+
+decomposition:
+  mode: template  # structured public-design plan builder (not open LLM TaskPlan)
+  min_subtasks: 2
+  max_subtasks: 6
+  max_dependency_depth: 6
+  max_implementation_milestones: 2
+  require_public_keystone_harness: true
+  graph_catalog:
+    discovery: configs/graphs/codex_realbench_public_discovery.yaml
+    implementation: configs/graphs/codex_realbench_public_implementation.yaml
+    integration: configs/graphs/codex_realbench_public_integration.yaml
+
+runtime:
+  backend: native_async
+  max_parallel_benchmark_tasks: 1
+  max_parallel_nodes_per_task: 2
+  max_parallel_llm_calls: 1
+  max_parallel_sandboxes: 1
+  max_concurrent_subtasks: 1
+
+sandbox:
+  backend: mock
+  per_test_timeout_seconds: 30
+
+# Explicitly disable adaptation loops (one-shot).
+fast_loop:
+  enabled: false
+  max_candidates: 0
+  max_total_backend_calls: 0
+
+slow_loop:
+  enabled: false
+  max_updates_per_task: 0
+  max_candidates_per_update: 0
+  allowed_backend_assignments:
+    coding:
+      - codex_sdk
+  backend_model_pools:
+    codex_sdk:
+      - ${CODEX_MODEL:-gpt-5.4}
+
+pareto:
+  enabled: false
+
+logging:
+  level: INFO
+  save_prompts: true
+  save_raw_responses: true
+  save_artifacts: true

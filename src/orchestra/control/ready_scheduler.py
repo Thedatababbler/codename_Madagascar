@@ -8,6 +8,7 @@ import os
 import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -152,15 +153,32 @@ def _cost_from_graph_result(result: GraphExecutionResult) -> CostRecord:
     )
 
 
-def _harness_command(graph: OrchestraGraph) -> tuple[list[str], float]:
-    for node in graph.nodes:
-        if node.node_kind is NodeKind.HARNESS:
-            command = list(
-                getattr(node, "command", None) or ["python", "-m", "pytest", "-q"]
-            )
-            timeout = float(getattr(node, "timeout_seconds", None) or 60.0)
-            return command, timeout
-    return ["python", "-m", "pytest", "-q"], 60.0
+def _harness_command(
+    graph: OrchestraGraph,
+    *,
+    expected_harness_id: str | None = None,
+) -> tuple[list[str], float]:
+    """Pick canonical-commit harness command from the local graph.
+
+    Prefer the harness matching ``expected_harness_id`` (SubtaskSpec keystone).
+    Fall back to the first harness node, then pytest -q.
+    """
+    harness_nodes = [n for n in graph.nodes if n.node_kind is NodeKind.HARNESS]
+    selected = None
+    if expected_harness_id:
+        for node in harness_nodes:
+            if getattr(node, "harness_id", None) == expected_harness_id:
+                selected = node
+                break
+    if selected is None and harness_nodes:
+        selected = harness_nodes[0]
+    if selected is None:
+        return ["python", "-m", "pytest", "-q"], 60.0
+    command = list(
+        getattr(selected, "command", None) or ["python", "-m", "pytest", "-q"]
+    )
+    timeout = float(getattr(selected, "timeout_seconds", None) or 60.0)
+    return command, timeout
 
 
 def _change_set_hash(cs: WorkspaceChangeSet | None) -> str:
@@ -937,7 +955,9 @@ class ReadySubtaskScheduler:
             base_revision=result.base_canonical_revision,
         )
         graph = load_graph(result.graph_template or sub.spec.local_graph_template)
-        command, timeout = _harness_command(graph)
+        command, timeout = _harness_command(
+            graph, expected_harness_id=sub.spec.keystone_harness_id
+        )
 
         record.status = WorkspaceCommitStatus.APPLYING
         try:
@@ -1230,6 +1250,12 @@ class ReadySubtaskScheduler:
                 for d in sorted(sub.spec.dependencies)
                 if state.subtasks[d].status is SubtaskStatus.COMMITTED
             ]
+            # Surface dynamic milestone objective into the forked workspace so
+            # role-agnostic contracts can focus the current SubtaskSpec.
+            brief = sub.spec.metadata.get("milestone_brief")
+            if isinstance(brief, str) and brief.strip():
+                milestone_path = Path(workspace_ref) / "MILESTONE.md"
+                milestone_path.write_text(brief, encoding="utf-8")
 
         exec_cfg = dict(sub.spec.metadata.get("execution_config") or {})
         graph_path = str(
