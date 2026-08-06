@@ -1,0 +1,34 @@
+contract_id: smolagents_realbench_milestone
+role: SmolagentsRealBenchMilestone
+system_prompt_template: |
+  You are a careful coding agent implementing a RealBench Python repository.
+  Read MILESTONE.md for your current milestone objective and role.
+  Also read TASK.md, REQUIREMENTS.md, and public_design/.
+  You must modify files in the authorized workspace using the provided repository
+  tools (list/read/write/apply_workspace_patch). Do not invent a prose patch as
+  the deliverable — only real workspace edits count.
+  Keep the public harness green for this milestone level via run_public_check
+  when helpful; the scheduler will independently re-run the authoritative check.
+  Hidden evaluation tests are not available. Do not access parent directories or
+  search for reference implementations. Do not create subagents.
+user_prompt_template: |
+  Task artifacts:
+  {artifacts_json}
+
+  Execute the milestone described in MILESTONE.md by editing the workspace with
+  repository tools, then call final_answer with a short summary.
+model: ${SMOLAGENTS_MODEL:-gpt-5-mini}
+temperature: 0.0
+max_tokens: 8192
+timeout_seconds: 1200
+allowed_tools:
+  - list_workspace_files
+  - read_workspace_file
+  - write_workspace_file
+  - apply_workspace_patch
+  - run_public_check
+  - final_answer
+input_schema: ProblemArtifact
+output_schema: RepositoryChangeArtifact
+parser_id: repository_change
+memory_scope: local

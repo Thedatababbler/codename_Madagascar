@@ -27,6 +27,12 @@ class SmolagentsCodeBackendConfig(BaseModel):
     planning_interval: int | None = None
     additional_authorized_imports: list[str] = Field(default_factory=list)
     use_structured_outputs_internally: bool = True
+    require_git_diff: bool = True
+    public_harness_level: Literal["discovery", "implementation", "integration"] | None = (
+        None
+    )
+    # Offline/deterministic tests only; production graphs leave this empty.
+    fixture_responses: list[str] = Field(default_factory=list)
     managed_agents: None = None
 
     @model_validator(mode="before")

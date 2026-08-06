@@ -13,7 +13,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-
 PUBLIC_CHECK_SCRIPT = "scripts/adamas_public_check.py"
 PUBLIC_HARNESS_MANIFEST = "adamas_public_harness.json"
 PUBLIC_TESTS_DIR = "tests_public"
@@ -150,7 +149,10 @@ def main() -> int:
     if not targets:
         targets = [root]
     for target in targets:
-        ok = compileall.compile_dir(str(target), quiet=1) if target.is_dir() else compileall.compile_file(str(target), quiet=1)
+        if target.is_dir():
+            ok = compileall.compile_dir(str(target), quiet=1)
+        else:
+            ok = compileall.compile_file(str(target), quiet=1)
         if not ok:
             print(f"FAIL: compileall failed under {target}", file=sys.stderr)
             return 1

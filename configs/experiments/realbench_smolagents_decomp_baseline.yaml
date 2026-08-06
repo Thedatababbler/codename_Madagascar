@@ -1,26 +1,26 @@
-# RealBench × AdaMAS: dynamic TaskPlan + public harness graphs + scheduler.
+# RealBench × AdaMAS: dynamic TaskPlan + public harness + smolagents_code.
 # One-shot only — fast_loop and slow_loop adaptation disabled.
 # Hidden RealBench tests are NOT used online; evaluate offline after freeze.
 experiment:
-  name: realbench_dynamic_taskplan_public_harness
+  name: realbench_smolagents_decomp_baseline
   seed: 42
-  agent_backend: codex_sdk
-  graph_config: configs/graphs/codex_realbench_public_integration.yaml
+  agent_backend: smolagents_code
+  graph_config: configs/graphs/smolagents_realbench_public_integration.yaml
   contracts_dir: configs/contracts
-  output_root: outputs/realbench_codex_decomp_baseline
+  output_root: outputs/realbench_smolagents_decomp_baseline
   dataset_root: data/realbench/datasets/projs_filtered_uml/level2
 
 decomposition:
-  mode: template  # structured public-design plan builder (not open LLM TaskPlan)
+  mode: template
   min_subtasks: 2
   max_subtasks: 6
   max_dependency_depth: 6
   max_implementation_milestones: 2
   require_public_keystone_harness: true
   graph_catalog:
-    discovery: configs/graphs/codex_realbench_public_discovery.yaml
-    implementation: configs/graphs/codex_realbench_public_implementation.yaml
-    integration: configs/graphs/codex_realbench_public_integration.yaml
+    discovery: configs/graphs/smolagents_realbench_public_discovery.yaml
+    implementation: configs/graphs/smolagents_realbench_public_implementation.yaml
+    integration: configs/graphs/smolagents_realbench_public_integration.yaml
 
 runtime:
   backend: native_async
@@ -34,7 +34,6 @@ sandbox:
   backend: mock
   per_test_timeout_seconds: 30
 
-# Explicitly disable adaptation loops (one-shot).
 fast_loop:
   enabled: false
   max_candidates: 0
@@ -46,10 +45,10 @@ slow_loop:
   max_candidates_per_update: 0
   allowed_backend_assignments:
     coding:
-      - codex_sdk
+      - smolagents_code
   backend_model_pools:
-    codex_sdk:
-      - ${CODEX_MODEL:-gpt-5.4}
+    smolagents_code:
+      - ${SMOLAGENTS_MODEL:-gpt-5-mini}
 
 pareto:
   enabled: false

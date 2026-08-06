@@ -265,4 +265,12 @@ async def test_backend_healthcheck_requires_smolagents():
 def test_default_tool_registry_allowlist():
     reset_tool_registry_for_tests()
     registry = get_tool_registry()
-    assert registry.known_ids() == {"python_math", "calculator", "final_answer"}
+    known = registry.known_ids()
+    assert {"python_math", "calculator", "final_answer"} <= known
+    assert {
+        "list_workspace_files",
+        "read_workspace_file",
+        "write_workspace_file",
+        "apply_workspace_patch",
+        "run_public_check",
+    } <= known

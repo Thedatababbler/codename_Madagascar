@@ -24,6 +24,26 @@ DEFAULT_GRAPH_CATALOG: dict[Role, str] = {
     "integration": "configs/graphs/codex_realbench_public_integration.yaml",
 }
 
+CODEX_GRAPH_CATALOG: dict[Role, str] = dict(DEFAULT_GRAPH_CATALOG)
+
+SMOLAGENTS_GRAPH_CATALOG: dict[Role, str] = {
+    "discovery": "configs/graphs/smolagents_realbench_public_discovery.yaml",
+    "implementation": "configs/graphs/smolagents_realbench_public_implementation.yaml",
+    "integration": "configs/graphs/smolagents_realbench_public_integration.yaml",
+}
+
+
+def graph_catalog_for_backend(backend: str) -> dict[Role, str]:
+    """Return the public-graph catalog for a selected agent backend."""
+    if backend == "smolagents_code":
+        return dict(SMOLAGENTS_GRAPH_CATALOG)
+    if backend == "codex_sdk":
+        return dict(CODEX_GRAPH_CATALOG)
+    raise ValueError(
+        f"unsupported RealBench agent backend {backend!r}; "
+        "expected 'codex_sdk' or 'smolagents_code'"
+    )
+
 KEYSTONE_HARNESS = "repository_test_harness"
 
 

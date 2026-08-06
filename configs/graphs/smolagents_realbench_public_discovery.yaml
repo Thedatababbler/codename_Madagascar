@@ -1,0 +1,73 @@
+graph_id: smolagents_realbench_public_discovery
+version: "1.0"
+initial_artifact_slots:
+  problem: ProblemArtifact
+final_output_slot: final_change
+metadata:
+  role: discovery
+  topology: smolagents_public_harness_gate
+  benchmark: realbench
+  public_harness_level: discovery
+  agent_backend: smolagents_code
+nodes:
+  - node_id: smolagents_implementer
+    node_kind: agent
+    contract_id: smolagents_realbench_milestone
+    backend:
+      type: smolagents_code
+      max_steps: 12
+      executor_type: local
+      use_structured_outputs_internally: true
+      require_git_diff: true
+      public_harness_level: discovery
+      additional_authorized_imports: []
+    model:
+      provider: openai_compatible
+      name: ${SMOLAGENTS_MODEL:-gpt-5-mini}
+      temperature: 0.0
+      max_tokens: 8192
+    tools:
+      - list_workspace_files
+      - read_workspace_file
+      - write_workspace_file
+      - apply_workspace_patch
+      - run_public_check
+      - final_answer
+    output_contract:
+      parser_id: repository_change
+      output_schema: RepositoryChangeArtifact
+    input_slots: {problem: ProblemArtifact}
+    output_slots: {repository_change: RepositoryChangeArtifact}
+    timeout_seconds: 1200
+  - node_id: repository_tests
+    node_kind: harness
+    harness_id: repository_test_harness
+    visibility: public
+    command: [python, scripts/adamas_public_check.py, --level, discovery]
+    timeout_seconds: 120
+    input_slots: {repository_change: RepositoryChangeArtifact}
+    output_slots: {result: RepositoryHarnessResultArtifact}
+  - node_id: freeze_change
+    node_kind: transform
+    transform_id: freeze_repository_change
+    input_slots:
+      repository_change: RepositoryChangeArtifact
+      gate: RepositoryHarnessResultArtifact
+    output_slots: {final_change: RepositoryChangeArtifact}
+edges:
+  - edge_id: agent_to_tests
+    source_node: smolagents_implementer
+    source_output: repository_change
+    destination_node: repository_tests
+    destination_input: repository_change
+  - edge_id: agent_to_freeze
+    source_node: smolagents_implementer
+    source_output: repository_change
+    destination_node: freeze_change
+    destination_input: repository_change
+  - edge_id: tests_pass_to_freeze
+    source_node: repository_tests
+    source_output: result
+    destination_node: freeze_change
+    destination_input: gate
+    condition: {source_field: passed, operator: is_true}

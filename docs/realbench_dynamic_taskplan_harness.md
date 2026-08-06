@@ -27,12 +27,14 @@ Hidden RealBench `proj_with_test` **不进入** agent / plan / 在线 harness；
 - Public harness：`src/orchestra/realbench/public_harness.py`  
   - `materialize_public_harness(workspace)`  
 - Graphs（均含 harness→freeze gate）：  
-  - `configs/graphs/codex_realbench_public_discovery.yaml` (`--level discovery`)  
-  - `configs/graphs/codex_realbench_public_implementation.yaml`  
-  - `configs/graphs/codex_realbench_public_integration.yaml`  
-- Contract：`configs/contracts/codex_realbench_milestone.yaml`  
+  - Codex：`configs/graphs/codex_realbench_public_{discovery,implementation,integration}.yaml`  
+  - Smolagents：`configs/graphs/smolagents_realbench_public_{discovery,implementation,integration}.yaml`  
+- Contracts：`codex_realbench_milestone.yaml` / `smolagents_realbench_milestone.yaml`  
 - Runner：`src/orchestra/cli/run_realbench_codex_decomp_baseline.py`  
-- Experiment：`configs/experiments/realbench_codex_decomp_baseline.yaml`  
+  - `--agent-backend codex_sdk|smolagents_code`（与 `experiment.agent_backend` 一致）  
+- Experiments：  
+  - `configs/experiments/realbench_codex_decomp_baseline.yaml`  
+  - `configs/experiments/realbench_smolagents_decomp_baseline.yaml`  
   - `decomposition.require_public_keystone_harness: true`  
 - Validator：`validate_subtask_graph_harness`（计划 keystone 必须出现在图中并 gate freeze）  
 - Scheduler：按 `keystone_harness_id` 选择 commit harness；fork 后写 `MILESTONE.md`
@@ -53,16 +55,35 @@ Hidden RealBench `proj_with_test` **不进入** agent / plan / 在线 harness；
 # dry-run：只产出 plan / subgraphs / public harness
 uv run python -m orchestra.cli.run_realbench_codex_decomp_baseline \
   --config configs/experiments/realbench_codex_decomp_baseline.yaml \
-  --tasks encore-ecosystem_NodeFlow \
+  --agent-backend codex_sdk \
+  --task-id encore-ecosystem_NodeFlow \
   --dry-run
 
-# 全量（需 Codex 凭证）
+# Codex 全量（需 Codex 凭证）
 bash scripts/run_realbench_codex_decomp_baseline.sh
+
+# Smolagents 全量（需 OpenAI-compatible 凭证；勿与 Codex 混跑）
+bash scripts/run_realbench_smolagents_decomp_baseline.sh
 
 # 冻结后离线 hidden 评测
 uv run python scripts/eval_realbench_codex_decomp_baseline.py \
   --batch-dir outputs/realbench_codex_decomp_baseline/<RUN_ID>
 ```
+
+## Codex vs smolagents 公平性
+
+两边共用同一 RealBench 公开输入、动态 milestone TaskPlan 语义、公开 harness、
+隔离 workspace、scheduler commit、评测逻辑与预算定义。差异仅在后端交互协议：
+
+| | Codex | Smolagents |
+|--|--|--|
+| 编辑方式 | Codex SDK 线程内改仓 | 白名单 repository tools |
+| step 限制 | Codex 回合语义 | `max_steps` CodeAgent |
+| token | Codex usage 字段 | smolagents TokenUsage；缺字段标 `unavailable` |
+| 终止 | SDK turn 结束 | `final_answer` / max_steps |
+| 变更证据 | Git snapshot（忽略模型文本） | 同左 |
+
+两边都**不**向 agent 暴露 hidden tests / 参考实现。注入的恒真 liveness 测试不计为解题证据。
 
 ## 与旧 baseline 的差异
 
@@ -80,3 +101,4 @@ uv run python scripts/eval_realbench_codex_decomp_baseline.py \
 - Codex 跨阶段 resume thread（仍 `thread_policy: fresh`）  
 - fast/slow loop 适应  
 - 把 hidden tests 接入在线 verifier  
+- 付费 API / held-out 线上实验（需单独启动）  

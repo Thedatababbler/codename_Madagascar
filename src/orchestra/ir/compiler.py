@@ -16,8 +16,9 @@ from orchestra.ir.nodes import (
     TransformNodeSpec,
 )
 from orchestra.tools.bbeh_tools import BBEH_TOOL_IDS
+from orchestra.tools.repository_tools import REPOSITORY_TOOL_IDS
 
-KNOWN_TOOL_IDS = set(BBEH_TOOL_IDS)
+KNOWN_TOOL_IDS = set(BBEH_TOOL_IDS) | set(REPOSITORY_TOOL_IDS)
 
 
 class GraphCompilationError(ValueError):

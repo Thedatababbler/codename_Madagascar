@@ -42,6 +42,7 @@ from orchestra.decomposition.decomposer import TaskDecomposer
 from orchestra.decomposition.realbench_plan import (
     DEFAULT_GRAPH_CATALOG,
     build_realbench_candidate_plan,
+    graph_catalog_for_backend,
 )
 from orchestra.decomposition.schemas import DecompositionLimits, TaskPlan
 from orchestra.executors.agent import AgentNodeExecutor
@@ -63,6 +64,8 @@ from orchestra.settings import load_env_file, resolve_runtime_settings
 from orchestra.storage.artifacts import FileArtifactStore
 from orchestra.storage.events import AppendOnlyEventWriter
 from orchestra.telemetry.events import TelemetryEvent
+
+SUPPORTED_AGENT_BACKENDS = frozenset({"codex_sdk", "smolagents_code"})
 
 TASKS: list[dict[str, str]] = [
     {
@@ -218,7 +221,8 @@ UML design files in this repository.
 ## Constraints
 - Hidden evaluation tests and reference implementations are not available.
 - Do not search outside this repository for answers.
-- Do not create Codex subagents; implement directly in this workspace.
+- Do not create subagents; implement directly in this workspace via the
+  authorized repository-editing tools for the selected agent backend.
 """,
         encoding="utf-8",
     )
@@ -247,16 +251,94 @@ UML design files in this repository.
     return ws
 
 
+def resolve_agent_backend(
+    experiment: dict[str, Any],
+    *,
+    cli_backend: str | None = None,
+) -> str:
+    """Resolve selected agent backend; CLI overrides experiment config."""
+    raw = cli_backend or experiment.get("agent_backend") or "codex_sdk"
+    backend = str(raw).strip()
+    if backend not in SUPPORTED_AGENT_BACKENDS:
+        raise SystemExit(
+            f"unsupported --agent-backend / experiment.agent_backend={backend!r}; "
+            f"expected one of {sorted(SUPPORTED_AGENT_BACKENDS)}"
+        )
+    return backend
+
+
+def resolve_graph_catalog(
+    experiment: dict[str, Any],
+    *,
+    agent_backend: str,
+) -> dict[str, str]:
+    """Resolve graph catalog and fail closed on backend/graph family mismatch."""
+    from orchestra.ir.nodes import AgentNodeSpec
+
+    deco_cfg = dict(experiment.get("decomposition") or {})
+    expected = graph_catalog_for_backend(agent_backend)
+    catalog = dict(deco_cfg.get("graph_catalog") or expected)
+    for role, path in expected.items():
+        chosen = str(catalog.get(role) or path)
+        catalog[role] = chosen
+        if agent_backend == "smolagents_code" and "codex_realbench" in chosen:
+            raise SystemExit(
+                f"smolagents_code mode refuses Codex graph for {role}: {chosen}"
+            )
+        if agent_backend == "codex_sdk" and "smolagents_realbench" in chosen:
+            raise SystemExit(
+                f"codex_sdk mode refuses smolagents graph for {role}: {chosen}"
+            )
+    # Verify graph files declare the selected backend type.
+    for role, path in catalog.items():
+        graph = load_graph(path)
+        agent_nodes = [n for n in graph.nodes if isinstance(n, AgentNodeSpec)]
+        if not agent_nodes:
+            raise SystemExit(f"graph family incomplete: no agent node in {path}")
+        for node in agent_nodes:
+            backend_type = node.resolved_backend().type
+            if backend_type != agent_backend:
+                raise SystemExit(
+                    f"backend/graph mismatch: selected={agent_backend} but "
+                    f"{path} node {node.node_id} uses {backend_type}"
+                )
+            if getattr(node.resolved_backend(), "require_git_diff", True) is False:
+                raise SystemExit(
+                    f"RealBench public graphs require require_git_diff=true ({path})"
+                )
+        if not str(graph.graph_id).startswith(("codex_realbench", "smolagents_realbench")):
+            raise SystemExit(
+                f"unexpected RealBench graph_id {graph.graph_id!r} in {path} ({role})"
+            )
+    return catalog
+
+
+def _graph_catalog_hashes(catalog: dict[str, str]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for role, path in sorted(catalog.items()):
+        graph = load_graph(path)
+        out[role] = graph.content_hash
+    return out
+
+
+def _tool_catalog_hash() -> str:
+    from orchestra.ir.compiler import KNOWN_TOOL_IDS
+
+    blob = "\n".join(sorted(KNOWN_TOOL_IDS)).encode()
+    return hashlib.sha256(blob).hexdigest()
+
+
 def build_dynamic_task_plan(
     task_id: str,
     *,
     workspace: Path,
     plan_path: Path,
     experiment: dict[str, Any],
+    agent_backend: str,
 ) -> TaskPlan:
     """Build + validate a dynamic milestone TaskPlan for one RealBench task."""
     deco_cfg = dict(experiment.get("decomposition") or {})
-    catalog = dict(deco_cfg.get("graph_catalog") or DEFAULT_GRAPH_CATALOG)
+    catalog = resolve_graph_catalog(experiment, agent_backend=agent_backend)
     candidate_payload = build_realbench_candidate_plan(
         task_id=task_id,
         workspace=workspace,
@@ -296,6 +378,7 @@ def build_dynamic_task_plan(
             "demo": "realbench_dynamic_taskplan_public_harness",
             "realbench_task_id": task_id,
             "plan_builder": "build_realbench_candidate_plan",
+            "agent_backend": agent_backend,
         },
     )
 
@@ -317,6 +400,34 @@ def _build_problem(task: dict[str, str], requirements: str) -> ProblemArtifact:
     )
 
 
+def _selected_model_name(agent_backend: str) -> str:
+    if agent_backend == "smolagents_code":
+        return os.getenv("SMOLAGENTS_MODEL", "gpt-5-mini")
+    return os.getenv("CODEX_MODEL", "gpt-5.4")
+
+
+def _smolagents_version() -> str | None:
+    try:
+        import smolagents
+
+        return getattr(smolagents, "__version__", "installed")
+    except ImportError:
+        return None
+
+
+def _public_harness_identity(workspace: Path) -> dict[str, Any]:
+    manifest_path = workspace / "adamas_public_harness.json"
+    if not manifest_path.is_file():
+        return {"present": False}
+    raw = manifest_path.read_bytes()
+    return {
+        "present": True,
+        "path": "adamas_public_harness.json",
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "payload": json.loads(raw.decode("utf-8")),
+    }
+
+
 async def _run_one(
     *,
     task: dict[str, str],
@@ -325,6 +436,7 @@ async def _run_one(
     batch_dir: Path,
     dry_run: bool,
     allow_config_drift: bool,
+    agent_backend: str,
 ) -> dict[str, Any]:
     started_at = datetime.now(UTC)
     wall_started = time.perf_counter()
@@ -346,15 +458,20 @@ async def _run_one(
         task=task,
         workspaces_root=workspaces_root,
     )
+    catalog = resolve_graph_catalog(experiment, agent_backend=agent_backend)
+    graph_hashes = _graph_catalog_hashes(catalog)
     plan_path = run_dir / "plan.yaml"
     plan = build_dynamic_task_plan(
         task_id,
         workspace=source_repo,
         plan_path=plan_path,
         experiment=experiment,
+        agent_backend=agent_backend,
     )
     requirements = (source_repo / "REQUIREMENTS.md").read_text(encoding="utf-8")
     problem = _build_problem(task, requirements)
+    selected_model = _selected_model_name(agent_backend)
+    harness_identity = _public_harness_identity(source_repo)
 
     logging.basicConfig(
         level=getattr(logging, str((config.get("logging") or {}).get("level", "INFO"))),
@@ -367,11 +484,13 @@ async def _run_one(
         ],
         force=True,
     )
-    logger = logging.getLogger("realbench_codex_decomp_baseline")
+    logger = logging.getLogger("realbench_decomp_baseline")
     logger.info(
-        "task=%s run_dir=%s source_repo=%s subtasks=%s "
-        "slow_loop=off fast_loop=off fresh_thread=true public_keystone=on",
+        "task=%s backend=%s model=%s run_dir=%s source_repo=%s subtasks=%s "
+        "slow_loop=off fast_loop=off public_keystone=on",
         task_id,
+        agent_backend,
+        selected_model,
         run_dir,
         source_repo,
         [s.subtask_id for s in plan.subtasks],
@@ -390,23 +509,28 @@ async def _run_one(
     graphs_dir = _dump_subgraphs(
         logs_dir=logs_dir, plan=plan, contracts_dir=contracts_dir
     )
-    _write_json(
-        logs_dir / "02_runtime" / "run_config.json",
-        {
-            "config_path": str(config_path),
-            "task": task,
-            "source_repo": str(source_repo),
-            "plan_path": str(plan_path),
-            "pareto_enabled": False,
-            "slow_loop": config.get("slow_loop"),
-            "fast_loop": config.get("fast_loop"),
-            "codex_thread_policy": "fresh",
-            "adaptation": "disabled_oneshot",
-            "decomposition_mode": "dynamic_public_harness",
-            "subtask_ids": [s.subtask_id for s in plan.subtasks],
-            "keystone_harness_ids": [s.keystone_harness_id for s in plan.subtasks],
-        },
-    )
+    run_config = {
+        "config_path": str(config_path),
+        "task": task,
+        "source_repo": str(source_repo),
+        "plan_path": str(plan_path),
+        "pareto_enabled": False,
+        "slow_loop": config.get("slow_loop"),
+        "fast_loop": config.get("fast_loop"),
+        "agent_backend": agent_backend,
+        "selected_model": selected_model,
+        "adaptation": "disabled_oneshot",
+        "decomposition_mode": "dynamic_public_harness",
+        "subtask_ids": [s.subtask_id for s in plan.subtasks],
+        "keystone_harness_ids": [s.keystone_harness_id for s in plan.subtasks],
+        "graph_catalog": catalog,
+        "graph_hashes": graph_hashes,
+        "repository_editing": True,
+        "workspace_isolation_policy": "shared_subtask_git_fork",
+    }
+    if agent_backend == "codex_sdk":
+        run_config["codex_thread_policy"] = "fresh"
+    _write_json(logs_dir / "02_runtime" / "run_config.json", run_config)
     _write_json(
         logs_dir / "00_decomposition" / "problem_artifact.json",
         problem.model_dump(mode="json"),
@@ -417,6 +541,8 @@ async def _run_one(
             "mode": "realbench_dynamic_taskplan_public_harness",
             "dry_run": True,
             "task_id": task_id,
+            "agent_backend": agent_backend,
+            "selected_model": selected_model,
             "plan_task_id": plan.task_id,
             "subtasks": [s.subtask_id for s in plan.subtasks],
             "keystone_harness_ids": [s.keystone_harness_id for s in plan.subtasks],
@@ -427,6 +553,7 @@ async def _run_one(
             "run_dir": str(run_dir),
             "slow_loop_enabled": False,
             "fast_loop_max_candidates": 0,
+            "graph_hashes": graph_hashes,
         }
         _write_json(run_dir / "summary.json", summary)
         _write_trace_md(run_dir=run_dir, plan=plan, state=None, summary=summary)
@@ -438,16 +565,30 @@ async def _run_one(
             contracts[key].model_dump_json() for key in sorted(contracts)
         ).encode()
     ).hexdigest()
+    include_smolagents = agent_backend == "smolagents_code"
+    include_codex = agent_backend == "codex_sdk"
     llm = OpenAICompatibleAsyncClient()
     backend_registry, backend_manifest = resolve_backend_registry(
         mock_backends=False,
         client=llm,
-        include_smolagents=False,
-        include_codex=True,
+        include_smolagents=include_smolagents,
+        include_codex=include_codex,
     )
-    if not backend_registry.has("codex_sdk"):
+    if not backend_registry.has(agent_backend):
+        install_hint = (
+            "uv sync --extra smolagents"
+            if agent_backend == "smolagents_code"
+            else "uv sync --extra codex"
+        )
+        raise RuntimeError(f"{agent_backend} unavailable; install with: {install_hint}")
+    # Fail closed: never silently register the opposite coding backend.
+    if include_smolagents and backend_registry.has("codex_sdk"):
         raise RuntimeError(
-            "codex_sdk unavailable; install with: uv sync --extra codex"
+            "smolagents RealBench baseline must not register codex_sdk"
+        )
+    if include_codex and backend_registry.has("smolagents_code"):
+        raise RuntimeError(
+            "codex RealBench baseline must not register smolagents_code"
         )
 
     runtime_cfg = config.get("runtime") or {}
@@ -477,6 +618,17 @@ async def _run_one(
 
     first_graph = load_graph(plan.subtasks[0].local_graph_template)
     compiled = build_compiler(contracts_dir).compile(first_graph)
+    from orchestra.ir.nodes import AgentNodeSpec
+
+    used = {
+        n.resolved_backend().type
+        for n in compiled.graph.nodes
+        if isinstance(n, AgentNodeSpec)
+    }
+    if used != {agent_backend}:
+        raise RuntimeError(
+            f"health-check graph backends {sorted(used)} != selected {agent_backend}"
+        )
     await healthcheck_used_backends(
         registry=backend_registry,
         graph=compiled,
@@ -489,10 +641,8 @@ async def _run_one(
     slow_loop_config = SlowLoopConfig(
         enabled=False,
         budget=SlowLoopBudget(max_updates_per_task=0, max_candidates_per_update=0),
-        allowed_backend_assignments={"coding": ["codex_sdk"]},
-        backend_model_pools={
-            "codex_sdk": [os.getenv("CODEX_MODEL", "gpt-5.4")],
-        },
+        allowed_backend_assignments={"coding": [agent_backend]},
+        backend_model_pools={agent_backend: [selected_model]},
     )
     fast_budget = FastLoopBudget(max_candidates=0, max_total_backend_calls=0)
     slow_loop = SlowLoopController(
@@ -541,14 +691,18 @@ async def _run_one(
                 "realbench_task_id": task_id,
                 "slow_loop_enabled": False,
                 "fast_loop_max_candidates": 0,
-                "codex_thread_policy": "fresh",
+                "agent_backend": agent_backend,
+                "selected_model": selected_model,
             },
         )
     )
 
     error: str | None = None
     try:
-        logger.info("starting ReadySubtaskScheduler.run_task (RealBench baseline)")
+        logger.info(
+            "starting ReadySubtaskScheduler.run_task (RealBench baseline backend=%s)",
+            agent_backend,
+        )
         state = await scheduler.run_task(
             plan,
             state,
@@ -576,7 +730,8 @@ async def _run_one(
         "pareto_enabled": False,
         "slow_loop_enabled": False,
         "fast_loop_max_candidates": 0,
-        "codex_thread_policy": "fresh",
+        "agent_backend": agent_backend,
+        "selected_model": selected_model,
         "decomposition_status": plan.decomposition_status.value,
         "subtask_ids": [s.subtask_id for s in plan.subtasks],
         "backend_override": backend_manifest.get("backend_override"),
@@ -601,20 +756,47 @@ async def _run_one(
             "trace_md": str(run_dir / "TRACE.md"),
         },
     }
+    if agent_backend == "codex_sdk":
+        summary["codex_thread_policy"] = "fresh"
     _write_json(run_dir / "summary.json", summary)
-    _write_json(
-        run_dir / "run_manifest.json",
-        {
-            "runner": "run_realbench_codex_decomp_baseline",
-            "started_at": started_at.isoformat(),
-            "config_path": str(config_path),
-            "task": task,
-            **backend_manifest,
-            "slow_loop_enabled": False,
-            "fast_loop_max_candidates": 0,
-            "codex_thread_policy": "fresh",
+    manifest = {
+        "runner": "run_realbench_codex_decomp_baseline",
+        "started_at": started_at.isoformat(),
+        "config_path": str(config_path),
+        "task": task,
+        **backend_manifest,
+        "slow_loop_enabled": False,
+        "fast_loop_max_candidates": 0,
+        "agent_backend": agent_backend,
+        "selected_backend_family": agent_backend,
+        "selected_model": selected_model,
+        "graph_catalog": catalog,
+        "graph_ids": {
+            role: load_graph(path).graph_id for role, path in catalog.items()
         },
-    )
+        "graph_hashes": graph_hashes,
+        "tool_catalog_hash": _tool_catalog_hash(),
+        "repository_editing": True,
+        "public_harness": harness_identity,
+        "workspace_isolation_policy": "shared_subtask_git_fork",
+        "seed": experiment.get("seed"),
+        "budget": {
+            "fast_loop_max_candidates": 0,
+            "slow_loop_max_updates_per_task": 0,
+            "max_concurrent_subtasks": runtime_cap,
+        },
+        "include_smolagents": include_smolagents,
+        "include_codex": include_codex,
+    }
+    if agent_backend == "codex_sdk":
+        manifest["codex_thread_policy"] = "fresh"
+    if agent_backend == "smolagents_code":
+        manifest["smolagents_version"] = _smolagents_version()
+        if manifest["smolagents_version"] is None:
+            raise RuntimeError("smolagents dependency missing after registry build")
+    if manifest.get("selected_backend_family") != agent_backend:
+        raise RuntimeError("manifest backend identity disagrees with selected backend")
+    _write_json(run_dir / "run_manifest.json", manifest)
     _write_trace_md(run_dir=run_dir, plan=plan, state=state, summary=summary)
     return summary
 
@@ -622,16 +804,40 @@ async def _run_one(
 async def _run(args: argparse.Namespace) -> int:
     load_env_file(_repo_root() / ".env")
     resolve_runtime_settings(include_lcb_repository_default=False)
-    # Host bwrap/userns workaround used by prior RealBench Codex runs.
-    os.environ.setdefault("ADAMAS_CODEX_SANDBOX_OVERRIDE", "full_access")
-    os.environ.setdefault("ADAMAS_ALLOW_UNTRUSTED_REPO_HARNESS", "1")
 
     config_path = Path(args.config)
     config = _load_yaml(config_path)
+    experiment = dict(config.get("experiment") or {})
+    agent_backend = resolve_agent_backend(
+        experiment, cli_backend=getattr(args, "agent_backend", None)
+    )
+    # Codex-only host workaround; never apply for smolagents mode.
+    if agent_backend == "codex_sdk":
+        os.environ.setdefault("ADAMAS_CODEX_SANDBOX_OVERRIDE", "full_access")
+    # Do not set ADAMAS_ALLOW_UNTRUSTED_REPO_HARNESS process-wide. Workspaces
+    # ship `.adamas_trusted_harness`; advisory run_public_check scopes the
+    # escape hatch to its own subprocess only.
+
     if bool((config.get("pareto") or {}).get("enabled", False)):
         raise SystemExit("baseline requires pareto.enabled=false")
     if bool((config.get("slow_loop") or {}).get("enabled", False)):
         raise SystemExit("baseline requires slow_loop.enabled=false")
+
+    # Fail closed if experiment identity disagrees with CLI selection.
+    exp_backend = experiment.get("agent_backend")
+    if exp_backend and str(exp_backend) != agent_backend and args.agent_backend:
+        # CLI wins, but record the override explicitly later in the batch manifest.
+        pass
+    if (
+        agent_backend == "smolagents_code"
+        and "codex" in str(experiment.get("name") or "").lower()
+        and "smolagents" not in str(experiment.get("name") or "").lower()
+        and not args.agent_backend
+    ):
+        raise SystemExit(
+            "experiment name looks Codex-only but agent_backend=smolagents_code; "
+            "use realbench_smolagents_decomp_baseline.yaml or pass --agent-backend"
+        )
 
     selected = TASKS
     if args.task_id:
@@ -641,31 +847,51 @@ async def _run(args: argparse.Namespace) -> int:
         if missing:
             raise SystemExit(f"unknown task_id(s): {sorted(missing)}")
 
+    default_out = (
+        "outputs/realbench_smolagents_decomp_baseline"
+        if agent_backend == "smolagents_code"
+        else "outputs/realbench_codex_decomp_baseline"
+    )
     batch_id = args.run_id or f"rb-decomp-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
     output_root = Path(
-        args.output_root
-        or (config.get("experiment") or {}).get(
-            "output_root", "outputs/realbench_codex_decomp_baseline"
-        )
+        args.output_root or experiment.get("output_root", default_out)
     )
     batch_dir = (output_root / batch_id).resolve()
     batch_dir.mkdir(parents=True, exist_ok=True)
-    _write_json(
-        batch_dir / "batch_manifest.json",
-        {
-            "batch_id": batch_id,
-            "tasks": selected,
-            "config": str(config_path),
-            "slow_loop_enabled": False,
-            "fast_loop_max_candidates": 0,
-            "codex_thread_policy": "fresh",
-            "dry_run": bool(args.dry_run),
-        },
-    )
+    batch_manifest: dict[str, Any] = {
+        "batch_id": batch_id,
+        "tasks": selected,
+        "config": str(config_path),
+        "slow_loop_enabled": False,
+        "fast_loop_max_candidates": 0,
+        "agent_backend": agent_backend,
+        "selected_backend_family": agent_backend,
+        "selected_model": _selected_model_name(agent_backend),
+        "dry_run": bool(args.dry_run),
+        "graph_catalog": resolve_graph_catalog(
+            experiment, agent_backend=agent_backend
+        ),
+        "graph_hashes": _graph_catalog_hashes(
+            resolve_graph_catalog(experiment, agent_backend=agent_backend)
+        ),
+        "tool_catalog_hash": _tool_catalog_hash(),
+        "repository_editing": True,
+        "workspace_isolation_policy": "shared_subtask_git_fork",
+        "seed": experiment.get("seed"),
+    }
+    if agent_backend == "codex_sdk":
+        batch_manifest["codex_thread_policy"] = "fresh"
+    if agent_backend == "smolagents_code":
+        batch_manifest["smolagents_version"] = _smolagents_version()
+        if batch_manifest["smolagents_version"] is None and not args.dry_run:
+            raise SystemExit(
+                "smolagents dependency missing; install with: uv sync --extra smolagents"
+            )
+    _write_json(batch_dir / "batch_manifest.json", batch_manifest)
 
     results: list[dict[str, Any]] = []
     for task in selected:
-        print(f"\n===== START {task['task_id']} =====", flush=True)
+        print(f"\n===== START {task['task_id']} ({agent_backend}) =====", flush=True)
         summary = await _run_one(
             task=task,
             config=config,
@@ -673,6 +899,7 @@ async def _run(args: argparse.Namespace) -> int:
             batch_dir=batch_dir,
             dry_run=bool(args.dry_run),
             allow_config_drift=bool(args.allow_config_drift),
+            agent_backend=agent_backend,
         )
         results.append(summary)
         print(json.dumps(summary, indent=2, sort_keys=True, ensure_ascii=False))
@@ -681,12 +908,13 @@ async def _run(args: argparse.Namespace) -> int:
     batch_summary = {
         "batch_id": batch_id,
         "batch_dir": str(batch_dir),
+        "agent_backend": agent_backend,
         "n_tasks": len(results),
         "results": results,
         "committed_all": [
             r["task_id"]
             for r in results
-            if set(r.get("committed") or []) >= {"analyze", "implement", "verify"}
+            if r.get("committed") and not r.get("error")
         ],
         "errors": [
             {"task_id": r["task_id"], "error": r.get("error")}
@@ -708,6 +936,12 @@ def main() -> int:
         "--config",
         default="configs/experiments/realbench_codex_decomp_baseline.yaml",
     )
+    parser.add_argument(
+        "--agent-backend",
+        choices=sorted(SUPPORTED_AGENT_BACKENDS),
+        default=None,
+        help="Agent backend family (overrides experiment.agent_backend).",
+    )
     parser.add_argument("--output-root")
     parser.add_argument("--run-id")
     parser.add_argument(
@@ -718,7 +952,7 @@ def main() -> int:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Only dump decomposition + subgraphs; do not call Codex.",
+        help="Only dump decomposition + subgraphs; do not call model backends.",
     )
     parser.add_argument("--allow-config-drift", action="store_true")
     args = parser.parse_args()

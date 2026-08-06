@@ -19,7 +19,7 @@ import tempfile
 import time
 import venv
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -100,7 +100,7 @@ def parse_junit_counts(junit_path: Path) -> dict[str, Any] | None:
 
 
 def utc_now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def write_json(path: Path, obj: Any) -> None:
@@ -251,16 +251,25 @@ def evaluate_hidden(
     elif counts.get("collection_failure"):
         failure_kind = "collection_failure"
         evaluator_failure = True
-    elif counts.get("collected") in (0, None) and counts["passed"] + counts["failed"] + counts["error"] == 0:
+    elif counts.get("collected") in (0, None) and (
+        counts["passed"] + counts["failed"] + counts["error"] == 0
+    ):
         failure_kind = "collection_failure"
         evaluator_failure = True
-    elif "ERROR: " in (stderr or "") and counts["passed"] == 0 and not counts.get("parsed_ok"):
+    elif (
+        "ERROR: " in (stderr or "")
+        and counts["passed"] == 0
+        and not counts.get("parsed_ok")
+    ):
         failure_kind = "dependency/setup failure"
         evaluator_failure = True
 
     denom = counts["passed"] + counts["failed"] + counts["error"]
     if denom == 0 or (
-        evaluator_failure and counts["passed"] == 0 and counts["failed"] == 0 and counts["error"] == 0
+        evaluator_failure
+        and counts["passed"] == 0
+        and counts["failed"] == 0
+        and counts["error"] == 0
     ):
         test_pass_rate = None
     else:
@@ -306,7 +315,10 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     evaluable = [r for r in rows if not r.get("infra_failure")]
     valid_rates = [r["test_pass_rate"] for r in evaluable if r.get("test_pass_rate") is not None]
     sum_p = sum(r.get("passed") or 0 for r in evaluable)
-    sum_den = sum((r.get("passed") or 0) + (r.get("failed") or 0) + (r.get("error") or 0) for r in evaluable)
+    sum_den = sum(
+        (r.get("passed") or 0) + (r.get("failed") or 0) + (r.get("error") or 0)
+        for r in evaluable
+    )
     micro = (sum_p / sum_den) if sum_den else None
     macro = statistics.mean(valid_rates) if valid_rates else None
     repo_ok = sum(1 for r in evaluable if r.get("repo_success") == 1)
@@ -328,8 +340,8 @@ def write_summary_md(summary: dict[str, Any], rows: list[dict[str, Any]], path: 
         "",
         f"- Generated: {summary['generated_at']}",
         f"- Batch: `{summary.get('batch_id')}`",
-        f"- Protocol: overlay agent **source** onto private `proj_with_test`, then pytest "
-        f"(agent `tests/` skipped; counts from junit.xml)",
+        "- Protocol: overlay agent **source** onto private `proj_with_test`, then pytest "
+        "(agent `tests/` skipped; counts from junit.xml)",
         f"- Runs: {summary['n_runs']}",
         f"- Evaluable: {summary['n_evaluable']}",
         "",
@@ -344,7 +356,10 @@ def write_summary_md(summary: dict[str, Any], rows: list[dict[str, Any]], path: 
         "",
         "## Per-task results",
         "",
-        "| task_id | domain | pass_rate | repo_success | passed/failed/error | collected | eval_s | evaluator_fail |",
+        (
+            "| task_id | domain | pass_rate | repo_success | "
+            "passed/failed/error | collected | eval_s | evaluator_fail |"
+        ),
         "|---|---|---|---|---|---|---|---|",
     ]
     for r in rows:

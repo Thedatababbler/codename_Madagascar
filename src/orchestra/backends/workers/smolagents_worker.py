@@ -165,6 +165,7 @@ def run_codeagent(request: dict[str, Any]) -> dict[str, Any]:
         }
 
     tool_ids = list(request.get("tools") or [])
+    backend_config_early = request.get("backend_config") or {}
     try:
         tools = get_tool_registry().build(
             tool_ids,
@@ -172,6 +173,13 @@ def run_codeagent(request: dict[str, Any]) -> dict[str, Any]:
                 run_id=request.get("run_id"),
                 task_id=request.get("task_id"),
                 node_id=request.get("node_id"),
+                workspace_ref=request.get("workspace_ref"),
+                metadata={
+                    "public_harness_level": backend_config_early.get(
+                        "public_harness_level"
+                    ),
+                    "subtask_id": request.get("subtask_id"),
+                },
             ),
         )
     except Exception as exc:  # noqa: BLE001

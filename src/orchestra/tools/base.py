@@ -56,7 +56,9 @@ class ToolRegistry:
 
 def default_tool_registry() -> ToolRegistry:
     from orchestra.tools.bbeh_tools import register_bbeh_tools
+    from orchestra.tools.repository_tools import register_repository_tools
 
     registry = ToolRegistry()
     register_bbeh_tools(registry)
+    register_repository_tools(registry)
     return registry
