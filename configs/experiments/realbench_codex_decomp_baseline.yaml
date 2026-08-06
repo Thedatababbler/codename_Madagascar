@@ -12,11 +12,12 @@ experiment:
 
 decomposition:
   mode: template  # structured public-design plan builder (not open LLM TaskPlan)
-  min_subtasks: 2
+  min_subtasks: 1
   max_subtasks: 6
   max_dependency_depth: 6
   max_implementation_milestones: 2
   require_public_keystone_harness: true
+  # Adaptive split is decided by plan builder; force_split: true disables single-milestone mode.
   graph_catalog:
     discovery: configs/graphs/codex_realbench_public_discovery.yaml
     implementation: configs/graphs/codex_realbench_public_implementation.yaml

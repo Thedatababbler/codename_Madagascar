@@ -12,7 +12,7 @@ experiment:
 
 decomposition:
   mode: template
-  min_subtasks: 2
+  min_subtasks: 1
   max_subtasks: 6
   max_dependency_depth: 6
   max_implementation_milestones: 2

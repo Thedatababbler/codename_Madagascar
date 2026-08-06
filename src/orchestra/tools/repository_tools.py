@@ -37,7 +37,15 @@ _PROTECTED_RELATIVE_PATHS = {
     ".adamas_trusted_harness",
     "tests/test_adamas_workspace_ok.py",
     "adamas_public_harness.json",
+    "adamas_milestone_contracts.json",
     "scripts/adamas_public_check.py",
+    "tests_public/test_milestone_contracts.py",
+}
+
+# Readable by agents (shared memory) but not writable/deletable via tools.
+_WRITE_PROTECTED_RELATIVE_PATHS = {
+    "ADAMAS_CHANGELOG.md",
+    "ADAMAS_DECISIONS.md",
 }
 
 _PUBLIC_CHECK_LEVELS = frozenset({"discovery", "implementation", "integration"})
@@ -123,6 +131,11 @@ def _is_protected(relative_path: str) -> bool:
     return False
 
 
+def _is_write_protected(relative_path: str) -> bool:
+    key = _rel_key(relative_path)
+    return key in _WRITE_PROTECTED_RELATIVE_PATHS or _is_protected(key)
+
+
 def _tool_error(exc: Exception) -> str:
     return f"ToolError: {type(exc).__name__}: {exc}"
 
@@ -204,7 +217,7 @@ def _build_repository_tools(context: ToolBuildContext) -> dict[str, Any]:
             return _tool_error(exc)
 
     def _write_file_impl(path: str, content: str, *, limit: int) -> str:
-        if _is_protected(path):
+        if _is_write_protected(path):
             raise WorkspacePathError("editing runner-owned path is forbidden")
         if not isinstance(content, str):
             raise WorkspacePathError("content must be a string")

@@ -1,5 +1,42 @@
 # Changelog
 
+## 2026-08-06 — RealBench: adaptive milestones + contracts + workspace memory
+
+Close three gaps between AdaMAS RealBench decomposition and vanilla long-session Codex:
+
+1. unnecessary milestone splits on simple repos
+2. weak online public harness (compile/import only)
+3. fresh-thread milestones with no cross-step shared memory
+
+### Added
+
+- Adaptive TaskPlan in `realbench_plan.py`: simple repos → single
+  `implement_repository`; complex trees keep discovery / implementation* /
+  integration. Override with `decomposition.force_split: true`.
+- Deterministic milestone public contracts from `public_design`
+  (`milestone_contracts.py`): writes `adamas_milestone_contracts.json` +
+  `tests_public/test_milestone_contracts.py`; optional LLM enrichment via
+  `ADAMAS_REALBENCH_LLM_CONTRACTS=1` (whitelist checks, fail-closed).
+- Public harness runs milestone contracts by level (`public_harness.py`).
+- Workspace shared memory scheme A (`workspace_memory.py`): append
+  `ADAMAS_CHANGELOG.md` after successful canonical commit; inject excerpt into
+  next `MILESTONE.md` on fork (`ready_scheduler.py`). Smolagents tools may read
+  the changelog but cannot overwrite it.
+
+### Changed
+
+- Codex / smolagents RealBench milestone contracts and experiment YAMLs
+  (`min_subtasks: 1`).
+- Docs: `docs/realbench_dynamic_taskplan_harness.md` (adaptive split, contracts,
+  changelog memory).
+- Unit tests for plan shape and backend graph selection.
+
+### Notes
+
+- Codex `thread_policy` remains `fresh`; shared memory is workspace changelog,
+  not thread resume.
+- Hidden RealBench eval stays offline-only.
+
 ## 2026-07-16 — Milestone 3.5: Codex second-backend vertical slice
 
 ### Added

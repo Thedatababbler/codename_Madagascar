@@ -75,8 +75,9 @@ def test_codex_catalog_graph_ids_unchanged(role: str, expected_id: str) -> None:
 def test_smolagents_dynamic_plan_selects_smolagents_graphs(tmp_path: Path) -> None:
     ws = _mini_workspace(tmp_path)
     catalog = graph_catalog_for_backend("smolagents_code")
+    # force_split exercises the full three-role catalog wiring.
     payload = build_realbench_candidate_plan(
-        task_id="demo", workspace=ws, graph_catalog=catalog
+        task_id="demo", workspace=ws, graph_catalog=catalog, force_split=True
     )
     roles = {s["metadata"]["role"]: s["local_graph_template"] for s in payload["subtasks"]}
     assert "smolagents_realbench_public_discovery" in roles["discovery"]
@@ -88,7 +89,7 @@ def test_smolagents_dynamic_plan_selects_smolagents_graphs(tmp_path: Path) -> No
         enabled=True,
         default_graph_template=catalog["integration"],
         keystone_harness_id="repository_test_harness",
-        limits=DecompositionLimits(min_subtasks=2, max_subtasks=6),
+        limits=DecompositionLimits(min_subtasks=1, max_subtasks=6),
         require_graph_files=True,
         require_public_keystone_harness=True,
     )
@@ -103,16 +104,30 @@ def test_smolagents_dynamic_plan_selects_smolagents_graphs(tmp_path: Path) -> No
         assert "codex_realbench" not in sub.local_graph_template
 
 
+def test_smolagents_adaptive_single_milestone_uses_integration_graph(
+    tmp_path: Path,
+) -> None:
+    ws = _mini_workspace(tmp_path)
+    catalog = graph_catalog_for_backend("smolagents_code")
+    payload = build_realbench_candidate_plan(
+        task_id="demo", workspace=ws, graph_catalog=catalog
+    )
+    assert payload["metadata"]["milestone_split"] is False
+    assert len(payload["subtasks"]) == 1
+    assert "smolagents_realbench_public_integration" in payload["subtasks"][0][
+        "local_graph_template"
+    ]
+
+
 def test_codex_dynamic_plan_still_selects_codex_graphs(tmp_path: Path) -> None:
     ws = _mini_workspace(tmp_path)
     catalog = graph_catalog_for_backend("codex_sdk")
     payload = build_realbench_candidate_plan(
-        task_id="demo", workspace=ws, graph_catalog=catalog
+        task_id="demo", workspace=ws, graph_catalog=catalog, force_split=True
     )
     for sub in payload["subtasks"]:
         assert "codex_realbench" in sub["local_graph_template"]
         assert "smolagents_realbench" not in sub["local_graph_template"]
-
 
 def test_resolve_graph_catalog_fail_closed_on_mismatch() -> None:
     with pytest.raises(SystemExit, match="refuses Codex graph"):

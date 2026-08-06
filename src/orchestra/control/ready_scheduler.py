@@ -1011,6 +1011,26 @@ class ReadySubtaskScheduler:
         record.committed_at = datetime.now(UTC)
         state.canonical_workspace_ref = promoted.path
         state.canonical_revision = record.committed_revision
+        # Scheme-A shared memory: append runner-owned changelog into canonical
+        # workspace so later milestones/agents share prior modification logs.
+        try:
+            self._append_workspace_changelog(
+                canonical_path=promoted.path,
+                subtask_id=sid,
+                role=str(
+                    sub.spec.metadata.get("public_harness_level")
+                    or sub.spec.metadata.get("role")
+                    or ""
+                ),
+                change_set=result.workspace_change_set,
+                revision=record.committed_revision,
+            )
+            tip = self.canonical._rev_parse(Path(promoted.path))  # noqa: SLF001
+            if tip:
+                state.canonical_revision = tip
+                record.committed_revision = tip
+        except Exception:  # noqa: BLE001 — changelog must not fail the commit
+            pass
         sub.status = SubtaskStatus.COMMITTED
         state.committed_subtask_count += 1
         sub.failure_reason = None
@@ -1040,6 +1060,34 @@ class ReadySubtaskScheduler:
         state.mark_ready_from_dependencies()
         state.state_version += 1
         self._record_public_evaluation(state, result, context)
+
+    @staticmethod
+    def _append_workspace_changelog(
+        *,
+        canonical_path: str,
+        subtask_id: str,
+        role: str,
+        change_set: WorkspaceChangeSet | None,
+        revision: str | None,
+    ) -> None:
+        from orchestra.realbench.workspace_memory import append_changelog_entry
+
+        files: list[str] = []
+        if change_set is not None:
+            files.extend(change_set.modified_files or [])
+            files.extend(change_set.added_untracked_files or [])
+            files.extend(change_set.deleted_files or [])
+            for ren in change_set.renamed_files or []:
+                files.append(getattr(ren, "to_path", None) or getattr(ren, "from_path", ""))
+        append_changelog_entry(
+            Path(canonical_path),
+            subtask_id=subtask_id,
+            role=role or None,
+            changed_files=[f for f in files if f],
+            revision=revision,
+            summary=f"canonical commit for subtask {subtask_id}",
+            git_commit=True,
+        )
 
     @staticmethod
     def _stamp_commit_identity_from_attempt(
@@ -1250,12 +1298,38 @@ class ReadySubtaskScheduler:
                 for d in sorted(sub.spec.dependencies)
                 if state.subtasks[d].status is SubtaskStatus.COMMITTED
             ]
-            # Surface dynamic milestone objective into the forked workspace so
-            # role-agnostic contracts can focus the current SubtaskSpec.
+            # Surface dynamic milestone objective + shared workspace memory into
+            # the forked workspace so role-agnostic contracts stay focused.
             brief = sub.spec.metadata.get("milestone_brief")
             if isinstance(brief, str) and brief.strip():
+                from orchestra.realbench.milestone_contracts import (
+                    materialize_milestone_contracts,
+                )
+                from orchestra.realbench.workspace_memory import (
+                    memory_brief_for_milestone,
+                )
+
+                role = str(
+                    sub.spec.metadata.get("public_harness_level")
+                    or sub.spec.metadata.get("role")
+                    or "integration"
+                )
+                focus = sub.spec.metadata.get("focus_paths")
+                focus_paths = (
+                    [str(x) for x in focus] if isinstance(focus, list) else None
+                )
+                if role in {"discovery", "implementation", "integration"}:
+                    materialize_milestone_contracts(
+                        Path(workspace_ref),
+                        role=role,  # type: ignore[arg-type]
+                        focus_paths=focus_paths,
+                        milestone_id=subtask_id,
+                    )
+                memory = memory_brief_for_milestone(Path(workspace_ref))
                 milestone_path = Path(workspace_ref) / "MILESTONE.md"
-                milestone_path.write_text(brief, encoding="utf-8")
+                milestone_path.write_text(
+                    brief.rstrip() + "\n\n" + memory, encoding="utf-8"
+                )
 
         exec_cfg = dict(sub.spec.metadata.get("execution_config") or {})
         graph_path = str(

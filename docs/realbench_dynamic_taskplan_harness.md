@@ -15,9 +15,19 @@ Hidden RealBench `proj_with_test` **不进入** agent / plan / 在线 harness；
 
 | 层 | 内容 | 可见性 |
 |----|------|--------|
-| 公开 harness | `scripts/adamas_public_check.py`（compileall / import / UML export） | agent 可见 |
+| 公开 harness | `scripts/adamas_public_check.py`（compileall / import / UML export + milestone contracts） | agent 可见 |
 | Milestone 目标 | 调度 fork 后写入 `MILESTONE.md` | agent 可见 |
+| 共享记忆 | `ADAMAS_CHANGELOG.md`（commit 后 runner 追加；跨 milestone/agent） | agent 可见 |
 | Hidden eval | `scripts/eval_realbench_codex_decomp_baseline.py` | 仅离线 |
+
+### 自适应切分
+
+简单仓库（少模块/单包）→ **单个** `implement_repository`（integration 图），避免无谓切段。  
+复杂树 → discovery / implementation* / integration。可用 `decomposition.force_split: true` 强制多阶段。
+
+### Milestone contracts
+
+`adamas_milestone_contracts.json` + `tests_public/test_milestone_contracts.py` 由 `public_design` 确定性生成；可选 `ADAMAS_REALBENCH_LLM_CONTRACTS=1` 用 LLM 增补（仅白名单 check 类型，失败回退确定性）。
 
 ## 组件
 

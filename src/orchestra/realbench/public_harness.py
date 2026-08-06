@@ -158,6 +158,49 @@ def main() -> int:
             return 1
     print(f"OK compileall level={args.level}")
 
+    # Milestone contracts (public_design-derived; optional LLM-enriched, frozen).
+    contracts_path = root / "adamas_milestone_contracts.json"
+    if contracts_path.is_file():
+        import inspect
+        import os
+
+        os.environ["ADAMAS_PUBLIC_CHECK_LEVEL"] = args.level
+        contracts = json.loads(contracts_path.read_text(encoding="utf-8"))
+        sys.path.insert(0, str(root))
+        failed_contracts: list[str] = []
+        for check in list(contracts.get("checks") or []):
+            levels = check.get("required_levels") or ["integration"]
+            if args.level not in levels:
+                continue
+            ctype = check.get("type")
+            try:
+                if ctype == "module_file_exists":
+                    if not (root / str(check.get("path") or "")).exists():
+                        failed_contracts.append(f"missing file {check.get('path')}")
+                elif ctype == "import":
+                    importlib.import_module(str(check["module"]))
+                elif ctype in {"export", "callable_or_class"}:
+                    loaded = importlib.import_module(str(check["module"]))
+                    sym = str(check["symbol"])
+                    if not hasattr(loaded, sym):
+                        failed_contracts.append(f"missing {check['module']}.{sym}")
+                    elif ctype == "callable_or_class":
+                        obj = getattr(loaded, sym)
+                        if not (inspect.isclass(obj) or callable(obj)):
+                            failed_contracts.append(
+                                f"not callable/class {check['module']}.{sym}"
+                            )
+            except Exception as exc:  # noqa: BLE001
+                failed_contracts.append(
+                    f"{ctype}:{check}: {type(exc).__name__}: {exc}"
+                )
+        if failed_contracts:
+            print("FAIL milestone contracts:", file=sys.stderr)
+            for item in failed_contracts[:40]:
+                print(f"  - {item}", file=sys.stderr)
+            return 1
+        print(f"OK milestone contracts level={args.level}")
+
     if args.level == "discovery":
         return 0
 
@@ -291,6 +334,13 @@ def materialize_public_harness(workspace: Path) -> PublicHarnessManifest:
     (workspace / PUBLIC_HARNESS_MANIFEST).write_text(
         json.dumps(manifest.to_dict(), indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
+    )
+    # Baseline milestone contracts (integration-strength); per-subtask refresh
+    # happens when the scheduler writes MILESTONE.md.
+    from orchestra.realbench.milestone_contracts import materialize_milestone_contracts
+
+    materialize_milestone_contracts(
+        workspace, role="integration", milestone_id="workspace_baseline"
     )
     # Keep trusted marker for repository_test_harness gate.
     marker = workspace / ".adamas_trusted_harness"

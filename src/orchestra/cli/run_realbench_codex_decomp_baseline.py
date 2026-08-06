@@ -339,6 +339,7 @@ def build_dynamic_task_plan(
     """Build + validate a dynamic milestone TaskPlan for one RealBench task."""
     deco_cfg = dict(experiment.get("decomposition") or {})
     catalog = resolve_graph_catalog(experiment, agent_backend=agent_backend)
+    force_split = deco_cfg.get("force_split")
     candidate_payload = build_realbench_candidate_plan(
         task_id=task_id,
         workspace=workspace,
@@ -346,6 +347,7 @@ def build_dynamic_task_plan(
         max_implementation_milestones=int(
             deco_cfg.get("max_implementation_milestones", 2)
         ),
+        force_split=None if force_split is None else bool(force_split),
     )
     plan_path.parent.mkdir(parents=True, exist_ok=True)
     plan_path.write_text(
@@ -353,7 +355,7 @@ def build_dynamic_task_plan(
         encoding="utf-8",
     )
     limits = DecompositionLimits(
-        min_subtasks=int(deco_cfg.get("min_subtasks", 2)),
+        min_subtasks=int(deco_cfg.get("min_subtasks", 1)),
         max_subtasks=int(deco_cfg.get("max_subtasks", 6)),
         max_dependency_depth=int(deco_cfg.get("max_dependency_depth", 6)),
     )
