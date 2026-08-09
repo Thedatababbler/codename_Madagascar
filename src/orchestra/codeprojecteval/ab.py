@@ -35,7 +35,7 @@ def merge_to_single_milestone(
     if len(milestones) == 1:
         return replace(
             draft,
-            milestones=[replace(milestones[0], role="integration", depends_on=[])],
+            milestones=[replace(milestones[0], gate_level="integration", depends_on=[])],
             generator=f"{draft.generator}+single_arm",
         )
 
@@ -79,7 +79,7 @@ def merge_to_single_milestone(
         title="Implement the repository",
         objective=objective,
         risk_rationale="",
-        role="integration",
+        gate_level="integration",
         depends_on=[],
         focus_paths=focus,
         acceptance=MilestoneAcceptance(

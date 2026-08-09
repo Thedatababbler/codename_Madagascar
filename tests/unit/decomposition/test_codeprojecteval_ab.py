@@ -26,7 +26,7 @@ def _multi_plan() -> MilestonePlanDraft:
         title="Storage contract",
         objective="Freeze the on-disk page format.",
         risk_rationale="Every later module builds on this layout.",
-        role="implementation",
+        gate_level="implementation",
         focus_paths=["pkg/storage.py"],
         acceptance=MilestoneAcceptance(
             criteria=["pages round-trip"],
@@ -49,7 +49,7 @@ def _multi_plan() -> MilestonePlanDraft:
         title="Tree API",
         objective="Implement the public tree operations.",
         risk_rationale="Consumers depend on the documented surface.",
-        role="integration",
+        gate_level="integration",
         depends_on=["storage_contract"],
         focus_paths=["pkg/tree.py"],
         acceptance=MilestoneAcceptance(

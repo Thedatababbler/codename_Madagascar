@@ -1,5 +1,60 @@
 # Changelog
 
+## 2026-08-09 — A role pool and subgraph templates the planner selects from
+
+Every plan came back looking templated — always `implementation` followed by
+`integration` — and it was, but not where it appeared to be. The *split*
+decision was genuinely content-driven (12 of 18 CodeProjectEval repositories got
+one milestone, and the ones that split were not the large ones). What was
+degenerate was the vocabulary: `role` was a three-value enum that selected the
+harness level, the terminal milestone was forced to `integration`, and read-only
+milestones were forbidden, so a two-milestone plan had exactly one possible role
+sequence. The label described nothing and the planner never chose it.
+
+Roles are now real objects with their own prompts, and the topology is chosen
+from a catalogue instead of being the same chain every time. Both follow the
+fixed-pool-plus-selection design of EvoMAS (arXiv:2605.08769), and the catalogue
+is restricted to shapes this runtime can actually execute.
+
+### Added
+
+- `configs/roles/*.yaml`: a pool of ten capability roles, each carrying its own
+  prompt, budget defaults and an `edits_repository` flag — `implementer`,
+  `contract_author`, `test_driven_implementer`, `integrator`, `gate_repairer`,
+  `edge_case_hardener`, `dependency_resolver`, `scope_pruner`, plus the
+  read-only `spec_auditor` and `contract_critic`. Loaded by
+  `orchestra.roles.pool`; the planner picks a role per slot and an unknown pick
+  degrades to the slot's default rather than failing the plan.
+- `configs/subgraph_templates/*.yaml`: five topologies loaded by
+  `orchestra.roles.templates` — `solo`, `chain`, `gate_then_repair`,
+  `review_then_fix`, `parallel_audit`. A template declares slots, edges and
+  where the gate sits; the builder compiles it into the runtime graph.
+- `gate_then_repair` implements early exit on a passing gate. The acceptance
+  harness runs straight after the first agent; its result feeds the repair
+  slot's input only on failure, so a milestone that passes first time freezes
+  immediately and never spends the second agent's budget. This uses conditional
+  edges into a shared input slot, which the scheduler already supported and
+  nothing used.
+- Templates are validated against the runtime's real constraints: two agents
+  that may edit the repository can never share a parallel wave, because a
+  milestone's agents share one workspace. Only read-only roles may fan out,
+  which is what makes `parallel_audit` safe.
+
+### Changed
+
+- `MilestoneDraft.role` is now `gate_level`, named for the only thing it
+  controls — how strict the acceptance gate is. `.role` remains as a read-only
+  alias so existing callers and frozen plans keep working.
+- Generated agent contracts embed the selected role's prompt, and a read-only
+  role is told it reports rather than edits; its node is also exempted from the
+  `require_git_diff` check that would otherwise score correct behaviour as a
+  failure.
+- A fan-in agent receives each upstream report in its own input slot. Sharing
+  one slot would have silently delivered whichever edge resolved first.
+- A template slot marked `required` no longer synthesises an agent the planner
+  did not ask for; it describes the shape the template was designed around, and
+  filling it would hand the milestone unplanned budget.
+
 ## 2026-08-09 — Honest denominators and equal-compute arms
 
 Two defects that corrupted the first CodeProjectEval A/B batch, both found by a

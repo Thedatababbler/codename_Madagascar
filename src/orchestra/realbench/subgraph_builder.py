@@ -22,6 +22,12 @@ from typing import Any
 import yaml
 
 from orchestra.realbench.milestone_planner import AgentDraft, MilestoneDraft
+from orchestra.roles.pool import RolePool, default_role_pool
+from orchestra.roles.templates import (
+    FALLBACK_TEMPLATE_ID,
+    SubgraphTemplate,
+    default_templates,
+)
 from orchestra.tools.repository_tools import REPOSITORY_TOOL_IDS
 
 CONTRACT_PREFIX = "rbdyn"
@@ -135,14 +141,25 @@ def _system_prompt(
     agent: AgentDraft,
     agent_backend: str,
     profile: DatasetPromptProfile = REALBENCH_PROMPT_PROFILE,
+    pool: RolePool | None = None,
 ) -> str:
-    editing = (
-        "Modify files with the provided repository tools "
-        "(list/read/write/apply_workspace_patch); only real workspace edits "
-        "count, never a prose patch."
-        if agent_backend == "smolagents_code"
-        else "Edit the repository directly in your workspace; only the git diff counts."
-    )
+    role = (pool or default_role_pool()).get(agent.role)
+    if role is not None and not role.edits_repository:
+        editing = (
+            "You do not edit this repository. Read it, and write your findings "
+            "into your final answer; the agent after you acts on that text and "
+            "sees nothing else of your work."
+        )
+    elif agent_backend == "smolagents_code":
+        editing = (
+            "Modify files with the provided repository tools "
+            "(list/read/write/apply_workspace_patch); only real workspace edits "
+            "count, never a prose patch."
+        )
+    else:
+        editing = (
+            "Edit the repository directly in your workspace; only the git diff counts."
+        )
     risk = (
         f"Why this milestone is a gate: {milestone.risk_rationale}\n"
         if milestone.risk_rationale
@@ -154,9 +171,13 @@ def _system_prompt(
     focus_text = (
         "\nFocus paths: " + ", ".join(f"`{p}`" for p in focus) + "\n" if focus else ""
     )
+    role_block = f"{role.prompt.strip()}\n\n" if role is not None else ""
+    title = role.title if role is not None else agent.role_id
+    shipping = profile.shipping if role is None or role.edits_repository else ""
     return (
-        f"You are `{agent.role_id}` on milestone `{milestone.milestone_id}` of a "
-        f"{profile.label}.\n"
+        f"You are the {title} on milestone `{milestone.milestone_id}` of a "
+        f"{profile.label}.\n\n"
+        f"{role_block}"
         f"Milestone objective: {milestone.objective}\n"
         f"{risk}"
         f"Your mandate: {agent.mandate}\n"
@@ -166,8 +187,8 @@ def _system_prompt(
         f"{profile.read_first}"
         "Contracts frozen by earlier milestones are load-bearing: other modules "
         "import them. Extend them, do not redesign or rename them.\n"
-        f"{profile.acceptance.format(role=milestone.role)}"
-        f"{profile.shipping}"
+        f"{profile.acceptance.format(role=milestone.gate_level)}"
+        f"{shipping}"
         "Do not access parent directories, look for reference implementations, or "
         "create subagents."
     )
@@ -185,13 +206,18 @@ def materialize_agent_contract(
     agent_backend: str,
     model_name: str | None = None,
     profile: DatasetPromptProfile = REALBENCH_PROMPT_PROFILE,
+    pool: RolePool | None = None,
 ) -> dict[str, Any]:
     """Write one generated agent contract and return its roster entry."""
     contract_id = contract_id_for(
         milestone_id=milestone.milestone_id, role_id=agent.role_id
     )
     system_prompt = _system_prompt(
-        milestone=milestone, agent=agent, agent_backend=agent_backend, profile=profile
+        milestone=milestone,
+        agent=agent,
+        agent_backend=agent_backend,
+        profile=profile,
+        pool=pool,
     )
     user_prompt = (
         "Task artifacts:\n{artifacts_json}\n\n"
@@ -220,8 +246,11 @@ def materialize_agent_contract(
     )
     return {
         "contract_id": contract_id,
+        "node_id": agent.role_id,
+        "role": agent.role,
+        "slot": agent.slot_id,
         "role_id": agent.role_id,
-        "role": payload["role"],
+        "title": payload["role"],
         "contract_path": str(path),
         "prompt_sha256": hashlib.sha256(system_prompt.encode()).hexdigest(),
         "prompt_chars": len(system_prompt),
@@ -254,6 +283,21 @@ def _backend_block(*, agent_backend: str, agent: AgentDraft, role: str) -> dict[
     }
 
 
+def _harness_node(
+    *, node_id: str, harness_command: list[str], timeout_seconds: int
+) -> dict[str, Any]:
+    return {
+        "node_id": node_id,
+        "node_kind": "harness",
+        "harness_id": "repository_test_harness",
+        "visibility": "public",
+        "command": list(harness_command),
+        "timeout_seconds": timeout_seconds,
+        "input_slots": {"repository_change": "RepositoryChangeArtifact"},
+        "output_slots": {"result": "RepositoryHarnessResultArtifact"},
+    }
+
+
 def build_milestone_graph(
     *,
     milestone: MilestoneDraft,
@@ -263,67 +307,126 @@ def build_milestone_graph(
     model_name: str | None = None,
     benchmark: str = "realbench",
     harness_timeout_seconds: int = 180,
+    template: SubgraphTemplate | None = None,
+    pool: RolePool | None = None,
 ) -> dict[str, Any]:
-    """Build the graph payload chaining a milestone's agents into the gate."""
+    """Compile a milestone's chosen template into a runnable graph payload.
+
+    The template supplies the shape; the milestone's agents supply which role
+    fills each slot. An ``early_gate_after`` template gates midway and wires the
+    remaining slots behind a *failing* result, so a milestone that passes first
+    time freezes immediately and never pays for them.
+    """
+    templates = default_templates()
+    shape = template or templates.get(milestone.template_id) or templates[FALLBACK_TEMPLATE_ID]
+    role_pool = pool or default_role_pool()
     model = model_name or default_model_name(agent_backend)
+
+    agents = list(milestone.agents)
+    slots = shape.slots_for(len(agents))
+    slot_edges = shape.edges_for(slots)
+    by_slot_id = {slot.slot_id: slot for slot in slots}
+    # Agents were filled slot-by-slot at plan time, but an optional slot may be
+    # absent, so bind by name and fall back to declaration order.
+    node_for_slot: dict[str, str] = {}
+    bound: list[tuple[str, Any, dict[str, Any]]] = []
+    for index, (agent, entry) in enumerate(zip(agents, roster, strict=True)):
+        slot_id = agent.slot_id if agent.slot_id in by_slot_id else slots[index].slot_id
+        node_id = f"agent_{index + 1}_{agent.role_id}"[:64]
+        node_for_slot[slot_id] = node_id
+        bound.append((slot_id, agent, entry))
+
+    incoming: dict[str, list[str]] = {}
+    for src, dst in slot_edges:
+        if src in node_for_slot and dst in node_for_slot:
+            incoming.setdefault(dst, []).append(src)
+
+    # An early gate is only meaningful when a slot is actually waiting behind a
+    # failure; if the plan dropped that slot, gate once at the end as usual.
+    early_slot = (
+        shape.early_gate_after
+        if shape.early_gate_after in node_for_slot
+        and any(by_slot_id[slot_id].runs_if_gate_failed for slot_id, _, _ in bound)
+        else None
+    )
+    probe_id = "repository_tests_probe"
+
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
-    node_ids: list[str] = []
 
-    for index, (agent, entry) in enumerate(zip(milestone.agents, roster, strict=True)):
-        node_id = f"agent_{index + 1}_{agent.role_id}"[:64]
-        node_ids.append(node_id)
+    for slot_id, agent, entry in bound:
+        node_id = node_for_slot[slot_id]
+        slot = by_slot_id[slot_id]
+        role = role_pool.get(agent.role) or role_pool.require("implementer")
         input_slots: dict[str, str] = {"problem": "ProblemArtifact"}
-        if index > 0:
-            input_slots["upstream_change"] = "RepositoryChangeArtifact"
-        nodes.append(
-            {
-                "node_id": node_id,
-                "node_kind": "agent",
-                "contract_id": entry["contract_id"],
-                "backend": _backend_block(
-                    agent_backend=agent_backend, agent=agent, role=milestone.role
-                ),
-                "model": {
-                    "provider": "openai_compatible",
-                    "name": model,
-                    "temperature": 0.0,
-                    "max_tokens": agent.max_tokens,
-                },
-                "output_contract": {
-                    "parser_id": "repository_change",
-                    "output_schema": "RepositoryChangeArtifact",
-                },
-                "input_slots": input_slots,
-                "output_slots": {"repository_change": "RepositoryChangeArtifact"},
-                "timeout_seconds": agent.timeout_seconds,
-            }
-        )
-        if agent_backend == "smolagents_code":
-            nodes[-1]["tools"] = list(_SMOLAGENTS_TOOLS)
-        if index > 0:
+        # Distinct slot names per upstream: one shared slot would resolve to the
+        # first active edge only, so a fan-in agent would silently see one of
+        # its two upstream reports.
+        for position, source_slot in enumerate(incoming.get(slot_id, [])):
+            name = "upstream_change" if position == 0 else f"upstream_change_{position + 1}"
+            input_slots[name] = "RepositoryChangeArtifact"
             edges.append(
                 {
-                    "edge_id": f"chain_{node_ids[index - 1]}_to_{node_id}",
-                    "source_node": node_ids[index - 1],
+                    "edge_id": f"link_{node_for_slot[source_slot]}_to_{node_id}"[:96],
+                    "source_node": node_for_slot[source_slot],
                     "source_output": "repository_change",
                     "destination_node": node_id,
-                    "destination_input": "upstream_change",
+                    "destination_input": name,
                 }
             )
-
-    terminal_agent = node_ids[-1]
-    nodes.append(
-        {
-            "node_id": "repository_tests",
-            "node_kind": "harness",
-            "harness_id": "repository_test_harness",
-            "visibility": "public",
-            "command": list(harness_command),
-            "timeout_seconds": harness_timeout_seconds,
-            "input_slots": {"repository_change": "RepositoryChangeArtifact"},
-            "output_slots": {"result": "RepositoryHarnessResultArtifact"},
+        if slot.runs_if_gate_failed and early_slot:
+            # The only input that cannot resolve unless the probe failed, which
+            # is what keeps this node out of the run on the happy path.
+            input_slots["gate_report"] = "RepositoryHarnessResultArtifact"
+            edges.append(
+                {
+                    "edge_id": f"gate_fail_to_{node_id}"[:96],
+                    "source_node": probe_id,
+                    "source_output": "result",
+                    "destination_node": node_id,
+                    "destination_input": "gate_report",
+                    "condition": {"source_field": "passed", "operator": "is_false"},
+                }
+            )
+        backend = _backend_block(
+            agent_backend=agent_backend, agent=agent, role=milestone.gate_level
+        )
+        if not role.edits_repository:
+            # A reviewer that reports instead of editing produces no diff, and a
+            # backend that demands one would score its correct behaviour a
+            # failure.
+            backend["require_git_diff"] = False
+        node: dict[str, Any] = {
+            "node_id": node_id,
+            "node_kind": "agent",
+            "contract_id": entry["contract_id"],
+            "backend": backend,
+            "model": {
+                "provider": "openai_compatible",
+                "name": model,
+                "temperature": 0.0,
+                "max_tokens": agent.max_tokens,
+            },
+            "output_contract": {
+                "parser_id": "repository_change",
+                "output_schema": "RepositoryChangeArtifact",
+            },
+            "input_slots": input_slots,
+            "output_slots": {"repository_change": "RepositoryChangeArtifact"},
+            "timeout_seconds": agent.timeout_seconds,
         }
+        if agent_backend == "smolagents_code":
+            node["tools"] = list(_SMOLAGENTS_TOOLS)
+        nodes.append(node)
+
+    terminal_slot = bound[-1][0]
+    terminal_agent = node_for_slot[terminal_slot]
+    nodes.append(
+        _harness_node(
+            node_id="repository_tests",
+            harness_command=harness_command,
+            timeout_seconds=harness_timeout_seconds,
+        )
     )
     nodes.append(
         {
@@ -346,6 +449,8 @@ def build_milestone_graph(
                 "destination_node": "repository_tests",
                 "destination_input": "repository_change",
             },
+            # Listed before the early-gate alternatives: the first active edge
+            # carrying a payload wins, and the latest change is the right one.
             {
                 "edge_id": "agent_to_freeze",
                 "source_node": terminal_agent,
@@ -364,16 +469,55 @@ def build_milestone_graph(
         ]
     )
 
+    if early_slot:
+        early_agent = node_for_slot[early_slot]
+        nodes.insert(
+            len(bound),
+            _harness_node(
+                node_id=probe_id,
+                harness_command=harness_command,
+                timeout_seconds=harness_timeout_seconds,
+            ),
+        )
+        edges.extend(
+            [
+                {
+                    "edge_id": "early_agent_to_probe",
+                    "source_node": early_agent,
+                    "source_output": "repository_change",
+                    "destination_node": probe_id,
+                    "destination_input": "repository_change",
+                },
+                {
+                    "edge_id": "probe_pass_to_freeze",
+                    "source_node": probe_id,
+                    "source_output": "result",
+                    "destination_node": "freeze_change",
+                    "destination_input": "gate",
+                    "condition": {"source_field": "passed", "operator": "is_true"},
+                },
+                {
+                    "edge_id": "early_agent_to_freeze",
+                    "source_node": early_agent,
+                    "source_output": "repository_change",
+                    "destination_node": "freeze_change",
+                    "destination_input": "repository_change",
+                },
+            ]
+        )
+
     return {
         "graph_id": f"rb_dynamic_{milestone.milestone_id}"[:96],
         "version": "1.0",
         "initial_artifact_slots": {"problem": "ProblemArtifact"},
         "final_output_slot": "final_change",
         "metadata": {
-            "role": milestone.role,
+            "gate_level": milestone.gate_level,
+            "role": milestone.gate_level,
             "benchmark": benchmark,
-            "topology": "dynamic_milestone_agent_chain",
-            "public_harness_level": milestone.role,
+            "topology": f"template:{shape.template_id}",
+            "template_id": shape.template_id,
+            "public_harness_level": milestone.gate_level,
             "agent_backend": agent_backend,
             "milestone_id": milestone.milestone_id,
             "risk_rationale": milestone.risk_rationale,

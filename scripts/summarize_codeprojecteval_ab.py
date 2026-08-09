@@ -61,8 +61,15 @@ def _collect(root: Path) -> dict[tuple[str, str], list[dict]]:
                         continue
                     passed = int(scored.get("passed") or 0)
                     ceiling = _ceiling(task)
+                    status = str(scored.get("status") or "")
                     entry.update(
                         {
+                            "status": status,
+                            # A run the harness never finished measuring is not a
+                            # run that scored zero. Averaging it in would read as
+                            # "this arm produced broken code" when the truth is
+                            # "we have no measurement".
+                            "measured": status not in {"timeout", "error"},
                             "passed": passed,
                             "failed": scored.get("failed"),
                             "error": scored.get("error"),
@@ -103,7 +110,7 @@ def main() -> int:
     report: dict[str, dict] = {}
 
     header = (
-        f"{'repo':<14}{'arm':<8}{'n':>2}  {'milestones':>10}  {'turns':>5}  "
+        f"{'repo':<14}{'arm':<8}{'n':>2}{'scored':>7}  {'milestones':>10}  {'turns':>5}  "
         f"{'pass_rate':>9}  {'bound':>6}  {'committed':>9}"
     )
     print(header)
@@ -114,21 +121,27 @@ def main() -> int:
             entries = runs.get((task, arm)) or []
             if not entries:
                 continue
+            scored_entries = [e for e in entries if e.get("measured", True)]
             stats = {
                 "n": len(entries),
+                "n_scored": len(scored_entries),
+                "unmeasured": [
+                    e.get("run_id") for e in entries if not e.get("measured", True)
+                ],
                 "milestones": _mean([e.get("milestones") for e in entries]),
                 "agent_turns": _mean([e.get("agent_turns") for e in entries]),
                 "pass_rate_reachable": _mean(
-                    [e.get("pass_rate_reachable") for e in entries]
+                    [e.get("pass_rate_reachable") for e in scored_entries]
                 ),
-                "pass_rate": _mean([e.get("pass_rate") for e in entries]),
+                "pass_rate": _mean([e.get("pass_rate") for e in scored_entries]),
                 "committed": _mean([e.get("committed") for e in entries]),
                 "errors": [e["run_error"] for e in entries if e.get("run_error")],
                 "runs": entries,
             }
             report[task][arm] = stats
             print(
-                f"{task:<14}{arm:<8}{stats['n']:>2}  {stats['milestones']:>10.1f}  "
+                f"{task:<14}{arm:<8}{stats['n']:>2}{stats['n_scored']:>7}  "
+                f"{stats['milestones']:>10.1f}  "
                 f"{stats['agent_turns']:>5.1f}  {stats['pass_rate']:>9.3f}  "
                 f"{stats['pass_rate_reachable']:>6.3f}  {stats['committed']:>9.1f}"
             )

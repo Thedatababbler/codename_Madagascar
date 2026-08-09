@@ -80,15 +80,46 @@ Milestone 的唯一存在理由是**风险闸门**：某个决策错了会让后
 `SnoopR.py` 存在，而不是 `SnoopR/__init__.py`（后者会逼 agent 造出一个
 hidden eval 里根本不存在的目录布局）。
 
+### 角色池与模板子图（`src/orchestra/roles/`）
+
+planner 不再自由发明 agent 角色，也不再自己设计拓扑，而是做两次选择：
+
+- **角色池**（`configs/roles/*.yaml`，10 个）：每个角色自带一段 prompt、预算默认值
+  和 `edits_repository` 标记。可写角色 8 个（`implementer`、`contract_author`、
+  `test_driven_implementer`、`integrator`、`gate_repairer`、`edge_case_hardener`、
+  `dependency_resolver`、`scope_pruner`），只读角色 2 个（`spec_auditor`、
+  `contract_critic`）。选到池外的名字会退回该槽位的默认角色，不会让整个计划失败。
+- **模板目录**（`configs/subgraph_templates/*.yaml`，5 个）：`solo`、`chain`、
+  `gate_then_repair`、`review_then_fix`、`parallel_audit`。模板声明槽位、边和验收门
+  的位置，builder 把它编译成运行时图。
+
+模板受运行时能力约束，不收录跑不了的形状：
+
+- 同一 milestone 的 agent 共享一个工作区，所以**两个可写 agent 不允许同层并行**
+  （加载时校验，违反直接报错）；只有只读角色可以扇出，这也是 `parallel_audit` 安全的原因。
+- 编译器拒绝环，因此没有 loop 型模板；"先试再修"要花掉第二个槽位。
+- 多条条件边可以指向同一输入槽，先激活且有产物者胜出——`gate_then_repair` 的提前退出
+  就建立在这个语义上。
+
 ### 每段 runtime subgraph（`src/orchestra/realbench/subgraph_builder.py`）
 
-每个 milestone 编译成独立子图，节点即 agent：
+每个 milestone 按所选模板编译成独立子图，节点即 agent。默认链式：
 
 ```text
 agent_1 → agent_2 → … → repository_tests(acceptance) → freeze_change
 ```
 
+`gate_then_repair` 则在首个 agent 之后就跑验收，**通过即冻结，修复 agent 完全不被唤醒**：
+
+```text
+agent_1 → probe(acceptance) ─[passed]──────────────→ freeze_change
+                            └[failed]→ agent_2(gate_repairer) → acceptance → freeze_change
+```
+
 - agent 串行共享同一 workspace；只有末位 agent 的变更进入 harness 与 freeze gate
+- 扇入节点的每个上游各占一个输入槽（`upstream_change`、`upstream_change_2`），
+  共用一个槽会导致只收到先到的那一份
+- 只读角色的节点关闭 `require_git_diff`：它本就不产生 diff，否则正确行为会被判失败
 - 每个 agent 生成一份 `AgentContract`（`<run_dir>/generated/contracts/rbdyn_*.yaml`），记录
   **role、system/user prompt、max_tokens、max_steps、timeout**
 - 图 metadata 里的 `agent_roster` 另存 `prompt_sha256` / `prompt_chars` 作为证据

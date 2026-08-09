@@ -180,7 +180,7 @@ def test_parse_plan_payload_defaults_missing_agents() -> None:
     )
 
     assert len(draft.milestones) == 1
-    assert [a.role_id for a in draft.milestones[0].agents] == ["implementer"]
+    assert [a.role for a in draft.milestones[0].agents] == ["implementer"]
 
 
 def test_sanitize_contract_checks_drops_unknown_shapes() -> None:

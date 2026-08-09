@@ -30,7 +30,7 @@ for arm in ${ARMS}; do
       --output-root outputs/cpe_ab \
       --run-id "${run_id}" || echo "run failed: ${run_id}"
     uv run python scripts/eval_codeprojecteval.py "outputs/cpe_ab/${run_id}" \
-      --per-test-timeout 15 --timeout 600 || echo "eval failed: ${run_id}"
+      --per-test-timeout 5 --timeout 1200 || echo "eval failed: ${run_id}"
   done
 done
 echo "done ${TASK}"

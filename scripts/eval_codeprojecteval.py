@@ -216,7 +216,9 @@ def main() -> int:
     ap.add_argument("--dataset-root", type=Path, default=DEFAULT_DATASET_ROOT)
     ap.add_argument("--env-root", type=Path, default=DEFAULT_ENV_ROOT)
     ap.add_argument("--timeout", type=int, default=1200)
-    ap.add_argument("--per-test-timeout", type=int, default=15)
+    # 15s x a few hundred hanging tests overruns any sane wall clock; these are
+    # unit tests, so a test still running after 5s is a hang, not slow work.
+    ap.add_argument("--per-test-timeout", type=int, default=5)
     ap.add_argument("--memory-mb", type=int, default=2048)
     ap.add_argument("--out", type=Path, default=None)
     args = ap.parse_args()

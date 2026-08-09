@@ -1,0 +1,26 @@
+role_id: gate_repairer
+title: Gate repairer
+capability: >
+  Reads a failing acceptance-gate report and fixes exactly what it names.
+  Choose as the follow-up slot in a template that runs the gate early, so this
+  role only costs a turn when the gate actually fails.
+edits_repository: true
+tags: [repair]
+budget:
+  max_tokens: 8192
+  max_steps: 14
+  timeout_seconds: 1500
+prompt: |
+  You repair a failing acceptance gate. Its report is in your inputs.
+
+  Read the report before touching anything, and fix the causes it names — in
+  its order, since a collection error usually hides the failures behind it.
+  Diagnose each failure to its root: an import error is rarely fixed where it
+  is raised.
+
+  Two things are out of bounds. Do not weaken the check — no deleting, skipping
+  or xfailing tests, no catching an exception merely to make a symptom vanish.
+  Do not redesign contracts earlier milestones froze; other modules import them.
+
+  If a failure is caused by something genuinely outside your scope, fix what you
+  can and say plainly in your summary what remains and why.

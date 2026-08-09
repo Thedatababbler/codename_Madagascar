@@ -21,12 +21,26 @@ from orchestra.realbench.public_harness import (
     parse_expected_modules,
     parse_package_exports,
 )
+from orchestra.roles.pool import RolePool, default_role_pool
+from orchestra.roles.templates import (
+    FALLBACK_TEMPLATE_ID,
+    SubgraphTemplate,
+    TemplateSlot,
+    default_templates,
+)
+from orchestra.roles.templates import (
+    catalog_lines as template_catalog_lines,
+)
 
-Role = Literal["discovery", "implementation", "integration"]
+# How strict the acceptance gate is when this milestone freezes. Named for what
+# it controls; it is not a description of the agents that run inside.
+GateLevel = Literal["discovery", "implementation", "integration"]
+Role = GateLevel  # Legacy alias for callers that still import ``Role``.
 
 PLAN_ENV_FLAG = "ADAMAS_REALBENCH_DYNAMIC_PLAN"
 PLAN_MODEL_ENV = "ADAMAS_REALBENCH_PLANNER_MODEL"
-ROLES: frozenset[str] = frozenset({"discovery", "implementation", "integration"})
+GATE_LEVELS: frozenset[str] = frozenset({"discovery", "implementation", "integration"})
+ROLES = GATE_LEVELS  # Legacy alias.
 ALLOWED_CHECK_TYPES = frozenset(
     {"import", "export", "callable_or_class", "module_file_exists"}
 )
@@ -40,11 +54,20 @@ TIMEOUT_RANGE = (120.0, 2400.0)
 
 @dataclass(frozen=True)
 class AgentDraft:
-    """One agent node inside a milestone subgraph."""
+    """One agent node inside a milestone subgraph.
+
+    ``role`` names a capability in the fixed role pool and decides what the
+    agent is told it is for; ``role_id`` is only this node's identity inside the
+    subgraph. Keeping them apart is the point: a planner that invents both ends
+    up with labels that describe nothing, which is what happened when every
+    milestone came back as "implementer" followed by "integration".
+    """
 
     role_id: str
     title: str
     mandate: str
+    role: str = "implementer"
+    slot_id: str = ""
     focus_paths: list[str] = field(default_factory=list)
     max_tokens: int = 8192
     max_steps: int = 12
@@ -72,11 +95,24 @@ class MilestoneDraft:
     title: str
     objective: str
     risk_rationale: str
-    role: Role
+    gate_level: GateLevel
+    template_id: str = FALLBACK_TEMPLATE_ID
     depends_on: list[str] = field(default_factory=list)
     focus_paths: list[str] = field(default_factory=list)
     acceptance: MilestoneAcceptance = field(default_factory=MilestoneAcceptance)
     agents: list[AgentDraft] = field(default_factory=list)
+
+    @property
+    def role(self) -> GateLevel:
+        """Backwards-compatible alias.
+
+        This field used to be called ``role``, and it read as though it
+        described what the milestone *was*. It never did: it selects how strict
+        the acceptance gate is, and with the terminal milestone forced to
+        ``integration`` there was only ever one possible sequence of values.
+        Agent roles now come from the role pool instead.
+        """
+        return self.gate_level
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
@@ -195,49 +231,115 @@ def sanitize_contract_checks(raw_checks: Any, *, limit: int = 60) -> list[dict[s
     return out
 
 
+def _resolve_template(
+    raw: Any, *, agent_count: int, templates: dict[str, SubgraphTemplate]
+) -> SubgraphTemplate:
+    """Pick the named template, or infer one that fits the agents proposed.
+
+    Inference matters for plans frozen before templates existed: they carry a
+    bare list of agents and no ``template_id``, and must keep every agent they
+    declare.
+    """
+    named = str(raw or "").strip()
+    if named in templates:
+        return templates[named]
+    if agent_count <= 1 and "solo" in templates:
+        return templates["solo"]
+    return templates[FALLBACK_TEMPLATE_ID]
+
+
+def _agent_for_slot(
+    item: dict[str, Any] | None,
+    *,
+    slot: TemplateSlot,
+    index: int,
+    milestone_id: str,
+    milestone_objective: str,
+    pool: RolePool,
+    used: set[str],
+) -> AgentDraft:
+    payload = item or {}
+    requested = str(payload.get("role") or "").strip()
+    # An unknown or slot-incompatible pick falls back to the slot's own default
+    # rather than failing the plan: the topology is still valid, and the default
+    # is the role the template was designed around.
+    role_id = requested if (requested in pool and slot.accepts(requested)) else slot.default_role
+    role = pool.require(role_id)
+
+    node_id = _slug(payload.get("role_id") or f"{slot.slot_id}_{role_id}", fallback=slot.slot_id)
+    while node_id in used:
+        node_id = f"{node_id}_{index + 1}"
+    used.add(node_id)
+
+    mandate = str(payload.get("mandate") or payload.get("instruction") or "").strip()
+    if not mandate:
+        mandate = (
+            f"Carry out your role for this milestone: {milestone_objective}"
+            if milestone_objective
+            else f"Carry out your role for milestone {milestone_id}."
+        )
+    return AgentDraft(
+        role_id=node_id,
+        title=str(payload.get("title") or role.title).strip()[:120],
+        mandate=mandate[:4000],
+        role=role_id,
+        slot_id=slot.slot_id,
+        focus_paths=_focus_paths(payload.get("focus_paths")),
+        max_tokens=_clamp_int(payload.get("max_tokens"), *MAX_TOKENS_RANGE, role.max_tokens),
+        max_steps=_clamp_int(payload.get("max_steps"), *MAX_STEPS_RANGE, role.max_steps),
+        timeout_seconds=_clamp_float(
+            payload.get("timeout_seconds"), *TIMEOUT_RANGE, role.timeout_seconds
+        ),
+    )
+
+
 def _parse_agents(
-    raw: Any, *, milestone_id: str, max_agents: int = MAX_AGENTS_PER_MILESTONE
+    raw: Any,
+    *,
+    milestone_id: str,
+    milestone_objective: str = "",
+    template: SubgraphTemplate,
+    pool: RolePool,
+    max_agents: int = MAX_AGENTS_PER_MILESTONE,
 ) -> list[AgentDraft]:
-    items = raw if isinstance(raw, list) else []
+    """Fill the template's slots from the agents the planner proposed.
+
+    The template decides how many agents run and how they are wired; the planner
+    decides which pool role sits in each slot and what its specific mandate is.
+    """
+    items = [item for item in (raw if isinstance(raw, list) else []) if isinstance(item, dict)]
+    items = items[: max(max_agents, len(template.slots))]
+    slots = template.slots_for(len(items))
+    by_slot = {
+        str(item.get("slot") or "").strip(): item
+        for item in items
+        if str(item.get("slot") or "").strip()
+    }
+
+    # Exactly as many agents as were proposed, never more: a template slot marked
+    # required describes the shape the template was designed around, and
+    # synthesising an agent to fill it would hand this milestone budget the
+    # planner never asked for.
+    if by_slot:
+        chosen = [slot for slot in slots if slot.slot_id in by_slot]
+    else:
+        chosen = slots[: max(len(items), 1)]
+
     agents: list[AgentDraft] = []
     used: set[str] = set()
-    for index, item in enumerate(items):
-        if not isinstance(item, dict):
-            continue
-        mandate = str(item.get("mandate") or item.get("instruction") or "").strip()
-        if not mandate:
-            continue
-        role_id = _slug(
-            item.get("role_id") or item.get("role") or f"agent{index + 1}",
-            fallback=f"agent{index + 1}",
-        )
-        while role_id in used:
-            role_id = f"{role_id}_2"
-        used.add(role_id)
+    for index, slot in enumerate(chosen):
+        item = by_slot.get(slot.slot_id)
+        if item is None and not by_slot:
+            item = items[index] if index < len(items) else None
         agents.append(
-            AgentDraft(
-                role_id=role_id,
-                title=str(item.get("title") or role_id).strip()[:120],
-                mandate=mandate[:4000],
-                focus_paths=_focus_paths(item.get("focus_paths")),
-                max_tokens=_clamp_int(item.get("max_tokens"), *MAX_TOKENS_RANGE, 8192),
-                max_steps=_clamp_int(item.get("max_steps"), *MAX_STEPS_RANGE, 12),
-                timeout_seconds=_clamp_float(
-                    item.get("timeout_seconds"), *TIMEOUT_RANGE, 1200.0
-                ),
-            )
-        )
-        if len(agents) >= max_agents:
-            break
-    if not agents:
-        agents.append(
-            AgentDraft(
-                role_id="implementer",
-                title=f"Implementer for {milestone_id}",
-                mandate=(
-                    "Implement this milestone end to end and keep the public "
-                    "acceptance harness green."
-                ),
+            _agent_for_slot(
+                item,
+                slot=slot,
+                index=index,
+                milestone_id=milestone_id,
+                milestone_objective=milestone_objective,
+                pool=pool,
+                used=used,
             )
         )
     return agents
@@ -248,8 +350,15 @@ def parse_plan_payload(
     *,
     max_milestones: int = MAX_MILESTONES,
     max_agents: int = MAX_AGENTS_PER_MILESTONE,
+    pool: RolePool | None = None,
+    templates: dict[str, SubgraphTemplate] | None = None,
 ) -> MilestonePlanDraft:
     """Normalize a raw planner payload into a validated milestone DAG.
+
+    Each milestone names a subgraph template and, per slot, a role from the
+    fixed pool. Both are validated here and fall back to the template's own
+    defaults when the planner names something that does not exist, so an
+    imaginative answer degrades to a runnable plan instead of failing one.
 
     ``max_agents`` bounds what a *planner* may propose per milestone. A plan
     that was already validated and frozen -- such as the merged single-milestone
@@ -258,6 +367,8 @@ def parse_plan_payload(
 
     Raises ``MilestonePlanError`` when nothing usable survives validation.
     """
+    role_pool = pool or default_role_pool()
+    template_catalog = templates or default_templates()
     if isinstance(payload, str):
         match = re.search(r"\{[\s\S]*\}", payload)
         if not match:
@@ -287,9 +398,11 @@ def parse_plan_payload(
         )
         while milestone_id in known_ids:
             milestone_id = f"{milestone_id}_2"
-        role = str(item.get("role") or "").strip()
-        if role not in ROLES:
-            role = "integration" if index == len(raw_milestones) - 1 else "implementation"
+        gate_level = str(item.get("gate_level") or item.get("role") or "").strip()
+        if gate_level not in GATE_LEVELS:
+            gate_level = (
+                "integration" if index == len(raw_milestones) - 1 else "implementation"
+            )
         # A milestone may only depend on milestones already declared: keeps the
         # DAG acyclic by construction regardless of what the model emitted.
         depends_on = [
@@ -308,19 +421,30 @@ def parse_plan_payload(
             checks=sanitize_contract_checks(acceptance_raw.get("checks")),
         )
 
+        raw_agents = item.get("agents")
+        proposed = len(raw_agents) if isinstance(raw_agents, list) else 0
+        template = _resolve_template(
+            item.get("template_id") or item.get("template"),
+            agent_count=min(proposed, max_agents) if proposed else proposed,
+            templates=template_catalog,
+        )
         milestones.append(
             MilestoneDraft(
                 milestone_id=milestone_id,
                 title=str(item.get("title") or milestone_id).strip()[:120],
                 objective=objective[:4000],
                 risk_rationale=str(item.get("risk_rationale") or "").strip()[:1000],
-                role=role,  # type: ignore[arg-type]
+                gate_level=gate_level,  # type: ignore[arg-type]
+                template_id=template.template_id,
                 depends_on=depends_on,
                 focus_paths=_focus_paths(item.get("focus_paths")),
                 acceptance=acceptance,
                 agents=_parse_agents(
-                    item.get("agents"),
+                    raw_agents,
                     milestone_id=milestone_id,
+                    milestone_objective=objective,
+                    template=template,
+                    pool=role_pool,
                     max_agents=max_agents,
                 ),
             )
@@ -340,8 +464,8 @@ def parse_plan_payload(
     # The last gate before freezing must grade the full public contract: an
     # implementation-level terminal milestone commits code whose UML-declared
     # symbols were never required to be importable from their documented module.
-    if milestones[-1].role != "integration":
-        milestones[-1] = replace(milestones[-1], role="integration")
+    if milestones[-1].gate_level != "integration":
+        milestones[-1] = replace(milestones[-1], gate_level="integration")
 
     return MilestonePlanDraft(
         milestones=milestones,
@@ -419,6 +543,8 @@ def render_planner_prompt(
     brief: PlanningBrief,
     agent_backend: str,
     max_milestones: int = MAX_MILESTONES,
+    pool: RolePool | None = None,
+    templates: dict[str, SubgraphTemplate] | None = None,
 ) -> str:
     """Render the risk-first decomposition prompt for any dataset's brief."""
     task_id = brief.task_id
@@ -426,6 +552,10 @@ def render_planner_prompt(
     exports = brief.exports
     design_sections = "\n\n".join(
         f"## {title}\n{text or '(missing)'}" for title, text in brief.documents
+    )
+    role_catalogue = "\n".join((pool or default_role_pool()).catalog_lines())
+    template_catalogue = "\n".join(
+        template_catalog_lines(templates or default_templates())
     )
 
     return f"""You plan milestones for an autonomous repository-implementation run.
@@ -459,11 +589,27 @@ milestone covering the whole repository. One milestone is the expected answer.
      root when the UML lists it there), not only at its definition site: a
      symbol that is importable from its private module but missing from the
      documented one still breaks every consumer.
-3. `agents`: 1..{MAX_AGENTS_PER_MILESTONE} agents that will run **in sequence** on
-   the same workspace as one subgraph. Each needs `role_id`, `title`, `mandate`
-   (its specific instruction), optional `focus_paths`, plus `max_tokens`,
-   `max_steps`, `timeout_seconds`. Only add a second agent when it has work the
-   first one cannot do; every agent must edit the repository.
+3. `template_id`: which subgraph shape runs the milestone, chosen from the
+   catalogue below. The template fixes how many agents run and how they are
+   wired; you do not design a topology.
+4. `agents`: one entry per slot of the chosen template. Each entry names the
+   template `slot`, a `role` from the pool below, and a `mandate` — the specific
+   instruction that makes a generic role concrete for *this* milestone. You may
+   override `focus_paths`, `max_tokens`, `max_steps`, `timeout_seconds`;
+   omitting them uses the role's own defaults.
+
+# Subgraph template catalogue
+{template_catalogue}
+
+Prefer the cheapest template that addresses the milestone's actual risk.
+`solo` is the expected answer for a milestone with no internal risk seam; extra
+slots cost real budget and are only worth it when the added agent sees something
+the previous one could not.
+
+# Role pool
+Pick each slot's role from this fixed pool; a role you invent will be replaced
+by the slot's default.
+{role_catalogue}
 
 Executing backend: `{agent_backend}`. {brief.acceptance_note}
 
@@ -486,7 +632,8 @@ Return ONLY a JSON object:
       "title": "...",
       "objective": "what to build, concretely",
       "risk_rationale": "what downstream work breaks if this is wrong",
-      "role": "discovery|implementation|integration",
+      "gate_level": "discovery|implementation|integration",
+      "template_id": "one of the template ids above",
       "depends_on": ["earlier_milestone_id"],
       "focus_paths": ["pkg/mod.py"],
       "acceptance": {{
@@ -498,9 +645,8 @@ Return ONLY a JSON object:
         ]
       }},
       "agents": [
-        {{"role_id": "implementer", "title": "...", "mandate": "...",
-          "focus_paths": ["pkg/"], "max_tokens": 8192, "max_steps": 12,
-          "timeout_seconds": 1200}}
+        {{"slot": "author", "role": "implementer", "mandate": "...",
+          "focus_paths": ["pkg/"]}}
       ]
     }}
   ]

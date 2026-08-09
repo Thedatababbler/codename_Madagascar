@@ -1,0 +1,37 @@
+template_id: chain
+title: Sequential chain
+extensible: true
+when_to_use: >
+  Two or three agents edit the same workspace in order, each building on what
+  the previous one left. Use when the milestone has distinct kinds of work that
+  must happen in a fixed order, such as substrate before behaviour, or
+  behaviour before public wiring.
+slots:
+  - id: first
+    default_role: contract_author
+    allowed_roles:
+      - contract_author
+      - implementer
+      - test_driven_implementer
+  - id: second
+    default_role: implementer
+    allowed_roles:
+      - implementer
+      - test_driven_implementer
+      - integrator
+      - edge_case_hardener
+      - dependency_resolver
+      - scope_pruner
+  - id: third
+    default_role: integrator
+    required: false
+    allowed_roles:
+      - integrator
+      - edge_case_hardener
+      - dependency_resolver
+      - scope_pruner
+edges:
+  - from: first
+    to: second
+  - from: second
+    to: third

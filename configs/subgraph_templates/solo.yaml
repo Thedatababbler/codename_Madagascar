@@ -1,0 +1,15 @@
+template_id: solo
+title: Single agent
+when_to_use: >
+  One agent does the whole milestone. The right answer whenever the work fits in
+  a single agent's budget and no second pass would see anything the first one
+  missed.
+slots:
+  - id: author
+    default_role: implementer
+    allowed_roles:
+      - implementer
+      - test_driven_implementer
+      - contract_author
+      - integrator
+edges: []

@@ -1,0 +1,28 @@
+template_id: gate_then_repair
+title: Implement, gate early, repair only on failure
+when_to_use: >
+  One agent implements, then the acceptance gate runs immediately. If it passes,
+  the milestone freezes and the second agent is never started; if it fails, the
+  repairer receives the failure report and fixes exactly what it names. Use when
+  the work is likely to succeed in one pass but expensive to get wrong — the
+  second agent's budget is only spent when it is needed.
+slots:
+  - id: author
+    default_role: implementer
+    allowed_roles:
+      - implementer
+      - test_driven_implementer
+      - contract_author
+      - integrator
+  - id: repairer
+    default_role: gate_repairer
+    required: false
+    runs_if_gate_failed: true
+    allowed_roles:
+      - gate_repairer
+      - integrator
+      - dependency_resolver
+edges:
+  - from: author
+    to: repairer
+early_gate_after: author

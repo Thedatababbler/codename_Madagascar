@@ -1,0 +1,38 @@
+template_id: parallel_audit
+title: Implement, audit from two angles, fix
+when_to_use: >
+  An author implements, then two read-only auditors examine the result at the
+  same time — one against the design documents, one against the contracts
+  earlier milestones froze — and a fixer acts on both reports. Use for a
+  high-blast-radius milestone where a single reviewer would plausibly miss one
+  of the two failure modes. Costs four agent turns.
+slots:
+  - id: author
+    default_role: implementer
+    allowed_roles:
+      - implementer
+      - test_driven_implementer
+      - contract_author
+  - id: spec_review
+    default_role: spec_auditor
+    allowed_roles:
+      - spec_auditor
+  - id: contract_review
+    default_role: contract_critic
+    allowed_roles:
+      - contract_critic
+  - id: fixer
+    default_role: gate_repairer
+    allowed_roles:
+      - gate_repairer
+      - implementer
+      - integrator
+edges:
+  - from: author
+    to: spec_review
+  - from: author
+    to: contract_review
+  - from: spec_review
+    to: fixer
+  - from: contract_review
+    to: fixer

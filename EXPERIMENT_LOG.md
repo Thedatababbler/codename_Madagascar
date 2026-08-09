@@ -32,6 +32,55 @@
 
 ---
 
+### EXP-20260809-01 — Reading the first A/B batch: three measurement traps
+- **Status:** canonical (methodology, not a result)
+- **Date:** 2026-08-09 (UTC)
+- **Why it exists:** the first summary of the 18-run batch reported pass rates
+  above 1.0 and a large multi-segment win on bplustree. Neither survived
+  inspection. All three causes were in the measurement, not in the system under
+  test, and each one flattered or damaged one arm specifically.
+  1. **Static test counting.** Denominators counted `def test_*`; pytest
+     parametrisation expands one function into many cases (bplustree: 59 counted
+     vs 356 collected). Fixed by collecting on the reference implementation.
+  2. **Unequal compute.** The planner's per-milestone agent cap was also applied
+     when reloading a frozen plan, so the merged single-segment arm — which by
+     construction puts every agent in one milestone — silently ran three of its
+     four agents on bplustree.
+  3. **Timeouts scored as zero.** A run whose hidden suite hit the wall clock
+     was averaged in as 0.000. Re-scored with a 5s per-test timeout, the two
+     affected bplustree runs came back at 0.475 and 0.480 — not 0. The summary
+     now excludes unmeasured runs and prints `scored` alongside `n`.
+- **Standing rule:** never average a run the harness did not finish measuring.
+  "We have no measurement" and "the code scored zero" are different claims, and
+  conflating them manufactured a 0.313 effect that does not exist.
+
+### EXP-20260809-02 — Was the decomposition actually templated?
+- **Status:** canonical (diagnosis)
+- **Date:** 2026-08-09 (UTC)
+- **Question:** every plan looked like the old template split — `implementation`
+  then `integration`, always two milestones.
+- **Evidence that the split decision is real:** across 18 CodeProjectEval
+  repositories the planner returned 1 milestone for 12 and 2 for 6, and the
+  choice is uncorrelated with size. It refused to split `djangorestframework-simplejwt`
+  (30 modules), `cookiecutter` (18) and `xmnlp` (24), and did split
+  `trailscraper` (890 LOC) and `zxcvbn` (1402 LOC). A size- or tree-driven
+  template would have done the opposite. Risk rationales and focus paths are
+  per-repository.
+- **Evidence that the *labels* were degenerate, and why:** `role` was a
+  three-value enum, the terminal milestone was forced to `integration`, and the
+  prompt forbids read-only milestones — so a two-milestone plan had exactly one
+  possible role sequence. The label was derived from position, never chosen.
+  Sampling until a multi-milestone plan appeared also selected the n=2 stratum.
+- **Fix:** the enum is renamed `gate_level` (it only sets harness strictness),
+  and agent roles now come from a ten-role pool with per-role prompts, with the
+  subgraph topology chosen from a five-template catalogue. See the 2026-08-09
+  CHANGELOG entry.
+- **Open question this raises:** all six splits put foundation modules first and
+  consumers second. That is a defensible risk seam, but it is not yet
+  distinguished from a mechanical topological cut of the import graph. Worth
+  testing before claiming the planner understands *where* to split, as opposed
+  to *whether* to.
+
 ### EXP-20260808-04 — CodeProjectEval: controlled single vs multi segment A/B
 - **Status:** running
 - **Date:** 2026-08-08 (UTC)
