@@ -14,6 +14,7 @@ from orchestra.codeprojecteval.ab import (
 )
 from orchestra.realbench.milestone_planner import (
     MAX_AGENTS_PER_MILESTONE,
+    TIMEOUT_RANGE,
     AgentDraft,
     MilestoneAcceptance,
     MilestoneDraft,
@@ -73,6 +74,24 @@ def _multi_plan() -> MilestonePlanDraft:
     return MilestonePlanDraft(milestones=[first, second], rationale="two risk gates")
 
 
+def _wide_plan() -> MilestonePlanDraft:
+    """A plan whose merged form exceeds both of the planner's per-proposal caps."""
+    base = _multi_plan()
+    return replace(
+        base,
+        milestones=[
+            replace(
+                milestone,
+                agents=[
+                    replace(agent, role_id=f"{agent.role_id}{index}")
+                    for index, agent in enumerate(milestone.agents * 3)
+                ],
+            )
+            for milestone in base.milestones
+        ],
+    )
+
+
 def test_single_arm_keeps_every_agent_and_the_whole_budget() -> None:
     multi = _multi_plan()
     single = merge_to_single_milestone(multi)
@@ -126,20 +145,7 @@ def test_merged_arm_keeps_its_budget_through_a_reload(tmp_path: Path) -> None:
     it is compared against -- an unequal-compute comparison that looks like a
     result.
     """
-    base = _multi_plan()
-    wide = replace(
-        base,
-        milestones=[
-            replace(
-                milestone,
-                agents=[
-                    replace(agent, role_id=f"{agent.role_id}{index}")
-                    for index, agent in enumerate(milestone.agents * 3)
-                ],
-            )
-            for milestone in base.milestones
-        ],
-    )
+    wide = _wide_plan()
     single = merge_to_single_milestone(wide)
     assert len(single.milestones[0].agents) > MAX_AGENTS_PER_MILESTONE
 
@@ -157,7 +163,7 @@ def test_solo_arm_is_one_agent_holding_the_whole_plans_wall_clock(
     given a single agent's timeout would lose for lack of time rather than for
     lack of collaborators, and the comparison would prove nothing.
     """
-    plan = _multi_plan()
+    plan = _wide_plan()
     solo = merge_to_single_agent(plan)
     budget = total_budget(solo)
 
@@ -170,9 +176,13 @@ def test_solo_arm_is_one_agent_holding_the_whole_plans_wall_clock(
     assert agent.role == "implementer"
     assert default_role_pool().require(agent.role).edits_repository
 
+    # Reloading must not re-apply the planner's per-agent timeout ceiling. It
+    # exists to stop a planner proposing an absurd wall clock for one node, not
+    # to shrink a plan that already concentrated its whole budget onto one.
     restored = load_draft(save_draft(solo, tmp_path / "plan.solo.json"))
     assert len(restored.milestones[0].agents) == 1
     assert total_budget(restored) == budget
+    assert restored.milestones[0].agents[0].timeout_seconds > TIMEOUT_RANGE[1]
 
 
 def test_merging_rebinds_agents_onto_slots_the_chain_actually_has(

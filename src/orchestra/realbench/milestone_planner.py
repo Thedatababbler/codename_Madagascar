@@ -257,6 +257,9 @@ def _agent_for_slot(
     milestone_objective: str,
     pool: RolePool,
     used: set[str],
+    timeout_ceiling: float = TIMEOUT_RANGE[1],
+    token_ceiling: int = MAX_TOKENS_RANGE[1],
+    step_ceiling: int = MAX_STEPS_RANGE[1],
 ) -> AgentDraft:
     payload = item or {}
     requested = str(payload.get("role") or "").strip()
@@ -285,10 +288,17 @@ def _agent_for_slot(
         role=role_id,
         slot_id=slot.slot_id,
         focus_paths=_focus_paths(payload.get("focus_paths")),
-        max_tokens=_clamp_int(payload.get("max_tokens"), *MAX_TOKENS_RANGE, role.max_tokens),
-        max_steps=_clamp_int(payload.get("max_steps"), *MAX_STEPS_RANGE, role.max_steps),
+        max_tokens=_clamp_int(
+            payload.get("max_tokens"), MAX_TOKENS_RANGE[0], token_ceiling, role.max_tokens
+        ),
+        max_steps=_clamp_int(
+            payload.get("max_steps"), MAX_STEPS_RANGE[0], step_ceiling, role.max_steps
+        ),
         timeout_seconds=_clamp_float(
-            payload.get("timeout_seconds"), *TIMEOUT_RANGE, role.timeout_seconds
+            payload.get("timeout_seconds"),
+            TIMEOUT_RANGE[0],
+            timeout_ceiling,
+            role.timeout_seconds,
         ),
     )
 
@@ -301,6 +311,9 @@ def _parse_agents(
     template: SubgraphTemplate,
     pool: RolePool,
     max_agents: int = MAX_AGENTS_PER_MILESTONE,
+    timeout_ceiling: float = TIMEOUT_RANGE[1],
+    token_ceiling: int = MAX_TOKENS_RANGE[1],
+    step_ceiling: int = MAX_STEPS_RANGE[1],
 ) -> list[AgentDraft]:
     """Fill the template's slots from the agents the planner proposed.
 
@@ -340,6 +353,9 @@ def _parse_agents(
                 milestone_objective=milestone_objective,
                 pool=pool,
                 used=used,
+                timeout_ceiling=timeout_ceiling,
+                token_ceiling=token_ceiling,
+                step_ceiling=step_ceiling,
             )
         )
     return agents
@@ -350,6 +366,9 @@ def parse_plan_payload(
     *,
     max_milestones: int = MAX_MILESTONES,
     max_agents: int = MAX_AGENTS_PER_MILESTONE,
+    timeout_ceiling: float = TIMEOUT_RANGE[1],
+    token_ceiling: int = MAX_TOKENS_RANGE[1],
+    step_ceiling: int = MAX_STEPS_RANGE[1],
     pool: RolePool | None = None,
     templates: dict[str, SubgraphTemplate] | None = None,
 ) -> MilestonePlanDraft:
@@ -360,10 +379,11 @@ def parse_plan_payload(
     defaults when the planner names something that does not exist, so an
     imaginative answer degrades to a runnable plan instead of failing one.
 
-    ``max_agents`` bounds what a *planner* may propose per milestone. A plan
-    that was already validated and frozen -- such as the merged single-milestone
-    arm of an A/B test -- carries the agent count of the whole plan, and
-    re-clamping it here would silently hand that arm less compute.
+    ``max_agents`` and the three ceilings bound what a *planner* may propose. A
+    plan that was already validated and frozen -- such as the merged arms of an
+    A/B test -- carries the agent count and budgets of the whole plan it was
+    derived from, and re-clamping them here would silently hand that arm less
+    compute than the arm it exists to be compared against.
 
     Raises ``MilestonePlanError`` when nothing usable survives validation.
     """
@@ -446,6 +466,9 @@ def parse_plan_payload(
                     template=template,
                     pool=role_pool,
                     max_agents=max_agents,
+                    timeout_ceiling=timeout_ceiling,
+                    token_ceiling=token_ceiling,
+                    step_ceiling=step_ceiling,
                 ),
             )
         )

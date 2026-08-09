@@ -26,6 +26,9 @@ from pathlib import Path
 
 from orchestra.realbench.milestone_planner import (
     MAX_AGENTS_PER_MILESTONE,
+    MAX_STEPS_RANGE,
+    MAX_TOKENS_RANGE,
+    TIMEOUT_RANGE,
     MilestoneAcceptance,
     MilestoneDraft,
     MilestonePlanDraft,
@@ -179,20 +182,27 @@ def save_draft(draft: MilestonePlanDraft, path: Path) -> Path:
 def load_draft(path: Path, *, max_milestones: int = 6) -> MilestonePlanDraft:
     """Re-validate a frozen draft through the same normalisation as a fresh one.
 
-    The per-milestone agent cap is raised to the frozen plan's own widest
-    milestone: the merged single-segment arm concentrates every agent into one
-    milestone by construction, and clamping it to the planner's limit would
-    hand the control arm less compute than the arm it is compared against.
+    Both planner-facing caps are raised to whatever this plan already contains.
+    The merged arms concentrate the whole plan into fewer nodes by construction
+    -- every agent into one milestone, or the whole wall clock onto one agent --
+    and re-clamping to the planner's per-proposal limits would hand a control
+    arm less compute than the arm it exists to be compared against.
     """
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    widest = max(
-        (len(m.get("agents") or []) for m in payload.get("milestones") or []),
-        default=MAX_AGENTS_PER_MILESTONE,
-    )
+    milestones = payload.get("milestones") or []
+    widest = max((len(m.get("agents") or []) for m in milestones), default=MAX_AGENTS_PER_MILESTONE)
+    agents = [agent for m in milestones for agent in (m.get("agents") or [])]
+
+    def _largest(field: str, default: float) -> float:
+        return max((float(agent.get(field) or 0.0) for agent in agents), default=default)
+
     draft = parse_plan_payload(
         json.dumps(payload),
         max_milestones=max_milestones,
         max_agents=max(widest, MAX_AGENTS_PER_MILESTONE),
+        timeout_ceiling=_largest("timeout_seconds", TIMEOUT_RANGE[1]),
+        token_ceiling=int(_largest("max_tokens", MAX_TOKENS_RANGE[1])),
+        step_ceiling=int(_largest("max_steps", MAX_STEPS_RANGE[1])),
     )
     return replace(draft, generator=str(payload.get("generator") or draft.generator))
 
