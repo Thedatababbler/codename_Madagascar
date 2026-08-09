@@ -15,8 +15,14 @@ class _Status:
 
 
 @dataclass
+class _Attempt:
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class _Sub:
     status: _Status
+    attempts: list[_Attempt] = field(default_factory=list)
 
 
 @dataclass
@@ -78,6 +84,30 @@ def test_rows_are_written_even_when_tuning_is_off() -> None:
     assert len(rows) == 1
     assert rows[0].harness_score is None
     assert rows[0].effective_score == 1.0
+
+
+def test_the_graded_score_is_recorded_with_the_fast_loop_switched_off() -> None:
+    """The main path records it on the attempt, not as a fast-loop candidate.
+
+    Reading only candidates reported no score at all whenever the loop was off,
+    which is every A/B run -- so the axis that separates two failures was blank
+    on exactly the runs a tuning loop would be calibrated against.
+    """
+    state = _State(
+        subtasks={
+            "m1": _Sub(
+                _Status("failed"),
+                attempts=[_Attempt({"harness_score": 0.62, "furthest_stage": "imports"})],
+            )
+        },
+        fast_loop_states={},
+    )
+
+    row = milestone_objectives(state)[0]
+
+    assert row.harness_score == 0.62
+    assert row.furthest_stage == "imports"
+    assert row.gate_passed is False
 
 
 def test_tuning_is_off_unless_a_config_asks_for_it() -> None:

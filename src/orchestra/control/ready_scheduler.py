@@ -65,6 +65,7 @@ from orchestra.control.task_state import (
     WorkspaceCommitStatus,
 )
 from orchestra.decomposition.schemas import TaskPlan
+from orchestra.harness.progress import best_harness_progress
 from orchestra.ir.artifacts import ArtifactBundle, ArtifactEnvelope
 from orchestra.ir.graph import OrchestraGraph, load_graph
 from orchestra.ir.nodes import NodeKind
@@ -1533,6 +1534,16 @@ class ReadySubtaskScheduler:
         )
         sub.status = status
         sub.attempts[-1].status = status
+        # Recorded the moment this milestone's gate has run, while the harness
+        # artifacts are still reachable from the graph result. This is the whole
+        # signal a within-run tuning loop has: the gate says pass or fail, and
+        # this says how far a failure got.
+        harness_score, furthest_stage = await best_harness_progress(
+            result, self.artifact_store
+        )
+        if harness_score is not None:
+            sub.attempts[-1].metadata["harness_score"] = harness_score
+            sub.attempts[-1].metadata["furthest_stage"] = furthest_stage
         initial_cost = _cost_from_graph_result(result)
 
         if status is SubtaskStatus.COMMITTED:

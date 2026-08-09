@@ -42,6 +42,7 @@ from orchestra.control.task_state import (
     TaskExecutionState,
 )
 from orchestra.harness.command_runner import run_authoritative_harness_command
+from orchestra.harness.progress import best_harness_progress
 from orchestra.ir.artifacts import ArtifactBundle
 from orchestra.ir.graph import OrchestraGraph, load_graph
 from orchestra.ir.nodes import NodeKind
@@ -49,7 +50,6 @@ from orchestra.runtime.backend import RunContext
 from orchestra.runtime.native_async import NativeAsyncRuntime
 from orchestra.runtime.state import GraphExecutionResult
 from orchestra.runtime.task_checkpoint import TaskCheckpointStore
-from orchestra.schemas.artifacts import RepositoryHarnessResultArtifact
 from orchestra.storage.artifacts import ArtifactStore
 from orchestra.workspaces.base import WorkspaceRef
 
@@ -642,26 +642,7 @@ class FastLoopController:
         Without it two failing candidates are indistinguishable and the selector
         falls back to price, so the fast loop learns to fail cheaply.
         """
-        best: float | None = None
-        stage = ""
-        for outputs in result.state.node_outputs.values():
-            for artifact_id in outputs.values():
-                try:
-                    artifact = await self.artifact_store.get(artifact_id)
-                except KeyError:
-                    continue
-                if artifact.artifact_type != "RepositoryHarnessResultArtifact":
-                    continue
-                payload = RepositoryHarnessResultArtifact.model_validate(artifact.payload)
-                if payload.score is None:
-                    continue
-                # A milestone can run more than one harness -- gate_then_repair
-                # has a midway probe as well as the end-of-chain gate -- and the
-                # candidate's standing is how far it eventually got.
-                if best is None or payload.score > best:
-                    best = payload.score
-                    stage = payload.furthest_stage
-        return best, stage
+        return await best_harness_progress(result, self.artifact_store)
 
     async def _commit_winner(
         self,

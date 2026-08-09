@@ -136,6 +136,15 @@ def milestone_objectives(state: Any) -> list[MilestoneObjective]:
         fast_loop_state = (getattr(state, "fast_loop_states", None) or {}).get(subtask_id)
         harness_score = None
         stage = ""
+        # The main path records its graded result on the attempt; the fast loop
+        # records one per candidate. Reading only the latter -- as this did --
+        # reports no score at all whenever the loop is switched off, which is
+        # every A/B run.
+        for attempt in getattr(sub, "attempts", None) or []:
+            score = (getattr(attempt, "metadata", None) or {}).get("harness_score")
+            if score is not None and (harness_score is None or score > harness_score):
+                harness_score = float(score)
+                stage = str((attempt.metadata or {}).get("furthest_stage") or "")
         for candidate in getattr(fast_loop_state, "candidates", None) or []:
             score = getattr(candidate, "harness_score", None)
             if score is not None and (harness_score is None or score > harness_score):

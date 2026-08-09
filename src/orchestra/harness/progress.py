@@ -13,8 +13,12 @@ scoring zero.
 from __future__ import annotations
 
 import json
+from typing import Any
 
-from orchestra.schemas.artifacts import HarnessStageResult
+from orchestra.schemas.artifacts import (
+    HarnessStageResult,
+    RepositoryHarnessResultArtifact,
+)
 
 MARKER = "ADAMAS_HARNESS_SCORE "
 
@@ -49,3 +53,31 @@ def parse_progress(stdout: str) -> tuple[float | None, list[HarnessStageResult],
             str(payload.get("furthest_stage") or ""),
         )
     return None, [], ""
+
+
+async def best_harness_progress(
+    result: Any, artifact_store: Any
+) -> tuple[float | None, str]:
+    """The furthest a graph execution's acceptance harnesses reported getting.
+
+    A milestone can run more than one: ``gate_then_repair`` probes midway as
+    well as gating at the end, and what the milestone is worth is how far it
+    eventually got, not what the first probe saw.
+    """
+    best: float | None = None
+    stage = ""
+    for outputs in getattr(result.state, "node_outputs", {}).values():
+        for artifact_id in outputs.values():
+            try:
+                artifact = await artifact_store.get(artifact_id)
+            except KeyError:
+                continue
+            if artifact.artifact_type != "RepositoryHarnessResultArtifact":
+                continue
+            payload = RepositoryHarnessResultArtifact.model_validate(artifact.payload)
+            if payload.score is None:
+                continue
+            if best is None or payload.score > best:
+                best = payload.score
+                stage = payload.furthest_stage
+    return best, stage

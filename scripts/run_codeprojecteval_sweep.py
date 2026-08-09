@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -78,7 +79,28 @@ class TrialResult:
     errors: list[str] = field(default_factory=list)
 
 
-def trial_env() -> dict[str, str]:
+def isolated_codex_home(run_id: str, root: Path) -> Path | None:
+    """A private Codex state directory for one trial.
+
+    The Codex CLI keeps its state, logs, memories and goals in four SQLite
+    databases under ``CODEX_HOME``, and concurrent processes sharing that
+    directory lose the race: the loser dies at startup with ``failed to
+    initialize state runtime ... database is locked``. Credentials and config
+    are copied in; the databases are created fresh and thrown away with the run.
+    """
+    source = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
+    if not source.is_dir():
+        return None
+    home = root / ".codex_homes" / run_id
+    home.mkdir(parents=True, exist_ok=True)
+    for name in ("auth.json", "config.toml"):
+        origin = source / name
+        if origin.is_file():
+            shutil.copy2(origin, home / name)
+    return home
+
+
+def trial_env(codex_home: Path | None = None) -> dict[str, str]:
     """The environment a trial runs under.
 
     Handed to the subprocess rather than set on this process: mutating the
@@ -89,10 +111,14 @@ def trial_env() -> dict[str, str]:
     env = dict(os.environ)
     env.setdefault("ADAMAS_CODEX_SANDBOX_OVERRIDE", "full_access")
     env.setdefault("ADAMAS_ALLOW_UNTRUSTED_REPO_HARNESS", "1")
+    if codex_home is not None:
+        env["CODEX_HOME"] = str(codex_home)
     return env
 
 
-def _run(cmd: list[str], *, log: Path, timeout: float) -> int:
+def _run(
+    cmd: list[str], *, log: Path, timeout: float, codex_home: Path | None = None
+) -> int:
     log.parent.mkdir(parents=True, exist_ok=True)
     with open(log, "ab") as stream:
         stream.write(f"\n$ {' '.join(cmd)}\n".encode())
@@ -100,7 +126,7 @@ def _run(cmd: list[str], *, log: Path, timeout: float) -> int:
         try:
             proc = subprocess.run(
                 cmd, cwd=REPO_ROOT, stdout=stream, stderr=subprocess.STDOUT,
-                timeout=timeout, check=False, env=trial_env(),
+                timeout=timeout, check=False, env=trial_env(codex_home),
             )
         except subprocess.TimeoutExpired:
             stream.write(b"\n[sweep] timed out\n")
@@ -201,6 +227,7 @@ def collect_result(trial: Trial, batch_dir: Path, *, status: str) -> TrialResult
 def execute(trial: Trial, args: argparse.Namespace) -> TrialResult:
     batch_dir = args.output_root / trial.run_id
     log = batch_dir / "sweep.log"
+    codex_home = isolated_codex_home(trial.run_id, args.output_root)
     started = time.monotonic()
     code = _run(
         [
@@ -213,14 +240,16 @@ def execute(trial: Trial, args: argparse.Namespace) -> TrialResult:
         ],
         log=log,
         timeout=args.run_timeout,
+        codex_home=codex_home,
     )
     status = "ok" if code == 0 else ("timeout" if code == 124 else "run_failed")
     if code == 0:
         score = _run(
             [
                 "uv", "run", "python", "scripts/eval_codeprojecteval.py", str(batch_dir),
-                "--per-test-timeout", str(args.per_test_timeout),
-                "--timeout", str(args.eval_timeout),
+                # int, not float: the scorer's argparse rejects "5.0".
+                "--per-test-timeout", str(int(args.per_test_timeout)),
+                "--timeout", str(int(args.eval_timeout)),
             ],
             log=log,
             timeout=args.eval_timeout + 300,

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import sys
 import threading
 import time
@@ -107,6 +108,45 @@ def test_repeats_are_capped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     )
     with pytest.raises(SystemExit, match="repeats above 5"):
         sweep.main()
+
+
+def test_each_trial_gets_its_own_codex_state_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Concurrent Codex processes cannot share one CODEX_HOME.
+
+    The CLI keeps its state in SQLite databases there, and the loser of the race
+    dies at startup with "database is locked" -- which is how the first parallel
+    sweep failed within six seconds.
+    """
+    source = tmp_path / "codex"
+    source.mkdir()
+    (source / "auth.json").write_text('{"token": "x"}', encoding="utf-8")
+    (source / "config.toml").write_text("model = 'gpt-5.4'", encoding="utf-8")
+    (source / "state_5.sqlite").write_text("shared db", encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOME", str(source))
+
+    first = sweep.isolated_codex_home("run-1", tmp_path / "out")
+    second = sweep.isolated_codex_home("run-2", tmp_path / "out")
+
+    assert first != second
+    assert (first / "auth.json").read_text(encoding="utf-8") == '{"token": "x"}'
+    assert (first / "config.toml").is_file()
+    # The databases are what collide, so they must not be inherited.
+    assert not (first / "state_5.sqlite").exists()
+    assert sweep.trial_env(first)["CODEX_HOME"] == str(first)
+
+
+def test_the_untrusted_harness_flag_stays_in_the_subprocess(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Setting it on this process would disable a safety check everywhere."""
+    monkeypatch.delenv("ADAMAS_ALLOW_UNTRUSTED_REPO_HARNESS", raising=False)
+
+    env = sweep.trial_env()
+
+    assert env["ADAMAS_ALLOW_UNTRUSTED_REPO_HARNESS"] == "1"
+    assert "ADAMAS_ALLOW_UNTRUSTED_REPO_HARNESS" not in os.environ
 
 
 def test_record_joins_run_scoring_and_usage_into_one_row(tmp_path: Path) -> None:
