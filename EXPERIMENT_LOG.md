@@ -990,3 +990,56 @@ report rather than hide: `gate_then_repair` lets the multi arm *skip* its
 repairer when the mid-milestone gate passes, so the multi arm may spend strictly
 less compute than its matched control. Report realized `agent_turns`, not
 budgeted ones.
+
+---
+
+## EXP-20260809-04 — Single vs multi-segment on the role-pool builder
+
+**Status:** `canonical` for mechanism, `underpowered` for effect size
+**Batches:** `outputs/cpe_ab/ab-{simpy,bplustree,pyjwt}-{single,multi}-r{1,2,3}-20260809T*`
+**Plans:** `outputs/cpe_ab/plans/` (legacy plans preserved at `plans_legacy/`)
+**Summary:** `outputs/cpe_ab/ab_summary_role_pool.json`
+(`summarize_codeprojecteval_ab.py --engine role_pool`)
+
+First A/B where both arms ran on the role pool and subgraph templates. Arms are
+matched on agent count and `max_steps`; see the budget caveat below.
+
+| repo | single | multi | turns single/multi | delta |
+|---|---|---|---|---|
+| simpy | 0.805 (n=3) | 0.732 (n=3) | 5 / 4 | −0.074 |
+| bplustree | 0.034 (n=2) | 0.307 (n=2) | 5 / 4.5 | +0.274 |
+| pyjwt | 0.510 (n=3) | 0.771 (n=3) | 4 / 2 | +0.261 |
+
+**What the delta is actually made of.** Not better code — fewer total losses.
+Per-run pyjwt single was 0.000 / 0.769 / 0.762 against multi's 0.741 / 0.827 /
+0.745. Drop the zero and the arms tie. That zero is the whole mechanism: four
+agents ran to completion, the single terminal gate failed, and because a change
+only freezes behind a passing gate, `committed: []` and the canonical repo held
+**zero lines** of `jwt/`. The other two single runs committed ~1877 lines. Across
+nine scored role-pool single runs, two committed nothing and one timed out under
+the hidden suite.
+
+Multi-segment arms freeze per milestone, so a failure in the last segment cannot
+erase the first. **Segmentation buys the floor, not the ceiling** — where the
+single arm commits at all, it matches or beats multi (simpy 0.805 vs 0.732).
+
+**Early exit is real and cheap.** Across 12 gated milestones the mid-milestone
+probe passed 10 times and the repairer was never instantiated; it failed twice
+(bplustree multi r1, r3), and the repairer fixed r3 through the terminal gate but
+not r1. pyjwt multi spent 2 of its 4 budgeted agent turns and **899k tokens
+against the single arm's 3.65M — 24.7%** — while scoring higher. The gap exceeds
+the turn ratio because each link of a chain re-reads the accumulated context.
+
+**Budget caveat — `max_tokens` does not bind Codex.** `codex_sdk.py` never reads
+it; only `openai_compatible_async.py` puts it on the request. The 8192 in every
+graph and roster is inert metadata under the Codex backend. Measured: 35 of 74
+agent nodes exceeded it (median 8030, max 24643). So "budget-matched" in this
+experiment means *agent count and `max_steps`*, never tokens. Left as-is by
+decision; do not read `max_tokens` from a run manifest as a spend limit. What
+does bind is `timeout_seconds` (1200s author, 1500s repairer) and `max_steps`.
+
+**Why n is small.** bplustree lost one run per arm to a hidden-suite timeout
+(generated code with an unbounded loop), leaving n=2. One earlier single run was
+excluded by the condition guard for replaying a legacy four-agent plan under the
+new builder. Treat the two positive deltas as consistent with the floor
+mechanism, not as measured effect sizes.
