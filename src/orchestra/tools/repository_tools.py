@@ -33,6 +33,8 @@ _LIST_SKIP_DIR_NAMES = {
     "node_modules",
 }
 
+# AdaMAS assets normally live outside the workspace; these names stay reserved
+# so an agent cannot fabricate something the harness might pick up.
 _PROTECTED_RELATIVE_PATHS = {
     ".adamas_trusted_harness",
     "tests/test_adamas_workspace_ok.py",
@@ -40,13 +42,12 @@ _PROTECTED_RELATIVE_PATHS = {
     "adamas_milestone_contracts.json",
     "scripts/adamas_public_check.py",
     "tests_public/test_milestone_contracts.py",
-}
-
-# Readable by agents (shared memory) but not writable/deletable via tools.
-_WRITE_PROTECTED_RELATIVE_PATHS = {
     "ADAMAS_CHANGELOG.md",
     "ADAMAS_DECISIONS.md",
+    "MILESTONE.md",
 }
+
+_WRITE_PROTECTED_RELATIVE_PATHS: set[str] = set()
 
 _PUBLIC_CHECK_LEVELS = frozenset({"discovery", "implementation", "integration"})
 
@@ -274,9 +275,23 @@ def _build_repository_tools(context: ToolBuildContext) -> dict[str, Any]:
         This feedback is advisory; the scheduler reruns the authoritative check.
         """
         try:
-            script = root / "scripts" / "adamas_public_check.py"
-            if not script.is_file():
-                raise WorkspacePathError("public check script missing in workspace")
+            # Harness assets are runner-owned and live outside the workspace so
+            # the agent can neither read nor rewrite them.
+            script = Path(os.getenv("ADAMAS_PUBLIC_CHECK_SCRIPT", ""))
+            manifest = Path(os.getenv("ADAMAS_PUBLIC_CHECK_MANIFEST", ""))
+            if not script.is_file() or not manifest.is_file():
+                raise WorkspacePathError("public check harness is not configured")
+            command = [
+                "python",
+                str(script),
+                "--manifest",
+                str(manifest),
+                "--level",
+                level,
+            ]
+            contracts = os.getenv("ADAMAS_PUBLIC_CHECK_CONTRACTS", "")
+            if contracts and Path(contracts).is_file():
+                command += ["--contracts", contracts]
             env = os.environ.copy()
             # Scope untrusted-harness escape hatch to this subprocess only.
             env["ADAMAS_ALLOW_UNTRUSTED_REPO_HARNESS"] = "1"
@@ -290,7 +305,7 @@ def _build_repository_tools(context: ToolBuildContext) -> dict[str, Any]:
                 ):
                     env.pop(key, None)
             proc = subprocess.run(
-                ["python", "scripts/adamas_public_check.py", "--level", level],
+                command,
                 cwd=str(root),
                 capture_output=True,
                 text=True,

@@ -1,27 +1,30 @@
-"""Workspace-owned cross-milestone memory (scheme A: CHANGELOG on disk).
+"""Cross-milestone memory kept in the run directory (prompt-only delivery).
 
-AdaMAS appends a structured changelog into the canonical workspace after each
-successful commit. Later milestones/agents read the same file via the forked
-workspace — no Codex thread resume required.
+AdaMAS appends a structured changelog under the run directory after each
+successful commit. Later milestones receive it as a **prompt prelude**; the
+agent workspace stays free of AdaMAS bookkeeping files.
 """
 
 from __future__ import annotations
 
-import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 CHANGELOG_NAME = "ADAMAS_CHANGELOG.md"
-DECISIONS_NAME = "ADAMAS_DECISIONS.md"
+MEMORY_DIRNAME = "adamas_memory"
 
 
-def changelog_path(workspace: Path) -> Path:
-    return Path(workspace) / CHANGELOG_NAME
+def memory_dir_for_run(run_dir: Path) -> Path:
+    return Path(run_dir) / MEMORY_DIRNAME
 
 
-def read_changelog(workspace: Path, *, max_chars: int = 12000) -> str:
-    path = changelog_path(workspace)
+def changelog_path(memory_dir: Path) -> Path:
+    return Path(memory_dir) / CHANGELOG_NAME
+
+
+def read_changelog(memory_dir: Path, *, max_chars: int = 12000) -> str:
+    path = changelog_path(memory_dir)
     if not path.is_file():
         return ""
     text = path.read_text(encoding="utf-8", errors="replace")
@@ -30,17 +33,8 @@ def read_changelog(workspace: Path, *, max_chars: int = 12000) -> str:
     return text[: max_chars - 20] + "\n\n…(changelog truncated)…\n"
 
 
-def _run_git(workspace: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["git", "-C", str(workspace), *args],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-
-
 def append_changelog_entry(
-    workspace: Path,
+    memory_dir: Path,
     *,
     subtask_id: str,
     role: str | None,
@@ -48,11 +42,11 @@ def append_changelog_entry(
     revision: str | None,
     summary: str | None = None,
     extra: dict[str, Any] | None = None,
-    git_commit: bool = True,
 ) -> Path:
-    """Append one milestone memory entry and optionally commit it."""
-    ws = Path(workspace)
-    path = changelog_path(ws)
+    """Append one milestone memory entry to the runner-side changelog."""
+    target = Path(memory_dir)
+    target.mkdir(parents=True, exist_ok=True)
+    path = changelog_path(target)
     ts = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     files = sorted({str(p).replace("\\", "/") for p in changed_files if p})
     lines = [
@@ -77,36 +71,28 @@ def append_changelog_entry(
 
     if not path.exists():
         header = (
-            "# AdaMAS Workspace Changelog\n\n"
-            "Runner-owned cross-milestone memory. Downstream agents must read "
-            "this file before editing. Do not delete prior entries.\n"
+            "# AdaMAS Milestone Memory\n\n"
+            "Runner-owned cross-milestone log injected into later agent prompts.\n"
         )
         path.write_text(header + "\n".join(lines), encoding="utf-8")
     else:
         with path.open("a", encoding="utf-8") as fh:
             fh.write("\n".join(lines))
-
-    if git_commit and (ws / ".git").exists():
-        _run_git(ws, "add", "--", CHANGELOG_NAME)
-        # Commit even if only changelog changed.
-        msg = f"adamas changelog after {subtask_id}"
-        _run_git(ws, "commit", "-m", msg, "--allow-empty")
     return path
 
 
-def memory_brief_for_milestone(workspace: Path) -> str:
-    """Markdown snippet injected into MILESTONE.md."""
-    text = read_changelog(workspace)
+def memory_brief_for_milestone(memory_dir: Path) -> str:
+    """Prompt section describing what earlier milestones already committed."""
+    text = read_changelog(memory_dir)
     if not text.strip():
         return (
-            "## Shared workspace memory\n"
-            f"- No prior `{CHANGELOG_NAME}` yet (first milestone).\n"
-            f"- After this milestone commits, AdaMAS will append to `{CHANGELOG_NAME}`.\n"
+            "## Shared milestone memory\n"
+            "- No earlier milestone has committed yet; you are first.\n"
         )
     return (
-        "## Shared workspace memory\n"
-        f"Read `{CHANGELOG_NAME}` for prior milestone modification logs "
-        "(shared across milestones/agents).\n\n"
+        "## Shared milestone memory\n"
+        "Earlier milestones already committed the changes below into the "
+        "repository you now see. Extend them; do not redo or rename them.\n\n"
         "<changelog_excerpt>\n"
         f"{text.strip()}\n"
         "</changelog_excerpt>\n"

@@ -108,6 +108,9 @@ class AgentNodeSpec(BaseNodeSpec):
     output_contract: OutputContract | None = None
     # Fast-loop overlays (optional; omitted from content hash when unset).
     prompt_feedback: str | None = None
+    # Runtime-injected context (milestone brief / shared memory); omitted from
+    # the content hash when unset so plan-time graph hashes stay stable.
+    prompt_prelude: str | None = None
     session_policy: Literal["fresh", "resume", "fork"] | None = None
 
     def resolved_backend(self) -> AgentBackendConfig:

@@ -52,6 +52,38 @@ def _default_client_factory(*, workspace_path: str | None = None) -> Any:
     return AsyncCodex(config=_build_codex_config(workspace_path=workspace_path))
 
 
+_TRANSIENT_TRANSPORT_MARKERS = (
+    "stream disconnected",
+    "stream closed before",
+    "connection reset",
+    "connection aborted",
+    "connection closed",
+    "incomplete chunked read",
+    "502 bad gateway",
+    "503 service unavailable",
+    "504 gateway",
+    "temporarily unavailable",
+)
+
+
+def _is_transient_transport_error(exc: BaseException) -> bool:
+    """True for provider/proxy transport failures worth one more attempt.
+
+    Quota, auth and model-behaviour failures are excluded: retrying those burns
+    wall clock and returns the same answer.
+    """
+    text = f"{type(exc).__name__}: {exc}".lower()
+    return any(marker in text for marker in _TRANSIENT_TRANSPORT_MARKERS)
+
+
+def _transient_retry_budget() -> int:
+    raw = (os.getenv("ADAMAS_CODEX_TRANSIENT_RETRIES") or "").strip()
+    try:
+        return max(0, min(6, int(raw))) if raw else 3
+    except ValueError:
+        return 3
+
+
 class CodexSDKBackend:
     backend_id = "codex_sdk"
 
@@ -247,75 +279,91 @@ class CodexSDKBackend:
         thread_id = ""
         final_response = ""
         usage = LLMUsage()
-        try:
-            async with asyncio.timeout(timeout):
-                client = client_factory()
-                close = getattr(client, "close", None)
-                try:
-                    if hasattr(client, "__aenter__"):
-                        client = await client.__aenter__()
-                    await self._ensure_auth(client)
-                    thread = await client.thread_start(
-                        cwd=workspace.path,
-                        sandbox=sandbox,
-                        approval_mode=approval,
-                        model=request.model.name if request.model else None,
-                    )
-                    thread_id = str(getattr(thread, "id", "") or "")
-                    turn = await thread.run(
-                        prompt,
-                        sandbox=sandbox,
-                        approval_mode=approval,
-                    )
-                    final_response = str(getattr(turn, "final_response", "") or "")
-                    turn_usage = getattr(turn, "usage", None)
-                    if turn_usage is not None:
-                        # TokenUsage / breakdown shapes vary by SDK build.
-                        last = getattr(turn_usage, "last", None) or turn_usage
-                        total = getattr(turn_usage, "total", None) or last
-                        usage = LLMUsage(
-                            prompt_tokens=int(
-                                getattr(total, "input_tokens", 0)
-                                or getattr(total, "prompt_tokens", 0)
-                                or 0
-                            ),
-                            completion_tokens=int(
-                                getattr(total, "output_tokens", 0)
-                                or getattr(total, "completion_tokens", 0)
-                                or 0
-                            ),
+        max_attempts = 1 + _transient_retry_budget()
+        transient_retries = 0
+        for attempt in range(1, max_attempts + 1):
+            try:
+                async with asyncio.timeout(timeout):
+                    client = client_factory()
+                    close = getattr(client, "close", None)
+                    try:
+                        if hasattr(client, "__aenter__"):
+                            client = await client.__aenter__()
+                        await self._ensure_auth(client)
+                        thread = await client.thread_start(
+                            cwd=workspace.path,
+                            sandbox=sandbox,
+                            approval_mode=approval,
+                            model=request.model.name if request.model else None,
                         )
-                finally:
-                    if hasattr(client, "__aexit__"):
-                        await client.__aexit__(None, None, None)
-                    elif callable(close):
-                        result = close()
-                        if asyncio.iscoroutine(result) or isinstance(result, Awaitable):
-                            await result  # type: ignore[misc]
-        except TimeoutError:
-            return self._fail(
-                request,
-                AgentRunStatus.TIMEOUT,
-                f"Codex exceeded timeout_seconds={timeout}",
-                latency_ms=int((time.perf_counter() - started) * 1000),
-                metadata={
-                    "workspace_ref": workspace.path,
-                    "codex_failure_class": "infra",
-                },
-            )
-        except Exception as exc:  # noqa: BLE001
-            status, failure_class = map_codex_exception(exc)
-            return self._fail(
-                request,
-                status,
-                f"{type(exc).__name__}: {exc}",
-                latency_ms=int((time.perf_counter() - started) * 1000),
-                metadata={
-                    "workspace_ref": workspace.path,
-                    "thread_id": thread_id,
-                    "codex_failure_class": failure_class.value,
-                },
-            )
+                        thread_id = str(getattr(thread, "id", "") or "")
+                        turn = await thread.run(
+                            prompt,
+                            sandbox=sandbox,
+                            approval_mode=approval,
+                        )
+                        final_response = str(getattr(turn, "final_response", "") or "")
+                        turn_usage = getattr(turn, "usage", None)
+                        if turn_usage is not None:
+                            # TokenUsage / breakdown shapes vary by SDK build.
+                            last = getattr(turn_usage, "last", None) or turn_usage
+                            total = getattr(turn_usage, "total", None) or last
+                            usage = LLMUsage(
+                                prompt_tokens=int(
+                                    getattr(total, "input_tokens", 0)
+                                    or getattr(total, "prompt_tokens", 0)
+                                    or 0
+                                ),
+                                completion_tokens=int(
+                                    getattr(total, "output_tokens", 0)
+                                    or getattr(total, "completion_tokens", 0)
+                                    or 0
+                                ),
+                            )
+                    finally:
+                        if hasattr(client, "__aexit__"):
+                            await client.__aexit__(None, None, None)
+                        elif callable(close):
+                            result = close()
+                            if asyncio.iscoroutine(result) or isinstance(
+                                result, Awaitable
+                            ):
+                                await result  # type: ignore[misc]
+            except TimeoutError:
+                return self._fail(
+                    request,
+                    AgentRunStatus.TIMEOUT,
+                    f"Codex exceeded timeout_seconds={timeout}",
+                    latency_ms=int((time.perf_counter() - started) * 1000),
+                    metadata={
+                        "workspace_ref": workspace.path,
+                        "codex_failure_class": "infra",
+                        "codex_transient_retries": transient_retries,
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001
+                status, failure_class = map_codex_exception(exc)
+                if attempt < max_attempts and _is_transient_transport_error(exc):
+                    # A dropped stream is the provider's fault, not the agent's;
+                    # retrying here keeps it from consuming the milestone budget.
+                    transient_retries += 1
+                    # A milestone turn costs minutes, so waiting out a short
+                    # provider outage is cheaper than losing the milestone.
+                    await asyncio.sleep(min(5.0 * 2 ** (attempt - 1), 30.0))
+                    continue
+                return self._fail(
+                    request,
+                    status,
+                    f"{type(exc).__name__}: {exc}",
+                    latency_ms=int((time.perf_counter() - started) * 1000),
+                    metadata={
+                        "workspace_ref": workspace.path,
+                        "thread_id": thread_id,
+                        "codex_failure_class": failure_class.value,
+                        "codex_transient_retries": transient_retries,
+                    },
+                )
+            break
 
         try:
             snap = await self._workspaces.snapshot(workspace)
@@ -390,5 +438,6 @@ class CodexSDKBackend:
                 "sdk_approval_kwarg": "approval_mode",
                 "sandbox": sandbox_name,
                 "sandbox_override": sandbox_override or None,
+                "codex_transient_retries": transient_retries,
             },
         )

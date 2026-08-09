@@ -15,7 +15,13 @@ if [[ -f .env ]]; then
 fi
 
 export ADAMAS_CODEX_SANDBOX_OVERRIDE="${ADAMAS_CODEX_SANDBOX_OVERRIDE:-full_access}"
-# Belt-and-suspenders with .adamas_trusted_harness written into workspaces.
+# Risk-first dynamic milestones are the default and the only measurable mode.
+# Template segmentation is a degraded fallback; a run that hits it writes
+# PLANNER_FALLBACK and must not be reported as a decomposition result.
+export ADAMAS_REALBENCH_DYNAMIC_PLAN="${ADAMAS_REALBENCH_DYNAMIC_PLAN:-1}"
+export ADAMAS_REALBENCH_PLANNER_MODEL="${ADAMAS_REALBENCH_PLANNER_MODEL:-gpt-5.4}"
+# Workspaces are dataset-only (no AdaMAS marker); the check script itself lives
+# outside the repository and is therefore not agent-writable.
 export ADAMAS_ALLOW_UNTRUSTED_REPO_HARNESS="${ADAMAS_ALLOW_UNTRUSTED_REPO_HARNESS:-1}"
 export CODEX_MODEL="${CODEX_MODEL:-gpt-5.4}"
 

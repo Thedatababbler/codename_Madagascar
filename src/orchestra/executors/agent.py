@@ -43,6 +43,10 @@ class AgentNodeExecutor:
         if len(node.output_slots) != 1:
             raise ValueError("Agent nodes must declare exactly one output slot")
         messages = list(render_contract(contract, inputs))
+        if node.prompt_prelude:
+            prelude = str(node.prompt_prelude).strip()
+            if prelude:
+                messages.insert(1, {"role": "user", "content": prelude})
         if node.prompt_feedback:
             feedback = str(node.prompt_feedback).strip()
             if feedback:

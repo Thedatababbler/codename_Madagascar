@@ -1,57 +1,74 @@
-"""Milestone public contract tests derived from public_design (+ optional LLM).
+"""Milestone public contract checks derived from public_design (+ optional LLM).
 
-Contracts are runner-owned, frozen into the workspace, and never read hidden
-tests. LLM enrichment is optional and fail-closed to a deterministic baseline.
+Contracts are runner-owned JSON kept **outside** the agent workspace and handed
+to the harness by absolute path; they never read hidden tests. LLM enrichment is
+optional and fail-closed to a deterministic baseline.
 """
 
 from __future__ import annotations
 
-import ast
 import json
 import os
 import re
 from pathlib import Path
 from typing import Any, Literal
 
-from orchestra.realbench.public_harness import (
-    parse_expected_modules,
-    parse_package_exports,
-)
+from orchestra.realbench.public_harness import export_candidates, load_public_design
 
-CONTRACTS_NAME = "adamas_milestone_contracts.json"
-CONTRACT_TEST_NAME = "tests_public/test_milestone_contracts.py"
+CONTRACTS_SUFFIX = ".contracts.json"
 ALLOWED_CHECK_TYPES = frozenset(
-    {"import", "export", "callable_or_class", "module_file_exists"}
+    {"import", "export", "export_any", "callable_or_class", "module_file_exists"}
 )
 Role = Literal["discovery", "implementation", "integration"]
 
 
-def _load_public_design(workspace: Path) -> tuple[list[str], dict[str, list[str]], list[str]]:
-    tree_path = workspace / "public_design" / "tree.txt"
-    pkg_path = workspace / "public_design" / "package.json"
-    tree = (
-        tree_path.read_text(encoding="utf-8", errors="ignore")
-        if tree_path.is_file()
-        else ""
-    )
-    package_json: dict[str, Any] = {}
-    if pkg_path.is_file():
-        try:
-            raw = json.loads(pkg_path.read_text(encoding="utf-8"))
-            if isinstance(raw, dict):
-                package_json = raw
-        except json.JSONDecodeError:
-            package_json = {}
-    modules = parse_expected_modules(tree)
-    exports = parse_package_exports(package_json)
-    packages: list[str] = []
-    seen: set[str] = set()
-    for mod in modules:
-        root = mod.split(".", 1)[0]
-        if root not in seen:
-            seen.add(root)
-            packages.append(root)
-    return modules, exports, packages
+def contracts_path_for(harness_dir: Path, milestone_id: str) -> Path:
+    """Runner-side path holding one milestone's frozen contract checks."""
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", milestone_id) or "milestone"
+    return Path(harness_dir) / f"{safe}{CONTRACTS_SUFFIX}"
+
+
+def _scaffold_check(root: str, modules: list[str]) -> dict[str, Any]:
+    """Existence check that respects single-file modules vs packages.
+
+    A public tree entry such as ``SnoopR.py`` must not be turned into a
+    ``SnoopR/__init__.py`` requirement: forcing a package there makes agents
+    invent a directory layout the hidden evaluation never overlays.
+    """
+    is_package = any(mod.startswith(root + ".") for mod in modules)
+    path = f"{root}/__init__.py" if is_package else f"{root}.py"
+    return {
+        "type": "module_file_exists",
+        "path": path,
+        "required_levels": ["discovery", "implementation", "integration"],
+    }
+
+
+_LEVEL_ORDER = ("discovery", "implementation", "integration")
+
+
+def _merge_checks(checks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse checks that target the same symbol, unioning required levels."""
+    merged: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for check in checks:
+        key = (
+            str(check.get("type") or ""),
+            str(
+                check.get("module")
+                or check.get("path")
+                or ",".join(check.get("modules") or [])
+            ),
+            str(check.get("symbol") or ""),
+        )
+        existing = merged.get(key)
+        if existing is None:
+            merged[key] = dict(check)
+            continue
+        levels = set(existing.get("required_levels") or []) | set(
+            check.get("required_levels") or []
+        )
+        existing["required_levels"] = [x for x in _LEVEL_ORDER if x in levels]
+    return list(merged.values())
 
 
 def build_deterministic_contracts(
@@ -62,7 +79,7 @@ def build_deterministic_contracts(
     milestone_id: str | None = None,
 ) -> dict[str, Any]:
     """Build frozen public checks for one milestone role."""
-    modules, exports, packages = _load_public_design(workspace)
+    modules, exports, packages = load_public_design(Path(workspace))
     focus = [str(p).replace("\\", "/").strip("/") for p in (focus_paths or []) if p]
     focus_mods = modules
     if focus:
@@ -84,13 +101,7 @@ def build_deterministic_contracts(
     checks: list[dict[str, Any]] = []
     # Discovery: files/scaffold existence for focused packages.
     for pkg in packages[:12]:
-        checks.append(
-            {
-                "type": "module_file_exists",
-                "path": f"{pkg}/__init__.py",
-                "required_levels": ["discovery", "implementation", "integration"],
-            }
-        )
+        checks.append(_scaffold_check(pkg, modules))
     for mod in focus_mods[:40]:
         checks.append(
             {
@@ -101,6 +112,22 @@ def build_deterministic_contracts(
         )
         short = mod.rsplit(".", 1)[-1]
         wanted = exports.get(short) or exports.get(mod) or []
+        if not wanted:
+            continue
+        # Candidates come from the full tree: narrowing to the focused module
+        # would re-impose the symbol on a same-named sibling that never owned it.
+        candidates = export_candidates(modules, short if short in exports else mod)
+        if len(candidates) > 1:
+            for sym in wanted[:20]:
+                checks.append(
+                    {
+                        "type": "export_any",
+                        "modules": candidates,
+                        "symbol": sym,
+                        "required_levels": ["integration"],
+                    }
+                )
+            continue
         for sym in wanted[:20]:
             checks.append(
                 {
@@ -145,6 +172,17 @@ def _sanitize_llm_checks(raw_checks: list[Any]) -> list[dict[str, Any]]:
             if not path or path.startswith("/") or ".." in path.split("/"):
                 continue
             cleaned["path"] = path
+        elif ctype == "export_any":
+            mods = [
+                m
+                for m in (str(x).strip() for x in (item.get("modules") or []))
+                if re.match(r"^[A-Za-z_][A-Za-z0-9_\.]*$", m)
+            ]
+            sym = str(item.get("symbol") or "").strip()
+            if not mods or not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", sym):
+                continue
+            cleaned["modules"] = mods[:8]
+            cleaned["symbol"] = sym
         else:
             mod = str(item.get("module") or "").strip()
             if not mod or not re.match(r"^[A-Za-z_][A-Za-z0-9_\.]*$", mod):
@@ -194,8 +232,8 @@ def maybe_enrich_contracts_with_llm(
     )
     prompt = (
         "Generate additional PUBLIC repository contract checks as JSON list.\n"
-        "Allowed check types only: import, export, callable_or_class, "
-        "module_file_exists.\n"
+        "Allowed check types only: import, export, export_any "
+        '(fields: modules[], symbol), callable_or_class, module_file_exists.\n'
         "Do NOT invent hidden tests, private APIs, or filesystem shell commands.\n"
         f"Milestone role: {role}\n"
         f"Existing checks: {json.dumps(contracts.get('checks')[:20], ensure_ascii=False)}\n"
@@ -237,70 +275,42 @@ def maybe_enrich_contracts_with_llm(
         return contracts
 
 
-def _contract_pytest_source() -> str:
-    return '''"""Runner-owned milestone contracts (public_design only; do not edit)."""
-
-from __future__ import annotations
-
-import importlib
-import inspect
-import json
-import sys
-from pathlib import Path
-
-import pytest
-
-ROOT = Path(__file__).resolve().parents[1]
-CONTRACTS_PATH = ROOT / "adamas_milestone_contracts.json"
-LEVEL = __import__("os").environ.get("ADAMAS_PUBLIC_CHECK_LEVEL", "integration")
-
-
-def _load() -> dict:
-    if not CONTRACTS_PATH.is_file():
-        return {"checks": []}
-    return json.loads(CONTRACTS_PATH.read_text(encoding="utf-8"))
-
-
-def _active(check: dict) -> bool:
-    levels = check.get("required_levels") or ["integration"]
-    return LEVEL in levels
-
-
-@pytest.mark.parametrize("check", [c for c in _load().get("checks", []) if _active(c)])
-def test_milestone_contract(check: dict) -> None:
-    ctype = check.get("type")
-    if ctype == "module_file_exists":
-        assert (ROOT / check["path"]).exists(), check
-        return
-    if str(ROOT) not in sys.path:
-        sys.path.insert(0, str(ROOT))
-    if ctype == "import":
-        importlib.import_module(check["module"])
-        return
-    mod = importlib.import_module(check["module"])
-    sym = check["symbol"]
-    assert hasattr(mod, sym), f"missing {check['module']}.{sym}"
-    obj = getattr(mod, sym)
-    if ctype == "callable_or_class":
-        assert inspect.isclass(obj) or callable(obj), f"{sym} not callable/class"
-'''
-
-
 def materialize_milestone_contracts(
     workspace: Path,
     *,
+    harness_dir: Path,
     role: Role,
     focus_paths: list[str] | None = None,
     milestone_id: str | None = None,
     enable_llm: bool | None = None,
-) -> dict[str, Any]:
-    """Write milestone contract JSON + pytest module into workspace."""
+    extra_checks: list[dict[str, Any]] | None = None,
+    acceptance_criteria: list[str] | None = None,
+    corner_cases: list[str] | None = None,
+) -> tuple[dict[str, Any], Path]:
+    """Write one milestone's contract JSON into the runner-side harness dir.
+
+    ``extra_checks`` carries planner-authored acceptance checks; they are merged
+    on top of the deterministic public_design baseline so a dynamic milestone can
+    pin the exact contract its downstream milestones depend on. Nothing is
+    written into ``workspace`` — it is read for public_design only.
+    """
     contracts = build_deterministic_contracts(
         workspace,
         role=role,
         focus_paths=focus_paths,
         milestone_id=milestone_id,
     )
+    if extra_checks:
+        from orchestra.realbench.milestone_planner import sanitize_contract_checks
+
+        contracts["checks"] = _merge_checks(
+            list(contracts.get("checks") or []) + sanitize_contract_checks(extra_checks)
+        )
+        contracts["generator"] = "deterministic+planner"
+    if acceptance_criteria:
+        contracts["acceptance_criteria"] = [str(x) for x in acceptance_criteria][:20]
+    if corner_cases:
+        contracts["corner_cases"] = [str(x) for x in corner_cases][:20]
     if enable_llm is None:
         enable_llm = os.getenv("ADAMAS_REALBENCH_LLM_CONTRACTS", "").strip().lower() in {
             "1",
@@ -312,14 +322,10 @@ def materialize_milestone_contracts(
             contracts, workspace=workspace, role=role
         )
 
-    ws = Path(workspace)
-    (ws / CONTRACTS_NAME).write_text(
+    out_dir = Path(harness_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = contracts_path_for(out_dir, milestone_id or role)
+    path.write_text(
         json.dumps(contracts, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
-    tests_dir = ws / "tests_public"
-    tests_dir.mkdir(parents=True, exist_ok=True)
-    (tests_dir / "__init__.py").touch()
-    (ws / CONTRACT_TEST_NAME).write_text(_contract_pytest_source(), encoding="utf-8")
-    # Cheap syntax validation of generated test module.
-    ast.parse((ws / CONTRACT_TEST_NAME).read_text(encoding="utf-8"))
-    return contracts
+    return contracts, path

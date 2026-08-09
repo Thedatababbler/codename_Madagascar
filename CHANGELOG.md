@@ -1,5 +1,231 @@
 # Changelog
 
+## 2026-08-09 — Honest denominators and equal-compute arms
+
+Two defects that corrupted the first CodeProjectEval A/B batch, both found by a
+reported pass rate above 1.0.
+
+### Fixed
+
+- Hidden-eval denominators come from `pytest --collect-only` on the reference
+  implementation instead of a static count of `def test_*`. Parametrisation
+  expands one function into many cases, so the static count undercounted
+  bplustree by 6x and put pass rates above 1.0. Counts are cached per repository
+  in `outputs/cpe_collect_cache.json` (`orchestra.codeprojecteval.ceiling.collected_counts`).
+- `MAX_AGENTS_PER_MILESTONE` no longer clamps a frozen plan reloaded from disk.
+  The cap bounds what a *planner* may propose per milestone; the merged
+  single-segment arm of an A/B test concentrates every agent into one milestone
+  by construction, so the cap was handing the control arm less compute than the
+  arm it is compared against. `parse_plan_payload` takes `max_agents`, and
+  `ab.load_draft` raises it to the frozen plan's own widest milestone.
+- `pass_rate_reachable` is clamped to 1.0 and reported as an optimistic bound
+  rather than the headline metric: a module predicted unreachable still runs
+  when the agent happens to define the undocumented symbol.
+
+## 2026-08-08 — CodeProjectEval: milestone gates that run real tests
+
+RealBench cannot answer whether milestone gating works: it hands the public API
+over in `public_design/` and ships no developer-visible tests, so a gate guards a
+decision the dataset already made and grades it against contracts we invented.
+CodeProjectEval ships a visible `check_tests` suite for development and holds back
+a non-overlapping `unit_tests` suite for scoring.
+
+### Added
+
+- `orchestra.codeprojecteval`: dataset adapter (`dataset.py`), runner-owned
+  acceptance harness (`harness.py`) and planning brief (`planning.py`). The
+  workspace holds design documents, `requirements.txt` and the visible
+  `check_tests`; the reference implementation and the held-out suite stay out, and
+  AdaMAS-invented content remains runner-owned and prompt-delivered as on RealBench.
+- Harness levels: discovery = packages exist + `compileall`; implementation =
+  + imports of every module in `directory_tree.txt` + contracts; integration =
+  + the dataset's own `check_tests`. The gate runs under the repository's own
+  virtualenv so third-party imports resolve the way they will during scoring.
+- `scripts/probe_codeprojecteval_env.py` provisions one venv per repository and
+  records which repositories are green on the reference implementation (11/18).
+- `scripts/probe_codeprojecteval_planner.py` reports how the risk-first planner
+  segments each repository before any generation budget is spent.
+- `orchestra.cli.run_codeprojecteval_decomp` + `configs/experiments/
+  codeprojecteval_decomp.yaml`: milestone execution through `ReadySubtaskScheduler`.
+  There is no template fallback on this dataset — a run whose planner is
+  unavailable fails instead of silently measuring a shape-based split.
+- `scripts/eval_codeprojecteval.py` scores the committed repository on the
+  held-out suite. Both suites are re-overlaid from the dataset, so a rewritten
+  visible suite cannot survive into scoring.
+- The visible suite is hashed into the harness manifest and verified before it
+  runs: editing or deleting `check_tests` fails the milestone outright.
+
+### Fixed
+
+- `parse_expected_modules` counted indentation in plain spaces, but `tree`
+  output indents with non-breaking spaces depending on locale, collapsing every
+  child to the top level (`const` instead of `bplustree.const`) and failing
+  import gates for a harness reason rather than an agent one.
+- CodeProjectEval trees rooted at the distribution name rather than the package
+  (`djangorestframework-simplejwt/` holding `rest_framework_simplejwt`) now take
+  their root from `config.json`.
+
+### Changed
+
+- `milestone_planner` takes a `PlanningBrief` (documents + parsed modules +
+  exports) instead of reaching into RealBench's `public_design/` layout;
+  `build_planner_prompt` keeps its behaviour through `realbench_brief`.
+- `build_plan_from_draft` accepts a `harness_binder`, so a dataset with real
+  developer-visible tests gates on those rather than on contracts derived from a
+  design document.
+- Test runs neutralise repository pytest configuration with `-o addopts=`: these
+  repositories bolt coverage thresholds, mypy and pycodestyle onto pytest, which
+  judges style rather than whether the milestone works.
+
+## 2026-08-07 — RealBench: AdaMAS scaffolding leaves the agent workspace
+
+Everything AdaMAS invents — milestone briefs, contract JSON, the public check
+script, the cross-milestone changelog — used to sit in the repository the agent
+edits. That leaked twice: the hidden evaluation overlays workspace files into the
+private fixture, and agents optimized against our scaffolding instead of the
+task (one run shipped `SnoopR/__init__.py` doing `from proj_clean.SnoopR import *`,
+green online and broken everywhere else).
+
+The workspace now contains dataset content only (`TASK.md`, `REQUIREMENTS.md`,
+`README.md`, `public_design/`, empty scaffold from `tree.txt`). Every AdaMAS
+artifact lives under the run directory and reaches the agent as prompt text.
+
+### Changed
+
+- `realbench/public_harness.py`: `materialize_public_harness(workspace,
+  harness_dir=...)` writes the check script and manifest outside the repository;
+  the script takes `--manifest` / `--contracts` / `--root` and runs against its
+  `cwd`, so forked subtask workspaces and commit staging copies share one
+  runner-owned asset. Dropped the generated `tests_public/` package and the
+  in-workspace trusted marker.
+- `realbench/milestone_contracts.py`: contracts are frozen at plan time into
+  `<run_dir>/harness/<milestone_id>.contracts.json` and returned with their path;
+  no JSON or pytest module is written into the workspace.
+- `ir/nodes.py`, `ir/graph.py`, `executors/agent.py`: new optional
+  `AgentNodeSpec.prompt_prelude`, excluded from the graph content hash when
+  unset, rendered as a user message right after the system prompt.
+- `ready_scheduler`: instead of writing `MILESTONE.md` and re-materializing
+  contracts into the fork, it injects the milestone brief plus prior-milestone
+  memory into the loaded graph's agent nodes. Commits append to
+  `<run_dir>/adamas_memory/ADAMAS_CHANGELOG.md` (no workspace commit, so the
+  canonical revision no longer moves for bookkeeping).
+- `realbench/workspace_memory.py` is now run-directory scoped and prompt-only.
+- `decomposition/realbench_plan.py`: both plan builders bind milestones to
+  runner-owned harness assets. The template fallback copies its static role graph
+  to `<run_dir>/generated/graphs/<milestone_id>.yaml` with an absolute harness
+  command; briefs and objectives no longer reference workspace files.
+- Agent prompts (generated contracts and the checked-in milestone contracts)
+  describe the acceptance check instead of pointing at a script, and forbid
+  shipping files the public tree does not describe.
+- `tools/repository_tools.py`: `run_public_check` invokes the runner-owned script
+  via `ADAMAS_PUBLIC_CHECK_SCRIPT` / `ADAMAS_PUBLIC_CHECK_MANIFEST`; AdaMAS
+  filenames stay reserved so an agent cannot fabricate one.
+
+### Fixed
+
+- Deterministic contracts treated every top-level module as a package, so a
+  single-file module like `SnoopR.py` demanded `SnoopR/__init__.py` and pushed
+  agents into a layout the hidden evaluation never sees.
+- Planner focus paths keep the dataset's `proj_clean/` root out of prompts.
+- The terminal milestone is always graded at `integration`. Every planner draft
+  in the first isolated batch chose `implementation` for its single milestone, so
+  the freeze gate never required UML-declared symbols to be importable from their
+  documented module and repositories committed with missing package exports.
+- Planner prompt now asks for symbols pinned at their documented export module
+  (package root when the UML says so), not only at the definition site — the
+  NodeFlow failure mode where `from nodeflow import Node` was never satisfied.
+- `eval_realbench_codex_decomp_baseline.py` skips AdaMAS filenames when
+  overlaying, so a regression cannot reach the private fixture.
+- UML package names are bare basenames, so a repository with two `abstract.py`
+  files had `Node` demanded from both. The export gate now accepts the symbol in
+  any candidate module (`export_any` contract check); NodeFlow's committed repo
+  passes hidden evaluation 6/6 yet its freeze gate had rejected it on this.
+- The public check no longer fails a milestone for a third-party package the
+  harness environment lacks (`pyproj` blocked every xproj commit). Missing
+  dependencies the repository does not own are reported as skipped; a missing
+  or broken repository module is still a hard failure.
+
+- A dropped response stream consumed the milestone's backend-call budget, so one
+  provider blip cascaded into `max_total_backend_calls exhausted` for every later
+  milestone. `codex_sdk` now retries transport failures (stream disconnect,
+  connection reset, 502/503/504) with backoff — 3 attempts by default,
+  `ADAMAS_CODEX_TRANSIENT_RETRIES` to change. Quota, auth and model-behaviour
+  failures are still returned immediately.
+
+### Changed
+
+- Risk-first dynamic planning is the default (`planner_enabled()` is true unless
+  `ADAMAS_REALBENCH_DYNAMIC_PLAN=0`; the experiment config sets
+  `dynamic_planner: true`). Template segmentation cuts by tree shape rather than
+  risk, so it is not a mode: it survives only as the fail-closed fallback, and a
+  run that reaches it now logs an error and writes `PLANNER_FALLBACK` beside its
+  `plan.yaml` so its numbers cannot be mistaken for a decomposition result.
+
+### Notes
+
+- Agent prompts state the package-root re-export convention. public_design cannot
+  express it (NodeFlow's UML lists `__init__` with empty exports while the hidden
+  tests import `IF` from `nodeflow.builtin`), and the same code re-exported those
+  names in one run but not the next — a 1.00 → 0.00 swing on that task alone.
+- The harness gate (`.adamas_trusted_harness`) is opened by the runner via
+  `ADAMAS_ALLOW_UNTRUSTED_REPO_HARNESS=1`; the executed script is no longer
+  agent-writable, which is stricter than the previous in-repo copy.
+
+## 2026-08-07 — RealBench: risk-first dynamic milestones with generated subgraphs
+
+Replaces template-shaped decomposition (single milestone vs. directory-sliced
+`implement_*` stages) with milestones derived from the task's own risk
+structure. A milestone now only exists to fence a decision whose failure would
+invalidate downstream work, and it ships both its acceptance harness and its own
+runtime subgraph.
+
+### Added
+
+- `realbench/milestone_planner.py` — risk-first planner. Prompts for blast-radius
+  gates, forbids directory/package splits and read-only milestones, caps at 4
+  milestones, and collapses to a single milestone when no non-terminal milestone
+  can justify itself with a `risk_rationale`. `parse_plan_payload` is a pure
+  validator: slugified ids, dependencies restricted to already-declared
+  milestones (acyclic by construction), clamped token/step/timeout budgets, and
+  check sanitization limited to
+  `import` / `export` / `callable_or_class` / `module_file_exists`.
+  Gated by `ADAMAS_REALBENCH_DYNAMIC_PLAN=1` or
+  `decomposition.dynamic_planner: true`; any failure falls back to the
+  deterministic public_design plan.
+- `realbench/subgraph_builder.py` — one generated subgraph per milestone:
+  `agent_1 → … → agent_n → repository_tests → freeze_change`. Agents run in
+  sequence over one workspace and only the terminal change reaches the gate.
+  Each agent gets a generated `AgentContract` recording role, prompts,
+  `max_tokens`, `max_steps` and timeout; the graph metadata carries an
+  `agent_roster` with `prompt_sha256` / `prompt_chars` as evidence. Contracts and
+  graphs land under `<run_dir>/generated/`, seeded with the base contract catalog
+  so baseline graphs keep resolving.
+- `decomposition/realbench_plan.py`: `build_plan_from_draft` compiles a planner
+  draft into the existing TaskPlan shape (shared `_assemble_plan` handoff wiring),
+  with per-milestone acceptance and roster in subtask metadata.
+
+### Changed
+
+- `milestone_contracts.materialize_milestone_contracts` accepts planner
+  `extra_checks` / `acceptance_criteria` / `corner_cases`, merging checks by
+  target with a union of `required_levels` instead of appending duplicates.
+- `ready_scheduler` forwards a milestone's acceptance into contract
+  materialization, so `MILESTONE.md` and `adamas_milestone_contracts.json` state
+  the same criteria and corner cases the harness enforces.
+- RealBench runner returns the effective contracts directory alongside the plan,
+  writes `milestone_plan_draft.json`, and records `decomposition_source` plus
+  per-milestone agent rosters in `run_config.json`.
+- Docs: `docs/realbench_dynamic_taskplan_harness.md` documents both decomposition
+  sources, the acceptance harness, and the generated-subgraph contract.
+
+### Notes
+
+- Hidden RealBench tests remain offline-only; planner inputs are public design
+  artifacts only.
+- No replan loop: milestones are planned once, before execution.
+- Agents within a milestone are sequential; parallel agents on one workspace are
+  intentionally out of scope.
+
 ## 2026-08-06 — RealBench: adaptive milestones + contracts + workspace memory
 
 Close three gaps between AdaMAS RealBench decomposition and vanilla long-session Codex:

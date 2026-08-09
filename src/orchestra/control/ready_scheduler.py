@@ -201,6 +201,19 @@ def _change_set_nonempty(cs: WorkspaceChangeSet | None) -> bool:
     )
 
 
+def _with_prompt_prelude(graph: OrchestraGraph, prelude: str) -> OrchestraGraph:
+    """Return a copy whose agent nodes carry runtime context in their prompt."""
+    from orchestra.ir.nodes import AgentNodeSpec
+
+    nodes = [
+        node.model_copy(update={"prompt_prelude": prelude})
+        if isinstance(node, AgentNodeSpec)
+        else node
+        for node in graph.nodes
+    ]
+    return graph.model_copy(update={"nodes": nodes})
+
+
 class ReadySubtaskScheduler:
     """Schedule dependency-ready subtasks; invoke FastLoopController on failure."""
 
@@ -1011,11 +1024,11 @@ class ReadySubtaskScheduler:
         record.committed_at = datetime.now(UTC)
         state.canonical_workspace_ref = promoted.path
         state.canonical_revision = record.committed_revision
-        # Scheme-A shared memory: append runner-owned changelog into canonical
-        # workspace so later milestones/agents share prior modification logs.
+        # Cross-milestone memory lives in the run directory and reaches later
+        # milestones through their prompt, never through the workspace.
         try:
-            self._append_workspace_changelog(
-                canonical_path=promoted.path,
+            self._append_milestone_memory(
+                run_dir=context.run_dir,
                 subtask_id=sid,
                 role=str(
                     sub.spec.metadata.get("public_harness_level")
@@ -1025,11 +1038,7 @@ class ReadySubtaskScheduler:
                 change_set=result.workspace_change_set,
                 revision=record.committed_revision,
             )
-            tip = self.canonical._rev_parse(Path(promoted.path))  # noqa: SLF001
-            if tip:
-                state.canonical_revision = tip
-                record.committed_revision = tip
-        except Exception:  # noqa: BLE001 — changelog must not fail the commit
+        except Exception:  # noqa: BLE001 — memory must not fail the commit
             pass
         sub.status = SubtaskStatus.COMMITTED
         state.committed_subtask_count += 1
@@ -1062,15 +1071,42 @@ class ReadySubtaskScheduler:
         self._record_public_evaluation(state, result, context)
 
     @staticmethod
-    def _append_workspace_changelog(
+    def _milestone_prompt_prelude(
         *,
-        canonical_path: str,
+        subtask_metadata: dict[str, Any],
+        run_dir: str | Path | None,
+    ) -> str:
+        """Milestone brief + earlier-milestone memory, delivered as prompt text."""
+        brief = subtask_metadata.get("milestone_brief")
+        if not isinstance(brief, str) or not brief.strip():
+            return ""
+        from orchestra.realbench.workspace_memory import (
+            memory_brief_for_milestone,
+            memory_dir_for_run,
+        )
+
+        memory = (
+            memory_brief_for_milestone(memory_dir_for_run(Path(run_dir)))
+            if run_dir
+            else ""
+        )
+        return brief.rstrip() + ("\n\n" + memory if memory else "\n")
+
+    @staticmethod
+    def _append_milestone_memory(
+        *,
+        run_dir: str | Path | None,
         subtask_id: str,
         role: str,
         change_set: WorkspaceChangeSet | None,
         revision: str | None,
     ) -> None:
-        from orchestra.realbench.workspace_memory import append_changelog_entry
+        if not run_dir:
+            return
+        from orchestra.realbench.workspace_memory import (
+            append_changelog_entry,
+            memory_dir_for_run,
+        )
 
         files: list[str] = []
         if change_set is not None:
@@ -1080,13 +1116,12 @@ class ReadySubtaskScheduler:
             for ren in change_set.renamed_files or []:
                 files.append(getattr(ren, "to_path", None) or getattr(ren, "from_path", ""))
         append_changelog_entry(
-            Path(canonical_path),
+            memory_dir_for_run(Path(run_dir)),
             subtask_id=subtask_id,
             role=role or None,
             changed_files=[f for f in files if f],
             revision=revision,
             summary=f"canonical commit for subtask {subtask_id}",
-            git_commit=True,
         )
 
     @staticmethod
@@ -1298,38 +1333,11 @@ class ReadySubtaskScheduler:
                 for d in sorted(sub.spec.dependencies)
                 if state.subtasks[d].status is SubtaskStatus.COMMITTED
             ]
-            # Surface dynamic milestone objective + shared workspace memory into
-            # the forked workspace so role-agnostic contracts stay focused.
-            brief = sub.spec.metadata.get("milestone_brief")
-            if isinstance(brief, str) and brief.strip():
-                from orchestra.realbench.milestone_contracts import (
-                    materialize_milestone_contracts,
-                )
-                from orchestra.realbench.workspace_memory import (
-                    memory_brief_for_milestone,
-                )
-
-                role = str(
-                    sub.spec.metadata.get("public_harness_level")
-                    or sub.spec.metadata.get("role")
-                    or "integration"
-                )
-                focus = sub.spec.metadata.get("focus_paths")
-                focus_paths = (
-                    [str(x) for x in focus] if isinstance(focus, list) else None
-                )
-                if role in {"discovery", "implementation", "integration"}:
-                    materialize_milestone_contracts(
-                        Path(workspace_ref),
-                        role=role,  # type: ignore[arg-type]
-                        focus_paths=focus_paths,
-                        milestone_id=subtask_id,
-                    )
-                memory = memory_brief_for_milestone(Path(workspace_ref))
-                milestone_path = Path(workspace_ref) / "MILESTONE.md"
-                milestone_path.write_text(
-                    brief.rstrip() + "\n\n" + memory, encoding="utf-8"
-                )
+        # Milestone brief + cross-milestone memory reach the agent through its
+        # prompt only; the workspace stays free of AdaMAS bookkeeping files.
+        prompt_prelude = self._milestone_prompt_prelude(
+            subtask_metadata=sub.spec.metadata, run_dir=context.run_dir
+        )
 
         exec_cfg = dict(sub.spec.metadata.get("execution_config") or {})
         graph_path = str(
@@ -1375,6 +1383,8 @@ class ReadySubtaskScheduler:
                     "PLAN_REVISION_GRAPH_HASH_MISMATCH: "
                     f"{graph_path} hash {graph.content_hash} != {expected_hash}"
                 )
+        if prompt_prelude:
+            graph = _with_prompt_prelude(graph, prompt_prelude)
         compiled = self.compiler.compile(graph)
         attempt_id = len(sub.attempts) + 1
         started = datetime.now(UTC)

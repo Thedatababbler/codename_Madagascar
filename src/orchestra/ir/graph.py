@@ -37,6 +37,8 @@ def _strip_default_backends_for_hash(data: dict[str, Any]) -> dict[str, Any]:
         # M4 optional fast-loop overlays; omit defaults so legacy hashes stay stable.
         if not item.get("prompt_feedback"):
             item.pop("prompt_feedback", None)
+        if not item.get("prompt_prelude"):
+            item.pop("prompt_prelude", None)
         if item.get("session_policy") in (None, "fresh"):
             item.pop("session_policy", None)
         nodes.append(item)

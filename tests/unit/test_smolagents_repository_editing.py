@@ -214,8 +214,7 @@ async def test_harness_scaffolding_excluded_from_agent_diff(tmp_path: Path) -> N
 
     ws = tmp_path / "ws"
     ws.mkdir()
-    (ws / ".adamas_trusted_harness").write_text("trusted\n", encoding="utf-8")
-    materialize_public_harness(ws)
+    materialize_public_harness(ws, harness_dir=tmp_path / "harness")
     _git_init(ws)
 
     def runner(payload: dict) -> dict:
@@ -235,9 +234,9 @@ async def test_harness_scaffolding_excluded_from_agent_diff(tmp_path: Path) -> N
     backend = SmolagentsCodeBackend(worker_runner=runner)
     result = await backend.run(_repo_request(), _ctx(tmp_path, ws))
     art = RepositoryChangeArtifact.model_validate(result.output_artifacts[0].payload)
+    # Harness assets live outside the repo, so they cannot enter a diff at all.
     assert art.changed_files == ["agent_only.py"]
-    assert ".adamas_trusted_harness" not in art.changed_files
-    assert "adamas_public_check.py" not in " ".join(art.changed_files)
+    assert not (ws / "scripts").exists()
 
 
 @pytest.mark.asyncio

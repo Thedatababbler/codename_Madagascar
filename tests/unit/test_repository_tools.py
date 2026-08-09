@@ -85,20 +85,26 @@ def test_write_read_list_and_protected_paths(tmp_path: Path) -> None:
 
 def test_apply_workspace_patch_and_public_check_server_controlled(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from orchestra.realbench.public_harness import materialize_public_harness
 
     ws = tmp_path / "ws"
     ws.mkdir()
-    (ws / ".adamas_trusted_harness").write_text("trusted\n", encoding="utf-8")
     (ws / "demo.py").write_text("print(1)\n", encoding="utf-8")
-    materialize_public_harness(ws)
+    manifest = materialize_public_harness(ws, harness_dir=tmp_path / "harness")
+    monkeypatch.setenv("ADAMAS_PUBLIC_CHECK_SCRIPT", manifest.script_path)
+    monkeypatch.setenv("ADAMAS_PUBLIC_CHECK_MANIFEST", manifest.manifest_path)
     tools = _tools(ws, level="discovery")
     assert "OK wrote" in tools["apply_workspace_patch"]("demo.py", "print(2)\n")
     assert (ws / "demo.py").read_text(encoding="utf-8") == "print(2)\n"
     out = tools["run_public_check"]()
     assert "exit=" in out
     assert "level=discovery" in out
+    # The harness the agent can trigger is not reachable from the workspace.
+    assert not (ws / "scripts").exists()
+    monkeypatch.delenv("ADAMAS_PUBLIC_CHECK_SCRIPT")
+    assert "not configured" in tools["run_public_check"]()
 
 
 def test_workspace_ref_required() -> None:
@@ -128,10 +134,9 @@ def test_public_check_does_not_accept_model_command(tmp_path: Path) -> None:
     """run_public_check takes no command argument from the model."""
     ws = tmp_path / "ws"
     ws.mkdir()
-    (ws / ".adamas_trusted_harness").write_text("trusted\n", encoding="utf-8")
     from orchestra.realbench.public_harness import materialize_public_harness
 
-    materialize_public_harness(ws)
+    materialize_public_harness(ws, harness_dir=tmp_path / "harness")
     tools = _tools(ws)
     fn = tools["run_public_check"]
     # Smolagents tools expose a forward callable without user command params.

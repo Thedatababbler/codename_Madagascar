@@ -212,6 +212,82 @@ async def test_workspace_isolation(tmp_path):
     assert "a - b" in (Path(ws_b.path) / "calculator.py").read_text(encoding="utf-8")
 
 
+class _FlakyCodex(_FakeCodex):
+    """Drops the response stream on the first turn, then behaves normally."""
+
+    def __init__(self, *, error: Exception, failures: int = 1) -> None:
+        super().__init__()
+        self._error = error
+        self._remaining = failures
+        self.turn_attempts = 0
+
+    async def thread_start(self, **kwargs):  # noqa: ANN003
+        self.turn_attempts += 1
+        if self._remaining > 0:
+            self._remaining -= 1
+            raise self._error
+        return await super().thread_start(**kwargs)
+
+
+@pytest.mark.asyncio
+async def test_dropped_stream_is_retried_without_charging_the_milestone(tmp_path):
+    mgr = SharedSubtaskGitWorkspaceManager()
+    ws = await mgr.prepare(
+        source_repo=str(FIXTURE),
+        run_dir=str(tmp_path),
+        task_id="codex_tiny_repo",
+        subtask_id="implement_fix",
+    )
+    fake = _FlakyCodex(
+        error=RuntimeError(
+            "stream disconnected before completion: "
+            "stream closed before response.completed"
+        )
+    )
+    backend = CodexSDKBackend(client_factory=lambda: fake)
+    result = await backend.run(
+        _request(),
+        BackendExecutionContext(
+            run_id="run",
+            task_id="codex_tiny_repo",
+            subtask_id="implement_fix",
+            node_id="codex_implementer",
+            workspace_ref=ws.path,
+        ),
+    )
+    assert result.status is AgentRunStatus.SUCCESS
+    assert fake.turn_attempts == 2
+    assert result.backend_metadata["codex_transient_retries"] == 1
+
+
+@pytest.mark.asyncio
+async def test_quota_error_is_not_retried(tmp_path):
+    mgr = SharedSubtaskGitWorkspaceManager()
+    ws = await mgr.prepare(
+        source_repo=str(FIXTURE),
+        run_dir=str(tmp_path),
+        task_id="codex_tiny_repo",
+        subtask_id="implement_fix",
+    )
+    fake = _FlakyCodex(
+        error=RuntimeError("unexpected status 403 Forbidden: insufficient_user_quota"),
+        failures=1,
+    )
+    backend = CodexSDKBackend(client_factory=lambda: fake)
+    result = await backend.run(
+        _request(),
+        BackendExecutionContext(
+            run_id="run",
+            task_id="codex_tiny_repo",
+            subtask_id="implement_fix",
+            node_id="codex_implementer",
+            workspace_ref=ws.path,
+        ),
+    )
+    assert result.status is not AgentRunStatus.SUCCESS
+    assert fake.turn_attempts == 1
+
+
 @pytest.mark.asyncio
 async def test_codex_repository_artifact(tmp_path):
     mgr = SharedSubtaskGitWorkspaceManager()

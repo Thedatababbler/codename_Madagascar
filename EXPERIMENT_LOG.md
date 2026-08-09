@@ -10,9 +10,232 @@
 | Status | `canonical` (use for comparisons) / `smoke` / `mock` / `superseded` / `incomplete` |
 | Paths | Repo-relative from AdaMAS root |
 
-**Last updated:** 2026-08-05 (UTC) — RealBench dynamic TaskPlan + public harness
+## Standing rules — read before launching any RealBench batch
+
+1. **Never run template milestone segmentation as an experiment.** Template
+   splitting cuts by public-tree shape (module count), which is not a
+   decomposition hypothesis and answers no question we are asking. Risk-first
+   dynamic planning is the default and the only mode worth measuring;
+   `decomposition.dynamic_planner: true` and `ADAMAS_REALBENCH_DYNAMIC_PLAN=1`
+   are now the defaults, and `planner_enabled()` returns true unless explicitly
+   disabled.
+2. A run that could not reach the planner writes `PLANNER_FALLBACK` next to its
+   `plan.yaml` and logs an error. **Such a task is void** — exclude it from
+   every comparison and rerun it, never report its numbers as a decomposition
+   result.
+3. Before reporting a batch, confirm `milestone_plan_draft.json` exists for every
+   task. Its absence means the batch silently ran the fallback.
+   (Batches `rb-isolated*` through 2026-08-08 all ran the fallback for this
+   reason; their per-task numbers say nothing about decomposition.)
+
+**Last updated:** 2026-08-08 (UTC) — RealBench workspace isolation, first clean batch
 
 ---
+
+### EXP-20260808-04 — CodeProjectEval: controlled single vs multi segment A/B
+- **Status:** running
+- **Date:** 2026-08-08 (UTC)
+- **Design:** the question is whether *gating* helps, not whether more compute
+  helps, so the single-segment arm is **derived from** the multi-segment plan by
+  merging its milestones. Both arms run the same agents, in the same order, with
+  the same token/step budget (`budget_matched: true` recorded per repository);
+  they differ only in whether an acceptance gate and a commit sit between those
+  agents. Both arms replay a **frozen** planner draft, so planner sampling
+  variance sits outside the comparison. 3 repetitions per arm.
+- **Population:** simpy (ceiling 1.00), bplustree (0.85), pyjwt (0.41). These
+  are the repositories where the risk-first planner reliably finds a gate.
+- **Population note:** voluptuous and tinydb were the preferred candidates
+  (ceiling 1.00) but the planner returned a single milestone in 4 of 4 samples
+  each, so they cannot supply a multi arm. That refusal is itself evidence that
+  the planner does not split for the sake of splitting.
+- **Gates the planner named:** simpy — the `Environment`/`Event`/`Process`
+  execution contract; bplustree — persistent storage and node contracts; pyjwt —
+  the algorithm/JWK contract every consumer imports.
+- **Read the results as:** within-repository difference between arms, using
+  `pass_rate` (passed / tests pytest collects on the reference implementation).
+  Never the absolute number alone — see EXP-20260808-03 for why.
+- **Two measurement defects found while reading the first 18 runs, both fixed:**
+  1. *Denominator.* The ceiling counted `def test_*` statically, but
+     parametrisation expands one function into dozens of cases, so reported
+     rates exceeded 1.0 (bplustree: 59 counted vs 356 collected). Denominators
+     now come from `pytest --collect-only` on the reference repository, cached
+     in `outputs/cpe_collect_cache.json`.
+  2. *Unequal compute.* `MAX_AGENTS_PER_MILESTONE=3` bounds what the *planner*
+     may propose, but it was also applied when reloading a frozen plan. The
+     merged single-segment arm concentrates every agent into one milestone, so
+     bplustree's control arm silently ran 3 of its 4 agents. The cap no longer
+     applies to frozen plans; the first bplustree single-arm triple is **void**
+     and was re-run.
+  `pass_rate_reachable` is now reported as a clamped optimistic *bound*, not the
+  headline: a module predicted unreachable still runs when the agent happens to
+  define the undocumented name, which makes its denominator too small.
+
+### EXP-20260808-03 — CodeProjectEval: first end-to-end task
+- **Status:** canonical (single task; pipeline validation, not a result)
+- **Date:** 2026-08-08 (UTC)
+- **Artifacts:** `outputs/codeprojecteval_decomp/cpe-second/`
+- **Run:** bplustree, codex_sdk / gpt-5.4, risk-first planner returned **one**
+  milestone. The milestone committed with `frozen=true` after passing the
+  dataset's visible `check_tests`; 1,132 lines shipped.
+- **Hidden eval: 0.000.** Two of eight held-out modules fail at collection:
+  `from bplustree.const import TreeConf, ENDIAN` → `ENDIAN` does not exist.
+  **`ENDIAN` appears zero times in PRD.md, UML.md, UML_pyreverse.md and
+  architecture_design.md.** The held-out suite is the original project's own
+  test suite and imports internal names the specification never states, so part
+  of the score is unreachable for any system regardless of decomposition.
+- **Reporting rule this implies:** never read an absolute hidden pass rate on
+  this dataset in isolation. Compare single vs multi milestone **within the same
+  repository** under matched budget, and report `failed` separately from
+  `error` — a collection ImportError usually means an unstated internal name,
+  while an assertion failure is a real behavioural gap.
+- **Planner variance:** bplustree planned 2, 2 and 1 milestones across three
+  samples. Whether a repository splits is itself stochastic, so an A/B must
+  either freeze one plan and reuse it or average several samples per arm.
+- **Bug found and fixed:** the shared tree parser counted indentation in plain
+  spaces, but `tree` output here indents with non-breaking spaces, so every
+  module collapsed to the top level (`const` instead of `bplustree.const`) and
+  the first run's milestone failed its import gate for a harness reason. All 18
+  repositories now resolve to the package root declared in `config.json`.
+
+### EXP-20260808-02 — CodeProjectEval: does the dataset contain risk gates?
+- **Status:** canonical (planning probe only; no generation run yet)
+- **Date:** 2026-08-08 (UTC)
+- **Artifacts:** `outputs/cpe_env_probe2.json`, `outputs/cpe_planner_probe.json`,
+  `docs/codeprojecteval_integration.md`
+- **Why:** RealBench hands the public API over in `public_design/` and ships no
+  developer-visible tests, so milestone gates there guard a decision the dataset
+  already made and grade it against contracts we invented. CodeProjectEval ships
+  visible `check_tests` plus a held-out `unit_tests` suite, so gates can run real
+  tests and the held-out suite measures whether gating generalises.
+- **Environment:** one venv per repository; **11/18 usable** (reference
+  implementation green on both suites). Repository pytest configs must be
+  neutralised with `-o addopts=` — they bolt coverage thresholds, mypy and
+  pycodestyle onto pytest and judge style, not behaviour.
+- **Planner probe (2 independent samples over all 18 repos):** splits
+  **bplustree, pyjwt, simpy** in both; voluptuous / flask / trailscraper / zxcvbn
+  in one of two; the rest stay single. The named gates are real blast-radius
+  decisions — on-disk page format, the algorithm→implementation registry and JWK
+  contracts, the `Environment`/`Event`/`Process` protocol — not directory cuts.
+- **Consequence for experiment design:** the splitting repositories are the
+  population where decomposition should pay off and the stable single-milestone
+  ones are controls, with the split decided by the planner rather than by us.
+
+### EXP-20260808-01 — RealBench Workspace Isolation, Clean Batch
+- **Status:** void as a decomposition result (ran the template fallback — no
+  `milestone_plan_draft.json`); still valid evidence for workspace isolation and
+  for the per-task variance argument
+- **Date:** 2026-08-08 (UTC)
+- **Batch path:** `outputs/realbench_codex_decomp_baseline/rb-isolated5-20260808T040317Z`
+- **Online:** **frozen 5/5**, zero `backend_run_failed`; planner split NodeFlow / xproj /
+  floquet into 4 milestones each, SnoopR and emojichef into 1
+- **Hidden eval:** micro **0.292**, macro **0.182**, repo success **0/5**
+  | task | this batch | best prior |
+  |------|-----------|-----------|
+  | NodeFlow | 0.00 (3 collection errors) | 1.00 |
+  | SnoopR | 0.40 | 0.30 |
+  | xproj | 0.138 | 0.276 |
+  | emojichef | 0.370 | 0.438 |
+  | floquet | 0.00 (numpy shape bug) | 0.00 |
+- **Interpretation:** isolation removed the failure modes it targeted (SnoopR now ships
+  `SnoopR.py`, every task freezes), but the decomposed batch still trails the
+  `rb-decomp` template batch (0.398). Per-task variance is larger than the batch gap:
+  NodeFlow swung 1.00 → 0.00 between two runs of the same code because it re-exported
+  `Integer/Float/IF` from `nodeflow/builtin/__init__.py` in one run and not the other.
+  Single-run batches cannot separate 0.29 from 0.40 under that variance.
+- **Follow-up applied:** agent prompts now state the package-root re-export convention.
+  public_design cannot expose this requirement — its UML lists `__init__` with empty
+  exports, and the hidden tests import a name (`IF`) the UML never mentions.
+
+### EXP-20260807-03 — RealBench Workspace Isolation, Rerun 2 (credit-truncated)
+- **Status:** incomplete (provider billing cut the batch after task 2)
+- **Date:** 2026-08-07 (UTC)
+- **Batch path:** `outputs/realbench_codex_decomp_baseline/rb-isolated2-20260807T200105Z`
+- **Change under test:** everything AdaMAS invents (milestone brief, acceptance
+  criteria, contract JSON, cross-milestone memory, check script) is runner-owned and
+  prompt-delivered; agent workspaces hold dataset files only. Plus: terminal milestone
+  forced to `integration`; single-file modules no longer demanded as packages.
+- **Hidden eval:** micro **0.313**, repo success **1/5**
+  - NodeFlow 6/6, repo success (planner produced 4 milestones, 3 committed)
+  - SnoopR 5/5 → 0.50, up from 3/7 → 0.30 in every earlier batch; the workspace now
+    carries `SnoopR.py` instead of the `SnoopR/` package the old contract forced
+  - xproj 4/13/12 — cut off mid-run
+  - emojichef / floquet — **no code produced at all**
+- **Why incomplete:** the provider returned `403 预扣费额度失败, 用户剩余额度 $0.8958,
+  需要预扣费额度 $1.0` for the last three tasks. Scored 0 for lack of budget, not
+  for behaviour; the batch is not comparable as a whole.
+- **False negative found afterwards:** NodeFlow's terminal gate rejected the repo for
+  "missing nodeflow.adapter.abstract.Node" while hidden tests pass 6/6 — UML package
+  names are basenames and the tree has two `abstract.py`. Fixed via `export_any`;
+  the committed repo now passes the gate. Not yet re-run end to end.
+
+### EXP-20260807-02 — RealBench Workspace Isolation, Rerun 1
+- **Status:** superseded by EXP-20260807-03
+- **Batch path:** `outputs/realbench_codex_decomp_baseline/rb-isolated-20260807T192536Z`
+- **Hidden eval:** micro **0.375**, repo success **1/5** (NodeFlow 6/6 recovered from
+  the dynplan regression; xproj blocked by a missing `pyproj` in the harness env,
+  emojichef lost to a provider 503)
+
+---
+
+### EXP-20260807-01 — RealBench Risk-First Dynamic Milestone Planner
+- **Status:** canonical (selected-5 Codex rerun complete; result is a regression)
+- **Date:** 2026-08-07 (UTC)
+- **Branch / commit:** `m622-production-evidence-closure` @ `3c542fa` + uncommitted
+  dynamic-planner work (`milestone_planner.py`, `subgraph_builder.py`)
+- **Benchmark / phase:** same selected-5 RealBench level2 tasks, decomposed by the
+  risk-first LLM planner (`ADAMAS_REALBENCH_DYNAMIC_PLAN=1`,
+  `ADAMAS_REALBENCH_PLANNER_MODEL=gpt-5.4`), per-milestone acceptance contracts and
+  generated agent-chain subgraphs
+- **Batch path:** `outputs/realbench_codex_decomp_baseline/rb-dynplan-20260807T065503Z`
+- **Planner output:** **5/5 tasks collapsed to one milestone with one agent**; every
+  rationale claimed no separable risk gate
+- **Online:** frozen 5/5
+- **Hidden eval:** micro **0.241**, macro **0.080**, repo success **0/5**
+  (report: `.../reports/rb-dynplan-20260807T065503Z_hidden_eval.md`)
+- **vs `rb-memory-20260806T224858Z`** (0.331) **and `rb-dynamic-20260805T091100Z`** (0.397):
+  worst of the three
+- **Confound (important):** compute per task dropped ~4x — 3 usage records / ~300 s
+  versus 12 records / ~700 s for previously split tasks. The comparison conflates
+  "different decomposition" with "much smaller budget", so this run does **not**
+  isolate planner quality.
+- **Diagnosed causes:**
+  1. Planner prompt over-biased toward a single milestone; the collapse rule
+     (non-terminal milestones need `risk_rationale`) removes any weakly-argued split.
+  2. Single milestone + single agent shrinks the budget instead of redistributing it.
+  3. Acceptance checks pinned symbols at their defining modules
+     (`nodeflow.node.abstract.Node`) while hidden tests import package re-exports
+     (`from nodeflow import func2node`), so the gate stayed green while the real
+     contract was missing.
+  4. SnoopR regressed to 0.0 by writing `SnoopR/__init__.py` as
+     `from proj_clean.SnoopR import *`; that resolves in the online workspace (which
+     ships `proj_clean/`) but not under hidden overlay — a workspace-layout leak the
+     public harness cannot catch.
+- **Notes:** No replan loop; hidden tests stayed offline-only.
+
+### EXP-20260806-01 — RealBench Adaptive + Milestone Contracts + Workspace Memory
+- **Status:** canonical (selected-5 Codex rerun complete)
+- **Date:** 2026-08-06→07 (UTC)
+- **Branch / commit:** `m622-production-evidence-closure` @ `3c542fa`
+- **Benchmark / phase:** same selected-5 RealBench level2 tasks as
+  `rb-dynamic-20260805T091100Z`, with adaptive milestone split, design-derived
+  public milestone contracts, and workspace shared memory scheme A
+  (`ADAMAS_CHANGELOG.md` append on commit + inject into next `MILESTONE.md`)
+- **Baseline / graph:**
+  - config: `configs/experiments/realbench_codex_decomp_baseline.yaml`
+  - runner: `scripts/run_realbench_codex_decomp_baseline.sh`
+  - model: `CODEX_MODEL=gpt-5.4`
+  - compare-to: `rb-dynamic-20260805T091100Z` (micro ≈ 0.397, repo success 0/5)
+- **Batch path:** `outputs/realbench_codex_decomp_baseline/rb-memory-20260806T224858Z`
+- **Online:** frozen **5/5** (all milestones committed)
+- **Adaptive split:** SnoopR + emojichef → single `implement_repository`;
+  NodeFlow / xproj / floquet → 4-milestone DAG
+- **Hidden eval:** micro **0.331**, macro **0.201**, repo success **0/5**
+  (report: `outputs/realbench_codex_decomp_baseline/reports/rb-memory-20260806T224858Z_hidden_eval.md`)
+- **vs prior dynamic (`rb-dynamic-20260805T091100Z`):** micro 0.397→0.331 (−0.066);
+  SnoopR 0.40→0.50; xproj 0.345→0.069 (main regression); NodeFlow/floquet still 0
+- **Notes:** Changelog artifacts present under canonical/workspaces. Codex
+  `thread_policy` still `fresh`. No repo-level success; memory+contracts did not
+  close the vanilla gap on this micro set.
 
 ### EXP-20260805-01 — RealBench Dynamic TaskPlan + Public Harness Wiring
 - **Status:** incomplete (engineering delivery; full 5-task Codex rerun not yet

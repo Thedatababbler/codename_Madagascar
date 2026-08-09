@@ -23,7 +23,10 @@ from orchestra.executors.registry import NodeExecutorRegistry
 from orchestra.ir.artifacts import ArtifactBundle, create_artifact
 from orchestra.ir.contracts import load_contracts
 from orchestra.ir.graph import load_graph
-from orchestra.realbench.public_harness import materialize_public_harness
+from orchestra.realbench.public_harness import (
+    materialize_public_harness,
+    public_check_command,
+)
 from orchestra.runtime.backend import RunContext
 from orchestra.runtime.checkpoint import CheckpointStore
 from orchestra.runtime.limits import RuntimeLimits, RuntimeSemaphores
@@ -45,6 +48,10 @@ def _fixture_edit_response(path: str = "demo_pkg/core.py", content: str = "x = 1
     return json.dumps({"thought": "edit real workspace file", "code": code})
 
 
+def _harness_dir(tmp_path: Path) -> Path:
+    return tmp_path / "adamas_harness"
+
+
 def _git_workspace(tmp_path: Path) -> Path:
     ws = tmp_path / "source_repo"
     public = ws / "public_design"
@@ -62,7 +69,7 @@ def _git_workspace(tmp_path: Path) -> Path:
     (ws / "demo_pkg" / "core.py").write_text("# scaffold\n", encoding="utf-8")
     (ws / ".adamas_trusted_harness").write_text("trusted_fixture\n", encoding="utf-8")
     (ws / "TASK.md").write_text("# task\n", encoding="utf-8")
-    materialize_public_harness(ws)
+    materialize_public_harness(ws, harness_dir=_harness_dir(tmp_path))
     subprocess.run(["git", "init"], cwd=ws, check=True, capture_output=True)
     subprocess.run(["git", "-C", str(ws), "config", "user.email", "t@local"], check=True)
     subprocess.run(["git", "-C", str(ws), "config", "user.name", "t"], check=True)
@@ -92,12 +99,17 @@ def _materialize_fixture_graph(tmp_path: Path, *, empty_edit: bool = False) -> P
         if empty_edit
         else _fixture_edit_response()
     )
+    harness_command = public_check_command(
+        harness_dir=_harness_dir(tmp_path), level="discovery"
+    )
     for node in raw["nodes"]:
         if node.get("node_kind") == "agent":
             node["model"] = {"provider": "fixture", "name": "scripted-repo"}
             node["backend"]["fixture_responses"] = [response]
             node["backend"]["max_steps"] = 6
             node["timeout_seconds"] = 120
+        if node.get("node_kind") == "harness":
+            node["command"] = harness_command
     out = tmp_path / "smolagents_fixture_discovery.yaml"
     out.write_text(yaml.safe_dump(raw, sort_keys=False), encoding="utf-8")
     # Ensure loadable
@@ -285,8 +297,6 @@ async def test_smolagents_repo_edit_to_canonical_commit(tmp_path: Path) -> None:
 async def test_empty_workspace_change_does_not_fake_success(tmp_path: Path) -> None:
     source = _git_workspace(tmp_path)
     graph_path = _materialize_fixture_graph(tmp_path, empty_edit=True)
-    # Omit milestone_brief so scheduler does not inject MILESTONE.md (which would
-    # create a non-empty diff unrelated to the agent).
     plan = _plan(graph_path, milestone_brief=None)
     run_dir = tmp_path / "run_empty"
     run_dir.mkdir()

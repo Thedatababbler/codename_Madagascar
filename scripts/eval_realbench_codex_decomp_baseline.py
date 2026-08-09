@@ -50,6 +50,14 @@ SKIP_NAMES = {
     ".pristine_snapshot.json",
     ".adamas_trusted_harness",
     "test_adamas_workspace_ok.py",
+    # Runs no longer place these in the workspace; kept so an accidental
+    # regression can never reach the hidden fixture.
+    "MILESTONE.md",
+    "ADAMAS_CHANGELOG.md",
+    "ADAMAS_DECISIONS.md",
+    "adamas_public_harness.json",
+    "adamas_milestone_contracts.json",
+    "adamas_public_check.py",
 }
 SKIP_PARTS = {".git", "public_design", "__pycache__", ".pytest_cache"}
 

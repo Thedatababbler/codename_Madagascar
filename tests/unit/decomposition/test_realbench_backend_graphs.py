@@ -35,8 +35,19 @@ def _mini_workspace(tmp_path: Path) -> Path:
     (ws / "demo_pkg").mkdir()
     (ws / "demo_pkg" / "__init__.py").write_text("", encoding="utf-8")
     (ws / "demo_pkg" / "core.py").write_text("", encoding="utf-8")
-    materialize_public_harness(ws)
+    materialize_public_harness(ws, harness_dir=tmp_path / "run" / "harness")
     return ws
+
+
+def _runner_kwargs(tmp_path: Path) -> dict[str, Path]:
+    return {
+        "generated_root": tmp_path / "run" / "generated",
+        "harness_dir": tmp_path / "run" / "harness",
+    }
+
+
+def _graph_id(path: str) -> str:
+    return load_graph(path).graph_id
 
 
 @pytest.mark.parametrize(
@@ -77,13 +88,19 @@ def test_smolagents_dynamic_plan_selects_smolagents_graphs(tmp_path: Path) -> No
     catalog = graph_catalog_for_backend("smolagents_code")
     # force_split exercises the full three-role catalog wiring.
     payload = build_realbench_candidate_plan(
-        task_id="demo", workspace=ws, graph_catalog=catalog, force_split=True
+        task_id="demo",
+        workspace=ws,
+        graph_catalog=catalog,
+        force_split=True,
+        **_runner_kwargs(tmp_path),
     )
-    roles = {s["metadata"]["role"]: s["local_graph_template"] for s in payload["subtasks"]}
-    assert "smolagents_realbench_public_discovery" in roles["discovery"]
-    assert "smolagents_realbench_public_implementation" in roles["implementation"]
-    assert "smolagents_realbench_public_integration" in roles["integration"]
-    assert all("codex_realbench" not in p for p in roles.values())
+    roles = {
+        s["metadata"]["role"]: _graph_id(s["local_graph_template"])
+        for s in payload["subtasks"]
+    }
+    assert roles["discovery"] == "smolagents_realbench_public_discovery"
+    assert roles["implementation"] == "smolagents_realbench_public_implementation"
+    assert roles["integration"] == "smolagents_realbench_public_integration"
 
     decomposer = TaskDecomposer(
         enabled=True,
@@ -100,8 +117,7 @@ def test_smolagents_dynamic_plan_selects_smolagents_graphs(tmp_path: Path) -> No
     )
     assert plan.decomposition_status.value == "ok"
     for sub in plan.subtasks:
-        assert "smolagents_realbench" in sub.local_graph_template
-        assert "codex_realbench" not in sub.local_graph_template
+        assert _graph_id(sub.local_graph_template).startswith("smolagents_realbench")
 
 
 def test_smolagents_adaptive_single_milestone_uses_integration_graph(
@@ -110,24 +126,29 @@ def test_smolagents_adaptive_single_milestone_uses_integration_graph(
     ws = _mini_workspace(tmp_path)
     catalog = graph_catalog_for_backend("smolagents_code")
     payload = build_realbench_candidate_plan(
-        task_id="demo", workspace=ws, graph_catalog=catalog
+        task_id="demo", workspace=ws, graph_catalog=catalog, **_runner_kwargs(tmp_path)
     )
     assert payload["metadata"]["milestone_split"] is False
     assert len(payload["subtasks"]) == 1
-    assert "smolagents_realbench_public_integration" in payload["subtasks"][0][
-        "local_graph_template"
-    ]
+    assert (
+        _graph_id(payload["subtasks"][0]["local_graph_template"])
+        == "smolagents_realbench_public_integration"
+    )
 
 
 def test_codex_dynamic_plan_still_selects_codex_graphs(tmp_path: Path) -> None:
     ws = _mini_workspace(tmp_path)
     catalog = graph_catalog_for_backend("codex_sdk")
     payload = build_realbench_candidate_plan(
-        task_id="demo", workspace=ws, graph_catalog=catalog, force_split=True
+        task_id="demo",
+        workspace=ws,
+        graph_catalog=catalog,
+        force_split=True,
+        **_runner_kwargs(tmp_path),
     )
     for sub in payload["subtasks"]:
-        assert "codex_realbench" in sub["local_graph_template"]
-        assert "smolagents_realbench" not in sub["local_graph_template"]
+        assert _graph_id(sub["local_graph_template"]).startswith("codex_realbench")
+
 
 def test_resolve_graph_catalog_fail_closed_on_mismatch() -> None:
     with pytest.raises(SystemExit, match="refuses Codex graph"):

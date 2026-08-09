@@ -41,6 +41,7 @@ from orchestra.control.task_state import TaskExecutionState
 from orchestra.decomposition.decomposer import TaskDecomposer
 from orchestra.decomposition.realbench_plan import (
     DEFAULT_GRAPH_CATALOG,
+    build_plan_from_draft,
     build_realbench_candidate_plan,
     graph_catalog_for_backend,
 )
@@ -52,7 +53,12 @@ from orchestra.ir.artifacts import ArtifactBundle, create_artifact
 from orchestra.ir.contracts import load_contracts
 from orchestra.ir.graph import load_graph
 from orchestra.llm.openai_compatible_async import OpenAICompatibleAsyncClient
+from orchestra.realbench.milestone_planner import plan_milestones
 from orchestra.realbench.public_harness import materialize_public_harness
+from orchestra.realbench.subgraph_builder import (
+    generated_contracts_dir,
+    prepare_generated_root,
+)
 from orchestra.runtime.backend import RunContext
 from orchestra.runtime.checkpoint import CheckpointStore
 from orchestra.runtime.limits import RuntimeLimits, RuntimeSemaphores
@@ -230,10 +236,8 @@ UML design files in this repository.
         f"# {task_id}\n\nSee TASK.md and public_design/.\n",
         encoding="utf-8",
     )
-    # Trusted marker + AdaMAS-owned public contract harness (no hidden tests).
-    (ws / ".adamas_trusted_harness").write_text("trusted_fixture\n", encoding="utf-8")
-    materialize_public_harness(ws)
-
+    # No AdaMAS assets here: contracts, harness and milestone briefs are
+    # runner-owned and reach the agent through its prompt only.
     subprocess.run(["git", "init"], cwd=str(ws), check=True, capture_output=True)
     subprocess.run(
         ["git", "-C", str(ws), "config", "user.email", "bench@local"], check=True
@@ -333,22 +337,73 @@ def build_dynamic_task_plan(
     *,
     workspace: Path,
     plan_path: Path,
+    harness_dir: Path,
     experiment: dict[str, Any],
     agent_backend: str,
-) -> TaskPlan:
-    """Build + validate a dynamic milestone TaskPlan for one RealBench task."""
+    contracts_dir: str = "configs/contracts",
+) -> tuple[TaskPlan, str]:
+    """Build + validate a milestone TaskPlan; return the plan and contracts dir.
+
+    A risk-first planner draft wins when available (its milestones ship their own
+    generated subgraphs and contracts); otherwise the deterministic
+    public_design plan is used unchanged. Either way every milestone is bound to
+    runner-owned harness assets under ``harness_dir``.
+    """
     deco_cfg = dict(experiment.get("decomposition") or {})
     catalog = resolve_graph_catalog(experiment, agent_backend=agent_backend)
     force_split = deco_cfg.get("force_split")
-    candidate_payload = build_realbench_candidate_plan(
+    candidate_payload: dict[str, Any] | None = None
+    generated_root = prepare_generated_root(
+        plan_path.parent, base_contracts_dir=contracts_dir
+    )
+    effective_contracts_dir = str(generated_contracts_dir(generated_root))
+
+    dynamic_cfg = deco_cfg.get("dynamic_planner")
+    draft = plan_milestones(
         task_id=task_id,
         workspace=workspace,
-        graph_catalog=catalog,
-        max_implementation_milestones=int(
-            deco_cfg.get("max_implementation_milestones", 2)
-        ),
-        force_split=None if force_split is None else bool(force_split),
+        agent_backend=agent_backend,
+        enable=None if dynamic_cfg is None else bool(dynamic_cfg),
+        max_milestones=int(deco_cfg.get("max_subtasks", 6)),
     )
+    if draft is not None:
+        candidate_payload = build_plan_from_draft(
+            task_id=task_id,
+            draft=draft,
+            workspace=workspace,
+            generated_root=generated_root,
+            harness_dir=harness_dir,
+            agent_backend=agent_backend,
+            model_name=_selected_model_name(agent_backend),
+        )
+        _write_json(
+            plan_path.parent / "milestone_plan_draft.json", draft.to_dict()
+        )
+
+    if candidate_payload is None:
+        # Template segmentation cuts by tree shape, not by risk: it is a
+        # degraded fallback, never an experiment arm. Make the degradation
+        # impossible to mistake for a planned run.
+        logging.getLogger("realbench_decomp_baseline").error(
+            "task=%s risk-first planner unavailable; falling back to TEMPLATE "
+            "segmentation. Results from this task are not a decomposition "
+            "measurement.",
+            task_id,
+        )
+        (plan_path.parent / "PLANNER_FALLBACK").write_text(
+            f"task={task_id}\nplan_source=template_fallback\n", encoding="utf-8"
+        )
+        candidate_payload = build_realbench_candidate_plan(
+            task_id=task_id,
+            workspace=workspace,
+            generated_root=generated_root,
+            harness_dir=harness_dir,
+            graph_catalog=catalog,
+            max_implementation_milestones=int(
+                deco_cfg.get("max_implementation_milestones", 2)
+            ),
+            force_split=None if force_split is None else bool(force_split),
+        )
     plan_path.parent.mkdir(parents=True, exist_ok=True)
     plan_path.write_text(
         yaml.safe_dump(candidate_payload, sort_keys=False, allow_unicode=True),
@@ -371,7 +426,7 @@ def build_dynamic_task_plan(
             deco_cfg.get("require_public_keystone_harness", True)
         ),
     )
-    return decomposer.decompose(
+    plan = decomposer.decompose(
         task_id=candidate_payload["task_id"],
         objective=candidate_payload["subtasks"][0]["objective"],
         candidate_plan=candidate_payload,
@@ -379,10 +434,18 @@ def build_dynamic_task_plan(
             "plan_config": str(plan_path),
             "demo": "realbench_dynamic_taskplan_public_harness",
             "realbench_task_id": task_id,
-            "plan_builder": "build_realbench_candidate_plan",
+            "plan_builder": str(
+                (candidate_payload.get("metadata") or {}).get("plan_builder")
+                or "build_realbench_candidate_plan"
+            ),
+            "decomposition_source": str(
+                (candidate_payload.get("metadata") or {}).get("decomposition_source")
+                or "public_design"
+            ),
             "agent_backend": agent_backend,
         },
     )
+    return plan, effective_contracts_dir
 
 
 def _build_problem(task: dict[str, str], requirements: str) -> ProblemArtifact:
@@ -417,14 +480,14 @@ def _smolagents_version() -> str | None:
         return None
 
 
-def _public_harness_identity(workspace: Path) -> dict[str, Any]:
-    manifest_path = workspace / "adamas_public_harness.json"
+def _public_harness_identity(manifest_path: Path) -> dict[str, Any]:
     if not manifest_path.is_file():
         return {"present": False}
     raw = manifest_path.read_bytes()
     return {
         "present": True,
-        "path": "adamas_public_harness.json",
+        "path": str(manifest_path),
+        "workspace_resident": False,
         "sha256": hashlib.sha256(raw).hexdigest(),
         "payload": json.loads(raw.decode("utf-8")),
     }
@@ -463,17 +526,24 @@ async def _run_one(
     catalog = resolve_graph_catalog(experiment, agent_backend=agent_backend)
     graph_hashes = _graph_catalog_hashes(catalog)
     plan_path = run_dir / "plan.yaml"
-    plan = build_dynamic_task_plan(
+    # Runner-owned harness assets; the agent workspace stays dataset-only.
+    harness_dir = run_dir / "harness"
+    public_manifest = materialize_public_harness(source_repo, harness_dir=harness_dir)
+    os.environ["ADAMAS_PUBLIC_CHECK_SCRIPT"] = public_manifest.script_path
+    os.environ["ADAMAS_PUBLIC_CHECK_MANIFEST"] = public_manifest.manifest_path
+    plan, contracts_dir = build_dynamic_task_plan(
         task_id,
         workspace=source_repo,
         plan_path=plan_path,
+        harness_dir=harness_dir,
         experiment=experiment,
         agent_backend=agent_backend,
+        contracts_dir=contracts_dir,
     )
     requirements = (source_repo / "REQUIREMENTS.md").read_text(encoding="utf-8")
     problem = _build_problem(task, requirements)
     selected_model = _selected_model_name(agent_backend)
-    harness_identity = _public_harness_identity(source_repo)
+    harness_identity = _public_harness_identity(Path(public_manifest.manifest_path))
 
     logging.basicConfig(
         level=getattr(logging, str((config.get("logging") or {}).get("level", "INFO"))),
@@ -501,13 +571,9 @@ async def _run_one(
     deco_dir = _dump_decomposition(
         logs_dir=logs_dir, plan=plan, plan_path=str(plan_path)
     )
-    if (source_repo / "adamas_public_harness.json").is_file():
-        _write_json(
-            Path(deco_dir) / "public_harness_manifest.json",
-            json.loads(
-                (source_repo / "adamas_public_harness.json").read_text(encoding="utf-8")
-            ),
-        )
+    _write_json(
+        Path(deco_dir) / "public_harness_manifest.json", public_manifest.to_dict()
+    )
     graphs_dir = _dump_subgraphs(
         logs_dir=logs_dir, plan=plan, contracts_dir=contracts_dir
     )
@@ -523,8 +589,18 @@ async def _run_one(
         "selected_model": selected_model,
         "adaptation": "disabled_oneshot",
         "decomposition_mode": "dynamic_public_harness",
+        "decomposition_source": str(
+            plan.metadata.get("decomposition_source") or "public_design"
+        ),
+        "contracts_dir": contracts_dir,
+        "harness_dir": str(harness_dir),
+        "workspace_scaffold_policy": "dataset_only_prompt_delivered_contracts",
         "subtask_ids": [s.subtask_id for s in plan.subtasks],
         "keystone_harness_ids": [s.keystone_harness_id for s in plan.subtasks],
+        "milestone_agent_rosters": {
+            s.subtask_id: s.metadata.get("agent_roster") or []
+            for s in plan.subtasks
+        },
         "graph_catalog": catalog,
         "graph_hashes": graph_hashes,
         "repository_editing": True,
@@ -816,9 +892,11 @@ async def _run(args: argparse.Namespace) -> int:
     # Codex-only host workaround; never apply for smolagents mode.
     if agent_backend == "codex_sdk":
         os.environ.setdefault("ADAMAS_CODEX_SANDBOX_OVERRIDE", "full_access")
-    # Do not set ADAMAS_ALLOW_UNTRUSTED_REPO_HARNESS process-wide. Workspaces
-    # ship `.adamas_trusted_harness`; advisory run_public_check scopes the
-    # escape hatch to its own subprocess only.
+    # Workspaces are runner-generated from the dataset and no longer carry a
+    # `.adamas_trusted_harness` marker (nothing AdaMAS-owned lives in them), so
+    # the harness gate is opened explicitly here. The executed check script is
+    # itself outside the workspace and therefore not agent-writable.
+    os.environ.setdefault("ADAMAS_ALLOW_UNTRUSTED_REPO_HARNESS", "1")
 
     if bool((config.get("pareto") or {}).get("enabled", False)):
         raise SystemExit("baseline requires pareto.enabled=false")

@@ -11,13 +11,16 @@ experiment:
   dataset_root: data/realbench/datasets/projs_filtered_uml/level2
 
 decomposition:
-  mode: template  # structured public-design plan builder (not open LLM TaskPlan)
+  # Risk-first LLM planning is the only supported mode. Template segmentation
+  # cuts by tree shape rather than by risk, so it is a fail-closed fallback that
+  # marks the run with PLANNER_FALLBACK — never an experiment arm.
+  dynamic_planner: true
+  mode: template  # shape of the fallback plan builder only
   min_subtasks: 1
   max_subtasks: 6
   max_dependency_depth: 6
   max_implementation_milestones: 2
   require_public_keystone_harness: true
-  # Adaptive split is decided by plan builder; force_split: true disables single-milestone mode.
   graph_catalog:
     discovery: configs/graphs/codex_realbench_public_discovery.yaml
     implementation: configs/graphs/codex_realbench_public_implementation.yaml

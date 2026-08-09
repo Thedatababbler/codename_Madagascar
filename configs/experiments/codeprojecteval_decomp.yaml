@@ -1,0 +1,36 @@
+experiment:
+  name: codeprojecteval_decomp
+  benchmark: codeprojecteval
+  # Risk-first dynamic milestones only. There is no template fallback on this
+  # dataset: a run whose planner is unavailable fails instead of silently
+  # measuring a shape-based split.
+  agent_backend: codex_sdk
+  dataset_root: /root/codex-benchmarks/projectgen/datasets/CodeProjectEval/python-subset
+  contracts_dir: configs/contracts
+  output_root: outputs/codeprojecteval_decomp
+  # A milestone gate runs the repository's own visible check_tests, which is
+  # slower than an import sweep.
+  harness_timeout_seconds: 900
+  seed: 20260808
+
+decomposition:
+  dynamic_planner: true
+  min_subtasks: 1
+  max_subtasks: 4
+  max_dependency_depth: 4
+  require_public_keystone_harness: true
+
+runtime:
+  max_parallel_nodes_per_task: 2
+
+pareto:
+  enabled: false
+
+slow_loop:
+  enabled: false
+
+fast_loop:
+  max_candidates: 0
+
+logging:
+  level: INFO
