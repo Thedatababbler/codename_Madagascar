@@ -1,5 +1,56 @@
 # Changelog
 
+## 2026-08-09 — Give the fast loop something to climb
+
+Tuning was going to run inside the fast loop, which retries a single milestone
+as variant candidates and picks one. Reading its selector first turned out to be
+worth the detour: the ordering was quality → cost → tokens, where quality is
+`1.0` for a candidate that passed its gate and `0.0` for one that did not. Every
+candidate the fast loop ever sees has failed — that is why it is running — so
+the first key was constant and the winner was whichever failure was cheapest.
+The loop was tuned to fail economically.
+
+The missing axis was a *graded* harness result. `RepositoryHarnessResultArtifact`
+carried a boolean and nothing else, so an attempt that compiled, imported every
+module and failed two tests was indistinguishable from one that produced no
+importable package at all.
+
+The CodeProjectEval harness now scores its stages — compile, imports, contracts,
+tests — as ratios and prints one machine-readable line. The weighted total is
+`1.0` exactly when everything the level asks for passed, and stages a run never
+reached contribute nothing, so stopping early at a cheap stage ranks below
+getting through it and failing later. Two deliberate exceptions: an altered
+visible test suite scores zero on tests rather than by ratio, because a loop
+that could climb by editing tests would learn to do that; and modules skipped
+for an absent third-party dependency leave the denominator rather than counting
+against the repository.
+
+The three tuning axes, all known the moment a milestone's gate has run:
+
+* **gate** — a hard partition, not a term in the sum. No amount of cheapness
+  promotes a failing candidate above a passing one unless
+  `allow_cost_to_outrank_gate` is set, which is off by default.
+* **harness score** — the graded result above. This is what separates two
+  failures.
+* **tokens** — normalised against a reference budget and weighted at 0.05, so a
+  candidate must spend a whole reference budget more to give up that much
+  score. Buying a pass with tokens is the trade being measured, not one to
+  optimise away.
+
+Absent by design is the held-out pass rate. It is not visible at milestone time,
+and a loop that could see it would be tuning on the test set.
+
+A harness that reports no score at all — a plain pytest command — is recorded as
+having none rather than as scoring zero, so a passing candidate under it cannot
+rank below a partially-failing one that happened to run under a harness that
+grades itself.
+
+Per-milestone objective rows are written to every run's summary even when the
+loop is switched off, so a tuning loop can be calibrated against runs that were
+not themselves tuned. The loop itself stays off in the A/B configuration:
+repair firing in one arm and not the other would be measured as part of that
+arm.
+
 ## 2026-08-09 — Run the trial matrix concurrently
 
 The A/B driver was a shell loop, so a three-repository three-arm sweep at n=3

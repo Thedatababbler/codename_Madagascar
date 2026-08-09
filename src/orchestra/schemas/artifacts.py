@@ -134,8 +134,28 @@ class RepositoryChangeArtifact(VersionedArtifact):
     source_node: str = ""
 
 
+class HarnessStageResult(BaseModel):
+    """How one acceptance stage went, as a ratio rather than a verdict."""
+
+    stage: str
+    passed_units: int
+    total_units: int
+    weight: float = 0.0
+
+    @property
+    def ratio(self) -> float:
+        return self.passed_units / self.total_units if self.total_units else 0.0
+
+
 class RepositoryHarnessResultArtifact(VersionedArtifact):
-    """Independent AdaMAS harness result for repository tests (not model-reported)."""
+    """Independent AdaMAS harness result for repository tests (not model-reported).
+
+    ``passed`` is the gate; ``score`` is how far the milestone got. A gate can
+    only say yes or no, which makes every failing attempt look identical and
+    gives a tuning loop nothing to climb: an attempt that compiled and imported
+    everything but failed two tests scores the same zero as one that produced no
+    importable package at all.
+    """
 
     passed: bool
     exit_code: int
@@ -143,6 +163,12 @@ class RepositoryHarnessResultArtifact(VersionedArtifact):
     stdout_summary: str = ""
     stderr_summary: str = ""
     changed_files: list[str] = Field(default_factory=list)
+
+    # None when the harness does not report progress (a plain pytest command).
+    # 1.0 exactly when everything the level asks for passed.
+    score: float | None = None
+    stages: list[HarnessStageResult] = Field(default_factory=list)
+    furthest_stage: str = ""
 
 
 class ArtifactProvenance(VersionedArtifact):

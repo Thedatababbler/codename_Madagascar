@@ -13,6 +13,31 @@ experiment:
   harness_timeout_seconds: 900
   seed: 20260808
 
+  # Tuning happens inside the fast loop, one milestone at a time. When a
+  # milestone's gate has run, everything the loop needs is already known -- it
+  # does not wait for the repository to be scored, and it must not: the held-out
+  # suite is not visible at that point and tuning on it would be tuning on the
+  # test set.
+  #
+  # Off by default. A repair loop that fires in one A/B arm and not the other
+  # gets measured as part of that arm, so the comparison runs turn it off and
+  # tuning runs turn it on deliberately.
+  tuning:
+    # Repair candidates per failed milestone. 0 disables the loop entirely.
+    fast_loop_candidates: 0
+    # A candidate whose gate passed. Nothing outranks this unless
+    # allow_cost_to_outrank_gate is set.
+    gate_weight: 1.0
+    # How far a candidate got, graded by harness stage. This is the axis that
+    # separates two failures; with a bare pass/fail the loop could only pick
+    # the cheapest one.
+    harness_weight: 0.5
+    # Applied to tokens over token_reference. Small on purpose: buying a pass
+    # with more tokens is the trade being measured, not one to optimise away.
+    token_weight: 0.05
+    token_reference: 1000000
+    allow_cost_to_outrank_gate: false
+
 decomposition:
   dynamic_planner: true
   min_subtasks: 1

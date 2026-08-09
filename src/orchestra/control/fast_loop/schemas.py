@@ -196,6 +196,11 @@ class CandidateRecord(BaseModel):
     harness_artifact_id: str | None = None
     status: CandidateStatus = CandidateStatus.PENDING
     quality_score: float | None = None
+    # How far the harness got, when it grades itself. quality_score is the gate
+    # and is only ever 0.0 or 1.0, so on its own it cannot separate two failed
+    # candidates and the selector fell through to picking the cheaper one.
+    harness_score: float | None = None
+    furthest_stage: str = ""
     cost: CostRecord = Field(default_factory=CostRecord)
     stability_incidents: list[StabilityIncident] = Field(default_factory=list)
     latency_ms: int | None = None

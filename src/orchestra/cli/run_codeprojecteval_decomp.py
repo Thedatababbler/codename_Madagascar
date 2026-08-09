@@ -47,7 +47,15 @@ from orchestra.codeprojecteval.harness import (
     check_command,
     contracts_path_for,
 )
+from orchestra.control.fast_loop.objectives import (
+    DEFAULT_GATE_WEIGHT,
+    DEFAULT_HARNESS_WEIGHT,
+    DEFAULT_TOKEN_WEIGHT,
+    TuningWeights,
+    milestone_objectives,
+)
 from orchestra.control.fast_loop.schemas import FastLoopBudget
+from orchestra.control.fast_loop.selector import DeterministicCandidateSelector
 from orchestra.control.ready_scheduler import ReadySubtaskScheduler
 from orchestra.control.slow_loop.controller import SlowLoopController
 from orchestra.control.slow_loop.schemas import SlowLoopBudget, SlowLoopConfig
@@ -259,6 +267,30 @@ def build_cpe_task_plan(
     return plan, effective_contracts_dir
 
 
+def read_tuning_config(config: dict[str, Any]) -> tuple[int, TuningWeights]:
+    """How many repair candidates the fast loop may try, and what it optimises.
+
+    Tuning happens *within* a milestone: once a milestone's gate has run, its
+    result is known immediately, and the fast loop can retry that milestone
+    alone rather than waiting for the whole repository to be scored. The three
+    axes available at that point are the gate, the harness's graded score and
+    the tokens spent -- deliberately not the held-out suite, which is not
+    visible then and would be tuning on the test set if it were.
+    """
+    tuning = dict((config.get("experiment") or {}).get("tuning") or {})
+    candidates = int(tuning.get("fast_loop_candidates", 0))
+    if candidates < 0:
+        raise ValueError("fast_loop_candidates cannot be negative")
+    weights = TuningWeights(
+        gate_weight=float(tuning.get("gate_weight", DEFAULT_GATE_WEIGHT)),
+        harness_weight=float(tuning.get("harness_weight", DEFAULT_HARNESS_WEIGHT)),
+        token_weight=float(tuning.get("token_weight", DEFAULT_TOKEN_WEIGHT)),
+        token_reference=int(tuning.get("token_reference", 1_000_000)),
+        allow_cost_to_outrank_gate=bool(tuning.get("allow_cost_to_outrank_gate", False)),
+    )
+    return candidates, weights
+
+
 async def _run_one(
     *,
     task_id: str,
@@ -277,6 +309,7 @@ async def _run_one(
     experiment = config["experiment"]
     contracts_dir = experiment.get("contracts_dir", "configs/contracts")
     harness_timeout = int(experiment.get("harness_timeout_seconds", DEFAULT_HARNESS_TIMEOUT))
+    fast_loop_candidates, tuning_weights = read_tuning_config(config)
 
     run_dir = batch_dir / task_id
     logs_dir = run_dir / "logs"
@@ -442,13 +475,21 @@ async def _run_one(
         backend_model_pools={agent_backend: [selected_model]},
     )
     task_checkpoint_store = TaskCheckpointStore(run_dir)
+    # Off by default: the A/B arms measure what decomposition buys, and a repair
+    # loop that fires in one arm and not the other would be measured as part of
+    # the arm. Turn it on deliberately, for tuning runs.
+    fast_loop_budget = FastLoopBudget(
+        max_candidates=fast_loop_candidates,
+        max_total_backend_calls=fast_loop_candidates * 2,
+    )
     scheduler = ReadySubtaskScheduler(
         runtime=runtime,
         artifact_store=artifact_store,
         task_checkpoint_store=task_checkpoint_store,
         contracts_dir=contracts_dir,
         source_repo=str(source_repo.resolve()),
-        budget=FastLoopBudget(max_candidates=0, max_total_backend_calls=0),
+        budget=fast_loop_budget,
+        selector=DeterministicCandidateSelector(weights=tuning_weights),
         slow_loop=SlowLoopController(
             config=slow_loop_config, checkpoint_store=task_checkpoint_store
         ),
@@ -533,6 +574,13 @@ async def _run_one(
             sid for sid, sub in state.subtasks.items() if sub.status.value == "committed"
         ],
         "usage_records": len(state.backend_usage_records or []),
+        "milestone_objectives": [o.to_dict() for o in milestone_objectives(state)],
+        "tuning": {
+            "fast_loop_candidates": fast_loop_candidates,
+            "gate_weight": tuning_weights.gate_weight,
+            "harness_weight": tuning_weights.harness_weight,
+            "token_weight": tuning_weights.token_weight,
+        },
         "backend_override": backend_manifest.get("backend_override"),
         "logs": {
             "decomposition": str(deco_dir),

@@ -35,7 +35,67 @@
    to average an arm that mixes them — it keeps the majority engine and prints
    what it excluded.
 
-**Last updated:** 2026-08-08 (UTC) — RealBench workspace isolation, first clean batch
+5. **n is capped at 5.** Ten repetitions per arm is not affordable here, and a
+   driver that accepts `--repeats 10` is how it gets spent by accident;
+   `run_codeprojecteval_sweep.py` refuses anything larger.
+
+**Last updated:** 2026-08-09 (UTC) — parallel sweep, dollar axis, fast-loop objectives
+
+---
+
+### EXP-20260809-05 — Infrastructure for tuning: parallelism, cost, and a gradient
+- **Status:** canonical (infrastructure, no experiment run)
+- **Date:** 2026-08-09 (UTC)
+- **Why it exists:** the readiness audit for Pareto fast-loop tuning found four
+  blockers. Three are now fixed and the fourth is characterised. No benchmark
+  was run for this entry; every claim below is from unit tests, dry runs, or
+  re-reading existing batches.
+
+**1. Serial execution.** The A/B driver was a shell loop; a three-repository
+three-arm sweep at n=3 took most of a day. Trials are independent processes, so
+the only thing serial execution protected was the collected-count cache, which
+is read-modify-written by every scoring run. That cache now holds a `flock` and
+replaces the file atomically, with the expensive collection outside the lock.
+`run_codeprojecteval_sweep.py` runs the matrix at a configurable concurrency
+(default 4, sized to the model endpoint) and writes one joined row per trial:
+pass rate, tokens, cost, wall clock, planned vs. realised turns, gates passed
+and failed, and a status distinguishing an unmeasured run from a scored zero.
+
+**2. No cost axis.** `estimated_cost_usd` was null everywhere for three
+independent reasons — no price listed for `gpt-5.4`, no model name stamped by
+the Codex backend, and a discarded `cached_input_tokens` figure. All three are
+fixed. Priced against the existing pyjwt batch as upper bounds: solo $1.39,
+multi $2.83, single $10.81. **These are ceilings, not invoices** — a Codex
+session re-sends its transcript each turn, so most of its input is cache hits
+billed at a tenth of list price, and the historical runs have no cache figure to
+subtract. Runs from here on record one and will be labelled `derived`.
+
+**3. No gradient inside a milestone.** The fast loop's selector ordered
+candidates by quality → cost → tokens, where quality is the 0/1 gate. Every
+candidate it sees has failed, so that key was constant and the cheapest failure
+won. The CodeProjectEval harness now grades its stages as ratios (verified
+monotone: 0.43 → 0.57 → 1.00 as a three-module package lands), and the selector
+optimises gate → graded score → tokens, with the gate as a hard partition.
+
+Per-milestone objective rows are written on **every** run, including untuned
+ones, so a tuning loop can be calibrated against existing history rather than
+needing fresh runs first.
+
+**4. Noise — not fixed, and it constrains the design.** Within-arm standard
+deviations still exceed the between-arm deltas at n=3 (pyjwt single: SD 0.361).
+With n capped at 5, a single-repository A/B will not separate arms that differ
+by less than roughly a third of the scale. Tuning should therefore be read as
+*within-run* milestone selection, where the comparison is between candidates on
+the same milestone under the same conditions, and not as a claim about arms.
+
+- **Ceilings on tuning that remain true:** `max_tokens` and `max_steps` are read
+  by the openai-compatible and smolagents paths respectively and are inert under
+  Codex. `timeout_seconds` is the only budget knob that binds, which is why the
+  solo arm inherits summed wall clock rather than a single agent's.
+- **Not run:** no experiment accompanies this entry, by instruction. The two
+  in-flight solo batches (pyjwt 3/3, simpy 3/3) completed before the code
+  changes and are preserved; bplustree solo was interrupted mid-run and its
+  partial directory was deleted rather than scored.
 
 ---
 

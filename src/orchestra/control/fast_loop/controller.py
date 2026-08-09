@@ -49,6 +49,7 @@ from orchestra.runtime.backend import RunContext
 from orchestra.runtime.native_async import NativeAsyncRuntime
 from orchestra.runtime.state import GraphExecutionResult
 from orchestra.runtime.task_checkpoint import TaskCheckpointStore
+from orchestra.schemas.artifacts import RepositoryHarnessResultArtifact
 from orchestra.storage.artifacts import ArtifactStore
 from orchestra.workspaces.base import WorkspaceRef
 
@@ -610,6 +611,7 @@ class FastLoopController:
             artifact_store=self.artifact_store,
             error=None,
         )
+        record.harness_score, record.furthest_stage = await self._harness_progress(result)
         if status is SubtaskStatus.COMMITTED:
             record.status = CandidateStatus.VALID
             record.quality_score = 1.0
@@ -631,6 +633,35 @@ class FastLoopController:
         if cand_ws is not None:
             summary_path = Path(cand_ws.path).parent / "candidate_result.json"
             summary_path.write_text(record.model_dump_json(indent=2), encoding="utf-8")
+
+    async def _harness_progress(
+        self, result: GraphExecutionResult
+    ) -> tuple[float | None, str]:
+        """The graded score this candidate's acceptance harness reported.
+
+        Without it two failing candidates are indistinguishable and the selector
+        falls back to price, so the fast loop learns to fail cheaply.
+        """
+        best: float | None = None
+        stage = ""
+        for outputs in result.state.node_outputs.values():
+            for artifact_id in outputs.values():
+                try:
+                    artifact = await self.artifact_store.get(artifact_id)
+                except KeyError:
+                    continue
+                if artifact.artifact_type != "RepositoryHarnessResultArtifact":
+                    continue
+                payload = RepositoryHarnessResultArtifact.model_validate(artifact.payload)
+                if payload.score is None:
+                    continue
+                # A milestone can run more than one harness -- gate_then_repair
+                # has a midway probe as well as the end-of-chain gate -- and the
+                # candidate's standing is how far it eventually got.
+                if best is None or payload.score > best:
+                    best = payload.score
+                    stage = payload.furthest_stage
+        return best, stage
 
     async def _commit_winner(
         self,

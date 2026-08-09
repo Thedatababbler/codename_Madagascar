@@ -104,6 +104,7 @@ import importlib
 import inspect
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -113,6 +114,88 @@ def _load_json(path):
     if path is None or not Path(path).is_file():
         return {}
     return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+# How far through the level's stages a milestone got, as a number a tuning loop
+# can climb. A bare pass/fail makes every failing attempt look identical: an
+# implementation that compiled and imported everything but failed two tests
+# would score exactly what an empty repository scores.
+STAGE_WEIGHTS = {
+    "discovery": {"compile": 1.0},
+    "implementation": {"compile": 0.3, "imports": 0.4, "contracts": 0.3},
+    "integration": {"compile": 0.15, "imports": 0.25, "contracts": 0.2, "tests": 0.4},
+}
+
+
+class Progress:
+    """Records each stage's passing ratio and prints them for the runner."""
+
+    def __init__(self, level):
+        self.level = level
+        self.weights = STAGE_WEIGHTS.get(level, STAGE_WEIGHTS["integration"])
+        self.stages = []
+
+    def record(self, stage, passed_units, total_units):
+        if stage not in self.weights:
+            return
+        self.stages.append(
+            {
+                "stage": stage,
+                "passed_units": int(passed_units),
+                "total_units": int(total_units),
+                "weight": self.weights[stage],
+            }
+        )
+
+    def score(self):
+        """Weighted progress in [0, 1]; 1.0 only when every stage fully passed.
+
+        Stages the run never reached contribute nothing, so stopping early at a
+        cheap stage scores below getting through it and failing a later one.
+        """
+        total = 0.0
+        for entry in self.stages:
+            units = entry["total_units"]
+            ratio = entry["passed_units"] / units if units else 0.0
+            total += entry["weight"] * ratio
+        return round(min(1.0, total), 6)
+
+    def emit(self):
+        reached = [e["stage"] for e in self.stages if e["passed_units"]]
+        print(
+            "ADAMAS_HARNESS_SCORE "
+            + json.dumps(
+                {
+                    "score": self.score(),
+                    "level": self.level,
+                    "stages": self.stages,
+                    "furthest_stage": reached[-1] if reached else "",
+                }
+            )
+        )
+
+
+def _pytest_counts(output):
+    """(passed, total) from pytest's summary line, or (0, 0) if unreadable.
+
+    Parsing text is unpleasant, but the alternative is requiring a report plugin
+    inside every one of the dataset's virtual environments.
+    """
+    passed = failed = errors = 0
+    for line in reversed((output or "").splitlines()):
+        line = line.strip()
+        if " passed" not in line and " failed" not in line and " error" not in line:
+            continue
+        for count, word in re.findall(r"(\\d+)\\s+(passed|failed|errors?|xfailed)", line):
+            if word == "passed":
+                passed = int(count)
+            elif word == "failed":
+                failed = int(count)
+            elif word.startswith("error"):
+                errors = int(count)
+        if passed or failed or errors:
+            return passed, passed + failed + errors
+    return 0, 0
 
 
 def _missing_third_party(exc, root, packages):
@@ -149,6 +232,8 @@ def main() -> int:
     packages = list(manifest.get("top_level_packages") or [])
     check_dir = str(manifest.get("check_tests_dir") or "check_tests")
 
+    progress = Progress(args.level)
+
     targets = [root / p for p in packages if (root / p).exists()]
     targets += [root / (p + ".py") for p in packages if (root / (p + ".py")).is_file()]
     if not targets:
@@ -156,19 +241,28 @@ def main() -> int:
             "FAIL: none of the declared packages exist yet: " + ", ".join(packages),
             file=sys.stderr,
         )
+        progress.record("compile", 0, max(1, len(packages)))
+        progress.emit()
         return 1
+    compiled = 0
     for target in targets:
         ok = (
             compileall.compile_dir(str(target), quiet=1)
             if target.is_dir()
             else compileall.compile_file(str(target), quiet=1)
         )
-        if not ok:
+        if ok:
+            compiled += 1
+        else:
             print("FAIL: compileall failed under " + str(target), file=sys.stderr)
-            return 1
+    progress.record("compile", compiled, len(targets))
+    if compiled != len(targets):
+        progress.emit()
+        return 1
     print("OK compileall level=" + args.level)
 
     if args.level == "discovery":
+        progress.emit()
         return 0
 
     sys.path.insert(0, str(root))
@@ -183,20 +277,28 @@ def main() -> int:
                 skipped_deps.add(dep)
                 continue
             failed_imports.append(mod + ": " + type(exc).__name__ + ": " + str(exc))
+    # Modules skipped for an absent third-party dependency are not the
+    # repository's failure, so they leave the denominator rather than counting
+    # against it.
+    attempted = max(0, len(modules) - len(skipped_deps))
+    progress.record("imports", max(0, attempted - len(failed_imports)), attempted)
     if failed_imports:
         print("FAIL imports:", file=sys.stderr)
         for item in failed_imports[:40]:
             print("  - " + item, file=sys.stderr)
+        progress.emit()
         return 1
     print("OK imports count=" + str(len(modules)))
 
     contracts = _load_json(args.contracts) if args.contracts else {}
     failed_contracts = []
+    attempted_contracts = 0
     for check in list(contracts.get("checks") or []):
         levels = check.get("required_levels") or ["integration"]
         if args.level not in levels:
             continue
         ctype = check.get("type")
+        attempted_contracts += 1
         try:
             if ctype == "module_file_exists":
                 if not (root / str(check.get("path") or "")).exists():
@@ -237,10 +339,18 @@ def main() -> int:
             failed_contracts.append(
                 str(ctype) + ": " + type(exc).__name__ + ": " + str(exc)
             )
+    # A level with no contracts declared has nothing to fail, which is full
+    # marks for that stage rather than a zero.
+    progress.record(
+        "contracts",
+        max(0, attempted_contracts - len(failed_contracts)) if attempted_contracts else 1,
+        attempted_contracts or 1,
+    )
     if failed_contracts:
         print("FAIL milestone contracts:", file=sys.stderr)
         for item in failed_contracts[:40]:
             print("  - " + item, file=sys.stderr)
+        progress.emit()
         return 1
     if contracts:
         print("OK milestone contracts level=" + args.level)
@@ -248,6 +358,7 @@ def main() -> int:
         print("SKIP unavailable dependencies: " + ", ".join(sorted(skipped_deps)))
 
     if args.level != "integration":
+        progress.emit()
         return 0
 
     # The visible suite is evidence, not workspace material: an agent that edits
@@ -265,11 +376,18 @@ def main() -> int:
         print("FAIL: visible check_tests were altered:", file=sys.stderr)
         for item in tampered[:20]:
             print("  - " + item, file=sys.stderr)
+        # Deliberately scored zero on tests rather than by ratio: an altered
+        # suite is not partial progress, and a loop that could climb by editing
+        # tests would learn to do exactly that.
+        progress.record("tests", 0, 1)
+        progress.emit()
         return 1
 
     selection = [t for t in args.tests.split(",") if t.strip()] or [check_dir]
     if not any((root / t.split("::", 1)[0]).exists() for t in selection):
         print("FAIL: no visible tests found at " + ", ".join(selection), file=sys.stderr)
+        progress.record("tests", 0, 1)
+        progress.emit()
         return 1
     env = dict(os.environ)
     env["PYTHONPATH"] = str(root) + os.pathsep + env.get("PYTHONPATH", "")
@@ -299,15 +417,21 @@ def main() -> int:
         )
     except subprocess.TimeoutExpired:
         print("FAIL check_tests: timed out", file=sys.stderr)
+        progress.record("tests", 0, 1)
+        progress.emit()
         return 1
     tail = (proc.stdout or "")[-4000:]
+    passed_tests, total_tests = _pytest_counts(proc.stdout)
+    progress.record("tests", passed_tests, total_tests or 1)
     if proc.returncode != 0:
         print("FAIL check_tests:", file=sys.stderr)
         print(tail, file=sys.stderr)
         print((proc.stderr or "")[-1500:], file=sys.stderr)
+        progress.emit()
         return 1
     print("OK check_tests")
     print(tail[-500:])
+    progress.emit()
     return 0
 
 
