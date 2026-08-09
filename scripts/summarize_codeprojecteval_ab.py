@@ -121,7 +121,14 @@ def main() -> int:
             entries = runs.get((task, arm)) or []
             if not entries:
                 continue
-            scored_entries = [e for e in entries if e.get("measured", True)]
+            # A run with no hidden-eval file at all is as unmeasured as one that
+            # timed out; counting it as scored overstates how much evidence the
+            # arm actually rests on.
+            scored_entries = [
+                e
+                for e in entries
+                if e.get("measured", True) and e.get("pass_rate") is not None
+            ]
             stats = {
                 "n": len(entries),
                 "n_scored": len(scored_entries),
