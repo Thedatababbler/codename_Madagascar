@@ -23,6 +23,7 @@ from orchestra.realbench.milestone_planner import (
     MilestonePlanDraft,
     parse_plan_payload,
 )
+from orchestra.roles.templates import FALLBACK_TEMPLATE_ID, default_templates
 
 
 def merge_to_single_milestone(
@@ -38,6 +39,12 @@ def merge_to_single_milestone(
             milestones=[replace(milestones[0], gate_level="integration", depends_on=[])],
             generator=f"{draft.generator}+single_arm",
         )
+
+    # Slot the merged agents into an extensible chain. Keeping a template that
+    # declares fewer slots -- `solo` above all -- would drop the overflow the
+    # next time this plan is loaded, handing the control arm less compute than
+    # the arm it exists to be compared against.
+    template_id = FALLBACK_TEMPLATE_ID
 
     objective = "\n".join(
         f"Stage {index + 1} — {m.title}: {m.objective}"
@@ -66,12 +73,19 @@ def merge_to_single_milestone(
     # Role ids must stay unique inside one subgraph; two milestones may both
     # have named their agent `implementer`.
     seen: dict[str, int] = {}
+    # Slot ids come from the template itself rather than being spelled out here,
+    # so renaming a slot in chain.yaml cannot silently unbind these agents.
+    chain_slots = default_templates()[template_id].slots_for(len(agents))
     unique_agents = []
-    for agent in agents:
+    for index, agent in enumerate(agents):
         count = seen.get(agent.role_id, 0) + 1
         seen[agent.role_id] = count
         unique_agents.append(
-            agent if count == 1 else replace(agent, role_id=f"{agent.role_id}_{count}")
+            replace(
+                agent,
+                slot_id=chain_slots[index].slot_id,
+                role_id=agent.role_id if count == 1 else f"{agent.role_id}_{count}",
+            )
         )
 
     merged = MilestoneDraft(
@@ -80,6 +94,7 @@ def merge_to_single_milestone(
         objective=objective,
         risk_rationale="",
         gate_level="integration",
+        template_id=template_id,
         depends_on=[],
         focus_paths=focus,
         acceptance=MilestoneAcceptance(

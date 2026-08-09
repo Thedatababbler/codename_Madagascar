@@ -27,6 +27,13 @@
    task. Its absence means the batch silently ran the fallback.
    (Batches `rb-isolated*` through 2026-08-08 all ran the fallback for this
    reason; their per-task numbers say nothing about decomposition.)
+4. **Never edit the builder while a batch is in flight, and never average across
+   builders.** A frozen plan is not a frozen system: replaying it under a newer
+   subgraph builder changes the prompts the agents receive. Runs now record
+   their engine (`topology: template:*` = role pool, `dynamic_milestone_agent_chain`
+   = the pre-2026-08-09 builder), and `summarize_codeprojecteval_ab.py` refuses
+   to average an arm that mixes them — it keeps the majority engine and prints
+   what it excluded.
 
 **Last updated:** 2026-08-08 (UTC) — RealBench workspace isolation, first clean batch
 
@@ -931,3 +938,55 @@ Copy the template below after each run (evaluate + summarize when applicable):
 - [ ] After any `run` / `evaluate` / `summarize` / smoke finishes → append EXP entry + refresh Quick reference if canonical.
 - [ ] Never overwrite historical metrics; mark `superseded` and point to the new ID.
 - [ ] Record graph content hash and backend type (`structured_llm` vs `smolagents_code`) every time.
+
+---
+
+## EXP-20260809-03 — The A/B arms were measured on two different builders
+
+**Status:** `superseded` (supersedes the CodeProjectEval A/B numbers in
+EXP-20260809-01/02; superseded in turn by the rerun below)
+
+**What happened.** Asked whether the reported A/B results used the new role pool,
+the honest answer turned out to be *almost none of them*. Of 18 runs, 17 were
+produced by the pre-role-pool builder (`topology: dynamic_milestone_agent_chain`,
+roles as free-text titles such as "Low-level storage contract implementer"). One
+— `ab-bplustree-single-r3` — started at 01:47 UTC, after the role pool had landed
+in the working tree, and ran with `topology: template:chain` and pool roles
+(`contract_author, implementer, integrator, integrator`).
+
+**Why it matters.** A frozen plan controls *what* is planned, not *how the agents
+are prompted*. The template builder injects each role's own prompt, so r3 was a
+different system, not a third sample of the same one. The bplustree single arm
+had been averaging 0.480 / 0.096 / 0.199 across two builders and reporting the
+mean as one condition.
+
+**Fixes landed.**
+- `summarize_codeprojecteval_ab.py` records each run's engine and refuses to
+  average an arm that mixes engines; it scores the majority engine and prints the
+  excluded runs. With r3 excluded, bplustree single is n=2 (0.288), which is too
+  thin and too variable to carry the +0.183 delta previously reported.
+- `merge_to_single_milestone` now retargets the merged milestone at the
+  extensible `chain` template and rebinds each agent to a slot read from the
+  template itself. Without this, a plan whose first milestone used `solo` would
+  have dropped every agent past the first on reload — the same class of bug as
+  the agent cap in EXP-20260809-01, and it would have hit the control arm only.
+
+**Decision.** Abandon the legacy-builder comparison rather than backfill it. All
+three repositories are being rerun on the role-pool builder, both arms, three
+repetitions. Legacy plans are kept at `outputs/cpe_ab/plans_legacy/` and legacy
+runs remain on disk for reference only.
+
+**What the new planner chose** (first time templates and pool roles are under
+test, not just implemented):
+
+| repo | multi arm | single arm (merged control) |
+|---|---|---|
+| simpy | `review_then_fix` (contract_author → spec_auditor → implementer) then `gate_then_repair` (implementer → gate_repairer) | `chain` of all 5 |
+| bplustree | same shape | `chain` of all 5 |
+| pyjwt | 2 milestones, 4 agent turns (needed 3 planner samples; it prefers a single milestone) | `chain` of all 4 |
+
+Both arms carry identical agent counts and token budgets. Note one asymmetry to
+report rather than hide: `gate_then_repair` lets the multi arm *skip* its
+repairer when the mid-milestone gate passes, so the multi arm may spend strictly
+less compute than its matched control. Report realized `agent_turns`, not
+budgeted ones.

@@ -18,6 +18,7 @@ from orchestra.realbench.milestone_planner import (
     MilestoneDraft,
     MilestonePlanDraft,
 )
+from orchestra.roles.templates import default_templates
 
 
 def _multi_plan() -> MilestonePlanDraft:
@@ -143,3 +144,26 @@ def test_merged_arm_keeps_its_budget_through_a_reload(tmp_path: Path) -> None:
     restored = load_draft(save_draft(single, tmp_path / "plan.single.json"))
 
     assert total_budget(restored) == total_budget(wide)
+
+
+def test_merging_rebinds_agents_onto_slots_the_chain_actually_has(
+    tmp_path: Path,
+) -> None:
+    """Every merged agent must land on a real slot of an extensible template.
+
+    A merged plan that kept a one-slot template would drop its overflow on the
+    next load, and a slot id spelled out by hand would unbind the moment
+    chain.yaml renamed one.
+    """
+    single = merge_to_single_milestone(_multi_plan())
+    milestone = single.milestones[0]
+    template = default_templates()[milestone.template_id]
+    valid = {slot.slot_id for slot in template.slots_for(len(milestone.agents))}
+
+    assert template.extensible
+    assert {agent.slot_id for agent in milestone.agents} <= valid
+
+    restored = load_draft(save_draft(single, tmp_path / "plan.single.json"))
+    assert [a.role for a in restored.milestones[0].agents] == [
+        a.role for a in milestone.agents
+    ]

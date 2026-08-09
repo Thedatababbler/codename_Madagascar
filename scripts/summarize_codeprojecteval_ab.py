@@ -15,12 +15,31 @@ from collections import defaultdict
 from functools import cache
 from pathlib import Path
 
+import yaml
+
 from orchestra.codeprojecteval.ceiling import (
     CeilingReport,
     analyze_ceiling,
     collected_counts,
 )
 from orchestra.codeprojecteval.dataset import DEFAULT_ENV_ROOT, load_task
+
+
+def _engine(run_dir: Path) -> str:
+    """Which subgraph builder produced this run's graphs.
+
+    A frozen plan replayed under a newer builder is not a repeat of the same
+    condition: the template-based builder injects each role's own prompt, so an
+    arm holding runs from both is measuring two systems and calling it noise.
+    """
+    graphs = sorted(Path(run_dir).glob("*/generated/graphs/*.yaml"))
+    if not graphs:
+        return "unknown"
+    metadata = (yaml.safe_load(graphs[0].read_text(encoding="utf-8")) or {}).get(
+        "metadata"
+    ) or {}
+    topology = str(metadata.get("topology") or "")
+    return "role_pool" if topology.startswith("template:") else "legacy_chain"
 
 
 @cache
@@ -54,6 +73,7 @@ def _collect(root: Path) -> dict[tuple[str, str], list[dict]]:
                 "committed": len(result.get("committed") or []),
                 "run_error": result.get("error"),
             }
+            entry["engine"] = _engine(batch)
             if hidden_path.is_file():
                 hidden = json.loads(hidden_path.read_text(encoding="utf-8"))
                 for scored in hidden.get("results") or []:
@@ -129,12 +149,33 @@ def main() -> int:
                 for e in entries
                 if e.get("measured", True) and e.get("pass_rate") is not None
             ]
+            engines = sorted({e.get("engine", "unknown") for e in scored_entries})
+            if len(engines) > 1:
+                # Averaging across builders would report a code change as an
+                # effect of the arm. Keep the majority engine and say so.
+                majority = max(
+                    engines,
+                    key=lambda name: sum(
+                        1 for e in scored_entries if e.get("engine") == name
+                    ),
+                )
+                dropped = [
+                    e["batch"] for e in scored_entries if e.get("engine") != majority
+                ]
+                scored_entries = [
+                    e for e in scored_entries if e.get("engine") == majority
+                ]
+                print(
+                    f"  ! {task}/{arm}: mixed engines {engines}; scoring only "
+                    f"{majority!r}, excluded {dropped}"
+                )
             stats = {
                 "n": len(entries),
                 "n_scored": len(scored_entries),
                 "unmeasured": [
-                    e.get("run_id") for e in entries if not e.get("measured", True)
+                    e.get("batch") for e in entries if not e.get("measured", True)
                 ],
+                "engines": sorted({e.get("engine", "unknown") for e in entries}),
                 "milestones": _mean([e.get("milestones") for e in entries]),
                 "agent_turns": _mean([e.get("agent_turns") for e in entries]),
                 "pass_rate_reachable": _mean(
