@@ -24,6 +24,32 @@ from orchestra.codeprojecteval.ceiling import (
 )
 from orchestra.codeprojecteval.dataset import DEFAULT_ENV_ROOT, load_task
 
+# Newest last; used only to break ties when an arm is mid-rerun.
+_ENGINE_RECENCY = {"unknown": 0, "legacy_chain": 1, "role_pool": 2}
+
+
+def _realized_turns(run_dir: Path) -> int | None:
+    """Agent nodes that actually ran, counted from the event stream.
+
+    The planned count overstates any template with an early exit: when
+    ``gate_then_repair`` passes its mid-milestone probe, the repairer never
+    runs, and reporting the budget would hide that the multi-segment arm bought
+    its result with less compute than the control it is compared against.
+    """
+    turns = 0
+    seen = False
+    for events in sorted(Path(run_dir).glob("*/logs/*/events.jsonl")):
+        for line in events.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            event = json.loads(line)
+            seen = True
+            if event.get("event_type") == "NODE_COMPLETED" and str(
+                event.get("node_id") or ""
+            ).startswith("agent_"):
+                turns += 1
+    return turns if seen else None
+
 
 def _engine(run_dir: Path) -> str:
     """Which subgraph builder produced this run's graphs.
@@ -74,6 +100,7 @@ def _collect(root: Path) -> dict[tuple[str, str], list[dict]]:
                 "run_error": result.get("error"),
             }
             entry["engine"] = _engine(batch)
+            entry["agent_turns_run"] = _realized_turns(batch)
             if hidden_path.is_file():
                 hidden = json.loads(hidden_path.read_text(encoding="utf-8"))
                 for scored in hidden.get("results") or []:
@@ -123,6 +150,12 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("root", type=Path, nargs="?", default=Path("outputs/cpe_ab"))
     ap.add_argument("--out", type=Path, default=Path("outputs/cpe_ab/ab_summary.json"))
+    ap.add_argument(
+        "--engine",
+        choices=("auto", "role_pool", "legacy_chain"),
+        default="auto",
+        help="report only runs from one subgraph builder",
+    )
     args = ap.parse_args()
 
     runs = _collect(args.root)
@@ -149,25 +182,31 @@ def main() -> int:
                 for e in entries
                 if e.get("measured", True) and e.get("pass_rate") is not None
             ]
+            if args.engine != "auto":
+                scored_entries = [
+                    e for e in scored_entries if e.get("engine") == args.engine
+                ]
             engines = sorted({e.get("engine", "unknown") for e in scored_entries})
             if len(engines) > 1:
                 # Averaging across builders would report a code change as an
-                # effect of the arm. Keep the majority engine and say so.
-                majority = max(
+                # effect of the arm. Keep one and say which.
+                #
+                # Ties go to the newest builder rather than to whichever name
+                # sorts first: a rerun that is half finished has equal counts,
+                # and silently reporting the superseded half is the failure this
+                # guard exists to prevent.
+                kept = max(
                     engines,
-                    key=lambda name: sum(
-                        1 for e in scored_entries if e.get("engine") == name
+                    key=lambda name: (
+                        sum(1 for e in scored_entries if e.get("engine") == name),
+                        _ENGINE_RECENCY.get(name, 0),
                     ),
                 )
-                dropped = [
-                    e["batch"] for e in scored_entries if e.get("engine") != majority
-                ]
-                scored_entries = [
-                    e for e in scored_entries if e.get("engine") == majority
-                ]
+                dropped = [e["batch"] for e in scored_entries if e.get("engine") != kept]
+                scored_entries = [e for e in scored_entries if e.get("engine") == kept]
                 print(
                     f"  ! {task}/{arm}: mixed engines {engines}; scoring only "
-                    f"{majority!r}, excluded {dropped}"
+                    f"{kept!r}, excluded {dropped}"
                 )
             stats = {
                 "n": len(entries),
@@ -176,13 +215,19 @@ def main() -> int:
                     e.get("batch") for e in entries if not e.get("measured", True)
                 ],
                 "engines": sorted({e.get("engine", "unknown") for e in entries}),
-                "milestones": _mean([e.get("milestones") for e in entries]),
-                "agent_turns": _mean([e.get("agent_turns") for e in entries]),
+                # Every column describes the same set of runs as the pass rate.
+                # Averaging turns over runs that were excluded for being another
+                # engine would describe a system nobody is scoring.
+                "milestones": _mean([e.get("milestones") for e in scored_entries]),
+                "agent_turns": _mean([e.get("agent_turns") for e in scored_entries]),
+                "agent_turns_run": _mean(
+                    [e.get("agent_turns_run") for e in scored_entries]
+                ),
                 "pass_rate_reachable": _mean(
                     [e.get("pass_rate_reachable") for e in scored_entries]
                 ),
                 "pass_rate": _mean([e.get("pass_rate") for e in scored_entries]),
-                "committed": _mean([e.get("committed") for e in entries]),
+                "committed": _mean([e.get("committed") for e in scored_entries]),
                 "errors": [e["run_error"] for e in entries if e.get("run_error")],
                 "runs": entries,
             }
@@ -190,11 +235,17 @@ def main() -> int:
             print(
                 f"{task:<14}{arm:<8}{stats['n']:>2}{stats['n_scored']:>7}  "
                 f"{stats['milestones']:>10.1f}  "
-                f"{stats['agent_turns']:>5.1f}  {stats['pass_rate']:>9.3f}  "
+                f"{stats['agent_turns']:>5.1f}{stats['agent_turns_run']:>5.1f}  "
+                f"{stats['pass_rate']:>9.3f}  "
                 f"{stats['pass_rate_reachable']:>6.3f}  {stats['committed']:>9.1f}"
             )
         both = report[task]
         if "single" in both and "multi" in both:
+            if not (both["single"]["n_scored"] and both["multi"]["n_scored"]):
+                # Both arms print 0.000 when nothing was scored, and their
+                # difference is a real-looking +0.000 that means "no data".
+                print(f"{'':<14}{'delta':<8}{'':>2}  {'':>10}  {'':>5}  {'n/a':>9}")
+                continue
             delta = round(
                 both["multi"]["pass_rate"] - both["single"]["pass_rate"], 4
             )
