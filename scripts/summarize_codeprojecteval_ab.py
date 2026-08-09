@@ -25,6 +25,9 @@ from orchestra.codeprojecteval.ceiling import (
 )
 from orchestra.codeprojecteval.dataset import DEFAULT_ENV_ROOT, load_task
 
+# solo first: it is the reference the other two have to beat.
+_ARMS = ("solo", "single", "multi")
+
 # Newest last; used only to break ties when an arm is mid-rerun.
 _ENGINE_RECENCY = {"unknown": 0, "legacy_chain": 1, "role_pool": 2}
 
@@ -193,7 +196,7 @@ def main() -> int:
     print("-" * len(header))
     for task in tasks:
         report[task] = {}
-        for arm in ("single", "multi"):
+        for arm in _ARMS:
             entries = runs.get((task, arm)) or []
             if not entries:
                 continue
@@ -262,18 +265,24 @@ def main() -> int:
                 f"{stats['pass_rate']:>9.3f}  "
                 f"{stats['pass_rate_reachable']:>6.3f}  {stats['committed']:>9.1f}"
             )
-        both = report[task]
-        if "single" in both and "multi" in both:
-            if not (both["single"]["n_scored"] and both["multi"]["n_scored"]):
-                # Both arms print 0.000 when nothing was scored, and their
-                # difference is a real-looking +0.000 that means "no data".
-                print(f"{'':<14}{'delta':<8}{'':>2}  {'':>10}  {'':>5}  {'n/a':>9}")
+        arms = report[task]
+        # Two deltas, because they answer different questions: gating is only
+        # what separates multi from single, while beating solo is what justifies
+        # running more than one agent at all.
+        for label, (later, earlier) in {
+            "gating": ("multi", "single"),
+            "vs solo": ("multi", "solo"),
+        }.items():
+            if later not in arms or earlier not in arms:
                 continue
-            delta = round(
-                both["multi"]["pass_rate"] - both["single"]["pass_rate"], 4
-            )
-            both["delta_pass_rate_multi_minus_single"] = delta
-            print(f"{'':<14}{'delta':<8}{'':>2}  {'':>10}  {'':>5}  {delta:>+9.3f}")
+            if not (arms[later]["n_scored"] and arms[earlier]["n_scored"]):
+                # An arm with nothing scored prints 0.000, and the difference
+                # would read as a real +0.000 rather than as absent data.
+                print(f"{'':<14}{label:<8}{'':>2}  {'':>10}  {'':>10}  {'n/a':>9}")
+                continue
+            delta = round(arms[later]["pass_rate"] - arms[earlier]["pass_rate"], 4)
+            arms[f"delta_{later}_minus_{earlier}"] = delta
+            print(f"{'':<14}{label:<8}{'':>2}  {'':>10}  {'':>10}  {delta:>+9.3f}")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")

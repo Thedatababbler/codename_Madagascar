@@ -7,6 +7,7 @@ from pathlib import Path
 
 from orchestra.codeprojecteval.ab import (
     load_draft,
+    merge_to_single_agent,
     merge_to_single_milestone,
     save_draft,
     total_budget,
@@ -18,6 +19,7 @@ from orchestra.realbench.milestone_planner import (
     MilestoneDraft,
     MilestonePlanDraft,
 )
+from orchestra.roles.pool import default_role_pool
 from orchestra.roles.templates import default_templates
 
 
@@ -144,6 +146,33 @@ def test_merged_arm_keeps_its_budget_through_a_reload(tmp_path: Path) -> None:
     restored = load_draft(save_draft(single, tmp_path / "plan.single.json"))
 
     assert total_budget(restored) == total_budget(wide)
+
+
+def test_solo_arm_is_one_agent_holding_the_whole_plans_wall_clock(
+    tmp_path: Path,
+) -> None:
+    """The baseline must be one agent, and must not be starved to be one.
+
+    Wall clock is the only budget the Codex backend enforces, so a solo arm
+    given a single agent's timeout would lose for lack of time rather than for
+    lack of collaborators, and the comparison would prove nothing.
+    """
+    plan = _multi_plan()
+    solo = merge_to_single_agent(plan)
+    budget = total_budget(solo)
+
+    assert len(solo.milestones) == 1
+    assert solo.milestones[0].template_id == "solo"
+    assert budget["agent_turns"] == 1
+    assert budget["timeout_seconds"] == total_budget(plan)["timeout_seconds"]
+
+    agent = solo.milestones[0].agents[0]
+    assert agent.role == "implementer"
+    assert default_role_pool().require(agent.role).edits_repository
+
+    restored = load_draft(save_draft(solo, tmp_path / "plan.solo.json"))
+    assert len(restored.milestones[0].agents) == 1
+    assert total_budget(restored) == budget
 
 
 def test_merging_rebinds_agents_onto_slots_the_chain_actually_has(

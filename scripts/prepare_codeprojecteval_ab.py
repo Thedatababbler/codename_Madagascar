@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Freeze the two arms of the decomposition A/B, one pair per repository.
+"""Freeze the three arms of the decomposition experiment, one set per repository.
 
 Samples the risk-first planner until it produces a genuine multi-milestone plan,
-then derives the single-segment control by merging that plan. Both arms then run
-the same agents with the same budgets; only the intermediate gates differ, and
-neither arm carries planner sampling variance.
+then derives both controls from it: a single-segment arm holding the same agents
+behind one final gate, and a single-agent arm handing the whole repository to one
+implementer. Every arm comes from the same draft, so none of them carries planner
+sampling variance.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ import json
 from pathlib import Path
 
 from orchestra.codeprojecteval.ab import (
+    merge_to_single_agent,
     merge_to_single_milestone,
     save_draft,
     total_budget,
@@ -61,12 +63,22 @@ def main() -> int:
             continue
 
         single = merge_to_single_milestone(multi)
+        solo = merge_to_single_agent(multi)
         multi_path = save_draft(multi, args.out / f"{name}.multi.json")
         single_path = save_draft(single, args.out / f"{name}.single.json")
-        budgets = {"multi": total_budget(multi), "single": total_budget(single)}
+        solo_path = save_draft(solo, args.out / f"{name}.solo.json")
+        budgets = {
+            "multi": total_budget(multi),
+            "single": total_budget(single),
+            "solo": total_budget(solo),
+        }
         matched = (
             budgets["multi"]["agent_turns"] == budgets["single"]["agent_turns"]
             and budgets["multi"]["max_tokens"] == budgets["single"]["max_tokens"]
+            # solo trades agents for one agent holding the same wall clock, the
+            # only budget the Codex backend actually enforces.
+            and budgets["solo"]["agent_turns"] == 1
+            and budgets["solo"]["timeout_seconds"] == budgets["multi"]["timeout_seconds"]
         )
         report[name] = {
             "status": "ok",
@@ -77,6 +89,7 @@ def main() -> int:
             "budget_matched": matched,
             "multi_plan": str(multi_path),
             "single_plan": str(single_path),
+            "solo_plan": str(solo_path),
         }
         print(
             f"{name}: multi={len(multi.milestones)} milestones, "

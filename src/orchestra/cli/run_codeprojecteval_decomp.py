@@ -661,7 +661,7 @@ def main() -> int:
     parser.add_argument(
         "--arm",
         default="planner",
-        help="Label recorded in summaries, e.g. single / multi.",
+        help="Label recorded in summaries, e.g. solo / single / multi.",
     )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--allow-config-drift", action="store_true")

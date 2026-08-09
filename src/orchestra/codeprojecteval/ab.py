@@ -1,13 +1,21 @@
-"""Build the two arms of a decomposition A/B from one planner draft.
+"""Build the arms of a decomposition experiment from one planner draft.
 
-The question is whether *gating* helps, not whether more compute helps. So the
-single-segment arm is derived from the multi-segment plan by merging its
-milestones: both arms run the same agents, in the same order, with the same
-token and step budgets. They differ only in whether an acceptance gate and a
-commit sit between those agents.
+Three arms, each answering a different question:
 
-Deriving one arm from the other also removes planner sampling variance from the
-comparison — the planner is asked once per repository, not once per run.
+``solo``
+    One agent, the whole repository, the plan's combined wall-clock budget. The
+    plain-Codex reference point; if neither other arm beats this, the machinery
+    is not paying for itself.
+``single``
+    Every agent of the multi-segment plan, in order, inside one milestone. Same
+    collaborators as ``multi`` but only one gate, at the very end.
+``multi``
+    The planner's own segmentation, with a gate and a commit per milestone.
+
+``single`` isolates *gating* from *more agents*, which ``solo`` alone cannot:
+comparing solo against multi would confound the two. Deriving every arm from one
+draft also removes planner sampling variance — the planner is asked once per
+repository, not once per run.
 """
 
 from __future__ import annotations
@@ -109,6 +117,54 @@ def merge_to_single_milestone(
             f"multi-segment plan, without intermediate gates. {draft.rationale}"
         ),
         generator=f"{draft.generator}+single_arm",
+    )
+
+
+def merge_to_single_agent(
+    draft: MilestonePlanDraft, *, milestone_id: str = "implement_repository"
+) -> MilestonePlanDraft:
+    """Collapse a plan into one agent doing the whole repository end to end.
+
+    This is the reference point the other two arms have to beat: plain Codex,
+    handed the whole task once, with no second agent and no intermediate gate.
+
+    It inherits the summed wall-clock budget of the plan it replaces. Under the
+    Codex backend that is the *only* budget that binds -- ``max_tokens`` is read
+    by the openai-compatible path alone and ``max_steps`` by smolagents alone --
+    so giving this arm one agent's timeout would starve it on the one axis that
+    is real and make the baseline a strawman.
+    """
+    single = merge_to_single_milestone(draft, milestone_id=milestone_id)
+    merged = single.milestones[0]
+    agents = list(merged.agents)
+    if not agents:
+        raise ValueError("cannot merge a plan with no agents")
+
+    solo = replace(
+        agents[0],
+        role_id="solo_implementer",
+        title="Sole implementer",
+        role="implementer",
+        slot_id=default_templates()["solo"].slots[0].slot_id,
+        mandate=(
+            "Implement the entire repository yourself, end to end. No other "
+            "agent will run after you and there is no intermediate checkpoint: "
+            "everything the acceptance suite needs must be in place when you "
+            "finish."
+        ),
+        focus_paths=list(merged.focus_paths),
+        max_tokens=sum(a.max_tokens for a in agents),
+        max_steps=sum(a.max_steps for a in agents),
+        timeout_seconds=sum(a.timeout_seconds for a in agents),
+    )
+    return MilestonePlanDraft(
+        milestones=[replace(merged, template_id="solo", agents=[solo])],
+        rationale=(
+            "Single-agent baseline: one agent implements the whole repository "
+            "with the plan's combined wall-clock budget, no collaborators and "
+            f"no intermediate gate. {draft.rationale}"
+        ),
+        generator=f"{draft.generator}+solo_arm",
     )
 
 
