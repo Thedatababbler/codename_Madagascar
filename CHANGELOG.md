@@ -1,5 +1,69 @@
 # Changelog
 
+## 2026-08-09 — Run the trial matrix concurrently
+
+The A/B driver was a shell loop, so a three-repository three-arm sweep at n=3
+took the better part of a day. Nothing about a trial requires that: each one is
+a separate process over its own output directory. What made serial execution
+*safe* rather than merely slow was a single piece of shared mutable state — the
+collected-test-count cache — which is read-modify-written by every scoring run
+and would silently lose entries under concurrency.
+
+`scripts/run_codeprojecteval_sweep.py` runs the matrix with a concurrency limit
+(default 4, sized to the model endpoint rather than the host) and writes one
+joined row per trial. Previously the run summary, the hidden score and the token
+usage lived in three files and every consumer rediscovered how to join them; a
+tuning loop cannot afford that. Each row carries pass rate, tokens, cost,
+wall clock, planned vs. realised agent turns, gates passed and failed, and a
+status that distinguishes an unmeasured run from a scored zero.
+
+`scripts/run_codeprojecteval_ab.sh` is now a thin wrapper over it, so there is
+one implementation rather than two that drift. `CONCURRENCY=1` restores serial
+behaviour.
+
+The cache moved behind `orchestra.codeprojecteval.shared_cache`, which holds a
+`flock` around the read-modify-write and replaces the file atomically. The
+expensive computation deliberately runs *outside* the lock: holding it across a
+multi-minute pytest collection would serialise every concurrent run behind the
+first, which is the opposite of the point. A racing writer may compute the same
+value twice; it cannot corrupt the file.
+
+Repeats are capped at 5. Anything larger is more compute than this experiment
+has agreed to spend, and a driver that will happily accept `--repeats 10` is how
+that gets spent by accident.
+
+## 2026-08-09 — Give the cost axis real prices
+
+`estimated_cost_usd` was null on every record, so the Pareto frontier had no
+cost dimension at all. Three separate things were missing, and fixing any one of
+them alone would not have produced a number:
+
+* **No prices.** The registry listed `gpt-5-mini` and `gpt-5-codex` with null
+  rates and did not mention `gpt-5.4` at all — the model every RealBench and
+  CodeProjectEval run actually uses. It now carries OpenAI's public list prices
+  ($2.50/M input, $0.25/M cached input, $15/M output for `gpt-5.4`).
+* **No model name.** The Codex backend never stamped one into its metadata, so
+  the registry lookup could not be attempted even once prices existed.
+* **No cached-token count.** The SDK reports `cached_input_tokens` and the
+  backend discarded it. This is not a rounding detail: a Codex session re-sends
+  its transcript every turn, so most of its input is cache hits billed at a
+  tenth of the rate, and ignoring it overstates cost by several times.
+
+Telemetry events now carry `cached_tokens`, `model_name` and `cost_quality`, and
+the node is priced where the model name is still in scope rather than leaving it
+to whoever reads the log later.
+
+Costs are labelled rather than presented as invoices. A run with no cached-token
+figure is marked `upper_bound`, because list-price input is a ceiling for a
+cache-heavy session; the historical A/B runs all fall in this category. Two
+further gaps are documented in the pricing file: the long-context tier above
+272K input tokens cannot be detected from per-session aggregates, and Batch's
+50% discount does not apply to interactive runs.
+
+For scale, the pyjwt arms price out at roughly $1.39 (solo), $2.83 (multi) and
+$10.81 (single) as upper bounds — the single-segment arm spends four times the
+multi-segment one and scored zero.
+
 ## 2026-08-09 — A role pool and subgraph templates the planner selects from
 
 Every plan came back looking templated — always `implementation` followed by

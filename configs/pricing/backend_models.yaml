@@ -1,6 +1,46 @@
-pricing_version: "2026-07-20"
+# Public OpenAI list prices, USD per million tokens, short-context tier.
+#
+# Cached input is a subset of `input_tokens`, not an addition to it, so
+# `derive_cost_usd` bills `input - cached` at the input rate and `cached` at the
+# cached rate. Getting that backwards roughly quadruples the reported cost of a
+# Codex session, which re-sends its transcript on every turn and is therefore
+# mostly cache hits.
+#
+# Two things these numbers do NOT capture, both of which make a derived figure a
+# floor rather than an invoice:
+#   * The long-context tier (above 272K input tokens in a single request) is
+#     priced at $5.00 / $0.50 / $22.50. Usage arrives aggregated per Codex
+#     session, so there is no way to tell from it which requests crossed the
+#     threshold.
+#   * Batch's 50% discount does not apply to interactive agent runs.
+pricing_version: "2026-08-09"
 
 models:
+  # What the CodeProjectEval and RealBench runs actually use.
+  gpt-5.4:
+    input_per_million_usd: 2.50
+    output_per_million_usd: 15.00
+    cached_input_per_million_usd: 0.25
+    source: openai_public_pricing_2026_08
+
+  gpt-5.4-mini:
+    input_per_million_usd: 0.75
+    output_per_million_usd: 4.50
+    cached_input_per_million_usd: 0.075
+    source: openai_public_pricing_2026_08
+
+  gpt-5.4-nano:
+    input_per_million_usd: 0.20
+    output_per_million_usd: 1.25
+    cached_input_per_million_usd: 0.02
+    source: openai_public_pricing_2026_08
+
+  gpt-5.5:
+    input_per_million_usd: 5.00
+    output_per_million_usd: 30.00
+    cached_input_per_million_usd: 0.50
+    source: openai_public_pricing_2026_08
+
   gpt-5-mini:
     input_per_million_usd: null
     output_per_million_usd: null

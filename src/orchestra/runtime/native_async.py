@@ -247,6 +247,28 @@ class NativeAsyncRuntime(RuntimeBackend):
                             "error": result.error,
                         },
                     )
+                # Imported here: orchestra.control imports this module, so a
+                # module-level import would close the cycle.
+                from orchestra.control.backend_usage import derive_cost_usd
+
+                # Price the node here rather than leaving it to whoever reads the
+                # log: the model name lives in the backend metadata and is gone
+                # by then, which is why every event carried a null cost.
+                node_model = next(
+                    (
+                        str(result.backend_metadata[key])
+                        for key in ("model_name", "model", "model_id")
+                        if result.backend_metadata.get(key)
+                    ),
+                    None,
+                )
+                node_cost, node_cost_quality = derive_cost_usd(
+                    prompt_tokens=result.usage.prompt_tokens,
+                    completion_tokens=result.usage.completion_tokens,
+                    cached_tokens=result.usage.cached_tokens,
+                    model_name=node_model,
+                    provider_cost_usd=result.usage.estimated_cost_usd,
+                )
                 await self._event(
                     context,
                     graph.graph.graph_id,
@@ -259,7 +281,10 @@ class NativeAsyncRuntime(RuntimeBackend):
                     latency_ms=result.latency_ms,
                     prompt_tokens=result.usage.prompt_tokens,
                     completion_tokens=result.usage.completion_tokens,
-                    estimated_cost_usd=result.usage.estimated_cost_usd,
+                    cached_tokens=result.usage.cached_tokens,
+                    model_name=node_model,
+                    estimated_cost_usd=node_cost,
+                    cost_quality=node_cost_quality,
                     status="succeeded" if result.succeeded else "failed",
                     metadata={
                         **({"error": result.error} if result.error else {}),

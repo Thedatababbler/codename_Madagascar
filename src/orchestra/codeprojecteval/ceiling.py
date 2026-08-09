@@ -14,7 +14,6 @@ fraction is computed up front and reported alongside the raw number.
 from __future__ import annotations
 
 import ast
-import json
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -22,6 +21,7 @@ from pathlib import Path
 
 from orchestra.codeprojecteval.dataset import CpeTask
 from orchestra.codeprojecteval.harness import expected_modules
+from orchestra.codeprojecteval.shared_cache import get_or_compute
 
 # Python convention rather than project-specific knowledge: an implementer is
 # expected to provide `__version__` without being told.
@@ -112,43 +112,37 @@ def collected_counts(
     above 1.0. The reference implementation is the only place these can be
     counted honestly, and the result is cached because it never changes.
     """
-    cache: dict[str, dict[str, int]] = {}
-    if cache_path and Path(cache_path).is_file():
-        cache = json.loads(Path(cache_path).read_text(encoding="utf-8"))
-        if task.task_id in cache:
-            return cache[task.task_id]
+    def _collect() -> dict[str, int]:
+        proc = subprocess.run(
+            [
+                str(python), "-m", "pytest", task.unit_tests, "--collect-only", "-q",
+                "--no-header", "-p", "no:cacheprovider", "-o", "addopts=",
+                "--continue-on-collection-errors",
+            ],
+            cwd=task.repo_root,
+            env={
+                "PYTHONPATH": str(task.repo_root),
+                "PATH": f"{Path(python).parent}:/usr/bin:/bin:/usr/local/bin",
+                "HOME": str(task.repo_root),
+            },
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        counts: dict[str, int] = {}
+        for line in (proc.stdout or "").splitlines():
+            node = line.strip()
+            if "::" not in node or not node.endswith(tuple("]") + tuple(")")) and "::" not in node:
+                continue
+            module = node.split("::", 1)[0]
+            if not module.endswith(".py"):
+                continue
+            counts[module] = counts.get(module, 0) + 1
+        return counts
 
-    proc = subprocess.run(
-        [
-            str(python), "-m", "pytest", task.unit_tests, "--collect-only", "-q",
-            "--no-header", "-p", "no:cacheprovider", "-o", "addopts=",
-            "--continue-on-collection-errors",
-        ],
-        cwd=task.repo_root,
-        env={
-            "PYTHONPATH": str(task.repo_root),
-            "PATH": f"{Path(python).parent}:/usr/bin:/bin:/usr/local/bin",
-            "HOME": str(task.repo_root),
-        },
-        capture_output=True,
-        text=True,
-        check=False,
+    return get_or_compute(
+        Path(cache_path) if cache_path else None, task.task_id, _collect
     )
-    counts: dict[str, int] = {}
-    for line in (proc.stdout or "").splitlines():
-        node = line.strip()
-        if "::" not in node or not node.endswith(tuple("]") + tuple(")")) and "::" not in node:
-            continue
-        module = node.split("::", 1)[0]
-        if not module.endswith(".py"):
-            continue
-        counts[module] = counts.get(module, 0) + 1
-
-    if cache_path:
-        cache[task.task_id] = counts
-        Path(cache_path).parent.mkdir(parents=True, exist_ok=True)
-        Path(cache_path).write_text(json.dumps(cache, indent=2), encoding="utf-8")
-    return counts
 
 
 def analyze_ceiling(task: CpeTask, *, collected: dict[str, int] | None = None) -> CeilingReport:

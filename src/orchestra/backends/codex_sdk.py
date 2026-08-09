@@ -279,6 +279,7 @@ class CodexSDKBackend:
         thread_id = ""
         final_response = ""
         usage = LLMUsage()
+        reasoning_tokens = 0
         max_attempts = 1 + _transient_retry_budget()
         transient_retries = 0
         for attempt in range(1, max_attempts + 1):
@@ -308,17 +309,27 @@ class CodexSDKBackend:
                             # TokenUsage / breakdown shapes vary by SDK build.
                             last = getattr(turn_usage, "last", None) or turn_usage
                             total = getattr(turn_usage, "total", None) or last
+                            prompt = int(
+                                getattr(total, "input_tokens", 0)
+                                or getattr(total, "prompt_tokens", 0)
+                                or 0
+                            )
+                            # A Codex session re-sends its transcript every turn,
+                            # so most of its input is cache hits billed at a tenth
+                            # of the rate. Dropping this figure -- as this did --
+                            # makes a derived cost several times the real one.
+                            cached = int(getattr(total, "cached_input_tokens", 0) or 0)
                             usage = LLMUsage(
-                                prompt_tokens=int(
-                                    getattr(total, "input_tokens", 0)
-                                    or getattr(total, "prompt_tokens", 0)
-                                    or 0
-                                ),
+                                prompt_tokens=prompt,
                                 completion_tokens=int(
                                     getattr(total, "output_tokens", 0)
                                     or getattr(total, "completion_tokens", 0)
                                     or 0
                                 ),
+                                cached_tokens=min(cached, prompt),
+                            )
+                            reasoning_tokens = int(
+                                getattr(total, "reasoning_output_tokens", 0) or 0
                             )
                     finally:
                         if hasattr(client, "__aexit__"):
@@ -439,5 +450,11 @@ class CodexSDKBackend:
                 "sandbox": sandbox_name,
                 "sandbox_override": sandbox_override or None,
                 "codex_transient_retries": transient_retries,
+                # The cost registry keys on the model name, and this backend
+                # never stamped one, so every Codex node priced as unavailable
+                # no matter what the registry contained.
+                "model_name": request.model.name if request.model else None,
+                "backend_kind": "codex_sdk",
+                "reasoning_output_tokens": reasoning_tokens,
             },
         )

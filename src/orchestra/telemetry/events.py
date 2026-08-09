@@ -16,6 +16,11 @@ class TelemetryEvent(BaseModel):
     latency_ms: int | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    # Cached input is a subset of prompt_tokens billed at a tenth of the rate.
+    # Without it a Codex node's cost is an upper bound rather than a figure.
+    cached_tokens: int | None = None
+    model_name: str | None = None
     estimated_cost_usd: float | None = None
+    cost_quality: str | None = None
     status: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
