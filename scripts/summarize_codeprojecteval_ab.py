@@ -13,6 +13,7 @@ import json
 import statistics
 from collections import defaultdict
 from functools import cache
+from hashlib import sha1
 from pathlib import Path
 
 import yaml
@@ -68,6 +69,27 @@ def _engine(run_dir: Path) -> str:
     return "role_pool" if topology.startswith("template:") else "legacy_chain"
 
 
+def _condition(run_dir: Path) -> str:
+    """Engine plus the plan it executed.
+
+    Same engine is not the same condition. One bplustree run replayed a legacy
+    four-agent plan under the template builder while its batch-mates ran a
+    five-agent plan that added a spec auditor and a gate repairer; grouping on
+    the engine alone would have averaged those together.
+    """
+    shape: list[str] = []
+    for path in sorted(Path(run_dir).glob("*/generated/graphs/*.yaml")):
+        metadata = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get(
+            "metadata"
+        ) or {}
+        roles = ",".join(
+            str(agent.get("role")) for agent in metadata.get("agent_roster") or []
+        )
+        shape.append(f"{metadata.get('template_id') or metadata.get('topology')}({roles})")
+    digest = sha1("|".join(shape).encode("utf-8")).hexdigest()[:7] if shape else "none"
+    return f"{_engine(run_dir)}/{digest}"
+
+
 @cache
 def _ceiling(task_id: str) -> CeilingReport:
     task = load_task(task_id)
@@ -100,6 +122,7 @@ def _collect(root: Path) -> dict[tuple[str, str], list[dict]]:
                 "run_error": result.get("error"),
             }
             entry["engine"] = _engine(batch)
+            entry["condition"] = _condition(batch)
             entry["agent_turns_run"] = _realized_turns(batch)
             if hidden_path.is_file():
                 hidden = json.loads(hidden_path.read_text(encoding="utf-8"))
@@ -186,7 +209,7 @@ def main() -> int:
                 scored_entries = [
                     e for e in scored_entries if e.get("engine") == args.engine
                 ]
-            engines = sorted({e.get("engine", "unknown") for e in scored_entries})
+            engines = sorted({e.get("condition", "unknown") for e in scored_entries})
             if len(engines) > 1:
                 # Averaging across builders would report a code change as an
                 # effect of the arm. Keep one and say which.
@@ -198,14 +221,14 @@ def main() -> int:
                 kept = max(
                     engines,
                     key=lambda name: (
-                        sum(1 for e in scored_entries if e.get("engine") == name),
-                        _ENGINE_RECENCY.get(name, 0),
+                        sum(1 for e in scored_entries if e.get("condition") == name),
+                        _ENGINE_RECENCY.get(name.split("/")[0], 0),
                     ),
                 )
-                dropped = [e["batch"] for e in scored_entries if e.get("engine") != kept]
-                scored_entries = [e for e in scored_entries if e.get("engine") == kept]
+                dropped = [e["batch"] for e in scored_entries if e.get("condition") != kept]
+                scored_entries = [e for e in scored_entries if e.get("condition") == kept]
                 print(
-                    f"  ! {task}/{arm}: mixed engines {engines}; scoring only "
+                    f"  ! {task}/{arm}: mixed conditions {engines}; scoring only "
                     f"{kept!r}, excluded {dropped}"
                 )
             stats = {
@@ -214,7 +237,7 @@ def main() -> int:
                 "unmeasured": [
                     e.get("batch") for e in entries if not e.get("measured", True)
                 ],
-                "engines": sorted({e.get("engine", "unknown") for e in entries}),
+                "conditions": sorted({e.get("condition", "unknown") for e in entries}),
                 # Every column describes the same set of runs as the pass rate.
                 # Averaging turns over runs that were excluded for being another
                 # engine would describe a system nobody is scoring.
