@@ -9,3 +9,8 @@ htmlcov/
 
 outputs/*
 !outputs/.gitkeep
+
+# Benchmark corpora live outside version control. RealBench was once swept in
+# by a `git add -A`, which put 12M lines and six LFS objects that no longer
+# exist on the server into a code branch and made the branch unpushable.
+data/
