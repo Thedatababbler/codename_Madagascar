@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-08-09 — Follow the graded score all the way down before believing in it
+
+The graded harness score was unit tested at every station and still did not
+arrive. A scheduler run with the fast loop off — the configuration every A/B
+run uses — shows why: the score reached the artifact and stopped there, because
+the objective record only ever read fast-loop candidates, and with the loop off
+there are none. The axis built to tell two failures apart was blank on exactly
+the runs meant to calibrate the tuning loop.
+
+`tests/integration/test_milestone_score_reaches_objectives.py` now runs the
+real scheduler against a harness that emits a graded score, and asserts the
+score lands on the attempt and in the objective record. Reverting the recording
+line turns it red, so it holds the wiring down rather than restating it.
+
+Following that path also surfaced a live crash. The catch-all branch of
+`classify_failure` passed `reason=` alongside a `**base_kwargs` that already
+contained `reason`, so every failure whose reason matched none of the named
+branches raised `TypeError` from inside the error handler. Unclassified
+failures were the one case the catch-all existed for, and it was the one case
+that could not run.
+
 ## 2026-08-09 — Give the fast loop something to climb
 
 Tuning was going to run inside the fast loop, which retries a single milestone

@@ -181,9 +181,11 @@ def diagnose_subtask_failure(
             infrastructure_related=False,
         )
 
+    # base_kwargs already carries `reason`; passing it again raised TypeError on
+    # every failure whose reason matched none of the branches above, so the
+    # catch-all crashed instead of catching.
     return FailureDiagnosis(
-        **base_kwargs,
-        reason=reason or SubtaskFailureReason.UNKNOWN,
+        **{**base_kwargs, "reason": reason or SubtaskFailureReason.UNKNOWN},
         retryable=True,
         concise_feedback=_truncate(message or "Subtask failed."),
         recommended_edit_types=["prompt_feedback", "fresh_retry"],
