@@ -842,22 +842,39 @@ def _collect_sessions(
 
 
 def _cost_from_result(result: GraphExecutionResult) -> CostRecord:
+    from orchestra.control.backend_usage import derive_cost_usd
+
     prompt = 0
     completion = 0
+    cached = 0
     calls = 0
+    model_name: str | None = None
     for meta in result.state.node_backend_metadata.values():
         usage = meta.get("usage") or {}
         if isinstance(usage, dict):
             prompt += int(usage.get("prompt_tokens") or 0)
             completion += int(usage.get("completion_tokens") or 0)
+            cached += int(usage.get("cached_tokens") or 0)
+        model_name = model_name or meta.get("model_name")
         if meta.get("backend_status") or meta.get("session_ref"):
             calls += 1
     if calls == 0:
         calls = 1
-    estimated = (prompt * 0.15 + completion * 0.60) / 1_000_000
+    # This used to carry its own price list, and it had drifted to a model an
+    # order of magnitude cheaper than the one being run, with no allowance for
+    # the cache hits that are most of a Codex session's input. Candidate costs
+    # have to come off the same table as the run's cost axis or the two
+    # disagree about what a candidate spent.
+    estimated, _quality = derive_cost_usd(
+        prompt_tokens=prompt,
+        completion_tokens=completion,
+        cached_tokens=cached,
+        model_name=model_name,
+        provider_cost_usd=None,
+    )
     return CostRecord(
         prompt_tokens=prompt,
         completion_tokens=completion,
-        estimated_cost_usd=estimated,
+        estimated_cost_usd=estimated or 0.0,
         backend_calls=calls,
     )

@@ -46,7 +46,7 @@ class Trial:
     arm: str
     seed: int
     run_id: str
-    plan_file: Path
+    plan_file: Path | None
 
     @property
     def label(self) -> str:
@@ -229,15 +229,21 @@ def execute(trial: Trial, args: argparse.Namespace) -> TrialResult:
     log = batch_dir / "sweep.log"
     codex_home = isolated_codex_home(trial.run_id, args.output_root)
     started = time.monotonic()
+    cmd = [
+        "uv", "run", "python", "-m", "orchestra.cli.run_codeprojecteval_decomp",
+        "--task-id", trial.task_id,
+        "--arm", trial.arm,
+        "--output-root", str(args.output_root),
+        "--run-id", trial.run_id,
+    ]
+    if args.config:
+        cmd += ["--config", str(args.config)]
+    # A/B trials replay a frozen plan so the arms differ only in gating. A probe
+    # has nothing to hold fixed yet and samples the planner instead.
+    if trial.plan_file is not None:
+        cmd += ["--plan-file", str(trial.plan_file)]
     code = _run(
-        [
-            "uv", "run", "python", "-m", "orchestra.cli.run_codeprojecteval_decomp",
-            "--task-id", trial.task_id,
-            "--plan-file", str(trial.plan_file),
-            "--arm", trial.arm,
-            "--output-root", str(args.output_root),
-            "--run-id", trial.run_id,
-        ],
+        cmd,
         log=log,
         timeout=args.run_timeout,
         codex_home=codex_home,
@@ -267,14 +273,17 @@ def build_trials(args: argparse.Namespace, stamp: str) -> list[Trial]:
     trials: list[Trial] = []
     for task_id in args.tasks:
         for arm in args.arms:
-            plan = args.plans / f"{task_id}.{arm}.json"
-            if not plan.is_file():
-                raise SystemExit(f"missing frozen plan: {plan}")
+            plan: Path | None = None
+            if arm != "planner":
+                plan = args.plans / f"{task_id}.{arm}.json"
+                if not plan.is_file():
+                    raise SystemExit(f"missing frozen plan: {plan}")
+            prefix = "probe" if arm == "planner" else "ab"
             for seed in range(1, args.repeats + 1):
                 trials.append(
                     Trial(
                         task_id=task_id, arm=arm, seed=seed,
-                        run_id=f"ab-{task_id}-{arm}-r{seed}-{stamp}",
+                        run_id=f"{prefix}-{task_id}-{arm}-r{seed}-{stamp}",
                         plan_file=plan,
                     )
                 )
@@ -302,6 +311,13 @@ def main() -> int:
     ap.add_argument("--eval-timeout", type=float, default=1200.0)
     ap.add_argument("--per-test-timeout", type=float, default=5.0)
     ap.add_argument("--out", type=Path, default=None, help="Trial record (JSONL).")
+    ap.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="Experiment config. The default has the repair loop off; a tuning "
+        "run needs one that turns it on.",
+    )
     args = ap.parse_args()
 
     if args.repeats > 5:

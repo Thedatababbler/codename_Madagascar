@@ -69,6 +69,7 @@ from orchestra.executors.registry import NodeExecutorRegistry
 from orchestra.ir.artifacts import ArtifactBundle, create_artifact
 from orchestra.ir.contracts import load_contracts
 from orchestra.ir.graph import load_graph
+from orchestra.ir.nodes import AgentNodeSpec
 from orchestra.llm.openai_compatible_async import OpenAICompatibleAsyncClient
 from orchestra.realbench.milestone_planner import plan_milestones
 from orchestra.realbench.subgraph_builder import (
@@ -291,6 +292,42 @@ def read_tuning_config(config: dict[str, Any]) -> tuple[int, TuningWeights]:
     return candidates, weights
 
 
+def _agent_count(graph_template: str) -> int:
+    """Agent nodes in a milestone's subgraph, which is what a call is spent on."""
+    try:
+        graph = load_graph(graph_template)
+    except Exception:  # noqa: BLE001 - a budget must not be able to fail a run
+        return 1
+    count = sum(1 for node in graph.nodes if isinstance(node, AgentNodeSpec))
+    return max(count, 1)
+
+
+def _fast_loop_budget(candidates: int, plan: TaskPlan) -> FastLoopBudget:
+    """Size the loop's ceilings off the plan, not off constants.
+
+    Every ceiling here is capable of truncating a tuning run silently, and the
+    defaults are all sized for milestones far smaller than these. Backend calls
+    are counted per agent node, so a candidate on a four-agent milestone spends
+    four of them, not one. The wall clock is worse than a cut-off: the candidate
+    generator clamps each candidate's timeout to it, so a low value quietly
+    tunes under a stricter deadline than the baseline ran with -- which would
+    make the comparison meaningless rather than merely short.
+    """
+    if candidates <= 0:
+        return FastLoopBudget(max_candidates=0, max_total_backend_calls=0)
+    widest = max((_agent_count(sub.local_graph_template) for sub in plan.subtasks), default=1)
+    slowest = max(
+        (float(sub.budget.timeout_seconds or 0) for sub in plan.subtasks), default=0.0
+    )
+    # +1 attempt: the original run, then one retry per candidate.
+    return FastLoopBudget(
+        max_candidates=candidates,
+        max_total_backend_calls=candidates * widest + widest,
+        max_wall_time_seconds=int(max(slowest * (candidates + 1), 600.0)),
+        max_attempts_per_subtask=candidates + 1,
+    )
+
+
 async def _run_one(
     *,
     task_id: str,
@@ -478,10 +515,7 @@ async def _run_one(
     # Off by default: the A/B arms measure what decomposition buys, and a repair
     # loop that fires in one arm and not the other would be measured as part of
     # the arm. Turn it on deliberately, for tuning runs.
-    fast_loop_budget = FastLoopBudget(
-        max_candidates=fast_loop_candidates,
-        max_total_backend_calls=fast_loop_candidates * 2,
-    )
+    fast_loop_budget = _fast_loop_budget(fast_loop_candidates, plan)
     scheduler = ReadySubtaskScheduler(
         runtime=runtime,
         artifact_store=artifact_store,

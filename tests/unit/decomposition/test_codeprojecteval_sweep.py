@@ -57,6 +57,47 @@ def test_a_missing_frozen_plan_fails_before_any_compute_is_spent(tmp_path: Path)
         sweep.build_trials(args, "STAMP")
 
 
+def test_a_probe_samples_the_planner_instead_of_replaying_a_plan(tmp_path: Path) -> None:
+    """Probes look for a repository whose gate fails; nothing is frozen yet."""
+    trials = sweep.build_trials(_args(tmp_path, arms=["planner"], repeats=1), "STAMP")
+
+    assert [t.plan_file for t in trials] == [None]
+    # Named apart from A/B runs so a summariser cannot average the two together.
+    assert trials[0].run_id.startswith("probe-")
+
+
+def test_the_command_carries_the_config_and_omits_a_plan_it_does_not_have(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The repair loop is off in the default config, so a tuning run must
+    be able to name a different one."""
+    seen: list[list[str]] = []
+
+    def fake_run(cmd, *, log, timeout, codex_home=None):  # noqa: ANN001
+        seen.append(cmd)
+        return 1  # non-zero: skip scoring, which needs a real batch directory
+
+    monkeypatch.setattr(sweep, "_run", fake_run)
+    monkeypatch.setattr(sweep, "isolated_codex_home", lambda *a, **k: None)
+    args = _args(
+        tmp_path,
+        arms=["planner"],
+        repeats=1,
+        config=tmp_path / "tuning.yaml",
+        run_timeout=1.0,
+        eval_timeout=1.0,
+        per_test_timeout=5.0,
+    )
+    trial = sweep.build_trials(args, "STAMP")[0]
+
+    sweep.execute(trial, args)
+
+    cmd = seen[0]
+    assert "--config" in cmd
+    assert str(tmp_path / "tuning.yaml") in cmd
+    assert "--plan-file" not in cmd
+
+
 def test_trials_actually_overlap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Four trials at concurrency four must not take four times one trial.
 

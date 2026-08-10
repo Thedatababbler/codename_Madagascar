@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-08-10 — Ceilings that would have ended a tuning run without saying so
+
+Turning the repair loop on for the first time meant reading its budget, and
+every ceiling in it was sized for milestones far smaller than these. Backend
+calls are counted per agent node, so a candidate on a four-agent milestone
+spends four of them, while the runner asked for `candidates * 2` — not enough
+to pay for one candidate. The wall clock was worse than a cut-off: the
+candidate generator clamps each candidate's timeout to it, so the 600s default
+would have tuned under a deadline a third of the one the baseline ran with, and
+reported the difference as a result. All three ceilings now come off the plan.
+
+The loop also carried its own price list, at $0.15/$0.60 per million against a
+model billed at $2.50/$15.00, ignoring the cache hits that are most of a Codex
+session's input. Candidate costs now come off the same table as the run's cost
+axis, because two disagreeing answers to "what did this candidate spend" is
+worse than one.
+
+`run_codeprojecteval_sweep.py` takes `--config` and an arm named `planner` that
+samples a plan rather than replaying a frozen one. A probe looking for a
+repository whose gate fails has nothing to hold fixed yet, and its runs are
+named apart from A/B runs so no summariser can average the two.
+
 ## 2026-08-09 — Follow the graded score all the way down before believing in it
 
 The graded harness score was unit tested at every station and still did not
