@@ -28,6 +28,7 @@ from orchestra.control.canonical_workspace import (
 )
 from orchestra.control.failure import classify_subtask_outcome
 from orchestra.control.fast_loop.controller import FastLoopController
+from orchestra.control.fast_loop.pareto import ParetoSelectionConfig
 from orchestra.control.fast_loop.schemas import CostRecord, FastLoopBudget, WorkspaceChangeSet
 from orchestra.control.fast_loop.selector import DeterministicCandidateSelector
 from orchestra.control.fast_loop.workspace import GitCandidateWorkspaceManager
@@ -231,6 +232,8 @@ class ReadySubtaskScheduler:
         max_concurrent_subtasks: int = 1,
         budget: FastLoopBudget | None = None,
         selector: DeterministicCandidateSelector | None = None,
+        pareto: ParetoSelectionConfig | None = None,
+        design_search: bool = False,
         allow_concurrent_subtasks: bool = False,
         slow_loop: SlowLoopController | None = None,
         slow_loop_config: SlowLoopConfig | None = None,
@@ -257,6 +260,8 @@ class ReadySubtaskScheduler:
             contracts_dir=contracts_dir,
             budget=budget,
             selector=selector,
+            pareto=pareto,
+            design_search=design_search,
             workspace_manager=self._candidate_ws,
             persist_checkpoints=False,
         )

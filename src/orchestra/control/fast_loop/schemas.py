@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validat
 from orchestra.backends.base import BackendSessionRef
 from orchestra.backends.capabilities import SessionPolicy
 from orchestra.control.task_state import BackendSessionRecord, SubtaskFailureReason
+from orchestra.ir.edges import EdgeCondition
 from orchestra.ir.graph import OrchestraGraph
 from orchestra.workspaces.base import WorkspaceRef
 
@@ -59,15 +60,80 @@ class SessionPolicyEdit(BaseModel):
     parent_session_ref: BackendSessionRef | None = None
 
 
+class AddRoleAgentEdit(BaseModel):
+    """Insert a role-pool agent into the milestone's subgraph.
+
+    The `local_agent` family of the design document. Unlike
+    ``add_verifier_node``, which can only attach one hardcoded structured
+    verifier, this instantiates any capability from ``configs/roles`` and so is
+    the edit that lets the search explore designs rather than retries.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    type: Literal["add_role_agent"] = "add_role_agent"
+    role_id: str
+    after_node_id: str
+    # Parallel placement is refused for editing roles: two agents writing the
+    # same workspace concurrently is the one topology the templates forbid.
+    parallel: bool = False
+
+
+class DropAgentEdit(BaseModel):
+    """Remove a non-editing agent from the milestone's subgraph.
+
+    Without an edit that can make a candidate *cheaper* than its parent, every
+    point on the cost axis is worse-or-equal and the frontier collapses into
+    "everything that passed". This is the edit that gives cost a direction to
+    trade against quality.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    type: Literal["drop_agent"] = "drop_agent"
+    node_id: str
+
+
+class RewireEdgeEdit(BaseModel):
+    """Re-gate or re-order an existing edge.
+
+    The `local_edge` family. ``condition`` gates a downstream agent on an
+    upstream failure, which is how a repair stage stops costing anything on the
+    happy path; ``serialize`` orders two agents that currently run in parallel.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    type: Literal["rewire_edge"] = "rewire_edge"
+    edge_id: str
+    condition: EdgeCondition | None = None
+    clear_condition: bool = False
+
+    @model_validator(mode="after")
+    def _one_intent(self) -> RewireEdgeEdit:
+        if self.clear_condition and self.condition is not None:
+            raise ValueError("rewire_edge cannot both set and clear a condition")
+        if not self.clear_condition and self.condition is None:
+            raise ValueError("rewire_edge needs a condition to set or clear_condition")
+        return self
+
+
 LocalEdit = Annotated[
     PromptFeedbackEdit
     | ModelOverrideEdit
     | ToolPolicyEdit
     | BudgetAdjustmentEdit
     | AddVerifierNodeEdit
-    | SessionPolicyEdit,
+    | SessionPolicyEdit
+    | AddRoleAgentEdit
+    | DropAgentEdit
+    | RewireEdgeEdit,
     Field(discriminator="type"),
 ]
+
+#: Edits that change the subgraph's shape rather than one node's parameters.
+#: The fast loop's search is a design search only to the extent that it can
+#: reach these.
+TOPOLOGY_EDIT_TYPES = frozenset(
+    {"add_verifier_node", "add_role_agent", "drop_agent", "rewire_edge"}
+)
 
 
 class FailureDiagnosis(BaseModel):
@@ -81,6 +147,10 @@ class FailureDiagnosis(BaseModel):
     concise_feedback: str
     recommended_edit_types: list[str] = Field(default_factory=list)
     infrastructure_related: bool = False
+    # How far the acceptance harness got before failing. Which capability the
+    # milestone was missing follows from this, so a design edit can address the
+    # stage that actually failed rather than adding an agent at random.
+    furthest_stage: str = ""
 
 
 class CostRecord(BaseModel):
@@ -240,6 +310,12 @@ class FastLoopState(BaseModel):
     diagnosis: FailureDiagnosis
     candidates: list[CandidateRecord] = Field(default_factory=list)
     selected_candidate_id: str | None = None
+    # Which candidates were mutually non-dominating, and the rule that picked one
+    # of them. A frontier that always contains every candidate, or always exactly
+    # one, is a degenerate search, and that is only visible if the frontier is
+    # written down rather than inferred from the winner.
+    pareto_frontier: list[str] = Field(default_factory=list)
+    selection_rule: str = ""
     exhausted: bool = False
     # Control-plane-only cost (e.g. future LLM generators). Deterministic gen = 0.
     control_plane_cost: CostRecord = Field(default_factory=CostRecord)

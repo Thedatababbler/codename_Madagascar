@@ -23,20 +23,35 @@ experiment:
   # gets measured as part of that arm, so the comparison runs turn it off and
   # tuning runs turn it on deliberately.
   tuning:
-    # Repair candidates per failed milestone. Two is the smallest number that
-    # makes the selector do anything: with one candidate there is nothing to
-    # rank, and the graded score exists precisely to order candidates that all
-    # failed their gate.
-    fast_loop_candidates: 2
-    # A candidate whose gate passed. Nothing outranks this unless
-    # allow_cost_to_outrank_gate is set.
+    # Design candidates per failed milestone. Each one re-runs the milestone from
+    # the last committed snapshot, which on the measured repositories is ~13 min
+    # and ~$1.50, so this number multiplies a run's duration directly. Three is
+    # the first value that can show whether the frontier carries information:
+    # an anchor that only receives the failure report, plus two design edits.
+    fast_loop_candidates: 3
+    # One atomic edit per candidate, and the trade-offs between them kept as a
+    # frontier instead of collapsed into a weighted sum. Off, candidates vary
+    # only retry parameters, and the effective candidate count is two whatever
+    # is configured here.
+    design_search: true
+    pareto:
+      # quality_first commits the best-scoring point on the frontier;
+      # balanced_knee can prefer a much cheaper near-miss.
+      rule: quality_first
+      # A difference smaller than the measurement's own resolution must not
+      # decide anything. Calibrated for candidates costing $1-2; see
+      # docs/fast_loop_pareto_protocol.md for the derivation of each.
+      epsilon:
+        # One unit of the coarsest weighted harness stage rounds to ~0.01.
+        quality: 0.02
+        # ~5% of an observed candidate's cost.
+        cost: 0.08
+        # Integer incident counts: one more incident is a real difference.
+        stability: 0.0
+    # The weighted scalar below is only consulted when design_search is off, or
+    # as the fallback when the frontier yields nothing to commit.
     gate_weight: 1.0
-    # How far a candidate got, graded by harness stage. This is the axis that
-    # separates two failures; with a bare pass/fail the loop could only pick
-    # the cheapest one.
     harness_weight: 0.5
-    # Applied to tokens over token_reference. Small on purpose: buying a pass
-    # with more tokens is the trade being measured, not one to optimise away.
     token_weight: 0.05
     token_reference: 1000000
     allow_cost_to_outrank_gate: false

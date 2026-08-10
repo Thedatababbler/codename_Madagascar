@@ -1,4 +1,4 @@
-"""Deterministic Fast Loop candidate selector (not Pareto)."""
+"""Fast Loop candidate selectors: a scalar one, and the Pareto one."""
 
 from __future__ import annotations
 
@@ -9,6 +9,11 @@ from orchestra.control.fast_loop.objectives import (
     MilestoneObjective,
     TuningWeights,
     rank,
+)
+from orchestra.control.fast_loop.pareto import (
+    ParetoSelectionConfig,
+    frontier,
+    select_from_frontier,
 )
 from orchestra.control.fast_loop.schemas import (
     CandidateRecord,
@@ -96,3 +101,50 @@ class DeterministicCandidateSelector:
             )
             return tied[0]
         return best
+
+
+class ParetoCandidateSelector:
+    """Keep the designs that trade off, then commit one of them.
+
+    The scalar selector above cannot express incomparability: it returns one
+    winner from any input, so a milestone whose candidates genuinely trade
+    quality against cost looks the same as one where a single candidate dominates
+    everything. This one builds the frontier first and records it, which is what
+    makes a degenerate search visible instead of invisible.
+
+    It falls back to the scalar selector when the frontier yields nothing to
+    commit, so switching this on cannot fail a run that would otherwise have
+    committed. A candidate with unmeasurable axes is not eliminated: nothing can
+    dominate it either, so incomparability keeps it in play and a missing price
+    cannot lose a milestone that passed its gate.
+    """
+
+    def __init__(
+        self,
+        config: ParetoSelectionConfig | None = None,
+        *,
+        fallback: CandidateSelector | None = None,
+    ) -> None:
+        self.config = config or ParetoSelectionConfig()
+        self.fallback = fallback or DeterministicCandidateSelector()
+        self.last_frontier: list[str] = []
+        self.last_rule: str = ""
+
+    def select(
+        self,
+        candidates: Sequence[CandidateRecord],
+        budget: FastLoopBudget,
+    ) -> CandidateRecord | None:
+        points = frontier(candidates, self.config)
+        self.last_frontier = [c.candidate_id for c in points]
+        winner = select_from_frontier(points, self.config)
+        if winner is None:
+            self.last_rule = "scalar_fallback"
+            return self.fallback.select(candidates, budget)
+        if winner.failure_reason is SubtaskFailureReason.INFRA:
+            # An infrastructure failure says nothing about the design, so it must
+            # not be committed as though the design were the reason it won.
+            self.last_rule = "scalar_fallback"
+            return self.fallback.select(candidates, budget)
+        self.last_rule = self.config.rule
+        return winner

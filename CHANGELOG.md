@@ -1,5 +1,86 @@
 # Changelog
 
+## 2026-08-10 — Make the fast loop search designs, not retries
+
+The fast loop was described as a Pareto search over a milestone's subgraph and
+was neither. Candidates varied prompt feedback, session policy, a budget bump
+and a model swap — retry parameters, not designs — and `DeterministicCandidate-
+Selector` collapsed them with a weighted sum, which returns exactly one winner
+from any input and cannot say that two candidates are incomparable. The Pareto
+machinery existed but was reachable only from the slow loop, so at the milestone
+level no frontier was ever built.
+
+Sizing the search turned up the reason raising `max_candidates` had bought
+nothing: `k` was clamped to 3, `model_override` needs a second model in the pool
+and Codex offers one, and the verifier was off by default. The effective
+candidate count was **2 regardless of configuration**. New edit types were a
+precondition for a wider search, not an extra.
+
+Three atomic edits now cover the archive's `local_agent` / `local_edge`
+families. `add_role_agent` instantiates any capability from `configs/roles`,
+rather than the one hardcoded structured verifier. `rewire_edge` gates an edge on
+an upstream failure or clears a condition. `drop_agent` removes a read-only
+agent, and matters more than it looks: with no edit that can make a candidate
+*cheaper* than its parent, every point on the cost axis is worse-or-equal and the
+frontier degenerates into "everything that passed".
+
+`DesignSearchCandidateGenerator` emits one atomic edit per candidate on top of a
+shared repair preamble. The preamble — the failure report, and a fresh session —
+is held constant rather than varied, because a repair candidate denied the
+evidence of what went wrong is strictly worse than the run it replaces, and
+paying to measure that is waste rather than a trade-off. A candidate that wins
+now names which single edit won.
+
+`ParetoCandidateSelector` builds the frontier on quality / cost / stability and
+records it on `FastLoopState`, so a degenerate search is visible in the summary
+instead of being inferred from the winner. Selection prefers gate-passing points
+— a cheap failure can legitimately sit on the frontier, but committing it would
+freeze unaccepted work — and falls back to the scalar selector when the frontier
+yields nothing to commit, so switching this on cannot fail a run that would
+otherwise have committed.
+
+Epsilon tolerances are configured, not implicit: quality 0.02 (one unit of the
+coarsest weighted harness stage rounds to ~0.01), cost $0.08 (~5% of an observed
+candidate; one real pair differed by 0.09%, which has to read as a tie),
+stability 0 (integer incident counts). Calibrated for candidates costing $1–2 and
+documented as such.
+
+Two hazards found by writing the integration test rather than by reasoning:
+
+* `CostRecord.estimated_cost_usd` is a float defaulting to `0.0`, not an
+  optional, so an unpriced candidate arrived at the frontier looking free — and
+  free dominates everything. Spending tokens while costing exactly zero is now
+  read as missing evidence.
+* An inserted agent reuses its anchor's contract, and the compiler requires the
+  node to declare a slot carrying the contract's input schema. Mirroring only the
+  anchor's output produced a graph that failed to compile.
+
+`tests/integration/test_fast_loop_design_frontier.py` drives the real scheduler
+with a backend and harness that give each candidate a different score and cost,
+and asserts two mutually non-dominating designs survive. It produces a frontier
+of `{feedback-only: 0.5 at $0.53, add_dependency_resolver: 0.9 at $1.86}` with
+the equal-scoring-but-dearer budget candidate correctly dominated. Unit tests
+alone cannot catch a search whose candidates all land on the same point, which is
+the failure mode that matters.
+
+`docs/fast_loop_pareto_protocol.md` records the axes, why `latency` is not one of
+them, the provisional definition of stability (a monotone inverse of incident
+count — revisit once a frontier exists where it separates candidates), the
+epsilon derivations, and the measured search cost: 13.5 min / $1.90 for a run
+with no repair, plus 13.3 min / $1.52 per candidate. Candidates are evaluated
+serially, so `k` multiplies a run's duration; repeats run concurrently, so
+wall-clock is one run's duration. `k=3` costs about 13 minutes more than `k=2`,
+not double.
+
+### Standing rules
+
+* Check the frontier is not degenerate before believing a tuning result. A
+  frontier that always holds every candidate, or always exactly one, is a
+  ranking with extra steps.
+* Parallelising candidates inside a run is not worth doing. Total agent-minutes
+  is fixed, the provider endpoint is the bottleneck, and running repeats
+  concurrently already saturates it.
+
 ## 2026-08-10 — Credit the candidate that actually won
 
 The first run with the repair loop on rescued a failed milestone and the

@@ -14,10 +14,13 @@ from orchestra.cli.validate_graph import build_compiler
 from orchestra.control.failure import classify_subtask_outcome
 from orchestra.control.fast_loop.budget import FastLoopBudgetTracker, spent_from_state
 from orchestra.control.fast_loop.candidate_generator import (
+    DesignSearchCandidateGenerator,
+    LocalCandidateGenerator,
     RuleBasedLocalCandidateGenerator,
 )
 from orchestra.control.fast_loop.capability import validate_candidate_against_capabilities
 from orchestra.control.fast_loop.diagnosis import diagnose_subtask_failure
+from orchestra.control.fast_loop.pareto import ParetoSelectionConfig
 from orchestra.control.fast_loop.schemas import (
     BackendModelPool,
     CandidateRecord,
@@ -29,7 +32,11 @@ from orchestra.control.fast_loop.schemas import (
     LocalCandidate,
     StabilityIncident,
 )
-from orchestra.control.fast_loop.selector import DeterministicCandidateSelector
+from orchestra.control.fast_loop.selector import (
+    CandidateSelector,
+    DeterministicCandidateSelector,
+    ParetoCandidateSelector,
+)
 from orchestra.control.fast_loop.workspace import (
     CandidateWorkspaceError,
     GitCandidateWorkspaceManager,
@@ -68,11 +75,13 @@ class FastLoopController:
         task_checkpoint_store: TaskCheckpointStore,
         contracts_dir: str = "configs/contracts",
         workspace_manager: GitCandidateWorkspaceManager | None = None,
-        generator: RuleBasedLocalCandidateGenerator | None = None,
-        selector: DeterministicCandidateSelector | None = None,
+        generator: LocalCandidateGenerator | None = None,
+        selector: CandidateSelector | None = None,
         budget: FastLoopBudget | None = None,
         capabilities: Mapping[str, BackendCapabilities] | None = None,
         model_pools: Mapping[str, BackendModelPool] | None = None,
+        pareto: ParetoSelectionConfig | None = None,
+        design_search: bool = False,
         clock=None,
         persist_checkpoints: bool = True,
     ) -> None:
@@ -82,11 +91,23 @@ class FastLoopController:
         self.contracts_dir = contracts_dir
         self.workspace_manager = workspace_manager or GitCandidateWorkspaceManager()
         self.compiler = build_compiler(contracts_dir)
-        self.generator = generator or RuleBasedLocalCandidateGenerator(
-            compiler=self.compiler,
-            model_pools=model_pools,
-        )
-        self.selector = selector or DeterministicCandidateSelector()
+        # Design search and Pareto selection travel together: one atomic edit per
+        # candidate is what makes a frontier readable, and a frontier is what makes
+        # varying the design worth paying for. Enabling one without the other
+        # produces either an unreadable frontier or a search with nothing to
+        # search over.
+        if design_search:
+            self.generator = generator or DesignSearchCandidateGenerator(
+                compiler=self.compiler,
+                model_pools=model_pools,
+            )
+            self.selector = selector or ParetoCandidateSelector(pareto)
+        else:
+            self.generator = generator or RuleBasedLocalCandidateGenerator(
+                compiler=self.compiler,
+                model_pools=model_pools,
+            )
+            self.selector = selector or DeterministicCandidateSelector()
         self.budget = budget or FastLoopBudget()
         self.budget_tracker = FastLoopBudgetTracker(self.budget, clock=clock)
         self.capabilities = dict(capabilities or {})
@@ -324,6 +345,12 @@ class FastLoopController:
             await self._save_checkpoint(state)
 
         winner = self.selector.select(fl_state.candidates, self.budget)
+        # Recorded whether or not a winner emerged: a search that ended with an
+        # empty frontier is a different failure from one that found points and
+        # could not commit any of them, and the two are indistinguishable from the
+        # winner alone.
+        fl_state.pareto_frontier = list(getattr(self.selector, "last_frontier", []) or [])
+        fl_state.selection_rule = str(getattr(self.selector, "last_rule", "") or "scalar")
         if winner is None:
             fl_state.exhausted = True
             sub.status = SubtaskStatus.FAILED

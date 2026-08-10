@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -165,10 +167,13 @@ def test_the_graded_score_is_recorded_with_the_fast_loop_switched_off() -> None:
 
 def test_tuning_is_off_unless_a_config_asks_for_it() -> None:
     """A repair loop firing in one A/B arm would be measured as part of the arm."""
-    candidates, weights = read_tuning_config({"experiment": {}})
+    tuning = read_tuning_config({"experiment": {}})
 
-    assert candidates == 0
-    assert weights.allow_cost_to_outrank_gate is False
+    assert tuning.candidates == 0
+    assert tuning.weights.allow_cost_to_outrank_gate is False
+    # Design search changes what a candidate is, so it must never arrive by
+    # default in a run whose purpose is to measure something else.
+    assert tuning.design_search is False
 
 
 def test_the_shipped_codeprojecteval_config_keeps_tuning_off() -> None:
@@ -177,8 +182,41 @@ def test_the_shipped_codeprojecteval_config_keeps_tuning_off() -> None:
     config = yaml.safe_load(
         open("configs/experiments/codeprojecteval_decomp.yaml", encoding="utf-8")
     )
-    candidates, weights = read_tuning_config(config)
+    tuning = read_tuning_config(config)
 
-    assert candidates == 0
-    assert weights.gate_weight == 1.0
-    assert weights.harness_weight == 0.5
+    assert tuning.candidates == 0
+    assert tuning.weights.gate_weight == 1.0
+    assert tuning.weights.harness_weight == 0.5
+
+
+def test_the_pareto_axes_come_with_tolerances_whether_or_not_a_config_sets_them() -> None:
+    tuning = read_tuning_config({"experiment": {}})
+    assert set(tuning.pareto.epsilon) == {"quality", "cost", "stability"}
+    assert tuning.pareto.epsilon["quality"] > 0.0
+
+
+def test_a_config_can_widen_the_search_and_set_its_tolerances() -> None:
+    tuning = read_tuning_config(
+        {
+            "experiment": {
+                "tuning": {
+                    "fast_loop_candidates": 3,
+                    "design_search": True,
+                    "pareto": {"rule": "balanced_knee", "epsilon": {"cost": 0.25}},
+                }
+            }
+        }
+    )
+    assert tuning.candidates == 3
+    assert tuning.design_search is True
+    assert tuning.pareto.rule == "balanced_knee"
+    assert tuning.pareto.epsilon["cost"] == 0.25
+    # Unset axes keep their calibrated defaults rather than dropping to zero.
+    assert tuning.pareto.epsilon["quality"] > 0.0
+
+
+def test_an_unknown_selection_rule_is_refused_before_the_run_starts() -> None:
+    with pytest.raises(ValueError, match="unknown fast-loop selection rule"):
+        read_tuning_config(
+            {"experiment": {"tuning": {"pareto": {"rule": "vibes"}}}}
+        )

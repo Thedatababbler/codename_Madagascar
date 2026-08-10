@@ -102,11 +102,21 @@ def diagnose_subtask_failure(
 
     primary = _primary_failed_node(failed_ids, graph)
 
+    # Recorded on the attempt by the scheduler when the harness reported a graded
+    # result. Carried onto the diagnosis so candidate generation can pick an edit
+    # aimed at the stage that failed.
+    furthest_stage = ""
+    for attempt in subtask_state.attempts:
+        stage = (attempt.metadata or {}).get("furthest_stage")
+        if stage:
+            furthest_stage = str(stage)
+
     base_kwargs = {
         "reason": reason,
         "evidence_artifact_ids": _uniq(evidence),
         "failed_node_ids": failed_ids,
         "primary_failed_node_id": primary,
+        "furthest_stage": furthest_stage,
     }
 
     if reason is SubtaskFailureReason.HARNESS:

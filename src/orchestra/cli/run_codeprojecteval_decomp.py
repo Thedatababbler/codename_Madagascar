@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -54,6 +55,7 @@ from orchestra.control.fast_loop.objectives import (
     TuningWeights,
     milestone_objectives,
 )
+from orchestra.control.fast_loop.pareto import ParetoSelectionConfig
 from orchestra.control.fast_loop.schemas import FastLoopBudget
 from orchestra.control.fast_loop.selector import DeterministicCandidateSelector
 from orchestra.control.ready_scheduler import ReadySubtaskScheduler
@@ -268,14 +270,27 @@ def build_cpe_task_plan(
     return plan, effective_contracts_dir
 
 
-def read_tuning_config(config: dict[str, Any]) -> tuple[int, TuningWeights]:
+@dataclass(frozen=True)
+class TuningConfig:
+    """What the fast loop is allowed to try, and how it decides."""
+
+    candidates: int
+    weights: TuningWeights
+    # With design_search off, candidates vary retry parameters and one winner is
+    # picked by a weighted sum. With it on, each candidate is the parent plus one
+    # atomic design edit and the trade-offs between them are kept as a frontier.
+    design_search: bool
+    pareto: ParetoSelectionConfig
+
+
+def read_tuning_config(config: dict[str, Any]) -> TuningConfig:
     """How many repair candidates the fast loop may try, and what it optimises.
 
     Tuning happens *within* a milestone: once a milestone's gate has run, its
     result is known immediately, and the fast loop can retry that milestone
     alone rather than waiting for the whole repository to be scored. The three
     axes available at that point are the gate, the harness's graded score and
-    the tokens spent -- deliberately not the held-out suite, which is not
+    what the attempt cost -- deliberately not the held-out suite, which is not
     visible then and would be tuning on the test set if it were.
     """
     tuning = dict((config.get("experiment") or {}).get("tuning") or {})
@@ -289,7 +304,12 @@ def read_tuning_config(config: dict[str, Any]) -> tuple[int, TuningWeights]:
         token_reference=int(tuning.get("token_reference", 1_000_000)),
         allow_cost_to_outrank_gate=bool(tuning.get("allow_cost_to_outrank_gate", False)),
     )
-    return candidates, weights
+    return TuningConfig(
+        candidates=candidates,
+        weights=weights,
+        design_search=bool(tuning.get("design_search", False)),
+        pareto=ParetoSelectionConfig.from_mapping(tuning.get("pareto")),
+    )
 
 
 def _agent_count(graph_template: str) -> int:
@@ -346,7 +366,9 @@ async def _run_one(
     experiment = config["experiment"]
     contracts_dir = experiment.get("contracts_dir", "configs/contracts")
     harness_timeout = int(experiment.get("harness_timeout_seconds", DEFAULT_HARNESS_TIMEOUT))
-    fast_loop_candidates, tuning_weights = read_tuning_config(config)
+    tuning = read_tuning_config(config)
+    fast_loop_candidates = tuning.candidates
+    tuning_weights = tuning.weights
 
     run_dir = batch_dir / task_id
     logs_dir = run_dir / "logs"
@@ -523,7 +545,15 @@ async def _run_one(
         contracts_dir=contracts_dir,
         source_repo=str(source_repo.resolve()),
         budget=fast_loop_budget,
-        selector=DeterministicCandidateSelector(weights=tuning_weights),
+        # Passing an explicit selector would override the design-search pairing,
+        # so the scalar one is only supplied when design search is off.
+        selector=(
+            None
+            if tuning.design_search
+            else DeterministicCandidateSelector(weights=tuning_weights)
+        ),
+        pareto=tuning.pareto,
+        design_search=tuning.design_search,
         slow_loop=SlowLoopController(
             config=slow_loop_config, checkpoint_store=task_checkpoint_store
         ),
@@ -614,6 +644,20 @@ async def _run_one(
             "gate_weight": tuning_weights.gate_weight,
             "harness_weight": tuning_weights.harness_weight,
             "token_weight": tuning_weights.token_weight,
+            "design_search": tuning.design_search,
+            "selection_rule": tuning.pareto.rule,
+            "epsilon": dict(tuning.pareto.epsilon),
+        },
+        # The frontier per milestone, so a degenerate search is visible in the
+        # summary rather than only in the checkpoint.
+        "pareto_frontiers": {
+            sid: {
+                "frontier": list(fl.pareto_frontier),
+                "rule": fl.selection_rule,
+                "selected": fl.selected_candidate_id,
+                "candidates": [c.candidate_id for c in fl.candidates],
+            }
+            for sid, fl in (state.fast_loop_states or {}).items()
         },
         "backend_override": backend_manifest.get("backend_override"),
         "logs": {
