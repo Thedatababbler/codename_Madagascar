@@ -58,6 +58,14 @@ def _target_agent_id(graph: OrchestraGraph, diagnosis: FailureDiagnosis) -> str 
         node = next((n for n in graph.nodes if n.node_id == node_id), None)
         if node is not None and node.node_kind is NodeKind.AGENT:
             return node.node_id
+    # Nothing failed, which is the quality-search case: the anchor is declared on
+    # the diagnosis rather than guessed here.
+    if diagnosis.focus_node_id:
+        node = next(
+            (n for n in graph.nodes if n.node_id == diagnosis.focus_node_id), None
+        )
+        if node is not None and node.node_kind is NodeKind.AGENT:
+            return node.node_id
     return None
 
 

@@ -151,6 +151,11 @@ class FailureDiagnosis(BaseModel):
     # milestone was missing follows from this, so a design edit can address the
     # stage that actually failed rather than adding an agent at random.
     furthest_stage: str = ""
+    # Where a search should attach its edits when nothing failed. A quality search
+    # runs on a milestone whose gate passed, so it has no failed node to edit, and
+    # naming the anchor explicitly is better than letting the generator fall back
+    # to whichever agent happens to be first.
+    focus_node_id: str | None = None
 
 
 class CostRecord(BaseModel):
@@ -316,6 +321,15 @@ class FastLoopState(BaseModel):
     # written down rather than inferred from the winner.
     pareto_frontier: list[str] = Field(default_factory=list)
     selection_rule: str = ""
+    # Why the loop ran at all. A search triggered by a failed gate and one
+    # triggered by a passing gate with a poor score have different success
+    # conditions, and averaging them would mix a repair rate with a refinement
+    # rate. Empty means the historical case, a failed gate.
+    search_reason: str = ""
+    # Why a quality search ended without adopting a candidate. "Declined" is a
+    # legitimate and expected outcome, so it needs to be distinguishable from a
+    # search that broke.
+    notes: list[str] = Field(default_factory=list)
     exhausted: bool = False
     # Control-plane-only cost (e.g. future LLM generators). Deterministic gen = 0.
     control_plane_cost: CostRecord = Field(default_factory=CostRecord)

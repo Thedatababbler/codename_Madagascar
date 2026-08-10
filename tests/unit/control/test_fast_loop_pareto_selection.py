@@ -95,6 +95,36 @@ class TestFrontier:
         flaky = _candidate("flaky", score=0.7, usd=1.0, incidents=3)
         assert _ids(frontier([clean, flaky])) == {"clean"}
 
+    def test_a_failing_candidate_cannot_push_a_passing_one_off_the_frontier(self) -> None:
+        """Failing the gate is a disqualification, not a point on a trade-off curve.
+
+        A candidate that abandons the gate can score high and spend little, which
+        dominates the passing work on both axes. Once the passing point is gone
+        selection has nothing safe left to prefer, so `require_gate_pass` stops
+        protecting anything — the guard has to be in dominance.
+        """
+        passing = _candidate("passing", score=0.55, usd=1.0, passed=True)
+        rogue = _candidate("rogue", score=0.95, usd=0.2, passed=False)
+
+        assert _ids(frontier([passing, rogue])) == {"passing", "rogue"}
+        winner = select_from_frontier(frontier([passing, rogue]))
+        assert winner is not None
+        assert winner.candidate_id == "passing"
+
+    def test_a_passing_candidate_may_still_dominate_a_failing_one(self) -> None:
+        """The asymmetry is deliberate: better on every axis that matters."""
+        passing = _candidate("passing", score=0.95, usd=0.5, passed=True)
+        failing = _candidate("failing", score=0.40, usd=2.0, passed=False)
+
+        assert _ids(frontier([passing, failing])) == {"passing"}
+
+    def test_an_all_failing_set_is_unaffected_by_the_rule(self) -> None:
+        """The repair path legitimately compares failures against each other."""
+        near = _candidate("near", score=0.8, usd=1.0, passed=False)
+        far = _candidate("far", score=0.2, usd=2.0, passed=False)
+
+        assert _ids(frontier([near, far])) == {"near"}
+
 
 class TestEpsilon:
     def test_a_difference_below_the_tolerance_is_a_tie(self) -> None:

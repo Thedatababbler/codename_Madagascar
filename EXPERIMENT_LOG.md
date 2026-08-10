@@ -60,7 +60,16 @@
    (imapclient, pyjwt, simpy, bplustree) but only imapclient fails its gate with
    any regularity; the other three pass first try, so adding them to a tuning arm
    buys zero fast-loop activity at full price. Widening the population requires a
-   trigger that fires on a low score, not only on a failed gate.
+   trigger that fires on a low score, not only on a failed gate — now implemented
+   as `tuning.quality_trigger`, and enabled only in
+   `configs/experiments/codeprojecteval_tuning_multi.yaml`.
+
+9. **Report a quality search separately from a repair search.** Both run the same
+   machinery through the same fast loop, but one is recovering a milestone that
+   failed and the other is refining one that passed. `FastLoopState.search_reason`
+   records which; averaging them together mixes a repair rate with a refinement
+   rate and neither number then means anything. A quality search that declines is
+   a success, not a failure, and is recorded as one.
 
 **Last updated:** 2026-08-10 (UTC) — denominator audit and task census
 (EXP-20260810-04)

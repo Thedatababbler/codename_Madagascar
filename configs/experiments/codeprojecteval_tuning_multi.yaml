@@ -1,0 +1,73 @@
+experiment:
+  name: codeprojecteval_tuning_multi
+  benchmark: codeprojecteval
+  # Risk-first dynamic milestones only, as everywhere on this dataset.
+  agent_backend: codex_sdk
+  dataset_root: /root/codex-benchmarks/projectgen/datasets/CodeProjectEval/python-subset
+  contracts_dir: configs/contracts
+  output_root: outputs/cpe_tuning_multi
+  harness_timeout_seconds: 900
+  seed: 20260810
+
+  # Why this config exists, separately from codeprojecteval_tuning.yaml:
+  #
+  # The fast loop was only ever reachable through failure, so the tuning
+  # population was one repository wide. Four CodeProjectEval repositories plan two
+  # milestones — imapclient, pyjwt, simpy, bplustree — but only imapclient fails
+  # its gate with any regularity. On the other three a tuning arm searched nothing
+  # and paid full price for the privilege (EXP-20260810-04).
+  #
+  # The quality trigger below searches a milestone whose gate passed but whose
+  # graded score is poor, which is what makes those three usable. A passing gate
+  # means "safe to build on", not "good": EXP-20260810-03 measured nine imapclient
+  # candidates at exactly 1.0 on the gate with held-out rates from 0.307 to 0.375.
+  tuning:
+    fast_loop_candidates: 3
+    design_search: true
+    quality_trigger:
+      enabled: true
+      # Search a milestone that passed but scored below this. 0.8 rather than 1.0
+      # deliberately: at 1.0 every milestone that is not perfect is searched, which
+      # multiplies the cost of a run by the candidate count almost every time and
+      # spends most of it on milestones that were nearly right. The recorded
+      # imapclient scores sit well under 0.8, and a milestone above it has little
+      # headroom for one atomic edit to recover.
+      min_score: 0.8
+    pareto:
+      rule: quality_first
+      epsilon:
+        quality: 0.02
+        cost: 0.08
+        stability: 0.0
+      # Left true: a candidate that fails its own gate must not be committed over
+      # one that passed. With an incumbent present the controller enforces this
+      # regardless, since replacing a passing milestone with a failing one is a
+      # regression no score can justify.
+      require_gate_pass: true
+    gate_weight: 1.0
+    harness_weight: 0.5
+    token_weight: 0.05
+    token_reference: 1000000
+    allow_cost_to_outrank_gate: false
+
+decomposition:
+  dynamic_planner: true
+  min_subtasks: 1
+  max_subtasks: 4
+  max_dependency_depth: 4
+  require_public_keystone_harness: true
+
+runtime:
+  max_parallel_nodes_per_task: 2
+
+pareto:
+  enabled: false
+
+slow_loop:
+  enabled: false
+
+fast_loop:
+  max_candidates: 0
+
+logging:
+  level: INFO

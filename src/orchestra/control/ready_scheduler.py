@@ -29,6 +29,10 @@ from orchestra.control.canonical_workspace import (
 from orchestra.control.failure import classify_subtask_outcome
 from orchestra.control.fast_loop.controller import FastLoopController
 from orchestra.control.fast_loop.pareto import ParetoSelectionConfig
+from orchestra.control.fast_loop.quality_trigger import (
+    QualityTrigger,
+    build_incumbent_record,
+)
 from orchestra.control.fast_loop.schemas import CostRecord, FastLoopBudget, WorkspaceChangeSet
 from orchestra.control.fast_loop.selector import DeterministicCandidateSelector
 from orchestra.control.fast_loop.workspace import GitCandidateWorkspaceManager
@@ -234,6 +238,7 @@ class ReadySubtaskScheduler:
         selector: DeterministicCandidateSelector | None = None,
         pareto: ParetoSelectionConfig | None = None,
         design_search: bool = False,
+        quality_trigger: QualityTrigger | None = None,
         allow_concurrent_subtasks: bool = False,
         slow_loop: SlowLoopController | None = None,
         slow_loop_config: SlowLoopConfig | None = None,
@@ -270,6 +275,9 @@ class ReadySubtaskScheduler:
             checkpoint_store=task_checkpoint_store,
         )
         self.task_budget_tracker = task_budget_tracker or TaskBudgetTracker()
+        # Off unless a config asks: a milestone that passes its gate is only
+        # searched when someone has decided the extra spend is worth it.
+        self.quality_trigger = quality_trigger or QualityTrigger()
         self.compiler = build_compiler(contracts_dir)
         self._state_lock = asyncio.Lock()
 
@@ -1574,28 +1582,46 @@ class ReadySubtaskScheduler:
             sub.failure_message = None
             sub.attempts[-1].error = None
             local_state.subtasks[subtask_id] = sub
-            return await self._finalize_worker_result(
-                local_state=local_state,
-                subtask_id=subtask_id,
-                expected_state_version=expected_state_version,
-                base_canonical_revision=base_task_revision,
-                graph=graph,
-                produced=[final_artifact],
-                sessions=sessions,
-                harness_passed=True,
-                delivery_records=list(state.delivery_ledger[ledger_before:]),
-                usage_before=usage_before,
+            if not self.quality_trigger.fires(
+                gate_passed=True, harness_score=harness_score
+            ):
+                return await self._finalize_worker_result(
+                    local_state=local_state,
+                    subtask_id=subtask_id,
+                    expected_state_version=expected_state_version,
+                    base_canonical_revision=base_task_revision,
+                    graph=graph,
+                    produced=[final_artifact],
+                    sessions=sessions,
+                    harness_passed=True,
+                    delivery_records=list(state.delivery_ledger[ledger_before:]),
+                    usage_before=usage_before,
+                )
+            # The gate passed but the milestone scored poorly, so it is searched
+            # anyway. The committed result enters the search as a candidate, which
+            # is what lets the search decline: see `build_incumbent_record`.
+            incumbent = build_incumbent_record(
+                attempt_id=len(sub.attempts),
+                graph_hash=graph.content_hash,
+                harness_score=harness_score,
+                furthest_stage=furthest_stage or "",
+                cost=initial_cost,
             )
+            incumbent_artifact = final_artifact
+        else:
+            incumbent = None
+            incumbent_artifact = None
 
-        sub.failure_reason = reason
-        sub.failure_message = message
-        sub.attempts[-1].error = message
-        sub.status = (
-            SubtaskStatus.RETRY_PENDING
-            if status is SubtaskStatus.HARNESS_FAILED
-            else status
-        )
-        local_state.subtasks[subtask_id] = sub
+        if incumbent is None:
+            sub.failure_reason = reason
+            sub.failure_message = message
+            sub.attempts[-1].error = message
+            sub.status = (
+                SubtaskStatus.RETRY_PENDING
+                if status is SubtaskStatus.HARNESS_FAILED
+                else status
+            )
+            local_state.subtasks[subtask_id] = sub
 
         base_ws = None
         base_source = state.canonical_workspace_ref or source_repo
@@ -1617,6 +1643,16 @@ class ReadySubtaskScheduler:
             graph_result=result,
             initial_execution_cost=initial_cost,
             base_workspace=base_ws,
+            incumbent=incumbent,
+        )
+        # A declined quality search keeps the first pass, so its artifact must still
+        # be published — the fast loop only publishes artifacts for a winner it
+        # committed, and here there is none.
+        searched = local_state.fast_loop_states.get(subtask_id)
+        declined = (
+            incumbent is not None
+            and searched is not None
+            and searched.selected_candidate_id == incumbent.candidate_id
         )
         return await self._finalize_worker_result(
             local_state=local_state,
@@ -1624,7 +1660,9 @@ class ReadySubtaskScheduler:
             expected_state_version=expected_state_version,
             base_canonical_revision=base_task_revision,
             graph=graph,
+            produced=[incumbent_artifact] if declined and incumbent_artifact else None,
             sessions=sessions,
+            harness_passed=True if declined else None,
             delivery_records=list(state.delivery_ledger[ledger_before:]),
             usage_before=usage_before,
         )

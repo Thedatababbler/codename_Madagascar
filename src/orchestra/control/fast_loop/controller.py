@@ -21,6 +21,7 @@ from orchestra.control.fast_loop.candidate_generator import (
 from orchestra.control.fast_loop.capability import validate_candidate_against_capabilities
 from orchestra.control.fast_loop.diagnosis import diagnose_subtask_failure
 from orchestra.control.fast_loop.pareto import ParetoSelectionConfig
+from orchestra.control.fast_loop.quality_trigger import quality_search_diagnosis
 from orchestra.control.fast_loop.schemas import (
     BackendModelPool,
     CandidateRecord,
@@ -45,6 +46,7 @@ from orchestra.control.task_state import (
     BackendSessionRecord,
     LocalUpdateRecord,
     SubtaskFailureReason,
+    SubtaskState,
     SubtaskStatus,
     TaskExecutionState,
 )
@@ -177,16 +179,25 @@ class FastLoopController:
         graph_result: GraphExecutionResult | None = None,
         initial_execution_cost: CostRecord | None = None,
         base_workspace: WorkspaceRef | None = None,
+        incumbent: CandidateRecord | None = None,
     ) -> TaskExecutionState:
         sub = state.subtasks[subtask_id]
-        if sub.status is SubtaskStatus.COMMITTED:
+        # An incumbent means this is a quality search: the milestone passed its
+        # gate and is being searched anyway because it scored poorly. The usual
+        # early-out is exactly wrong there, since a passing milestone is the
+        # premise rather than a reason to stop.
+        if sub.status is SubtaskStatus.COMMITTED and incumbent is None:
             return state
 
         base_graph = graph or load_graph(sub.spec.local_graph_template)
-        diagnosis = diagnose_subtask_failure(
-            subtask_state=sub,
-            graph=base_graph,
-            graph_result=graph_result,
+        diagnosis = (
+            quality_search_diagnosis(incumbent, base_graph)
+            if incumbent is not None
+            else diagnose_subtask_failure(
+                subtask_state=sub,
+                graph=base_graph,
+                graph_result=graph_result,
+            )
         )
 
         fl_state = state.fast_loop_states.get(subtask_id)
@@ -216,6 +227,13 @@ class FastLoopController:
                 if winner and winner.status is CandidateStatus.COMMITTED:
                     return state
 
+        if incumbent is not None:
+            fl_state.search_reason = "quality"
+            if not any(
+                c.candidate_id == incumbent.candidate_id for c in fl_state.candidates
+            ):
+                fl_state.candidates.append(incumbent)
+
         self.budget_tracker.mark_started(fl_state)
 
         if diagnosis.infrastructure_related:
@@ -240,12 +258,18 @@ class FastLoopController:
             await self._save_checkpoint(state)
             return state
 
-        if not fl_state.candidates:
+        # The incumbent occupies a slot without having been generated, so "have we
+        # generated yet" cannot be read off an empty list once it is present.
+        searchable = [c for c in fl_state.candidates if not c.metadata.get("incumbent")]
+        if not searchable:
             ok, reason, code = self.budget_tracker.can_generate_candidate(fl_state)
             if not ok:
                 fl_state.exhausted = True
-                sub.status = SubtaskStatus.FAILED
-                sub.failure_message = reason
+                if incumbent is not None:
+                    self._keep_incumbent(sub, fl_state, incumbent, reason)
+                else:
+                    sub.status = SubtaskStatus.FAILED
+                    sub.failure_message = reason
                 state.state_version += 1
                 await self._save_checkpoint(state)
                 return state
@@ -265,9 +289,14 @@ class FastLoopController:
             state.state_version += 1
             await self._save_checkpoint(state)
 
-        if not fl_state.candidates:
+        if not any(not c.metadata.get("incumbent") for c in fl_state.candidates):
             fl_state.exhausted = True
-            sub.status = SubtaskStatus.FAILED
+            if incumbent is not None:
+                self._keep_incumbent(
+                    sub, fl_state, incumbent, "no candidate designs were generated"
+                )
+            else:
+                sub.status = SubtaskStatus.FAILED
             state.state_version += 1
             await self._save_checkpoint(state)
             return state
@@ -353,10 +382,44 @@ class FastLoopController:
         fl_state.selection_rule = str(getattr(self.selector, "last_rule", "") or "scalar")
         if winner is None:
             fl_state.exhausted = True
-            sub.status = SubtaskStatus.FAILED
-            sub.failure_reason = diagnosis.reason
-            sub.failure_message = (
-                diagnosis.concise_feedback or "fast loop exhausted without valid winner"
+            if incumbent is not None:
+                self._keep_incumbent(
+                    sub, fl_state, incumbent, "no candidate was selectable"
+                )
+            else:
+                sub.status = SubtaskStatus.FAILED
+                sub.failure_reason = diagnosis.reason
+                sub.failure_message = (
+                    diagnosis.concise_feedback
+                    or "fast loop exhausted without valid winner"
+                )
+            state.state_version += 1
+            await self._save_checkpoint(state)
+            return state
+
+        # The search declined: nothing on the frontier beat the work that was
+        # already committed, so the first pass stands and no patch is applied.
+        if incumbent is not None and winner.metadata.get("incumbent"):
+            self._keep_incumbent(
+                sub, fl_state, winner, "no candidate improved on the first pass"
+            )
+            state.state_version += 1
+            await self._save_checkpoint(state)
+            return state
+
+        # Quality never buys its way past safety. `require_gate_pass` makes this
+        # the normal outcome of selection, but it is configurable and this is not:
+        # replacing a milestone that passed with one that does not is a regression
+        # no score can justify, since everything downstream builds on it.
+        if incumbent is not None and winner.status not in {
+            CandidateStatus.VALID,
+            CandidateStatus.COMMITTED,
+        }:
+            self._keep_incumbent(
+                sub,
+                fl_state,
+                incumbent,
+                f"winner {winner.candidate_id} did not pass the gate",
             )
             state.state_version += 1
             await self._save_checkpoint(state)
@@ -396,6 +459,31 @@ class FastLoopController:
         state.state_version += 1
         await self._save_checkpoint(state)
         return state
+
+    def _keep_incumbent(
+        self,
+        sub: SubtaskState,
+        fl_state: FastLoopState,
+        incumbent: CandidateRecord,
+        reason: str,
+    ) -> None:
+        """End a quality search by keeping the first pass, as a success.
+
+        A quality search runs on a milestone that already passed, so every way the
+        search can end without a better design is a no-op, not a failure. Marking it
+        failed here would take a repository that works and break it because the
+        search it was subjected to found nothing — the one outcome a search for
+        improvements must never produce.
+        """
+        incumbent.status = CandidateStatus.COMMITTED
+        fl_state.selected_candidate_id = incumbent.candidate_id
+        fl_state.exhausted = True
+        sub.status = SubtaskStatus.COMMITTED
+        sub.failure_reason = None
+        sub.failure_message = None
+        if sub.attempts:
+            sub.attempts[-1].error = None
+        fl_state.notes.append(f"quality search declined: {reason}")
 
     async def _infra_retry_once(
         self,

@@ -48,6 +48,14 @@ experiment:
         cost: 0.08
         # Integer incident counts: one more incident is a real difference.
         stability: 0.0
+    # Whether a milestone that *passed* its gate is searched anyway. Left off
+    # here: this config is the imapclient tuning arm, where the gate fails and the
+    # repair path already reaches the loop. Switching it on is what opens pyjwt,
+    # simpy and bplustree, whose gates pass first try — see
+    # configs/experiments/codeprojecteval_tuning_multi.yaml.
+    quality_trigger:
+      enabled: false
+      min_score: 0.0
     # The weighted scalar below is only consulted when design_search is off, or
     # as the fallback when the frontier yields nothing to commit.
     gate_weight: 1.0

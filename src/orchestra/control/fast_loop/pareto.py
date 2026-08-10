@@ -169,10 +169,29 @@ def frontier(
             dominates(vectors[other.candidate_id], mine, directions, cfg.epsilon)
             for other in ran
             if other.candidate_id != cand.candidate_id
+            and _may_dominate(other, cand)
         ):
             continue
         kept.append(cand)
     return kept
+
+
+def _may_dominate(other: CandidateRecord, cand: CandidateRecord) -> bool:
+    """Whether `other` is even eligible to dominate `cand`.
+
+    Failing the acceptance gate is not a position on a trade-off curve, it is a
+    disqualification, so a failing candidate may not push a passing one off the
+    frontier. Without this a candidate that abandoned the gate and therefore
+    scored high and spent little would dominate the passing work on both axes —
+    and once the passing point is gone, selection has nothing safe left to prefer,
+    so `require_gate_pass` silently stops protecting anything.
+
+    The reverse is allowed: a passing candidate dominating a failing one is a
+    genuine improvement on every axis that matters.
+    """
+    if other.status in PASSING_STATUSES:
+        return True
+    return cand.status not in PASSING_STATUSES
 
 
 def _normalised_distance(

@@ -57,6 +57,7 @@ from orchestra.control.fast_loop.objectives import (
     milestone_objectives,
 )
 from orchestra.control.fast_loop.pareto import ParetoSelectionConfig
+from orchestra.control.fast_loop.quality_trigger import QualityTrigger
 from orchestra.control.fast_loop.schemas import FastLoopBudget
 from orchestra.control.fast_loop.selector import DeterministicCandidateSelector
 from orchestra.control.ready_scheduler import ReadySubtaskScheduler
@@ -286,6 +287,7 @@ class TuningConfig:
     # atomic design edit and the trade-offs between them are kept as a frontier.
     design_search: bool
     pareto: ParetoSelectionConfig
+    quality_trigger: QualityTrigger
 
 
 def read_tuning_config(config: dict[str, Any]) -> TuningConfig:
@@ -314,6 +316,7 @@ def read_tuning_config(config: dict[str, Any]) -> TuningConfig:
         weights=weights,
         design_search=bool(tuning.get("design_search", False)),
         pareto=ParetoSelectionConfig.from_mapping(tuning.get("pareto")),
+        quality_trigger=QualityTrigger.from_mapping(tuning.get("quality_trigger")),
     )
 
 
@@ -559,6 +562,7 @@ async def _run_one(
         ),
         pareto=tuning.pareto,
         design_search=tuning.design_search,
+        quality_trigger=tuning.quality_trigger,
         slow_loop=SlowLoopController(
             config=slow_loop_config, checkpoint_store=task_checkpoint_store
         ),

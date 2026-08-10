@@ -1,5 +1,64 @@
 # Changelog
 
+## 2026-08-10 — A passing gate is no longer the end of the search
+
+The fast loop lived in one branch of `ReadySubtaskScheduler`: the one where a
+milestone's gate failed. A milestone that committed returned before the loop was
+considered. That capped the tuning population at a single repository — four
+CodeProjectEval tasks plan two milestones, but only imapclient fails its gate with
+any regularity, so adding pyjwt, simpy or bplustree to a tuning arm searched nothing
+and paid full price for it (EXP-20260810-04).
+
+A gate that passes means "safe to build on", not "good". EXP-20260810-03 measured
+nine imapclient candidates at exactly 1.0 on the gate with held-out rates from 0.307
+to 0.375. With the graded score now able to separate designs, "passed but scored
+poorly" is a searchable condition, and `QualityTrigger` decides when to spend on it:
+off by default, fires only below a configured score, and never on an unmeasured
+score — a milestone with no graded score would otherwise search on every run
+unfalsifiably, since nothing it produced could raise a number that was never taken.
+
+### Making it impossible for the search to make things worse
+
+The search now starts from work that is already good enough to build on, so every
+outcome that replaces it with something worse is a regression the old design could
+not produce. Three things make that unreachable.
+
+**The first pass competes.** `build_incumbent_record` enters the committed result as
+a candidate carrying its real score and its real spend, so the frontier can conclude
+"nothing beat it" and the controller keeps what it had. Without it the selector would
+pick the best of the *alternatives* and commit that — on a degenerate frontier, three
+candidates paid for in order to replace a passing milestone with a cheaper, worse one.
+A declined search is recorded as a decline (`FastLoopState.notes`) and leaves the
+milestone committed with no failure reason: "found nothing better" must not break a
+milestone that works.
+
+**Failing the gate is a disqualification, not a trade-off.** This was a live bug in
+the Pareto layer, found by a test written to check the opposite. A candidate that
+abandons the gate scores high and spends little, which *dominates* the passing work
+on both axes — so the passing point was eliminated from the frontier before selection
+ran, and `require_gate_pass` was left with nothing to protect. Dominance is now
+one-directional across the gate boundary: a passing candidate may dominate a failing
+one, never the reverse. All-failing sets, which is what the repair path compares, are
+unaffected. The controller enforces the same rule independently, because
+`require_gate_pass` is configurable and this is not.
+
+**The anchor is declared, not guessed.** Candidate generation edits the primary
+failed node, and in a quality search nothing failed. Rather than fabricate a failed
+node, `FailureDiagnosis` gained `focus_node_id` and the diagnosis names the agent
+whose output the gate actually scored (the one feeding the harness). The generator
+falls back to it only when no node failed, so the existing "never silently pick the
+first agent" guarantee still holds.
+
+`FastLoopState.search_reason` distinguishes a repair search from a quality search:
+they have different success conditions, and averaging them would mix a repair rate
+with a refinement rate.
+
+Switched on in `configs/experiments/codeprojecteval_tuning_multi.yaml` at
+`min_score: 0.8`; the imapclient config leaves it off, since the repair path already
+reaches the loop there. Covered by `tests/unit/control/test_quality_trigger.py` and
+`tests/integration/test_fast_loop_quality_search.py`, which drives seven real
+scheduler runs whose gate passes.
+
 ## 2026-08-10 — Pinned held-out denominators: a scoring fix that was only half made
 
 Preparing to widen the tuning experiment beyond imapclient turned up a defect that
