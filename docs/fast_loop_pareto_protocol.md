@@ -153,3 +153,21 @@ has room to move. On the first real tuning run every repair candidate reached a
 graded score of 1.0, leaving the selector to decide on cost alone. That is a
 degenerate frontier, and it is the outcome this protocol has to be able to
 detect and report rather than paper over.
+
+Measured at `k=3` (EXP-20260810-02): the frontier is degenerate, and reproducibly
+so. All three candidates scored 1.0 on the gate in all three seeds, leaving cost as
+the only live axis and the frontier at one point. The cost model above was
+confirmed — 49 min and $6.55 per run against a predicted 53 min and $6.45.
+
+So the binding constraint on the fast loop is not the search space, which now
+produces genuinely distinct designs, but the **acceptance gate's ceiling**: a gate
+that every repair candidate can max out cannot rank designs, no matter how good the
+search over them is. Widening `k` to 4 would buy nothing until the gate can
+separate candidates. The next move is to make quality discriminating on this
+milestone — e.g. score the gate against the hidden suite's reachable ceiling rather
+than the visible contract checks — not to widen the search.
+
+Note also that the gate's 1.0 did not predict downstream quality: candidates
+indistinguishable at the gate differed by more than a factor of two on the hidden
+suite. Any objective built on a saturating gate is measuring agreement with the
+gate, not task quality.

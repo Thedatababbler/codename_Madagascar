@@ -1,5 +1,65 @@
 # Changelog
 
+## EXP-20260810-02 — The frontier is degenerate, and the search still found something
+
+Stage B of the fast-loop protocol: imapclient, the frozen two-milestone plan the
+`k=2` arm replayed, `k=3` with design search on, three seeds concurrently. 49 min
+per run and $6.55, against a prediction of 53 min and $6.45 — the cost model in
+`docs/fast_loop_pareto_protocol.md` holds.
+
+**The frontier is degenerate, consistently.** All three candidates scored **1.0**
+on the graded acceptance gate in every one of the three runs, so quality could not
+separate them and the frontier collapsed to a single point. With one point,
+"select from the frontier" is "pick the cheapest" — the Pareto layer did no work
+here, and none of what follows can be credited to it. This is the outcome the
+protocol was written to be able to report rather than paper over.
+
+The gate saturating is not new — the `k=2` arm had the same problem — but it is now
+measured across seeds rather than observed once.
+
+**The search still produced a reproducible finding.** `drop_agent` on the
+read-only `spec_auditor` won 3/3, and deterministically rather than by coin flip:
+removing an agent is reliably cheaper than not removing one ($0.68–$1.04 against
+$1.17–$1.47 for the feedback-only anchor and $2.02–$2.24 for adding an agent).
+The auditor is not losing work — all three designs produce 37–41 changed files and
+111–128k characters of patch — it simply costs money and changes nothing the gate
+can see. The `k=2` arm, whose only candidates were retry variants of the same
+three-agent chain, flip-flopped between `cand_feedback` and `cand_budget` on
+whichever happened to be cheaper.
+
+**Hidden pass rate 0.163 ± 0.092 → 0.348 ± 0.029**, with variance collapsing:
+
+| arm | n | hidden pass | cost/run | wall/run | agent turns |
+|-----|---|-------------|----------|----------|-------------|
+| k=0, no repair | 5 | 0.000 ± 0.000 | $1.90 | 13 min | 3 |
+| k=2, retry repair | 5 | 0.163 ± 0.092 | $5.08 | 40 min | 10 |
+| k=3, design search | 3 | 0.348 ± 0.029 | $6.55 | 49 min | 13 |
+
+Exact one-sided permutation test: p = 2/56 = 0.036. At n=3 against n=5 the floor
+is 1/56 = 0.018, so this is close to the most the sample size can say. Only
+milestone 1 entered the search in either arm; milestone 2 committed first try in
+both, so the arms differ in exactly one place.
+
+**What this cannot claim.** Two properties of the candidate set changed together:
+its *content* (`drop_agent` became reachable) and its *count* (3 against 2). Count
+cannot be matched in the control, because the retry generator tops out at two
+candidates — that is the limitation this work exists to fix, and it makes the two
+inseparable in this comparison. Since each candidate runs from the last committed
+snapshot and only the winner's patch is applied, a third candidate adds no
+committed work, which makes content the more likely cause; "more likely" is not
+"measured".
+
+The clean isolation is `k=2` with design search on — anchor plus `drop_agent`
+only. That matches the control's candidate count and varies only content: 3 runs,
+~40 min, ~$15.
+
+### Standing rules
+
+* A frontier of one point means the Pareto layer decided nothing. Report the
+  finding, but do not attribute it to the search.
+* When a comparison changes two things at once, say which one cannot be held
+  fixed and why, before reporting the effect.
+
 ## 2026-08-10 — Make the fast loop search designs, not retries
 
 The fast loop was described as a Pareto search over a milestone's subgraph and
