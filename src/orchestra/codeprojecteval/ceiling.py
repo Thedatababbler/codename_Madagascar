@@ -39,6 +39,14 @@ class CeilingReport:
     blocked_modules: list[str] = field(default_factory=list)
     undocumented_names: list[str] = field(default_factory=list)
     modules: list[dict] = field(default_factory=list)
+    # Modules whose size came from counting `def test_*` because pytest never
+    # reported them. Parametrisation makes that a large undercount, so any total
+    # carrying estimates cannot be used as a denominator.
+    estimated_modules: list[str] = field(default_factory=list)
+
+    @property
+    def estimated(self) -> bool:
+        return bool(self.estimated_modules)
 
     @property
     def reachable_ceiling(self) -> float:
@@ -58,7 +66,35 @@ class CeilingReport:
             "blocked_modules": list(self.blocked_modules),
             "undocumented_names": list(self.undocumented_names),
             "modules": list(self.modules),
+            "estimated_modules": list(self.estimated_modules),
         }
+
+
+def denominator_faults(report: CeilingReport, *, passed: int) -> list[str]:
+    """Reasons this report's total cannot be used as a scoring denominator.
+
+    A pass rate above 1 is not a good score, it is proof the denominator is wrong.
+    Returning the reasons lets a caller report the raw counts and withhold the
+    rate, which is recoverable, instead of publishing a number like 2.54.
+    """
+    faults: list[str] = []
+    if not report.tests_total:
+        faults.append("suite size unknown")
+    if report.estimated:
+        faults.append(f"{len(report.estimated_modules)} module(s) counted statically")
+    if report.tests_total and passed > report.tests_total:
+        faults.append(f"passed {passed} of a claimed {report.tests_total}")
+    return faults
+
+
+def reachable_is_unsound(report: CeilingReport, *, passed: int) -> bool:
+    """Whether the measurement contradicts the reachability estimate.
+
+    Reachability is a heuristic over which names the design documents mention, and
+    it is too pessimistic on some tasks — pyjwt passes around 220 tests against a
+    claimed 105 reachable. Where that happens the estimate, not the run, is wrong.
+    """
+    return bool(report.tests_reachable and passed > report.tests_reachable)
 
 
 def _design_text(task: CpeTask) -> str:
@@ -155,6 +191,7 @@ def analyze_ceiling(task: CpeTask, *, collected: dict[str, int] | None = None) -
     unit_root = task.repo_root / task.unit_tests
     per_module: list[dict] = []
     blocked_modules: list[str] = []
+    estimated_modules: list[str] = []
     undocumented: set[str] = set()
     blocked = reachable = 0
     seen: set[Path] = set()
@@ -169,10 +206,13 @@ def analyze_ceiling(task: CpeTask, *, collected: dict[str, int] | None = None) -
         missing = sorted(name for name in imported if name not in documented)
         relative = path.relative_to(task.repo_root).as_posix()
         # Prefer what pytest really collects; parametrisation makes the static
-        # function count a large undercount.
+        # function count a large undercount. Falling back silently is what let
+        # bplustree report a denominator of 59 in some runs and 356 in others —
+        # a 6x drift on the same suite — so the fallback is now recorded.
         count = (collected or {}).get(relative)
         if count is None:
             count = _count_tests(path)
+            estimated_modules.append(relative)
         if missing:
             blocked += count
             blocked_modules.append(relative)
@@ -195,4 +235,5 @@ def analyze_ceiling(task: CpeTask, *, collected: dict[str, int] | None = None) -
         blocked_modules=blocked_modules,
         undocumented_names=sorted(undocumented),
         modules=per_module,
+        estimated_modules=estimated_modules,
     )

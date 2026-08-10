@@ -19,12 +19,18 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from orchestra.codeprojecteval.ceiling import analyze_ceiling, collected_counts
+from orchestra.codeprojecteval.ceiling import (
+    analyze_ceiling,
+    collected_counts,
+    denominator_faults,
+    reachable_is_unsound,
+)
 from orchestra.codeprojecteval.dataset import (
     DEFAULT_DATASET_ROOT,
     DEFAULT_ENV_ROOT,
     load_task,
 )
+from orchestra.codeprojecteval.suite_sizes import load_pinned_suite_sizes
 
 # Files AdaMAS or the dataset owns; never counted as agent output.
 SKIP_NAMES = {
@@ -99,6 +105,21 @@ def _parse_counts(text: str) -> dict[str, int]:
     return counts
 
 
+def _suite_sizes(task_id: str, task, python: Path) -> dict[str, int] | None:
+    """Collected case counts, preferring the pinned file over live collection.
+
+    Live collection is a fallback for an unpinned task only. It is not equivalent:
+    it varies with the environment's state, which is how the same suite came to be
+    divided by two different numbers across runs.
+    """
+    pinned = load_pinned_suite_sizes().get(task_id)
+    if pinned:
+        return pinned
+    return collected_counts(
+        task, python=python, cache_path=Path("outputs/cpe_collect_cache.json")
+    )
+
+
 def score_task(
     task_id: str,
     *,
@@ -155,12 +176,7 @@ def score_task(
             )
         except subprocess.TimeoutExpired:
             ceiling = analyze_ceiling(
-                task,
-                collected=collected_counts(
-                    task,
-                    python=python,
-                    cache_path=Path("outputs/cpe_collect_cache.json"),
-                ),
+                task, collected=_suite_sizes(task_id, task, python)
             )
             return {
                 "task_id": task_id,
@@ -179,12 +195,9 @@ def score_task(
     tail = (proc.stdout or "")[-6000:]
     counts = _parse_counts(tail)
     observed = counts["passed"] + counts["failed"] + counts["error"]
-    ceiling = analyze_ceiling(
-        task,
-        collected=collected_counts(
-            task, python=python, cache_path=Path("outputs/cpe_collect_cache.json")
-        ),
-    )
+    ceiling = analyze_ceiling(task, collected=_suite_sizes(task_id, task, python))
+    faults = denominator_faults(ceiling, passed=counts["passed"])
+    reachable_unsound = reachable_is_unsound(ceiling, passed=counts["passed"])
     return {
         "task_id": task_id,
         "status": "ok" if proc.returncode == 0 else "fail",
@@ -194,17 +207,20 @@ def score_task(
         **counts,
         # Raw uses the dataset's own suite size, so a module that never imported
         # still costs its tests rather than shrinking the denominator.
-        "pass_rate": round(counts["passed"] / ceiling.tests_total, 4)
-        if ceiling.tests_total
-        else 0.0,
+        "pass_rate": None
+        if faults
+        else round(counts["passed"] / ceiling.tests_total, 4),
+        "denominator_faults": faults,
         "pass_rate_observed": round(counts["passed"] / observed, 4) if observed else 0.0,
         # Normalised by what the design documents can specify at all.
-        "pass_rate_reachable": round(counts["passed"] / ceiling.tests_reachable, 4)
-        if ceiling.tests_reachable
-        else 0.0,
+        "pass_rate_reachable": None
+        if (faults or reachable_unsound or not ceiling.tests_reachable)
+        else round(counts["passed"] / ceiling.tests_reachable, 4),
+        "reachable_unsound": reachable_unsound,
         "reachable_ceiling": ceiling.reachable_ceiling,
         "tests_total": ceiling.tests_total,
         "tests_reachable": ceiling.tests_reachable,
+        "estimated_modules": ceiling.estimated_modules,
         "blocked_modules": ceiling.blocked_modules,
         "tail": tail[-1200:],
     }
@@ -239,28 +255,44 @@ def main() -> int:
             memory_mb=args.memory_mb,
         )
         results.append(result)
+
+        def _rate(value: float | None) -> str:
+            return "  n/a" if value is None else f"{value:.3f}"
+
         print(
             f"{result['task_id']:24s} {result['status']:12s} "
             f"pass={result.get('passed', 0):4d} fail={result.get('failed', 0):3d} "
             f"err={result.get('error', 0):3d} "
-            f"raw={result.get('pass_rate', 0):.3f} "
-            f"reachable={result.get('pass_rate_reachable', 0):.3f} "
-            f"(ceiling {result.get('reachable_ceiling', 0):.2f})",
+            f"raw={_rate(result.get('pass_rate'))} "
+            f"reachable={_rate(result.get('pass_rate_reachable'))} "
+            f"(ceiling {result.get('reachable_ceiling', 0):.2f})"
+            + (
+                "  UNSCORED: " + "; ".join(result["denominator_faults"])
+                if result.get("denominator_faults")
+                else ""
+            ),
             flush=True,
         )
 
-    scored = [r for r in results if "pass_rate" in r]
+    scored = [r for r in results if r.get("pass_rate") is not None]
+    reachable_scored = [r for r in results if r.get("pass_rate_reachable") is not None]
+    unscored = [r["task_id"] for r in results if r.get("pass_rate") is None]
     summary = {
         "batch_dir": str(args.batch_dir),
         "n_tasks": len(results),
+        "n_scored": len(scored),
+        # Named so nobody averages a mean that silently dropped tasks.
+        "unscored_tasks": unscored,
         "mean_pass_rate": round(sum(r["pass_rate"] for r in scored) / len(scored), 4)
         if scored
-        else 0.0,
+        else None,
         "mean_pass_rate_reachable": round(
-            sum(r["pass_rate_reachable"] for r in scored) / len(scored), 4
+            sum(r["pass_rate_reachable"] for r in reachable_scored)
+            / len(reachable_scored),
+            4,
         )
-        if scored
-        else 0.0,
+        if reachable_scored
+        else None,
         "fully_passing": [r["task_id"] for r in scored if r["status"] == "ok"],
         "results": results,
     }
@@ -271,6 +303,8 @@ def main() -> int:
         f"mean_pass_rate_reachable={summary['mean_pass_rate_reachable']} "
         f"fully_passing={len(summary['fully_passing'])}/{len(scored)}"
     )
+    if unscored:
+        print(f"UNSCORED ({len(unscored)}): {', '.join(unscored)}")
     print(f"wrote {out}")
     return 0
 

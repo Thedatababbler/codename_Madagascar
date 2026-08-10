@@ -24,6 +24,7 @@ from orchestra.codeprojecteval.ceiling import (
     collected_counts,
 )
 from orchestra.codeprojecteval.dataset import DEFAULT_ENV_ROOT, load_task
+from orchestra.codeprojecteval.suite_sizes import load_pinned_suite_sizes
 
 # solo first: it is the reference the other two have to beat.
 _ARMS = ("solo", "single", "multi")
@@ -96,14 +97,14 @@ def _condition(run_dir: Path) -> str:
 @cache
 def _ceiling(task_id: str) -> CeilingReport:
     task = load_task(task_id)
-    return analyze_ceiling(
+    # Pinned counts first, for the same reason the scorer prefers them: a
+    # denominator recomputed per run is not comparable across runs.
+    collected = load_pinned_suite_sizes().get(task_id) or collected_counts(
         task,
-        collected=collected_counts(
-            task,
-            python=DEFAULT_ENV_ROOT / task_id / "bin" / "python",
-            cache_path=Path("outputs/cpe_collect_cache.json"),
-        ),
+        python=DEFAULT_ENV_ROOT / task_id / "bin" / "python",
+        cache_path=Path("outputs/cpe_collect_cache.json"),
     )
+    return analyze_ceiling(task, collected=collected)
 
 
 def _collect(root: Path) -> dict[tuple[str, str], list[dict]]:

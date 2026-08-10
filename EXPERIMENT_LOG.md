@@ -46,9 +46,68 @@
    cheaper repositories with tuning switched on (a probe whose gate passes costs
    no more than one without it) rather than spending n=5 on the saturated one.
 
-**Last updated:** 2026-08-10 (UTC) — first real tuning run (EXP-20260810-01)
+7. **Denominators are pinned, never computed per run, and a rate above 1 is
+   refused rather than published.** Held-out suite sizes live in
+   `configs/codeprojecteval_suite_sizes.json`; scoring reads the pin, and
+   `denominator_faults()` withholds the rate whenever any module's size was
+   guessed. Two runs of the same task divided by different numbers for two months
+   because the counts were cached under `outputs/` and the per-module fallback to
+   static counting was silent (EXP-20260810-04). Re-pin only when the dataset
+   changes, and read the diff.
+
+8. **A fast-loop experiment needs a task whose gate can fail, which is a much
+   smaller set than "tasks that split".** Four repositories plan two milestones
+   (imapclient, pyjwt, simpy, bplustree) but only imapclient fails its gate with
+   any regularity; the other three pass first try, so adding them to a tuning arm
+   buys zero fast-loop activity at full price. Widening the population requires a
+   trigger that fires on a low score, not only on a failed gate.
+
+**Last updated:** 2026-08-10 (UTC) — denominator audit and task census
+(EXP-20260810-04)
 
 ---
+
+### EXP-20260810-04 — Which tasks can exercise the fast loop, and a scoring fix that had decayed
+- **Status:** canonical (methodology and audit, not a result)
+- **Date:** 2026-08-10 (UTC)
+- **Question:** the tuning work so far used one repository. Which others can join?
+
+**Two milestones is necessary and nowhere near sufficient.** Across all recorded
+CodeProjectEval runs, the risk-first planner returns two milestones for
+**imapclient, pyjwt, simpy and bplustree**, and one for **voluptuous** and
+**deprecated** (per standing rule 1, that refusal is respected, never overridden).
+But the fast loop is invoked only in the gate-failure branch of
+`ReadySubtaskScheduler` — a milestone that commits returns before the loop is
+reached — and the other three tasks pass their gates on the first attempt, at
+held-out rates of 0.78 (simpy), 0.75 (pyjwt) and 0.34 (bplustree) against
+imapclient's 0.14. So imapclient was not a convenience sample; it was the only task
+where the loop fires at all.
+
+**The authored-suite axis does not change this by itself.** The `test_first` suite
+added earlier today makes candidates *rankable* where the gate was degenerate, but
+it is graded and non-gating by design, so it cannot make the search *fire*.
+Widening the population needs a quality trigger — enter the loop when the gate
+passed but the score is low — which is a scheduler change, not a config change.
+
+**Cost is not the obstacle.** pyjwt and simpy run ~11 min against imapclient's
+32-40, so a three-task tuning population is cheaper than the single-task one was.
+
+**The denominator defect that would have inflated every task added.** See the
+2026-08-10 CHANGELOG entry for the mechanism and the corrected table. What belongs
+in the log is why it survived: EXP-20260809-01 recorded this exact problem as
+"fixed by collecting on the reference implementation", and that fix was real — but
+the counts were cached in the untracked `outputs/` tree and `analyze_ceiling` fell
+back to static counting per module without recording it, so the fix held only while
+the cache did. Two months of pyjwt evaluations (23 of 25) published a
+`pass_rate_reachable` above 1 and nobody was stopped by it.
+- **Standing rule this produced:** rule 7. A guard that only fires on an impossible
+  *symptom* is not a guard. bplustree was caught because 2.54 > 1; a task whose
+  undercount left `passed < total` would still be inflating quietly today, so the
+  fault is now raised on the guessed denominator itself.
+- **Correction to the record:** bplustree multi was published at 1.125 ± 1.353 and
+  is 0.337 ± 0.251 once pinned — most of that headline variance was the divisor
+  moving, not the system. pyjwt and simpy shift by ~0.025 in both arms. imapclient
+  is unchanged, so EXP-20260810-01 through -03 stand as written.
 
 ### EXP-20260810-01 — The repair loop, run for real: 0.000 → 0.163 on imapclient
 - **Status:** canonical
