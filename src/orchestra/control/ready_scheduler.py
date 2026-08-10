@@ -1538,12 +1538,15 @@ class ReadySubtaskScheduler:
         # artifacts are still reachable from the graph result. This is the whole
         # signal a within-run tuning loop has: the gate says pass or fail, and
         # this says how far a failure got.
-        harness_score, furthest_stage = await best_harness_progress(
+        harness_score, harness_stages, furthest_stage = await best_harness_progress(
             result, self.artifact_store
         )
         if harness_score is not None:
             sub.attempts[-1].metadata["harness_score"] = harness_score
             sub.attempts[-1].metadata["furthest_stage"] = furthest_stage
+            sub.attempts[-1].metadata["harness_stages"] = [
+                stage.model_dump(mode="json") for stage in harness_stages
+            ]
         initial_cost = _cost_from_graph_result(result)
 
         if status is SubtaskStatus.COMMITTED:

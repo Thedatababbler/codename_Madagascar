@@ -42,7 +42,11 @@ class _Candidate:
 @dataclass
 class _FastLoop:
     candidates: list[_Candidate] = field(default_factory=list)
-    winner_candidate_id: str = ""
+    # Named as FastLoopState names it. The double used to invent
+    # `winner_candidate_id`, so the tests agreed with each other about a field
+    # the real state does not have and every repaired milestone was recorded as
+    # having been won by the main path.
+    selected_candidate_id: str | None = None
 
 
 @dataclass
@@ -73,6 +77,55 @@ def test_each_milestone_gets_a_row_with_all_three_axes() -> None:
     assert rows["m2"].gate_passed is False
     assert rows["m2"].harness_score == 0.7
     assert rows["m2"].furthest_stage == "tests"
+
+
+def test_a_repaired_milestone_is_credited_to_the_candidate_that_won() -> None:
+    """On a tuning run this is the one thing the row exists to say."""
+    state = _State(
+        subtasks={"m1": _Sub(_Status("committed"))},
+        fast_loop_states={
+            "m1": _FastLoop(
+                [_Candidate(1.0, "tests")], selected_candidate_id="cand_feedback"
+            )
+        },
+    )
+
+    assert milestone_objectives(state)[0].candidate_id == "cand_feedback"
+
+
+def test_a_milestone_that_never_needed_repair_is_credited_to_the_main_path() -> None:
+    state = _State(subtasks={"m1": _Sub(_Status("committed"))})
+
+    assert milestone_objectives(state)[0].candidate_id == "main"
+
+
+def test_the_stage_breakdown_travels_with_the_score() -> None:
+    """A bare 0.62 says little; "contracts 12/19" says where to look."""
+    breakdown = [
+        {"stage": "imports", "passed_units": 10, "total_units": 10, "weight": 0.25},
+        {"stage": "contracts", "passed_units": 12, "total_units": 19, "weight": 0.2},
+    ]
+    state = _State(
+        subtasks={
+            "m1": _Sub(
+                _Status("failed"),
+                attempts=[
+                    _Attempt(
+                        {
+                            "harness_score": 0.62,
+                            "furthest_stage": "contracts",
+                            "harness_stages": breakdown,
+                        }
+                    )
+                ],
+            )
+        }
+    )
+
+    row = milestone_objectives(state)[0]
+
+    assert row.stages == breakdown
+    assert row.to_dict()["stages"] == breakdown
 
 
 def test_rows_are_written_even_when_tuning_is_off() -> None:

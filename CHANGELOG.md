@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-08-10 — Credit the candidate that actually won
+
+The first run with the repair loop on rescued a failed milestone and the
+objective record said the main path won it. `milestone_objectives` read
+`winner_candidate_id`; the state calls it `selected_candidate_id`, so the
+`getattr` default turned every repaired milestone into `"main"`. On a tuning
+run that field is the one thing the row exists to say.
+
+The unit test agreed with the bug because its `_FastLoop` double declared
+`winner_candidate_id` too — the tests and the code had settled on a field the
+real schema never had. The double now matches `FastLoopState`.
+
+The stage breakdown also stopped at the first hop: `best_harness_progress`
+returned only a score and a stage name, leaving `MilestoneObjective.stages`
+permanently empty. It now returns the same shape as `parse_progress`, because
+0.62 says little and "contracts 12/19" says where to look.
+
 ## 2026-08-10 — Ceilings that would have ended a tuning run without saying so
 
 Turning the repair loop on for the first time meant reading its budget, and

@@ -140,11 +140,13 @@ def milestone_objectives(state: Any) -> list[MilestoneObjective]:
         # records one per candidate. Reading only the latter -- as this did --
         # reports no score at all whenever the loop is switched off, which is
         # every A/B run.
+        stages: list[dict[str, Any]] = []
         for attempt in getattr(sub, "attempts", None) or []:
             score = (getattr(attempt, "metadata", None) or {}).get("harness_score")
             if score is not None and (harness_score is None or score > harness_score):
                 harness_score = float(score)
                 stage = str((attempt.metadata or {}).get("furthest_stage") or "")
+                stages = list((attempt.metadata or {}).get("harness_stages") or [])
         for candidate in getattr(fast_loop_state, "candidates", None) or []:
             score = getattr(candidate, "harness_score", None)
             if score is not None and (harness_score is None or score > harness_score):
@@ -153,13 +155,19 @@ def milestone_objectives(state: Any) -> list[MilestoneObjective]:
         rows.append(
             MilestoneObjective(
                 milestone_id=subtask_id,
-                candidate_id=getattr(fast_loop_state, "winner_candidate_id", "") or "main",
+                # The field is `selected_candidate_id`. Reading a name the state
+                # does not have made every repaired milestone claim the main
+                # path won, which on a tuning run is the one thing the record
+                # exists to say.
+                candidate_id=getattr(fast_loop_state, "selected_candidate_id", None)
+                or "main",
                 gate_passed=str(getattr(sub.status, "value", sub.status)) == "committed",
                 harness_score=harness_score,
                 prompt_tokens=prompt,
                 completion_tokens=completion,
                 estimated_cost_usd=cost,
                 furthest_stage=stage,
+                stages=stages,
             )
         )
     return rows

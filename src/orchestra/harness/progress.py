@@ -57,14 +57,20 @@ def parse_progress(stdout: str) -> tuple[float | None, list[HarnessStageResult],
 
 async def best_harness_progress(
     result: Any, artifact_store: Any
-) -> tuple[float | None, str]:
+) -> tuple[float | None, list[HarnessStageResult], str]:
     """The furthest a graph execution's acceptance harnesses reported getting.
 
     A milestone can run more than one: ``gate_then_repair`` probes midway as
     well as gating at the end, and what the milestone is worth is how far it
     eventually got, not what the first probe saw.
+
+    Returns the same shape as ``parse_progress``. The per-stage breakdown is
+    what makes a score readable -- 0.62 says little, "contracts 12/19" says
+    where to look -- so it travels with the number rather than being dropped
+    at the first hop.
     """
     best: float | None = None
+    stages: list[HarnessStageResult] = []
     stage = ""
     for outputs in getattr(result.state, "node_outputs", {}).values():
         for artifact_id in outputs.values():
@@ -79,5 +85,6 @@ async def best_harness_progress(
                 continue
             if best is None or payload.score > best:
                 best = payload.score
+                stages = list(payload.stages or [])
                 stage = payload.furthest_stage
-    return best, stage
+    return best, stages, stage

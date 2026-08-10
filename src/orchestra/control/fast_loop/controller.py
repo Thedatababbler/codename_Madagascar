@@ -50,6 +50,7 @@ from orchestra.runtime.backend import RunContext
 from orchestra.runtime.native_async import NativeAsyncRuntime
 from orchestra.runtime.state import GraphExecutionResult
 from orchestra.runtime.task_checkpoint import TaskCheckpointStore
+from orchestra.schemas.artifacts import HarnessStageResult
 from orchestra.storage.artifacts import ArtifactStore
 from orchestra.workspaces.base import WorkspaceRef
 
@@ -611,7 +612,9 @@ class FastLoopController:
             artifact_store=self.artifact_store,
             error=None,
         )
-        record.harness_score, record.furthest_stage = await self._harness_progress(result)
+        record.harness_score, _stages, record.furthest_stage = (
+            await self._harness_progress(result)
+        )
         if status is SubtaskStatus.COMMITTED:
             record.status = CandidateStatus.VALID
             record.quality_score = 1.0
@@ -636,7 +639,7 @@ class FastLoopController:
 
     async def _harness_progress(
         self, result: GraphExecutionResult
-    ) -> tuple[float | None, str]:
+    ) -> tuple[float | None, list[HarnessStageResult], str]:
         """The graded score this candidate's acceptance harness reported.
 
         Without it two failing candidates are indistinguishable and the selector
