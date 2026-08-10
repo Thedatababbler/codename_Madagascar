@@ -1,5 +1,78 @@
 # Changelog
 
+## EXP-20260810-03 — The gate carries no signal about hidden quality
+
+Offline follow-up to EXP-20260810-02, run entirely from saved candidate patches
+and the pristine workspace. No API spend.
+
+First, a correction to this repository's own protocol doc: it proposed scoring the
+gate "against the hidden suite's reachable ceiling". That is **test leakage** — the
+hidden suite is the evaluation metric, and selecting designs on it would void every
+pass rate we report. The suggestion has been struck from
+`docs/fast_loop_pareto_protocol.md`. Any fix to the quality axis has to come from
+signals the agent is already allowed to see.
+
+**The gate is uninformative, quantitatively.** All nine candidates across the three
+seeds scored exactly **1.0**. Replaying each candidate's patch onto the pristine
+workspace and running the held-out suite offline — as a diagnostic, never as a
+selection signal — gives:
+
+| seed | cand_feedback | cand_add_contract_author | cand_drop_agent (committed) |
+|------|---------------|--------------------------|------------------------------|
+| r1 | 0.3296 | **0.3596** | 0.3071 |
+| r2 | 0.3371 | **0.3745** | 0.3446 |
+| r3 | **0.3483** | 0.3184 | 0.3296 |
+
+Identical at the gate, spread 0.307–0.375 — 22% relative. The gate's 36 contract
+units ask whether modules exist, import, and export their symbols; nothing about
+behaviour. Designs that agree on structure and differ on behaviour are exactly what
+it cannot rank.
+
+Cost-based selection — what a one-point frontier reduces to — committed the worst
+candidate in r1 and the middle one in r2 and r3, mean 0.327 against an oracle's
+0.361. Suggestive only: `add` beat `drop` in 2 of 3 seeds, a paired sign test at
+n=3 says nothing. What *is* established is that the selector was choosing among
+candidates it could not tell apart on quality.
+
+**Visible tests cannot rescue the axis.** The obvious leak-free fix is to score the
+visible `check_tests` as a graded, non-gating stage at `implementation` level.
+Measured directly: all three candidates pass **9/9** visible tests with exit code 0.
+Zero discrimination. And this is not an imapclient accident — across all 28
+CodeProjectEval tasks the visible suite is a rounding error against the held-out
+one:
+
+| task | visible | hidden | ratio |
+|------|---------|--------|-------|
+| flask | 27 | 375 | 7% |
+| portalocker | 12 | 49 | 24% |
+| csvs-to-sqlite | 10 | 24 | 42% |
+| imapclient | 7 | 267 | 3% |
+
+No task has both enough visible units for resolution (epsilon on quality is 0.02,
+so ~20 units minimum) and enough coverage for a visible gain to transfer. Changing
+task does not fix this.
+
+**Incidental finding: milestone 2 is nearly free of effect.** Milestone 1 alone
+reaches 0.327 mean; the final workspace after milestone 2 reaches 0.348. In r2 the
+second milestone made things *worse* (0.345 → 0.315). Worth a look on its own.
+
+### Consequence
+
+The blocker is not the search space, which now produces genuinely distinct designs,
+and not the selection rule. It is that **no leak-free behavioural signal with
+headroom exists in the workspace today**. Until one does, the fast loop is choosing
+on cost among candidates that are tied on a structural proxy, which the numbers
+above suggest is mildly harmful. The two ways to create such a signal — richer
+spec-derived behavioural contracts, or test-first agent-authored tests — are design
+work, not tuning work.
+
+### Standing rules
+
+* The held-out suite is for evaluation and offline diagnosis only. It must never
+  reach a selector, an objective, or a prompt.
+* Before widening a search, check that the objective can rank what the search
+  produces. A saturated objective makes a better search worthless.
+
 ## EXP-20260810-02 — The frontier is degenerate, and the search still found something
 
 Stage B of the fast-loop protocol: imapclient, the frozen two-milestone plan the

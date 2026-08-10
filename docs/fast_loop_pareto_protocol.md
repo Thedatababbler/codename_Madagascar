@@ -162,12 +162,27 @@ confirmed — 49 min and $6.55 per run against a predicted 53 min and $6.45.
 So the binding constraint on the fast loop is not the search space, which now
 produces genuinely distinct designs, but the **acceptance gate's ceiling**: a gate
 that every repair candidate can max out cannot rank designs, no matter how good the
-search over them is. Widening `k` to 4 would buy nothing until the gate can
-separate candidates. The next move is to make quality discriminating on this
-milestone — e.g. score the gate against the hidden suite's reachable ceiling rather
-than the visible contract checks — not to widen the search.
+search over them is. Widening `k` to 4 buys nothing until the gate can separate
+candidates.
 
-Note also that the gate's 1.0 did not predict downstream quality: candidates
-indistinguishable at the gate differed by more than a factor of two on the hidden
-suite. Any objective built on a saturating gate is measuring agreement with the
-gate, not task quality.
+The gate's 1.0 does not predict held-out quality. Measured offline in
+EXP-20260810-03: nine candidates all scored 1.0, and their held-out pass rates
+spanned 0.307–0.375. An objective built on a saturating gate measures agreement
+with the gate, not task quality.
+
+**The held-out suite is not available as a fix.** Scoring against it — including
+against its reachable ceiling — is test leakage: it is the evaluation metric, and
+selecting designs on it would void every pass rate we report. It may be used for
+evaluation and for offline diagnosis, never inside a selector, an objective, or a
+prompt.
+
+The leak-free candidate — scoring the visible `check_tests` as a graded, non-gating
+stage at `implementation` level — was measured and does not work either: all three
+imapclient candidates pass 9/9 visible tests. No CodeProjectEval task has a visible
+suite with both the resolution (~20 units, given epsilon 0.02) and the coverage for
+a visible gain to transfer; the best is flask at 27 visible against 375 held out.
+
+Creating a signal with headroom therefore means adding one: richer behavioural
+contracts derived from the PRD and UML, or tests authored test-first by a dedicated
+role before the implementer runs. Both are design work and neither is a tuning
+parameter.
