@@ -39,7 +39,69 @@
    driver that accepts `--repeats 10` is how it gets spent by accident;
    `run_codeprojecteval_sweep.py` refuses anything larger.
 
-**Last updated:** 2026-08-09 (UTC) — parallel sweep, dollar axis, fast-loop objectives
+6. **Check the gate has a gradient before paying to tune on it.** A repair loop
+   only fires when a milestone gate fails, so on a repository whose gate almost
+   always passes a tuning run is a lottery, not an experiment. Count gate
+   outcomes in existing batches first; if they are nearly all passes, probe
+   cheaper repositories with tuning switched on (a probe whose gate passes costs
+   no more than one without it) rather than spending n=5 on the saturated one.
+
+**Last updated:** 2026-08-10 (UTC) — first real tuning run (EXP-20260810-01)
+
+---
+
+### EXP-20260810-01 — The repair loop, run for real: 0.000 → 0.163 on imapclient
+- **Status:** canonical
+- **Date:** 2026-08-10 (UTC)
+- **Population:** imapclient, one frozen 2-milestone plan replayed by both arms
+  (`review_then_fix` 3 agents, then `gate_then_repair` 2 agents), n=5 per arm,
+  arms launched concurrently so endpoint conditions are shared.
+- **Arms:** repair loop on (`fast_loop_candidates: 2`) vs off (`0`). Nothing
+  else differs — same plan, same budgets, same builder.
+- **Artefacts:** `outputs/cpe_tuning/{on,off}_trials.jsonl`,
+  `configs/experiments/codeprojecteval_tuning.yaml`.
+
+| arm | hidden pass | milestone gates passed | $/run | wall clock |
+|-----|-------------|------------------------|-------|------------|
+| repair on  | **0.163 ± 0.082** | 10/10 | $5.08 | 40 min |
+| repair off | **0.000 ± 0.000** | 0/10 (5/5 runs died at milestone 1) | $1.90 | 13 min |
+
+**Choosing the repository mattered more than the tuning did.** The first attempt
+was going to be pyjwt, where the loop would have fired roughly once in ten runs:
+across the previous sweep's 15 gate results, 14 read `passed=True, score=1.0`.
+That gate is saturated — it reports a perfect score on work that fails a quarter
+of the held-out suite, because it is built from 10 visible tests against 290
+hidden ones. Tuning on a rare event with n=5 buys nothing. Three single probe
+runs on untried repositories (deprecated $0.21, voluptuous $1.34, imapclient
+$5.33) found one whose gate fails reliably; the probes carried tuning switched
+on, which costs nothing extra on the runs where the gate passes.
+
+**What the loop bought.** On imapclient, milestone 1's gate fails every time,
+and without repair the run stops there: milestone 2 never starts and the
+repository scores zero. Five for five. With repair, both candidates fixed it
+every time and all ten milestones committed. The loop costs 2.7x and 3x the wall
+clock; against a floor of zero that is not a close call.
+
+**The graded score did its job on the main path and never got to do it in the
+loop.** Every failed main attempt scored 0.983 with `contracts 34/36` — the same
+two symbols missing on all five runs, `imapclient.response_types.Quota` and
+`MailboxQuotaRoots`. As a bare pass/fail that failure is indistinguishable from
+producing nothing; as 34/36 it names the two lines to look at. But inside the
+loop the axis never separated anything: all ten candidates scored exactly 1.0,
+so the tie fell to tokens every time.
+
+**Tokens decided all five, sometimes on noise.** Run 4's candidates differed by
+1,837 tokens out of 2.07M — 0.09%. The selector is deterministic, so this is
+harmless in the sense that both candidates had passed, but it means that when
+several candidates pass, we choose among them on an axis uncorrelated with the
+held-out outcome. The spread in final scores (0.094 to 0.315) is consistent with
+that choice being close to a coin flip. **Reporting rule:** do not present the
+token tie-break as a quality decision. It is a cost decision taken among
+candidates the gate could not distinguish.
+
+**Open, and not answered here:** whether the graded score helps when candidates
+genuinely differ. It needs a milestone where repair sometimes fails, and
+imapclient's repair succeeded 10/10.
 
 ---
 

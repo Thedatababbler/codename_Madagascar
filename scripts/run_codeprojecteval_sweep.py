@@ -76,6 +76,11 @@ class TrialResult:
     committed: int = 0
     gates_passed: int = 0
     gates_failed: int = 0
+    # Milestones whose committed work came from a repair candidate rather than
+    # the first attempt. On a tuning run this is what the loop bought.
+    repaired: list[str] = field(default_factory=list)
+    probe_gates_passed: int = 0
+    probe_gates_failed: int = 0
     errors: list[str] = field(default_factory=list)
 
 
@@ -166,6 +171,20 @@ def collect_result(trial: Trial, batch_dir: Path, *, status: str) -> TrialResult
             result.wall_clock_seconds = float(row.get("latency_ms") or 0.0) / 1000.0
             if row.get("error"):
                 result.errors.append(str(row["error"]))
+            # A milestone's own acceptance gate, which is what these names have
+            # always claimed to count. They counted a conditional edge instead
+            # -- one that exists only inside gate_then_repair -- so a run that
+            # died on its first milestone gate reported none of either.
+            for status in (row.get("subtask_status") or {}).values():
+                if status == "committed":
+                    result.gates_passed += 1
+                elif status in {"failed", "harness_failed", "blocked"}:
+                    result.gates_failed += 1
+            result.repaired = [
+                objective.get("milestone_id")
+                for objective in row.get("milestone_objectives") or []
+                if objective.get("candidate_id") not in {None, "", "main"}
+            ]
 
     hidden_path = batch_dir / "hidden_eval.json"
     if hidden_path.is_file():
@@ -198,9 +217,9 @@ def collect_result(trial: Trial, batch_dir: Path, *, status: str) -> TrialResult
         elif kind == "CONDITIONAL_EDGE_ACTIVATED":
             edge = str((event.get("metadata") or {}).get("edge_id") or "")
             if edge.endswith("_pass_to_freeze"):
-                result.gates_passed += 1
+                result.probe_gates_passed += 1
             elif edge.startswith("gate_fail_to"):
-                result.gates_failed += 1
+                result.probe_gates_failed += 1
 
     if priced_nodes and priced_nodes == result.agent_turns_run:
         result.cost_quality = "derived" if result.cached_tokens else "upper_bound"

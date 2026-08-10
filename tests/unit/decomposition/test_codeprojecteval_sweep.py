@@ -201,6 +201,11 @@ def test_record_joins_run_scoring_and_usage_into_one_row(tmp_path: Path) -> None
                     {
                         "task_id": "pyjwt", "milestone_count": 2, "agent_turns": 4,
                         "committed": ["m1", "m2"], "latency_ms": 660_000, "error": None,
+                        "subtask_status": {"m1": "committed", "m2": "failed"},
+                        "milestone_objectives": [
+                            {"milestone_id": "m1", "candidate_id": "cand_feedback"},
+                            {"milestone_id": "m2", "candidate_id": "main"},
+                        ],
                     }
                 ]
             }
@@ -240,7 +245,13 @@ def test_record_joins_run_scoring_and_usage_into_one_row(tmp_path: Path) -> None
     # early exit makes them differ, and reporting only the first would hide it.
     assert (row.agent_turns_planned, row.agent_turns_run) == (4, 2)
     assert row.prompt_tokens + row.completion_tokens == 1650
+    # Milestone acceptance gates, not the conditional probe edge inside
+    # gate_then_repair, which is counted separately.
     assert (row.gates_passed, row.gates_failed) == (1, 1)
+    assert (row.probe_gates_passed, row.probe_gates_failed) == (1, 1)
+    # A milestone whose committed work came from a repair candidate is what a
+    # tuning run buys, so it is named rather than merely counted.
+    assert row.repaired == ["m1"]
 
 
 def test_an_unmeasured_run_is_not_recorded_as_a_scored_zero(tmp_path: Path) -> None:
