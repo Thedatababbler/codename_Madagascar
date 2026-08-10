@@ -9,8 +9,8 @@ from orchestra.backends.capabilities import BackendCapabilities, SessionPolicy
 from orchestra.control.fast_loop.capability import filter_compatible_candidates
 from orchestra.control.fast_loop.edit_engine import (
     LocalEditError,
-    role_of,
     apply_local_edits,
+    role_of,
 )
 from orchestra.control.fast_loop.schemas import (
     AddRoleAgentEdit,

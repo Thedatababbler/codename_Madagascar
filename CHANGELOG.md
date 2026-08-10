@@ -1,5 +1,95 @@
 # Changelog
 
+## 2026-08-10 — A quality axis that can rank designs: test-first authored suites
+
+EXP-20260810-03 established that the acceptance gate cannot rank the designs the
+fast loop now produces — nine candidates at exactly 1.0, held-out pass rates from
+0.307 to 0.375 — and that no existing leak-free signal has headroom: the visible
+suite is 7 tests on imapclient, all passing, and no CodeProjectEval task ships one
+big enough to help. This adds a signal instead of borrowing one.
+
+A `test_author` role turns the design documents into an executable suite under
+`spec_tests/` before any implementation exists; a `test_first` template runs it
+ahead of the builder; the harness grades the milestone on the fraction of that
+suite which passes. Nothing is derived from the held-out suite.
+
+### Four decisions that make it work
+
+**Graded, never gating.** The authored suite moves the score, never the exit code.
+It is written by an LLM from prose, so parts of it will be unsatisfiable or simply
+wrong, and a milestone that cannot satisfy it must still freeze and let the next
+one proceed. This is the gate/quality separation EXP-20260810-03 asked for: the
+gate answers "is it safe to build on this", the score answers "how good is it".
+
+**One frozen yardstick per milestone, not per attempt.** The suite is copied out
+of the workspace into the runner-owned harness directory on first use, and every
+fast-loop candidate is graded against the copy the *first* attempt authored.
+Without this the axis would be worthless: candidates that each authored their own
+tests would be marking their own exams, and their scores would not be comparable —
+precisely the property a Pareto frontier needs. The workspace copy is restored
+from the frozen one on every harness run, so an implementer always reads the suite
+it will actually be scored against.
+
+**Vacuous tests leave the yardstick.** A test that passes against the repository
+as it shipped measures nothing, and a suite of them would hand every design a free
+1.0 — the exact failure this work exists to escape. The harness runs the frozen
+suite against a source-withheld copy of the repository once per milestone and
+excludes however many tests pass there. A suite that is *entirely* vacuous drops
+the stage rather than scoring zero on a 0.4 weight, since otherwise authoring junk
+tests would rank below authoring none.
+
+**A separate weight table, not a renormalised one.** `SPEC_STAGE_WEIGHTS` gives
+behaviour 0.4 at `implementation` and 0.3 at `integration`; a milestone with no
+authored suite keeps the old table untouched. Renormalising the old weights would
+have turned 0.3/0.4/0.3 into 0.25/0.42/0.33 and silently moved every score we have
+already recorded.
+
+### Two defects caught before they could hide
+
+Both would have left the mechanism running and quietly useless:
+
+* The vacuity baseline was `task.repo_root` — which still contains the dataset's
+  reference implementation. Every *correct* authored test would have passed there
+  and been written off as vacuous, leaving nothing to grade. The baseline is now a
+  `build_agent_workspace` copy, with source and held-out tests withheld.
+* pytest aborts the whole session on the first module it cannot import
+  (`Interrupted: 1 error during collection`), which is the normal state of a
+  half-built milestone. The baseline run measured zero vacuous tests for that
+  reason, and grading would have reported zero for every file whenever one file
+  failed to import — flattening the gradient completely.
+  `--continue-on-collection-errors` on both runs fixes it.
+
+### Measured
+
+Structural stages saturate as before; behaviour now separates. With the structural
+stages full, an implementation passing 10 of 20 authored tests scores 0.8 and one
+passing 18 scores 0.96, against 1.0 for both under the old table. Two
+implementations that are byte-identical in structure — same module, same symbol,
+same signature, wrong return value — score 1.0 and 0.8. The axis is monotone
+across three progressively better implementations with every step clearing the
+0.02 quality epsilon. Full suite green, ruff clean; `pytest` with no arguments now
+runs the suite rather than collecting the deliberately-broken fixture repos.
+
+No experiment was run.
+
+### Known limits
+
+* The vacuity filter only catches a test whose module imports cleanly. An
+  `assert True` sharing a file with an import-coupled test is shielded by that
+  file's collection error and stays in the yardstick. This is the safe direction —
+  the dangerous case, a suite that never touches the implementation, is caught —
+  and it is asserted in a test so it cannot change silently.
+* The baseline is the repository as shipped, so at the second milestone a test
+  already satisfied by the first is not filtered out.
+* A file that cannot be imported counts as one failed unit however many tests it
+  holds, so a broken file understates its own cost.
+* The suite is authored from prose by a model. A wrong test makes correct code look
+  broken, which is *bias* on the axis rather than noise, and it is not yet
+  measured. The first run on a task should compare the authored score against the
+  held-out rate offline before the axis is trusted for selection.
+* Scores from a `test_first` milestone are on a different scale from
+  EXP-20260810-02 and -03 and are not comparable to them.
+
 ## EXP-20260810-03 — The gate carries no signal about hidden quality
 
 Offline follow-up to EXP-20260810-02, run entirely from saved candidate patches

@@ -9,6 +9,12 @@ from orchestra.sandbox.lcb_official import OfficialLCBSandbox
 from orchestra.schemas.artifacts import PublicExample
 from orchestra.schemas.task import AgentVisibleLCBTask
 
+# The repositories under tests/fixtures are inputs to integration tests, several
+# of them deliberately broken so an agent has something to repair. Collecting
+# them as our own tests made a bare `pytest` report failures that say nothing
+# about this codebase.
+collect_ignore_glob = ["fixtures/*"]
+
 
 @pytest.fixture
 def visible_echo_task():

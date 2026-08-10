@@ -18,12 +18,16 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from orchestra.codeprojecteval.dataset import CpeTask
+from orchestra.codeprojecteval.dataset import CpeTask, build_agent_workspace
 from orchestra.realbench.public_harness import parse_expected_modules
 
 CHECK_SCRIPT_NAME = "adamas_cpe_check.py"
 CHECK_MANIFEST_NAME = "adamas_cpe_harness.json"
 CONTRACTS_SUFFIX = ".contracts.json"
+SPEC_TESTS_SUFFIX = ".spec_tests"
+# Where a ``test_author`` writes inside the workspace. Deliberately not the
+# dataset's own ``check_tests``, which is digest-guarded evidence.
+SPEC_TESTS_DIRNAME = "spec_tests"
 
 
 @dataclass(frozen=True)
@@ -34,6 +38,11 @@ class CpeHarnessManifest:
     check_tests_dir: str
     source_dir: str
     check_tests_digest: dict[str, str] = field(default_factory=dict)
+    # Where a test_author writes, and the repository as it shipped. The second is
+    # what makes a vacuous authored test detectable: anything passing against it
+    # passes without an implementation.
+    spec_tests_dir: str = "spec_tests"
+    pristine_repo: str = ""
     script_path: str = ""
     manifest_path: str = ""
     env_python: str = ""
@@ -105,6 +114,7 @@ import inspect
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -126,14 +136,51 @@ STAGE_WEIGHTS = {
     "integration": {"compile": 0.15, "imports": 0.25, "contracts": 0.2, "tests": 0.4},
 }
 
+# Used instead of the above when a frozen specification suite is available to
+# grade. Kept as a separate table rather than renormalising the one above: the
+# structural stages saturate, so a level that can measure behaviour has to give
+# behaviour most of the weight, and a milestone with no authored suite must keep
+# scoring exactly as it did before this existed.
+SPEC_STAGE_WEIGHTS = {
+    "implementation": {
+        "compile": 0.15,
+        "imports": 0.25,
+        "contracts": 0.2,
+        "spec_tests": 0.4,
+    },
+    "integration": {
+        "compile": 0.1,
+        "imports": 0.15,
+        "contracts": 0.15,
+        "tests": 0.3,
+        "spec_tests": 0.3,
+    },
+}
+
 
 class Progress:
     """Records each stage's passing ratio and prints them for the runner."""
 
-    def __init__(self, level):
+    def __init__(self, level, spec_tests=False):
         self.level = level
-        self.weights = STAGE_WEIGHTS.get(level, STAGE_WEIGHTS["integration"])
+        self.spec_tests = bool(spec_tests) and level in SPEC_STAGE_WEIGHTS
         self.stages = []
+
+    @property
+    def weights(self):
+        if self.spec_tests:
+            return SPEC_STAGE_WEIGHTS[self.level]
+        return STAGE_WEIGHTS.get(self.level, STAGE_WEIGHTS["integration"])
+
+    def drop_spec_stage(self):
+        """Score as if no suite existed, once it turns out none can be graded.
+
+        An unreadable or entirely vacuous suite must not be a zero on a 0.4
+        weight: that would rank every design in the milestone below one that
+        never authored tests at all.
+        """
+        self.spec_tests = False
+        self.stages = [e for e in self.stages if e["stage"] != "spec_tests"]
 
     def record(self, stage, passed_units, total_units):
         if stage not in self.weights:
@@ -143,7 +190,6 @@ class Progress:
                 "stage": stage,
                 "passed_units": int(passed_units),
                 "total_units": int(total_units),
-                "weight": self.weights[stage],
             }
         )
 
@@ -153,14 +199,18 @@ class Progress:
         Stages the run never reached contribute nothing, so stopping early at a
         cheap stage scores below getting through it and failing a later one.
         """
+        weights = self.weights
         total = 0.0
         for entry in self.stages:
             units = entry["total_units"]
             ratio = entry["passed_units"] / units if units else 0.0
-            total += entry["weight"] * ratio
+            total += weights.get(entry["stage"], 0.0) * ratio
         return round(min(1.0, total), 6)
 
     def emit(self):
+        weights = self.weights
+        for entry in self.stages:
+            entry["weight"] = weights.get(entry["stage"], 0.0)
         reached = [e["stage"] for e in self.stages if e["passed_units"]]
         print(
             "ADAMAS_HARNESS_SCORE "
@@ -210,6 +260,130 @@ def _missing_third_party(exc, root, packages):
     return top
 
 
+def _has_tests(directory):
+    path = Path(directory)
+    if not path.is_dir():
+        return False
+    return any(
+        p.is_file() and "__pycache__" not in p.parts for p in path.rglob("test_*.py")
+    )
+
+
+def _run_pytest(cwd, target, *, timeout, import_root=None):
+    """Run one suite and return (passed, total, tail). Never raises."""
+    env = dict(os.environ)
+    roots = [str(import_root or cwd)]
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = os.pathsep.join([p for p in roots + [existing] if p])
+    command = [
+        sys.executable,
+        "-m",
+        "pytest",
+        "-q",
+        "--no-header",
+        "-p",
+        "no:cacheprovider",
+        # Repositories bolt coverage thresholds, mypy and pycodestyle onto
+        # pytest; those judge style, not whether the milestone works.
+        "-o",
+        "addopts=",
+        # Without this pytest aborts the whole session on the first module it
+        # cannot import, which is the normal state of a half-built milestone: one
+        # unimportable file would report zero for every other file's tests and
+        # flatten the gradient this stage exists to provide.
+        "--continue-on-collection-errors",
+        str(target),
+    ]
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=str(cwd),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return 0, 0, "timed out"
+    passed, total = _pytest_counts(proc.stdout)
+    return passed, total, (proc.stdout or "")[-2000:]
+
+
+def _freeze_spec_suite(root, source_rel, frozen_dir):
+    """Copy the authored suite out of the workspace, once, and keep it in sync.
+
+    The copy lives beside the manifest, outside the repository, so no later
+    agent can edit what it is scored against. Every candidate in a fast-loop
+    search therefore grades against the suite the first attempt authored, which
+    is what makes their quality scores comparable at all — a candidate that
+    rewrote the tests would be marking its own exam.
+    """
+    frozen = Path(frozen_dir)
+    source = Path(root) / source_rel
+    if not frozen.is_dir():
+        if not _has_tests(source):
+            return False
+        staging = frozen.parent / (frozen.name + ".staging")
+        shutil.rmtree(staging, ignore_errors=True)
+        shutil.copytree(
+            source, staging, ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
+        )
+        try:
+            os.replace(str(staging), str(frozen))
+        except OSError:
+            # Another invocation won the race; its copy is the yardstick.
+            shutil.rmtree(staging, ignore_errors=True)
+        if not frozen.is_dir():
+            return False
+    # Keep the workspace copy identical to the frozen one, so an agent reading
+    # the suite to implement against it sees exactly what it will be scored on.
+    if source.resolve() != frozen.resolve():
+        shutil.rmtree(source, ignore_errors=True)
+        try:
+            shutil.copytree(frozen, source)
+        except OSError:
+            pass
+    return True
+
+
+def _vacuous_count(frozen_dir, pristine_repo, timeout):
+    """How many authored tests pass with no implementation present.
+
+    A test that passes against the repository as it shipped measures nothing
+    about the milestone, and a suite of them would hand every design a free
+    1.0. The count is cached: it depends only on the frozen suite.
+    """
+    frozen = Path(frozen_dir)
+    cache = frozen.parent / (frozen.name + ".baseline.json")
+    if cache.is_file():
+        try:
+            return int(json.loads(cache.read_text(encoding="utf-8"))["vacuous"])
+        except Exception:  # noqa: BLE001
+            pass
+    if not pristine_repo or not Path(pristine_repo).is_dir():
+        return 0
+    scratch = frozen.parent / (frozen.name + ".baseline_repo")
+    shutil.rmtree(scratch, ignore_errors=True)
+    try:
+        shutil.copytree(
+            pristine_repo,
+            scratch,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".git"),
+        )
+    except OSError:
+        return 0
+    passed, total, _ = _run_pytest(scratch, frozen, timeout=timeout)
+    shutil.rmtree(scratch, ignore_errors=True)
+    try:
+        cache.write_text(
+            json.dumps({"vacuous": passed, "collected": total}), encoding="utf-8"
+        )
+    except OSError:
+        pass
+    return passed
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -221,6 +395,11 @@ def main() -> int:
     parser.add_argument("--contracts", default="")
     parser.add_argument("--tests", default="", help="pytest node ids or paths")
     parser.add_argument("--timeout", type=int, default=900)
+    parser.add_argument(
+        "--spec-tests",
+        default="",
+        help="runner-owned directory holding this milestone's frozen authored suite",
+    )
     args = parser.parse_args()
 
     root = Path.cwd()
@@ -231,8 +410,52 @@ def main() -> int:
     modules = list(manifest.get("expected_modules") or [])
     packages = list(manifest.get("top_level_packages") or [])
     check_dir = str(manifest.get("check_tests_dir") or "check_tests")
+    spec_dir_rel = str(manifest.get("spec_tests_dir") or "spec_tests")
 
-    progress = Progress(args.level)
+    # Graded but never gating. The authored suite states behaviour the documents
+    # only describe, so parts of it may be unsatisfiable or simply wrong; a
+    # milestone that failed it must still be able to freeze and let the next one
+    # proceed. It moves the score, not the exit code.
+    spec_frozen = (
+        Path(args.spec_tests)
+        if args.spec_tests and _freeze_spec_suite(root, spec_dir_rel, args.spec_tests)
+        else None
+    )
+    progress = Progress(args.level, spec_tests=spec_frozen is not None)
+    graded_spec = [False]
+
+    def finish(code):
+        """Grade the authored suite, then emit. Called on every exit path.
+
+        Deliberately runs even when an earlier stage already failed: a design
+        that got two contracts wrong but implemented most of the documented
+        behaviour has to score above one that implemented none, and that is the
+        exact comparison the structural stages cannot make.
+        """
+        if spec_frozen is not None and not graded_spec[0] and progress.spec_tests:
+            graded_spec[0] = True
+            vacuous = _vacuous_count(
+                spec_frozen, manifest.get("pristine_repo") or "", args.timeout
+            )
+            passed, total, tail = _run_pytest(root, spec_frozen, timeout=args.timeout)
+            gradable = total - vacuous
+            if gradable <= 0:
+                print(
+                    "SKIP spec_tests: nothing gradable "
+                    + "(collected " + str(total) + ", vacuous " + str(vacuous) + ")"
+                )
+                progress.drop_spec_stage()
+            else:
+                progress.record("spec_tests", max(0, passed - vacuous), gradable)
+                print(
+                    "SPEC spec_tests "
+                    + str(max(0, passed - vacuous)) + "/" + str(gradable)
+                    + " (vacuous " + str(vacuous) + " excluded)"
+                )
+                if passed < total:
+                    print(tail[-800:])
+        progress.emit()
+        return code
 
     targets = [root / p for p in packages if (root / p).exists()]
     targets += [root / (p + ".py") for p in packages if (root / (p + ".py")).is_file()]
@@ -242,8 +465,7 @@ def main() -> int:
             file=sys.stderr,
         )
         progress.record("compile", 0, max(1, len(packages)))
-        progress.emit()
-        return 1
+        return finish(1)
     compiled = 0
     for target in targets:
         ok = (
@@ -257,13 +479,11 @@ def main() -> int:
             print("FAIL: compileall failed under " + str(target), file=sys.stderr)
     progress.record("compile", compiled, len(targets))
     if compiled != len(targets):
-        progress.emit()
-        return 1
+        return finish(1)
     print("OK compileall level=" + args.level)
 
     if args.level == "discovery":
-        progress.emit()
-        return 0
+        return finish(0)
 
     sys.path.insert(0, str(root))
     skipped_deps = set()
@@ -286,8 +506,7 @@ def main() -> int:
         print("FAIL imports:", file=sys.stderr)
         for item in failed_imports[:40]:
             print("  - " + item, file=sys.stderr)
-        progress.emit()
-        return 1
+        return finish(1)
     print("OK imports count=" + str(len(modules)))
 
     contracts = _load_json(args.contracts) if args.contracts else {}
@@ -350,16 +569,14 @@ def main() -> int:
         print("FAIL milestone contracts:", file=sys.stderr)
         for item in failed_contracts[:40]:
             print("  - " + item, file=sys.stderr)
-        progress.emit()
-        return 1
+        return finish(1)
     if contracts:
         print("OK milestone contracts level=" + args.level)
     if skipped_deps:
         print("SKIP unavailable dependencies: " + ", ".join(sorted(skipped_deps)))
 
     if args.level != "integration":
-        progress.emit()
-        return 0
+        return finish(0)
 
     # The visible suite is evidence, not workspace material: an agent that edits
     # it can make any implementation pass.
@@ -380,15 +597,13 @@ def main() -> int:
         # suite is not partial progress, and a loop that could climb by editing
         # tests would learn to do exactly that.
         progress.record("tests", 0, 1)
-        progress.emit()
-        return 1
+        return finish(1)
 
     selection = [t for t in args.tests.split(",") if t.strip()] or [check_dir]
     if not any((root / t.split("::", 1)[0]).exists() for t in selection):
         print("FAIL: no visible tests found at " + ", ".join(selection), file=sys.stderr)
         progress.record("tests", 0, 1)
-        progress.emit()
-        return 1
+        return finish(1)
     env = dict(os.environ)
     env["PYTHONPATH"] = str(root) + os.pathsep + env.get("PYTHONPATH", "")
     command = [
@@ -418,8 +633,7 @@ def main() -> int:
     except subprocess.TimeoutExpired:
         print("FAIL check_tests: timed out", file=sys.stderr)
         progress.record("tests", 0, 1)
-        progress.emit()
-        return 1
+        return finish(1)
     tail = (proc.stdout or "")[-4000:]
     passed_tests, total_tests = _pytest_counts(proc.stdout)
     progress.record("tests", passed_tests, total_tests or 1)
@@ -427,12 +641,10 @@ def main() -> int:
         print("FAIL check_tests:", file=sys.stderr)
         print(tail, file=sys.stderr)
         print((proc.stderr or "")[-1500:], file=sys.stderr)
-        progress.emit()
-        return 1
+        return finish(1)
     print("OK check_tests")
     print(tail[-500:])
-    progress.emit()
-    return 0
+    return finish(0)
 
 
 if __name__ == "__main__":
@@ -457,17 +669,27 @@ def materialize_check_harness(
     script_path = out / CHECK_SCRIPT_NAME
     script_path.write_text(_check_script_source(), encoding="utf-8")
     python = Path(env_python or task.env_python)
+    # The baseline an authored test has to be measured against is the repository
+    # as the agent received it — documents and the visible suite, no source.
+    # Emphatically not ``task.repo_root``, which still holds the reference
+    # implementation: every correct authored test would pass there and be written
+    # off as vacuous.
+    pristine = out / "pristine_repo"
+    if not pristine.exists():
+        build_agent_workspace(task, pristine)
     manifest = CpeHarnessManifest(
         levels={
             "discovery": "compileall",
-            "implementation": "compileall+imports+contracts",
-            "integration": "compileall+imports+contracts+check_tests",
+            "implementation": "compileall+imports+contracts(+spec_tests, graded)",
+            "integration": ("compileall+imports+contracts+check_tests(+spec_tests, graded)"),
         },
         expected_modules=modules,
         top_level_packages=packages,
         check_tests_dir=task.check_tests,
         source_dir=task.source_dir,
         check_tests_digest=_digest_check_tests(task),
+        spec_tests_dir=SPEC_TESTS_DIRNAME,
+        pristine_repo=str(pristine),
         script_path=str(script_path),
         manifest_path=str(out / CHECK_MANIFEST_NAME),
         env_python=str(python),
@@ -493,6 +715,7 @@ def check_command(
     env_python: Path,
     contracts_path: Path | None = None,
     tests: list[str] | None = None,
+    spec_tests_path: Path | None = None,
 ) -> list[str]:
     """Absolute harness command for one milestone level.
 
@@ -513,12 +736,27 @@ def check_command(
         command += ["--contracts", str(contracts_path)]
     if tests:
         command += ["--tests", ",".join(tests)]
+    if spec_tests_path is not None:
+        command += ["--spec-tests", str(spec_tests_path)]
     return command
 
 
+def _safe_milestone(milestone_id: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", milestone_id) or "milestone"
+
+
 def contracts_path_for(harness_dir: Path, milestone_id: str) -> Path:
-    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", milestone_id) or "milestone"
-    return Path(harness_dir) / f"{safe}{CONTRACTS_SUFFIX}"
+    return Path(harness_dir) / f"{_safe_milestone(milestone_id)}{CONTRACTS_SUFFIX}"
+
+
+def spec_tests_path_for(harness_dir: Path, milestone_id: str) -> Path:
+    """Where this milestone's authored suite is frozen.
+
+    Per milestone rather than per attempt: every fast-loop candidate is scored
+    against the suite the first attempt wrote, which is the only way their
+    quality scores mean the same thing.
+    """
+    return Path(harness_dir) / f"{_safe_milestone(milestone_id)}{SPEC_TESTS_SUFFIX}"
 
 
 def build_deterministic_contracts(

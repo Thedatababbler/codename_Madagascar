@@ -47,6 +47,7 @@ from orchestra.codeprojecteval.harness import (
     build_deterministic_contracts,
     check_command,
     contracts_path_for,
+    spec_tests_path_for,
 )
 from orchestra.control.fast_loop.objectives import (
     DEFAULT_GATE_WEIGHT,
@@ -220,6 +221,10 @@ def build_cpe_task_plan(
             level=milestone.role,
             env_python=env_python,
             contracts_path=path,
+            # Passed unconditionally, not only for a test-first template: a
+            # milestone that authored no suite finds nothing to freeze and scores
+            # exactly as it did before this stage existed.
+            spec_tests_path=spec_tests_path_for(harness_dir, milestone.milestone_id),
         )
 
     payload = build_plan_from_draft(

@@ -9,6 +9,8 @@ fixing that would have bought a wider search on paper only.
 from __future__ import annotations
 
 import pytest
+from milestone_subgraph import FIXER, REVIEWER
+from milestone_subgraph import review_then_fix_graph as _graph
 
 from orchestra.control.fast_loop.candidate_generator import (
     DesignSearchCandidateGenerator,
@@ -18,8 +20,6 @@ from orchestra.control.fast_loop.schemas import (
     FastLoopBudget,
 )
 from orchestra.control.task_state import SubtaskFailureReason
-
-from milestone_subgraph import FIXER, REVIEWER, review_then_fix_graph as _graph
 
 
 def _diagnosis(stage: str = "contracts") -> FailureDiagnosis:

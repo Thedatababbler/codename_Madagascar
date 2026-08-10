@@ -52,7 +52,13 @@ def test_role_without_a_prompt_is_rejected() -> None:
 
 def test_templates_load_and_name_only_pool_roles() -> None:
     templates = _templates()
-    assert {"solo", "chain", "gate_then_repair", "review_then_fix"} <= set(templates)
+    assert {
+        "solo",
+        "chain",
+        "gate_then_repair",
+        "review_then_fix",
+        "test_first",
+    } <= set(templates)
     for template in templates.values():
         assert template.when_to_use.strip(), template.template_id
 
@@ -196,9 +202,7 @@ def _materialize(template_id: str, agents: list[dict]) -> dict:
         },
         max_agents=4,
     )
-    root = prepare_generated_root(
-        Path(tempfile.mkdtemp()), base_contracts_dir="configs/contracts"
-    )
+    root = prepare_generated_root(Path(tempfile.mkdtemp()), base_contracts_dir="configs/contracts")
     path, _ = materialize_milestone_subgraph(
         generated_root=root,
         milestone=plan.milestones[0],
@@ -239,8 +243,79 @@ def test_generated_template_graphs_compile() -> None:
                 {"slot": "fixer", "role": "gate_repairer", "mandate": "d"},
             ],
         ),
+        (
+            "test_first",
+            [
+                {"slot": "test_author", "role": "test_author", "mandate": "a"},
+                {
+                    "slot": "builder",
+                    "role": "test_driven_implementer",
+                    "mandate": "b",
+                },
+                {"slot": "repairer", "role": "gate_repairer", "mandate": "c"},
+            ],
+        ),
     ]:
         _compile(_materialize(template_id, agents))
+
+
+def test_test_first_gates_after_the_builder_not_after_the_test_author() -> None:
+    """The suite has to exist before the gate can grade against it.
+
+    A probe placed after the test_author would run against a repository with no
+    implementation and report a failure that means nothing.
+    """
+    payload = _materialize(
+        "test_first",
+        [
+            {"slot": "test_author", "role": "test_author", "mandate": "a"},
+            {"slot": "builder", "role": "test_driven_implementer", "mandate": "b"},
+            {"slot": "repairer", "role": "gate_repairer", "mandate": "c"},
+        ],
+    )
+    graph = OrchestraGraph(**payload)
+    edges = {(e.source_node, e.destination_node) for e in graph.edges}
+    author = next(n.node_id for n in graph.nodes if "test_author" in n.node_id)
+    builder = next(n.node_id for n in graph.nodes if "test_driven_implementer" in n.node_id)
+
+    assert (author, builder) in edges
+    assert (builder, "repository_tests_probe") in edges
+    assert not any(src == author and "probe" in dst for src, dst in edges)
+    # The author writes files, so it owes a diff like any other editing role.
+    by_id = {node["node_id"]: node for node in payload["nodes"]}
+    assert by_id[author]["backend"]["require_git_diff"] is True
+
+
+def test_test_first_skips_the_repairer_when_the_authored_gate_passes() -> None:
+    payload = _materialize(
+        "test_first",
+        [
+            {"slot": "test_author", "role": "test_author", "mandate": "a"},
+            {"slot": "builder", "role": "test_driven_implementer", "mandate": "b"},
+            {"slot": "repairer", "role": "gate_repairer", "mandate": "c"},
+        ],
+    )
+    graph = OrchestraGraph(**payload)
+    scheduler = Scheduler(max_parallel_nodes=4)
+    state = _state(graph)
+    author = next(n.node_id for n in graph.nodes if "test_author" in n.node_id)
+    builder = next(n.node_id for n in graph.nodes if "test_driven_implementer" in n.node_id)
+    repairer = next(n.node_id for n in graph.nodes if "gate_repairer" in n.node_id)
+
+    state.node_status[author] = NodeStatus.SUCCEEDED
+    state.node_outputs[author] = {"repository_change": "suite"}
+    state.node_status[builder] = NodeStatus.SUCCEEDED
+    state.node_outputs[builder] = {"repository_change": "change-1"}
+    state.node_status["repository_tests_probe"] = NodeStatus.SUCCEEDED
+    state.node_outputs["repository_tests_probe"] = {"result": "probe-pass"}
+    state.active_edges.add("probe_pass_to_freeze")
+    state.inactive_edges.add("gate_fail_to_" + repairer)
+
+    ready = scheduler.find_ready_nodes(graph, state)
+    assert "freeze_change" in ready
+    assert repairer not in ready
+    resolved = scheduler.resolve_input_ids(graph, state, "freeze_change")
+    assert resolved["repository_change"] == "change-1"
 
 
 def test_a_read_only_reviewer_is_not_asked_for_a_diff() -> None:
@@ -285,9 +360,7 @@ def _state(graph: OrchestraGraph) -> RuntimeState:
         node_status={node.node_id: NodeStatus.PENDING for node in graph.nodes},
         initial_artifacts={"problem": "artifact-problem"},
     )
-    state.active_edges.update(
-        edge.edge_id for edge in graph.edges if edge.condition is None
-    )
+    state.active_edges.update(edge.edge_id for edge in graph.edges if edge.condition is None)
     return state
 
 

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import pytest
-
 from dataclasses import dataclass, field
 from typing import Any
+
+import pytest
 
 from orchestra.cli.run_codeprojecteval_decomp import read_tuning_config
 from orchestra.control.fast_loop.objectives import milestone_objectives

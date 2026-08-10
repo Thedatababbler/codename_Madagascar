@@ -186,3 +186,31 @@ Creating a signal with headroom therefore means adding one: richer behavioural
 contracts derived from the PRD and UML, or tests authored test-first by a dedicated
 role before the implementer runs. Both are design work and neither is a tuning
 parameter.
+
+### The authored-suite axis
+
+The second was built: a `test_author` role writes an executable suite from the
+design documents under `spec_tests/` before any implementation exists, the
+`test_first` template runs it ahead of the builder, and the harness scores the
+milestone on the fraction of that suite which passes. It is graded and never
+gating, so an unsatisfiable authored test cannot deadlock a milestone.
+
+Two properties of it matter to this protocol specifically:
+
+* **The suite is frozen once per milestone**, in the runner-owned harness
+  directory, and every candidate is scored against the copy the first attempt
+  wrote. A frontier built from candidates that each authored their own tests would
+  be comparing scores from different yardsticks, which is not a frontier.
+* **Tests that pass against the repository as shipped are excluded.** Without that,
+  a suite of vacuous assertions restores exactly the saturation this section
+  documents.
+
+Quality on this axis moves 0.8 against 0.96 for implementations passing 10 and 18
+of 20 authored tests, so the 0.02 epsilon is now well inside the axis's resolution
+rather than larger than its whole range.
+
+One caution before trusting it for selection: the suite is authored from prose by a
+model, so a wrong test makes correct code look broken. That is bias, not noise, and
+epsilon does not absorb it. On the first run of a task, compare the authored score
+against the held-out rate offline — the same replay-the-patches method as
+EXP-20260810-03 — and only then let the axis drive a selection.

@@ -1,0 +1,38 @@
+template_id: test_first
+title: Author the tests, then implement against them
+when_to_use: >
+  One agent turns the design documents into an executable test suite before any
+  code exists, a second implements against it, and the acceptance gate runs
+  immediately after. Use when the milestone's risk is that "done" is decided by
+  whoever implements it — the documents are prose, the gate only checks that
+  symbols exist, and nothing else states what the behaviour should be. The
+  authored suite is frozen once written and scores the milestone, so this is
+  also the only template whose quality signal can tell two implementations
+  apart.
+slots:
+  - id: test_author
+    default_role: test_author
+    allowed_roles:
+      - test_author
+  - id: builder
+    default_role: test_driven_implementer
+    allowed_roles:
+      - test_driven_implementer
+      - implementer
+      - contract_author
+      - integrator
+  - id: repairer
+    default_role: gate_repairer
+    required: false
+    runs_if_gate_failed: true
+    allowed_roles:
+      - gate_repairer
+      - implementer
+      - integrator
+      - dependency_resolver
+edges:
+  - from: test_author
+    to: builder
+  - from: builder
+    to: repairer
+early_gate_after: builder

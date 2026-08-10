@@ -10,6 +10,7 @@ tell us nothing about the graphs the search will run on.
 from __future__ import annotations
 
 import pytest
+from milestone_subgraph import AUTHOR, FIXER, REVIEWER, review_then_fix_graph
 
 from orchestra.control.fast_loop.edit_engine import LocalEditError, apply_local_edits
 from orchestra.control.fast_loop.schemas import (
@@ -17,7 +18,6 @@ from orchestra.control.fast_loop.schemas import (
     DropAgentEdit,
     RewireEdgeEdit,
 )
-from milestone_subgraph import AUTHOR, FIXER, REVIEWER, review_then_fix_graph
 from orchestra.ir.edges import EdgeCondition
 from orchestra.ir.graph import OrchestraGraph
 
