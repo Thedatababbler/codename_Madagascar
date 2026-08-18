@@ -90,6 +90,21 @@ class RolePool:
             key=lambda role: (not role.edits_repository, role.role_id),
         )
 
+    def role_for_node_id(self, node_id: str) -> RoleSpec | None:
+        """The role a compiled agent node was instantiated with, or ``None``.
+
+        Read off the node id, which the subgraph builder composes as
+        ``agent_<n>_<slot>_<role_id>``, because a compiled node carries its
+        contract but not its role. A planner may name a slot's ``role_id``
+        itself, in which case the suffix does not match and the role is
+        genuinely unknown — callers must decide what to assume, and the safe
+        assumption is that an unidentified agent edits the repository.
+        """
+        for role in self.ordered():
+            if node_id.endswith(f"_{role.role_id}"):
+                return role
+        return None
+
     def catalog_lines(self) -> list[str]:
         """One line per role, for the planner prompt."""
         lines = []

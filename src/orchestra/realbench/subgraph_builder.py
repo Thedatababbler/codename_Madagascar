@@ -237,8 +237,21 @@ def _system_prompt(
     )
 
 
-def contract_id_for(*, milestone_id: str, role_id: str) -> str:
-    return f"{CONTRACT_PREFIX}_{milestone_id}_{role_id}"[:120]
+def contract_id_for(
+    *, milestone_id: str, role_id: str, namespace: str = ""
+) -> str:
+    """Contract id for one agent of one milestone.
+
+    ``namespace`` separates several compilations of the same milestone, which a
+    plan-layer search needs: two candidates filling the same slot with different
+    roles would otherwise overwrite each other's contract on disk, and whichever
+    ran second would score the other's prompt.
+    """
+    parts = [CONTRACT_PREFIX, milestone_id]
+    if namespace:
+        parts.append(namespace)
+    parts.append(role_id)
+    return "_".join(parts)[:120]
 
 
 def materialize_agent_contract(
@@ -250,10 +263,13 @@ def materialize_agent_contract(
     model_name: str | None = None,
     profile: DatasetPromptProfile = REALBENCH_PROMPT_PROFILE,
     pool: RolePool | None = None,
+    contract_namespace: str = "",
 ) -> dict[str, Any]:
     """Write one generated agent contract and return its roster entry."""
     contract_id = contract_id_for(
-        milestone_id=milestone.milestone_id, role_id=agent.role_id
+        milestone_id=milestone.milestone_id,
+        role_id=agent.role_id,
+        namespace=contract_namespace,
     )
     system_prompt = _system_prompt(
         milestone=milestone,
@@ -352,6 +368,7 @@ def build_milestone_graph(
     harness_timeout_seconds: int = 180,
     template: SubgraphTemplate | None = None,
     pool: RolePool | None = None,
+    variant: str = "",
 ) -> dict[str, Any]:
     """Compile a milestone's chosen template into a runnable graph payload.
 
@@ -597,23 +614,29 @@ def build_milestone_graph(
             ]
         )
 
+    graph_id = f"rb_dynamic_{milestone.milestone_id}" + (f"__{variant}" if variant else "")
+    metadata: dict[str, Any] = {
+        "gate_level": milestone.gate_level,
+        "role": milestone.gate_level,
+        "benchmark": benchmark,
+        "topology": f"template:{shape.template_id}",
+        "template_id": shape.template_id,
+        "public_harness_level": milestone.gate_level,
+        "agent_backend": agent_backend,
+        "milestone_id": milestone.milestone_id,
+        "risk_rationale": milestone.risk_rationale,
+        "agent_roster": roster,
+    }
+    if variant:
+        # Omitted when empty so a plain compilation's payload — and therefore its
+        # content hash — is exactly what it was before variants existed.
+        metadata["variant"] = variant
     return {
-        "graph_id": f"rb_dynamic_{milestone.milestone_id}"[:96],
+        "graph_id": graph_id[:96],
         "version": "1.0",
         "initial_artifact_slots": {"problem": "ProblemArtifact"},
         "final_output_slot": "final_change",
-        "metadata": {
-            "gate_level": milestone.gate_level,
-            "role": milestone.gate_level,
-            "benchmark": benchmark,
-            "topology": f"template:{shape.template_id}",
-            "template_id": shape.template_id,
-            "public_harness_level": milestone.gate_level,
-            "agent_backend": agent_backend,
-            "milestone_id": milestone.milestone_id,
-            "risk_rationale": milestone.risk_rationale,
-            "agent_roster": roster,
-        },
+        "metadata": metadata,
         "nodes": nodes,
         "edges": edges,
     }
@@ -656,8 +679,14 @@ def materialize_milestone_subgraph(
     profile: DatasetPromptProfile = REALBENCH_PROMPT_PROFILE,
     benchmark: str = "realbench",
     harness_timeout_seconds: int = 180,
+    contract_namespace: str = "",
 ) -> tuple[str, list[dict[str, Any]]]:
-    """Write contracts + graph for one milestone; return (graph path, roster)."""
+    """Write contracts + graph for one milestone; return (graph path, roster).
+
+    ``contract_namespace`` separates repeated compilations of one milestone, so a
+    plan-layer candidate does not overwrite the contracts or the graph of the
+    attempt it is being compared against.
+    """
     root = Path(generated_root)
     contracts_dir = generated_contracts_dir(root)
     contracts_dir.mkdir(parents=True, exist_ok=True)
@@ -672,6 +701,7 @@ def materialize_milestone_subgraph(
             agent_backend=agent_backend,
             model_name=model_name,
             profile=profile,
+            contract_namespace=contract_namespace,
         )
         for agent in milestone.agents
     ]
@@ -683,8 +713,10 @@ def materialize_milestone_subgraph(
         model_name=model_name,
         benchmark=benchmark,
         harness_timeout_seconds=harness_timeout_seconds,
+        variant=contract_namespace,
     )
-    graph_path = graphs_dir / f"{milestone.milestone_id}.yaml"
+    stem = milestone.milestone_id + (f"__{contract_namespace}" if contract_namespace else "")
+    graph_path = graphs_dir / f"{stem}.yaml"
     graph_path.write_text(
         yaml.safe_dump(graph, sort_keys=False, allow_unicode=True), encoding="utf-8"
     )

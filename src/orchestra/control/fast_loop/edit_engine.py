@@ -338,10 +338,7 @@ def _editing_agents(graph: OrchestraGraph, pool: RolePool) -> list[AgentNodeSpec
 
 
 def role_of(node: AgentNodeSpec, pool: RolePool):  # noqa: ANN202 - RoleSpec | None
-    for role in pool.ordered():
-        if node.node_id.endswith(f"_{role.role_id}"):
-            return role
-    return None
+    return pool.role_for_node_id(node.node_id)
 
 
 def _add_role_agent(

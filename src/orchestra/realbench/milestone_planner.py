@@ -303,6 +303,10 @@ def _agent_for_slot(
     )
 
 
+def _slot_key(item: dict[str, Any]) -> str:
+    return str(item.get("slot") or item.get("slot_id") or "").strip()
+
+
 def _parse_agents(
     raw: Any,
     *,
@@ -323,10 +327,12 @@ def _parse_agents(
     items = [item for item in (raw if isinstance(raw, list) else []) if isinstance(item, dict)]
     items = items[: max(max_agents, len(template.slots))]
     slots = template.slots_for(len(items))
+    # `slot` is what the planner is asked for; `slot_id` is what `to_dict` writes.
+    # Accepting both makes a frozen draft round-trip to the same slot assignment
+    # instead of silently falling back to declaration order, which a replay of a
+    # plan whose agents are not in slot order would get wrong.
     by_slot = {
-        str(item.get("slot") or "").strip(): item
-        for item in items
-        if str(item.get("slot") or "").strip()
+        _slot_key(item): item for item in items if _slot_key(item)
     }
 
     # Exactly as many agents as were proposed, never more: a template slot marked

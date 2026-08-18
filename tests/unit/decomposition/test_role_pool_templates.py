@@ -177,6 +177,92 @@ def test_a_template_never_synthesises_an_agent_the_planner_did_not_ask_for() -> 
     assert len(plan.milestones[0].agents) == 1
 
 
+def test_a_frozen_draft_round_trips_to_the_same_slot_assignment() -> None:
+    """`to_dict` writes `slot_id`; the parser was only reading `slot`.
+
+    A replay whose agents are not already in slot order would silently fall back
+    to declaration order and put roles in the wrong positions — which a plan-layer
+    search, refilling slots deliberately, would then do on every candidate.
+    """
+    original = parse_plan_payload(
+        {
+            "milestones": [
+                {
+                    "milestone_id": "m",
+                    "objective": "build it",
+                    "risk_rationale": "r",
+                    "template_id": "review_then_fix",
+                    "agents": [
+                        {"slot": "fixer", "role": "gate_repairer", "mandate": "c"},
+                        {"slot": "author", "role": "implementer", "mandate": "a"},
+                        {"slot": "reviewer", "role": "contract_critic", "mandate": "b"},
+                    ],
+                }
+            ]
+        },
+        max_agents=4,
+    )
+    replayed = parse_plan_payload(original.to_dict(), max_agents=4)
+
+    assert [(a.slot_id, a.role) for a in replayed.milestones[0].agents] == [
+        (a.slot_id, a.role) for a in original.milestones[0].agents
+    ]
+    assert [(a.slot_id, a.role) for a in replayed.milestones[0].agents] == [
+        ("author", "implementer"),
+        ("reviewer", "contract_critic"),
+        ("fixer", "gate_repairer"),
+    ]
+
+
+def test_two_compilations_of_one_milestone_do_not_overwrite_each_other() -> None:
+    """A plan-layer candidate must not score the contracts of its own parent."""
+    plan = parse_plan_payload(
+        {
+            "milestones": [
+                {
+                    "milestone_id": "m",
+                    "objective": "build it",
+                    "risk_rationale": "r",
+                    "template_id": "solo",
+                    "agents": [{"slot": "author", "role": "implementer", "mandate": "a"}],
+                }
+            ]
+        },
+        max_agents=4,
+    )
+    root = prepare_generated_root(
+        Path(tempfile.mkdtemp()), base_contracts_dir="configs/contracts"
+    )
+    parent_path, parent_roster = materialize_milestone_subgraph(
+        generated_root=root,
+        milestone=plan.milestones[0],
+        agent_backend="codex_sdk",
+        harness_command=["python", "check.py"],
+    )
+    candidate_path, candidate_roster = materialize_milestone_subgraph(
+        generated_root=root,
+        milestone=plan.milestones[0],
+        agent_backend="codex_sdk",
+        harness_command=["python", "check.py"],
+        contract_namespace="cand_a",
+    )
+
+    assert parent_path != candidate_path
+    assert parent_roster[0]["contract_id"] != candidate_roster[0]["contract_id"]
+    assert Path(parent_roster[0]["contract_path"]).is_file()
+    assert Path(candidate_roster[0]["contract_path"]).is_file()
+
+    parent = yaml.safe_load(Path(parent_path).read_text(encoding="utf-8"))
+    candidate = yaml.safe_load(Path(candidate_path).read_text(encoding="utf-8"))
+    assert parent["graph_id"] != candidate["graph_id"]
+    # An unnamespaced compilation keeps the payload it had before variants
+    # existed, so plan-time graph hashes on the recorded arms do not move.
+    assert "variant" not in parent["metadata"]
+    assert candidate["metadata"]["variant"] == "cand_a"
+    _compile(parent)
+    _compile(candidate)
+
+
 def test_a_dropped_repair_slot_falls_back_to_gating_once_at_the_end() -> None:
     payload = _materialize(
         "gate_then_repair", [{"slot": "author", "role": "implementer", "mandate": "a"}]
