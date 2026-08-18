@@ -63,6 +63,20 @@ def _build_scripted_fixture_model(responses: list[str], *, model_id: str) -> Any
     return ScriptedFixtureModel()
 
 
+def completion_limit(spec: ModelSpec) -> dict[str, int]:
+    """The token ceiling the hosted model actually accepts.
+
+    gpt-5 / o-series reject ``max_tokens`` and want ``max_completion_tokens``.
+    Passing the old name makes the first generation fail with HTTP 400, which
+    the scheduler then records as a finished milestone with an empty repository
+    (RealBench xiaoai, 2026-08-15).
+    """
+    name = spec.name.lower()
+    if name.startswith(("gpt-5", "o1", "o3", "o4")):
+        return {"max_completion_tokens": spec.max_tokens}
+    return {"max_tokens": spec.max_tokens}
+
+
 class SmolagentsModelFactory:
     """Create smolagents models from AdaMAS ModelSpec without bypassing pricing fields."""
 
@@ -103,7 +117,7 @@ class SmolagentsModelFactory:
                 api_base=api_base.rstrip("/"),
                 api_key=api_key,
                 temperature=spec.temperature,
-                max_tokens=spec.max_tokens,
+                **completion_limit(spec),
             )
         except Exception as exc:  # noqa: BLE001
             raise BackendInitializationError(

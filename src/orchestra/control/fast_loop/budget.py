@@ -95,6 +95,12 @@ class FastLoopBudgetTracker:
                 continue
             if cand.status is CandidateStatus.PENDING:
                 continue
+            # The incumbent *is* the initial attempt, entered as a candidate so the
+            # search can decline. Counting it again spends a slot on work already
+            # paid for, and a quality search asked for three candidates then got
+            # two, the third rejected as "max_attempts_per_subtask exhausted".
+            if cand.metadata.get("incumbent"):
+                continue
             used += 1
         return used
 

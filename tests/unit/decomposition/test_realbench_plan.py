@@ -225,6 +225,7 @@ def test_materialized_role_graph_uses_absolute_harness(tmp_path: Path) -> None:
     assert all(not part.startswith("scripts/") for part in command)
     assert str(harness_dir) in " ".join(command)
     assert "--contracts" in command
+    assert "--spec-tests" in command
 
 
 def test_force_split_keeps_multi_milestone(tmp_path: Path) -> None:

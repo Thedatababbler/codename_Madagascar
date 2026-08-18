@@ -51,7 +51,12 @@ from orchestra.control.task_state import (
     TaskExecutionState,
 )
 from orchestra.harness.command_runner import run_authoritative_harness_command
-from orchestra.harness.progress import best_harness_progress
+from orchestra.harness.progress import (
+    behaviour_failures,
+    behaviour_score,
+    behaviour_total,
+    best_harness_progress,
+)
 from orchestra.ir.artifacts import ArtifactBundle
 from orchestra.ir.graph import OrchestraGraph, load_graph
 from orchestra.ir.nodes import NodeKind
@@ -727,9 +732,12 @@ class FastLoopController:
             artifact_store=self.artifact_store,
             error=None,
         )
-        record.harness_score, _stages, record.furthest_stage = (
+        record.harness_score, stages, record.furthest_stage = (
             await self._harness_progress(result)
         )
+        record.behaviour_score = behaviour_score(stages)
+        record.behaviour_failures = behaviour_failures(stages)
+        record.behaviour_total = behaviour_total(stages)
         if status is SubtaskStatus.COMMITTED:
             record.status = CandidateStatus.VALID
             record.quality_score = 1.0

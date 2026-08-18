@@ -148,6 +148,23 @@ def collected_counts(
     above 1.0. The reference implementation is the only place these can be
     counted honestly, and the result is cached because it never changes.
     """
+    def _modules() -> list[str]:
+        """Every held-out module the dataset ships, collected or not.
+
+        A module pytest reports nothing for — a helper base class, a version
+        check that collects zero cases — used to be absent from the counts
+        entirely, which is indistinguishable from a module nobody pinned. The
+        ceiling then counted it statically and withheld the pass rate for both
+        imapclient and simpy (EXP-20260811-01). Zero is a count; say so.
+        """
+        root = task.repo_root / task.unit_tests
+        found = {
+            path.relative_to(task.repo_root).as_posix()
+            for pattern in ("test_*.py", "*_test.py")
+            for path in root.rglob(pattern)
+        }
+        return sorted(found)
+
     def _collect() -> dict[str, int]:
         proc = subprocess.run(
             [
@@ -165,7 +182,7 @@ def collected_counts(
             text=True,
             check=False,
         )
-        counts: dict[str, int] = {}
+        counts: dict[str, int] = dict.fromkeys(_modules(), 0)
         for line in (proc.stdout or "").splitlines():
             node = line.strip()
             if "::" not in node or not node.endswith(tuple("]") + tuple(")")) and "::" not in node:

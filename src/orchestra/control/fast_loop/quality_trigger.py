@@ -54,8 +54,16 @@ class QualityTrigger:
     """
 
     enabled: bool = False
-    #: Fire when the graded score is strictly below this. 1.0 would search every
-    #: milestone that is not perfect; 0.0 searches nothing.
+    #: Fire when the *behavioural* score is strictly below this. 1.0 would search
+    #: every milestone that is not perfect; 0.0 searches nothing.
+    #:
+    #: Compared against behaviour rather than the blended graded score, because the
+    #: blend cannot express "poor". Every committed CodeProjectEval milestone passes
+    #: compile, imports and contracts outright, and those stages hold 0.6 to 0.7 of
+    #: the weight, so a blended score is pinned into [0.92, 0.96] however badly the
+    #: code behaves: at min_score 0.8 the trigger could not fire on any milestone
+    #: ever recorded, and at a threshold high enough to fire it would fire on all of
+    #: them. Behaviour spans 0.79 to 0.86 on the same runs (EXP-20260810-05).
     min_score: float = 0.0
 
     @classmethod
@@ -66,19 +74,19 @@ class QualityTrigger:
             raise ValueError(f"quality_trigger.min_score must be in [0, 1], got {min_score}")
         return cls(enabled=bool(data.get("enabled", False)), min_score=min_score)
 
-    def fires(self, *, gate_passed: bool, harness_score: float | None) -> bool:
+    def fires(self, *, gate_passed: bool, behaviour_score: float | None) -> bool:
         """Whether to search a milestone whose gate has just passed.
 
         An unknown score never fires. The point of the trigger is to spend where a
         measurement says there is room, and "we did not measure" is not that: a
-        milestone with no graded score would otherwise search on every run,
+        milestone with no behavioural stage would otherwise search on every run,
         unfalsifiably, since nothing it produced could raise the missing number.
         """
         if not self.enabled or not gate_passed:
             return False
-        if harness_score is None:
+        if behaviour_score is None:
             return False
-        return harness_score < self.min_score
+        return behaviour_score < self.min_score
 
 
 def build_incumbent_record(
@@ -86,6 +94,9 @@ def build_incumbent_record(
     attempt_id: int,
     graph_hash: str,
     harness_score: float | None,
+    behaviour_score: float | None = None,
+    behaviour_failures: list[str] | None = None,
+    behaviour_total: int | None = None,
     furthest_stage: str = "",
     cost: CostRecord | None = None,
     latency_ms: int | None = None,
@@ -111,6 +122,12 @@ def build_incumbent_record(
         status=CandidateStatus.VALID,
         quality_score=1.0,
         harness_score=harness_score,
+        behaviour_score=behaviour_score,
+        # Carried so the incumbent joins the per-test comparison rather than sitting
+        # outside it: a search that cannot compare its own starting point against the
+        # alternatives on the same terms cannot conclude that none of them is better.
+        behaviour_failures=list(behaviour_failures or []),
+        behaviour_total=behaviour_total,
         furthest_stage=furthest_stage,
         cost=cost or CostRecord(),
         latency_ms=latency_ms,

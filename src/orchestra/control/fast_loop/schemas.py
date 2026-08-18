@@ -275,6 +275,21 @@ class CandidateRecord(BaseModel):
     # and is only ever 0.0 or 1.0, so on its own it cannot separate two failed
     # candidates and the selector fell through to picking the cheaper one.
     harness_score: float | None = None
+    # The behavioural slice of that score -- the stage measuring whether the code
+    # works rather than whether it exists. Carried separately because it is the
+    # only part that still moves once the structural stages saturate, and quality
+    # comparison reads it in preference to the blend.
+    behaviour_score: float | None = None
+    #: Which behavioural tests this candidate failed, and how many the stage ran.
+    #: Kept so quality can be compared over the tests that *differ* between the
+    #: candidates of one search: all candidates in a search are graded against one
+    #: frozen suite, and the tests they all pass or all fail contribute a constant.
+    behaviour_failures: list[str] = Field(default_factory=list)
+    behaviour_total: int | None = None
+    #: Quality as the selector compared it, once the constant tests were removed.
+    #: Derived from the pool, so it is meaningful only within its own search and is
+    #: recorded rather than recomputed to keep a frontier auditable after the fact.
+    comparable_quality: float | None = None
     furthest_stage: str = ""
     cost: CostRecord = Field(default_factory=CostRecord)
     stability_incidents: list[StabilityIncident] = Field(default_factory=list)

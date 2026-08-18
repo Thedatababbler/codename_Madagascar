@@ -84,6 +84,44 @@ async def test_a_passing_milestone_is_searched_when_it_scored_poorly(
 
 
 @pytest.mark.asyncio
+async def test_the_trigger_reads_behaviour_not_the_blended_score(tmp_path: Path) -> None:
+    """The condition the real harness always presents, and the one that was missed.
+
+    A committed CodeProjectEval milestone passes compile, imports and contracts
+    outright, and those hold most of the graded score's weight, so the blend sits
+    above 0.9 no matter how little of the code works. A trigger reading the blend
+    could not fire on any milestone ever recorded — the feature was inert on every
+    repository it was written for (EXP-20260810-05).
+    """
+    state = await run_scheduler(
+        tmp_path,
+        design_search=True,
+        quality_trigger=TRIGGER,
+        scores=[0.95, 0.95, 0.95, 0.95, 0.95],
+        behaviour=[PASSING_BUT_POOR, 0.30, 0.30, 0.30, 0.30],
+        passes=[True, True, True, True, True],
+    )
+
+    fast_loop = _fast_loop(state)
+    assert fast_loop.search_reason == "quality"
+
+
+@pytest.mark.asyncio
+async def test_good_behaviour_behind_a_high_blend_is_still_spared(tmp_path: Path) -> None:
+    """The other direction: reading behaviour must not make the trigger fire always."""
+    state = await run_scheduler(
+        tmp_path,
+        design_search=True,
+        quality_trigger=TRIGGER,
+        scores=[0.95, 0.95, 0.95, 0.95, 0.95],
+        behaviour=[0.9, 0.9, 0.9, 0.9, 0.9],
+        passes=[True, True, True, True, True],
+    )
+
+    assert state.fast_loop_states == {}
+
+
+@pytest.mark.asyncio
 async def test_the_search_is_off_unless_asked(tmp_path: Path) -> None:
     """The same poor-but-passing run, with no trigger configured."""
     state = await run_scheduler(tmp_path, design_search=True, **NO_IMPROVEMENT)

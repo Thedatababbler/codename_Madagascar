@@ -401,6 +401,11 @@ def main() -> int:
         default=None,
         help="Defaults to <batch-dir>/hidden_eval",
     )
+    ap.add_argument(
+        "--task-id",
+        action="append",
+        help="Score only these tasks; default is every task in the manifest that has a workspace.",
+    )
     args = ap.parse_args()
     batch_dir = args.batch_dir.resolve()
     out_dir = (args.out_dir or (batch_dir / "hidden_eval")).resolve()
@@ -409,6 +414,12 @@ def main() -> int:
     common = _import_vanilla()
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
     tasks = manifest["selected_tasks"]
+    if args.task_id:
+        wanted = set(args.task_id)
+        tasks = [t for t in tasks if t["task_id"] in wanted]
+        missing = wanted - {t["task_id"] for t in tasks}
+        if missing:
+            raise SystemExit(f"unknown task_id(s): {sorted(missing)}")
     eval_tmp = out_dir / "_eval_tmp"
 
     rows: list[dict[str, Any]] = []

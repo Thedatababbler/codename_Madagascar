@@ -1,0 +1,56 @@
+experiment:
+  name: codeprojecteval_nosearch_multi
+  benchmark: codeprojecteval
+  agent_backend: codex_sdk
+  dataset_root: /root/codex-benchmarks/projectgen/datasets/CodeProjectEval/python-subset
+  contracts_dir: configs/contracts
+  output_root: outputs/cpe_nosearch_multi
+  harness_timeout_seconds: 900
+  seed: 20260810
+
+  # The control arm for `codeprojecteval_tuning_multi.yaml`, identical to it in
+  # every respect but one: no search. Same dataset, same frozen `test_first`
+  # plans, same milestone segmentation, same authored suite taken into custody
+  # before the implementer runs, same scoring. Each milestone gets exactly one
+  # attempt, whatever it scores.
+  #
+  # Comparing against the older no-search runs in `outputs/cpe_ab` would not
+  # answer the question: those replay different plans, under a different
+  # template, from before the authored suite existed. Search is worth what it
+  # buys over the same run without it, so the control has to be the same run.
+  #
+  # The in-graph repairer still runs when a gate fails. That belongs to the
+  # template rather than to the search, and removing it would make this arm a
+  # comparison of two different plans again.
+  tuning:
+    fast_loop_candidates: 0
+    design_search: false
+    quality_trigger:
+      enabled: false
+    gate_weight: 1.0
+    harness_weight: 0.5
+    token_weight: 0.05
+    token_reference: 1000000
+    allow_cost_to_outrank_gate: false
+
+decomposition:
+  dynamic_planner: true
+  min_subtasks: 1
+  max_subtasks: 4
+  max_dependency_depth: 4
+  require_public_keystone_harness: true
+
+runtime:
+  max_parallel_nodes_per_task: 2
+
+pareto:
+  enabled: false
+
+slow_loop:
+  enabled: false
+
+fast_loop:
+  max_candidates: 0
+
+logging:
+  level: INFO

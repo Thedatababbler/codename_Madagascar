@@ -60,6 +60,13 @@ HARNESS_SCRIPT = """
 import json, sys
 from pathlib import Path
 
+UNITS = {units}
+behaviour = {behaviour}
+# Which of UNITS tests failed, per invocation. Scripted rather than derived so a
+# test can hold the count fixed while changing *which* tests moved -- the case the
+# per-test refinement exists for, and one that counts alone cannot express.
+failed_ids = {failed_ids}
+
 counter = Path(r"{counter}")
 n = int(counter.read_text()) + 1 if counter.exists() else 1
 counter.write_text(str(n))
@@ -72,11 +79,27 @@ print("ADAMAS_HARNESS_SCORE " + json.dumps({{
     "stages": [
         {{"stage": "compile", "passed_units": 1, "total_units": 1, "weight": 0.15}},
         {{"stage": "imports", "passed_units": 8, "total_units": 10, "weight": 0.25}},
+        {{
+            "stage": "spec_tests",
+            "passed_units": (
+                UNITS - len(failed_ids[i])
+                if failed_ids
+                else round(behaviour[i] * UNITS)
+            ),
+            "total_units": UNITS,
+            "weight": 0.3,
+            "failed_tests": failed_ids[i] if failed_ids else [],
+        }},
     ],
-    "furthest_stage": "imports",
+    "furthest_stage": "spec_tests",
 }}))
 sys.exit(0 if passes[i] else 1)
 """
+
+#: Denominator for the scripted behavioural stage. Large enough that rounding a
+#: scripted score into pass counts stays well inside the quality epsilon, so a
+#: distinction a test meant to make cannot be quantised away into a tie.
+BEHAVIOUR_UNITS = 1000
 
 
 class CountingBackend:
@@ -155,14 +178,33 @@ class CountingBackend:
 
 
 def harness_command(
-    tmp_path: Path, *, scores: Sequence[float], passes: Sequence[bool]
+    tmp_path: Path,
+    *,
+    scores: Sequence[float],
+    passes: Sequence[bool],
+    behaviour: Sequence[float] | None = None,
+    failed_ids: Sequence[Sequence[str]] | None = None,
+    units: int = BEHAVIOUR_UNITS,
 ) -> list[str]:
+    """A harness whose verdict, blended score and behavioural stage are scripted.
+
+    ``behaviour`` defaults to ``scores`` so most tests can keep saying "this
+    candidate scored 0.3". Passing it separately is what lets a test drive the two
+    apart, which is the real harness's normal condition: the blend is dominated by
+    structural stages that always pass, so it stays high while behaviour does not.
+
+    ``failed_ids`` takes over from ``behaviour`` when given, naming the tests that
+    failed rather than only how many.
+    """
     script = tmp_path / "staged_harness.py"
     script.write_text(
         HARNESS_SCRIPT.format(
             counter=tmp_path / "harness_calls.txt",
             scores=list(scores),
             passes=list(passes),
+            behaviour=list(behaviour if behaviour is not None else scores),
+            failed_ids=[list(ids) for ids in (failed_ids or [])],
+            units=units,
         ),
         encoding="utf-8",
     )
@@ -249,12 +291,25 @@ async def run_scheduler(
     design_search: bool,
     scores: Sequence[float],
     passes: Sequence[bool],
+    behaviour: Sequence[float] | None = None,
+    failed_ids: Sequence[Sequence[str]] | None = None,
+    units: int = BEHAVIOUR_UNITS,
     quality_trigger: QualityTrigger | None = None,
 ) -> TaskExecutionState:
     registry = AgentBackendRegistry()
     registry.register(CountingBackend())
     rt = runtime(tmp_path, registry)
-    task_plan = plan(tmp_path, harness_command(tmp_path, scores=scores, passes=passes))
+    task_plan = plan(
+        tmp_path,
+        harness_command(
+            tmp_path,
+            scores=scores,
+            passes=passes,
+            behaviour=behaviour,
+            failed_ids=failed_ids,
+            units=units,
+        ),
+    )
     scheduler = ReadySubtaskScheduler(
         runtime=rt,
         artifact_store=rt.artifact_store,

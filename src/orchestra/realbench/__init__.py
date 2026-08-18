@@ -7,6 +7,7 @@ from orchestra.realbench.public_harness import (
     parse_expected_modules,
     parse_package_exports,
     public_check_command,
+    spec_tests_path_for,
 )
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "parse_expected_modules",
     "parse_package_exports",
     "public_check_command",
+    "spec_tests_path_for",
 ]

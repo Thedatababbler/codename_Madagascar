@@ -114,6 +114,7 @@
       "unit_tests/test_views.py": 13
     },
     "imapclient": {
+      "unit_tests/imapclient_test.py": 0,
       "unit_tests/test_auth.py": 3,
       "unit_tests/test_datetime_util.py": 8,
       "unit_tests/test_enable.py": 5,
@@ -202,7 +203,8 @@
       "unit_tests/test_resources.py": 40,
       "unit_tests/test_rt.py": 9,
       "unit_tests/test_timeout.py": 5,
-      "unit_tests/test_util.py": 20
+      "unit_tests/test_util.py": 20,
+      "unit_tests/test_version.py": 0
     },
     "tinydb": {
       "unit_tests/test_middlewares.py": 8,

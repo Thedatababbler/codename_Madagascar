@@ -35,6 +35,16 @@ models:
     cached_input_per_million_usd: 0.02
     source: openai_public_pricing_2026_08
 
+  # Used when gpt-5.4 is in provider cooldown. Priced so the cost axis stays a
+  # measurement during those runs: an unpriced model reports cost as unavailable,
+  # and an unavailable axis cannot participate in a Pareto comparison at all.
+  # 128K context, so the long-context caveat above does not apply to it.
+  gpt-5.3-codex-spark:
+    input_per_million_usd: 1.75
+    output_per_million_usd: 14.00
+    cached_input_per_million_usd: 0.175
+    source: openai_public_pricing_2026_08
+
   gpt-5.5:
     input_per_million_usd: 5.00
     output_per_million_usd: 30.00

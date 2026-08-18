@@ -141,6 +141,10 @@ class HarnessStageResult(BaseModel):
     passed_units: int
     total_units: int
     weight: float = 0.0
+    #: Which tests failed, for stages that have per-test identity. Empty means
+    #: either nothing failed or the stage does not report identities, so it cannot
+    #: be read as "all tests passed" -- only as "no failure is named here".
+    failed_tests: list[str] = Field(default_factory=list)
 
     @property
     def ratio(self) -> float:

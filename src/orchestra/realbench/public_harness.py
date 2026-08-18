@@ -14,12 +14,15 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 PUBLIC_CHECK_SCRIPT_NAME = "adamas_public_check.py"
 PUBLIC_HARNESS_MANIFEST_NAME = "adamas_public_harness.json"
+SPEC_TESTS_SUFFIX = ".spec_tests"
+SPEC_TESTS_DIRNAME = "spec_tests"
 
 
 @dataclass(frozen=True)
@@ -29,6 +32,8 @@ class PublicHarnessManifest:
     expected_modules: list[str]
     expected_exports: dict[str, list[str]]
     top_level_packages: list[str]
+    spec_tests_dir: str = SPEC_TESTS_DIRNAME
+    pristine_repo: str = ""
     script_path: str = ""
     manifest_path: str = ""
     source: str = "public_design/tree.txt+package.json"
@@ -161,212 +166,28 @@ def _top_level_packages(modules: list[str]) -> list[str]:
 
 
 def _public_check_source() -> str:
-    return '''#!/usr/bin/env python3
-"""AdaMAS public contract check for RealBench (runner-owned; no hidden tests).
+    """The standalone check script, copied beside the manifest at materialize.
 
-Runs against a repository given by ``--root`` (default: cwd). The manifest and
-milestone contracts are AdaMAS-owned files kept outside that repository.
-"""
-
-from __future__ import annotations
-
-import argparse
-import compileall
-import importlib
-import inspect
-import json
-import sys
-from pathlib import Path
-
-
-def _load_json(path: Path | None) -> dict:
-    if path is None or not path.is_file():
-        return {}
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _export_candidates(modules: list[str], name: str) -> list[str]:
-    """Modules that may host the symbols UML declares under ``name``."""
-    if name in modules:
-        return [name]
-    return [mod for mod in modules if mod.rsplit(".", 1)[-1] == name]
-
-
-def _missing_third_party(exc: BaseException, root: Path, packages: list[str]) -> str:
-    """Return the name of an absent dependency this repository does not own.
-
-    The evaluation environment installs the project's third-party requirements;
-    this harness environment may not. Failing a milestone because ``pyproj`` is
-    absent would punish the agent for something it cannot install.
+    Kept as its own module so the Progress / custody / spec_tests logic can be
+    read and tested as ordinary Python rather than a string literal. The copy
+    that runs against a repository still has no AdaMAS imports: the agent's
+    environment is not required to have this package installed.
     """
-    if not isinstance(exc, ModuleNotFoundError) or not exc.name:
-        return ""
-    top = exc.name.split(".", 1)[0]
-    if top in packages:
-        return ""
-    if (root / top).is_dir() or (root / f"{top}.py").is_file():
-        return ""
-    return top
+    return Path(__file__).with_name("public_check.py").read_text(encoding="utf-8")
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--level",
-        choices=("discovery", "implementation", "integration"),
-        default="integration",
-    )
-    parser.add_argument("--manifest", required=True)
-    parser.add_argument("--contracts", default="")
-    parser.add_argument("--root", default="")
-    args = parser.parse_args()
-
-    root = Path(args.root).resolve() if args.root else Path.cwd()
-    manifest_path = Path(args.manifest)
-    if not manifest_path.is_file():
-        print(f"FAIL: missing manifest {manifest_path}", file=sys.stderr)
-        return 2
-    manifest = _load_json(manifest_path)
-    modules = list(manifest.get("expected_modules") or [])
-    exports = dict(manifest.get("expected_exports") or {})
-    packages = list(manifest.get("top_level_packages") or [])
-
-    targets = [root / p for p in packages if (root / p).exists()]
-    targets += [root / f"{p}.py" for p in packages if (root / f"{p}.py").is_file()]
-    if not targets:
-        targets = [root]
-    for target in targets:
-        if target.is_dir():
-            ok = compileall.compile_dir(str(target), quiet=1)
-        else:
-            ok = compileall.compile_file(str(target), quiet=1)
-        if not ok:
-            print(f"FAIL: compileall failed under {target}", file=sys.stderr)
-            return 1
-    print(f"OK compileall level={args.level}")
-
-    sys.path.insert(0, str(root))
-
-    skipped_deps: set[str] = set()
-
-    contracts = _load_json(Path(args.contracts) if args.contracts else None)
-    if contracts:
-        failed_contracts: list[str] = []
-        for check in list(contracts.get("checks") or []):
-            levels = check.get("required_levels") or ["integration"]
-            if args.level not in levels:
-                continue
-            ctype = check.get("type")
-            try:
-                if ctype == "module_file_exists":
-                    if not (root / str(check.get("path") or "")).exists():
-                        failed_contracts.append(f"missing file {check.get('path')}")
-                elif ctype == "import":
-                    importlib.import_module(str(check["module"]))
-                elif ctype == "export_any":
-                    sym = str(check["symbol"])
-                    mods = [str(m) for m in (check.get("modules") or [])]
-                    hosts = []
-                    for mod in mods:
-                        try:
-                            hosts.append(importlib.import_module(mod))
-                        except Exception as exc:  # noqa: BLE001
-                            dep = _missing_third_party(exc, root, packages)
-                            if dep:
-                                skipped_deps.add(dep)
-                            continue
-                    if hosts and not any(hasattr(obj, sym) for obj in hosts):
-                        failed_contracts.append(
-                            f"missing {sym} from any of {', '.join(mods)}"
-                        )
-                elif ctype in {"export", "callable_or_class"}:
-                    loaded = importlib.import_module(str(check["module"]))
-                    sym = str(check["symbol"])
-                    if not hasattr(loaded, sym):
-                        failed_contracts.append(f"missing {check['module']}.{sym}")
-                    elif ctype == "callable_or_class":
-                        obj = getattr(loaded, sym)
-                        if not (inspect.isclass(obj) or callable(obj)):
-                            failed_contracts.append(
-                                f"not callable/class {check['module']}.{sym}"
-                            )
-            except Exception as exc:  # noqa: BLE001
-                dep = _missing_third_party(exc, root, packages)
-                if dep:
-                    skipped_deps.add(dep)
-                    continue
-                failed_contracts.append(
-                    f"{ctype}:{check}: {type(exc).__name__}: {exc}"
-                )
-        if failed_contracts:
-            print("FAIL milestone contracts:", file=sys.stderr)
-            for item in failed_contracts[:40]:
-                print(f"  - {item}", file=sys.stderr)
-            return 1
-        print(f"OK milestone contracts level={args.level}")
-
-    if args.level == "discovery":
-        return 0
-
-    failed_imports: list[str] = []
-    unverified: list[str] = []
-    for mod in modules:
-        try:
-            importlib.import_module(mod)
-        except Exception as exc:  # noqa: BLE001 — surface import contract failures
-            dep = _missing_third_party(exc, root, packages)
-            if dep:
-                skipped_deps.add(dep)
-                unverified.append(mod)
-                continue
-            failed_imports.append(f"{mod}: {type(exc).__name__}: {exc}")
-    if failed_imports:
-        print("FAIL imports:", file=sys.stderr)
-        for item in failed_imports[:40]:
-            print(f"  - {item}", file=sys.stderr)
-        return 1
-    print(f"OK imports count={len(modules) - len(unverified)}")
-    if skipped_deps:
-        print(
-            "SKIP unavailable dependencies: "
-            + ", ".join(sorted(skipped_deps))
-            + f" (unverified modules: {len(unverified)})"
-        )
-
-    if args.level == "implementation":
-        return 0
-
-    # Integration: require UML-exported symbols when resolvable. A UML name is a
-    # bare basename, so it may map onto several modules; hosting the symbol in
-    # one of them satisfies the design.
-    missing: list[str] = []
-    for name, wanted in exports.items():
-        candidates = _export_candidates(modules, name)
-        loaded = []
-        for mod in candidates:
-            try:
-                loaded.append((mod, importlib.import_module(mod)))
-            except Exception:  # noqa: BLE001 — import failures reported above
-                continue
-        if not loaded:
-            continue
-        for sym in wanted:
-            if not any(hasattr(obj, sym) for _, obj in loaded):
-                missing.append(
-                    " or ".join(f"{mod}.{sym}" for mod, _ in loaded)
-                )
-    if missing:
-        print("FAIL missing UML exports:", file=sys.stderr)
-        for item in missing[:40]:
-            print(f"  - {item}", file=sys.stderr)
-        return 1
-    print(f"OK export checks missing=0 considered_modules={len(modules)}")
-    return 0
+def _safe_milestone(milestone_id: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", milestone_id) or "milestone"
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
-'''
+def spec_tests_path_for(harness_dir: Path, milestone_id: str) -> Path:
+    """Where this milestone's authored suite is frozen.
+
+    Per milestone rather than per attempt: every fast-loop candidate is scored
+    against the suite the first attempt wrote, which is the only way their
+    quality scores mean the same thing.
+    """
+    return Path(harness_dir) / f"{_safe_milestone(milestone_id)}{SPEC_TESTS_SUFFIX}"
 
 
 def public_check_command(
@@ -374,6 +195,7 @@ def public_check_command(
     harness_dir: Path,
     level: str,
     contracts_path: Path | None = None,
+    spec_tests_path: Path | None = None,
 ) -> list[str]:
     """Absolute harness command for one milestone level.
 
@@ -391,6 +213,8 @@ def public_check_command(
     ]
     if contracts_path is not None:
         command += ["--contracts", str(contracts_path)]
+    if spec_tests_path is not None:
+        command += ["--spec-tests", str(spec_tests_path)]
     return command
 
 
@@ -407,17 +231,28 @@ def materialize_public_harness(
     out.mkdir(parents=True, exist_ok=True)
     check_path = out / PUBLIC_CHECK_SCRIPT_NAME
     manifest_path = out / PUBLIC_HARNESS_MANIFEST_NAME
+    # The baseline an authored test has to be measured against is the repository
+    # as the agent received it. Copied now, before anyone writes into it.
+    pristine = out / "pristine_repo"
+    if not pristine.exists():
+        shutil.copytree(
+            Path(workspace),
+            pristine,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".git", "spec_tests"),
+        )
 
     manifest = PublicHarnessManifest(
         command=public_check_command(harness_dir=out, level="integration"),
         levels={
             "discovery": "compileall",
-            "implementation": "compileall+imports",
-            "integration": "compileall+imports+uml_exports",
+            "implementation": "compileall+imports+contracts(+spec_tests, graded)",
+            "integration": "compileall+imports+uml_exports(+spec_tests, graded)",
         },
         expected_modules=modules,
         expected_exports=exports,
         top_level_packages=packages,
+        spec_tests_dir=SPEC_TESTS_DIRNAME,
+        pristine_repo=str(pristine),
         script_path=str(check_path),
         manifest_path=str(manifest_path),
     )

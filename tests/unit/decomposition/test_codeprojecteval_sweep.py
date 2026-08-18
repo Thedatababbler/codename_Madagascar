@@ -268,3 +268,5 @@ def test_an_unmeasured_run_is_not_recorded_as_a_scored_zero(tmp_path: Path) -> N
     )
 
     assert row.status == "timeout"
+    assert row.pass_rate is None
+    assert row.pass_rate_reachable is None

@@ -92,6 +92,14 @@ Safety invariants hold as they do for templates: `drop_agent` refuses the last
 editing agent and any harness node; parallel placement is refused for editing
 agents that would share a workspace; harness nodes stay `public`.
 
+One consequence of the fixed draft order is worth reading alongside the cost
+section below: at `fast_loop_candidates: 2` only the first two drafts are ever
+built, so the search that has actually been paid for is feedback-only against
+add-one-role, whatever the diagnosis said.
+`docs/fast_loop_playbook_search.md` proposes keying the drafts on a diagnosed
+failure class instead, and documents which topology edits that needs and does not
+yet have.
+
 ## Epsilon tolerances
 
 `dominance.dominates` takes absolute per-objective tolerances. Two candidates
@@ -101,12 +109,21 @@ measurement's own resolution must not decide anything.
 
 | Objective | Epsilon | Why this size |
 |-----------|---------|---------------|
-| quality | 0.02 | one unit of the coarsest weighted harness stage rounds to ~0.01; below 0.02 the score cannot tell candidates apart |
+| quality | 0.02 | one authored test in ~58 is 0.017, and a single flipped test in an agent-authored suite is as likely to be noise as evidence about the design |
 | cost | 0.08 USD | ~5% of an observed candidate ($1.52 mean on imapclient). A real run pair differed by 0.09%, which must read as a tie |
 | stability | 0.0 | integer incident counts; one more incident is a real difference |
 
 These are calibrated to candidates costing $1–2. They live in the experiment
 config, not in code, and must be re-derived for a materially different scale.
+
+The quality epsilon only means the above because quality is read off the
+**behavioural** stage. Read off the blended graded score it means something much
+stricter than intended: the structural stages saturate on any milestone that
+commits, so they contribute a constant that divides real differences by roughly
+three. The 0.069 spread separating the best and worst recorded imapclient designs
+arrives as 0.021 — a tie, at this tolerance. That was the code's actual behaviour
+until EXP-20260810-05; the axis now reads behaviour, with the blend as a fallback for
+harnesses that report no behavioural stage.
 
 ## Search cost
 
@@ -214,3 +231,85 @@ model, so a wrong test makes correct code look broken. That is bias, not noise, 
 epsilon does not absorb it. On the first run of a task, compare the authored score
 against the held-out rate offline — the same replay-the-patches method as
 EXP-20260810-03 — and only then let the axis drive a selection.
+
+### What the first such comparison found
+
+Run in EXP-20260810-05 against the nine imapclient candidates, `test_author` on
+`gpt-5.3-codex-spark`. The axis separates them, 0.793–0.862, where the gate had put
+all nine at exactly 1.0 — so the saturation this section was written about is gone.
+The direction is unresolved: r = −0.204 at n = 9, p ≈ 0.6.
+
+That is not a verdict on the axis, and the study could not have produced one. The
+held-out rates it was asked to predict have a standard deviation of 0.021; per-test,
+43 of the 58 authored tests pass for every candidate and 7 fail for every candidate,
+leaving 8 that move, none separating held-out means by more than 0.03. Both suites
+independently report that these nine candidates are the same work. Repeat the
+comparison on candidates that actually differ — an arm that varies the builder role
+or the model, rather than one atomic edit each — before concluding anything about
+direction, and note that 7 authored tests failing everywhere is the measurable form of
+the authoring bias warned about above.
+
+The 7 also carry a cheap improvement: tests that no candidate can pass are either
+authoring errors or unreachable specification, and either way they are constant, so
+they lower every score equally and consume resolution. Excluding them is not possible
+a priori, but within a single search all candidates share one frozen suite, so the
+constant part is identifiable after the fact.
+
+### The axis only exists if the suite reaches the gate
+
+The first end-to-end `test_first` run (EXP-20260810-06) produced no behavioural score
+on either milestone, because both builders deleted `spec_tests/` before the gate could
+freeze it. They were obeying the shipping rule every editing agent receives — ship only
+files the design documents describe — and no document describes a directory another
+agent invented. The prompts now carry the exemption, but the shape of the failure is
+worth keeping in mind when reading a frontier:
+
+* A missing behavioural stage is not a low score. Quality falls back to the blend,
+  which saturates, and the search silently returns to ranking designs it cannot tell
+  apart. `NOTE no authored suite` in the gate log is the thing to grep for; a run that
+  carries it has no quality axis regardless of what it scored.
+* The freeze is what makes candidates comparable, so it has to happen while the suite
+  is still there. It now happens in a custody step wired directly after the author,
+  which is also the last moment the suite exists in the workspace — so once the author
+  has written it, no later agent can remove it from the comparison.
+
+### The implementer must not be able to read the suite
+
+Surviving to the gate was necessary and not sufficient. The next run (EXP-20260811-01)
+kept the suite and scored a perfect behavioural stage on every milestone — 38/38,
+29/29, 51/51 — from code that failed most of the held-out suite. The implementer could
+read the tests, so it wrote to them, and the axis saturated exactly like the blend it
+was meant to replace.
+
+Custody is the answer: `--take-custody` copies the suite to the frozen path and deletes
+the workspace copy before the builder starts, and the change edge from author to builder
+is cut so the diff cannot carry the suite into the builder's prompt instead. Two
+consequences for reading a frontier:
+
+* A behavioural score is now a measurement of transfer from prose to code, not of
+  compliance with a visible checklist. Scores from before 2026-08-11 are not comparable
+  with scores after it, and the earlier ones should be read as an upper bound.
+* Nothing about grading changed, so a run that reports no behavioural stage still means
+  no suite was authored, not that custody ate it. The gate's `NOTE no authored suite`
+  remains the thing to grep for.
+
+### The exam has a fixed size, whatever the candidate's code does to it
+
+One frozen suite of 36 cases graded four candidates out of 36, 31, 36 and 31
+(EXP-20260811-03). `pytest` reports a module it cannot import as one error rather
+than as the cases inside it, so a denominator read off the summary line shrinks
+exactly when a candidate breaks an import — the worst work divided by the smallest
+exam, and a whole lost test file scoring better than a failed assertion. Worse, the
+comparison quietly degrades: `discriminating_quality` engages only when every
+candidate shares a `behaviour_total`, so unequal denominators drop selection back to
+raw ratios that are not on the same scale.
+
+The suite's size is therefore counted from its source and pinned beside the frozen
+copy, and cases that never ran are failures. When reading a frontier:
+
+* `SPEC spec_tests 24/36 (vacuous 0 excluded; 12 not collected)` is a candidate whose
+  code broke an import, not a smaller milestone. A large `not collected` alongside a
+  passing gate usually means the suite reaches modules the gate's contracts do not.
+* The pin only rises. If a suite is edited after its first grading — which custody is
+  designed to prevent — the recorded size is the largest ever seen, so a shrunken
+  suite would report as failures rather than as a new exam.

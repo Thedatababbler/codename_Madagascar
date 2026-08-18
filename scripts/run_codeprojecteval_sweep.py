@@ -198,6 +198,8 @@ def collect_result(trial: Trial, batch_dir: Path, *, status: str) -> TrialResult
                 # Scored zero is not the same as never measured, and a tuning
                 # loop that cannot tell them apart will chase the difference.
                 result.status = str(row["status"])
+                result.pass_rate = None
+                result.pass_rate_reachable = None
 
     model_name: str | None = None
     priced_nodes = 0
@@ -275,7 +277,9 @@ def execute(trial: Trial, args: argparse.Namespace) -> TrialResult:
                 # int, not float: the scorer's argparse rejects "5.0".
                 "--per-test-timeout", str(int(args.per_test_timeout)),
                 "--timeout", str(int(args.eval_timeout)),
-            ],
+                "--cpu-seconds", str(int(getattr(args, "cpu_seconds", 3600))),
+            ]
+            + (["--prefer-agent-workspace"] if args.prefer_agent_workspace else []),
             log=log,
             timeout=args.eval_timeout + 300,
         )
@@ -327,8 +331,9 @@ def main() -> int:
     ap.add_argument("--plans", type=Path, default=Path("outputs/cpe_ab/plans"))
     ap.add_argument("--output-root", type=Path, default=Path("outputs/cpe_ab"))
     ap.add_argument("--run-timeout", type=float, default=5400.0)
-    ap.add_argument("--eval-timeout", type=float, default=1200.0)
-    ap.add_argument("--per-test-timeout", type=float, default=5.0)
+    ap.add_argument("--eval-timeout", type=float, default=21600.0)
+    ap.add_argument("--per-test-timeout", type=float, default=30.0)
+    ap.add_argument("--cpu-seconds", type=float, default=3600.0)
     ap.add_argument("--out", type=Path, default=None, help="Trial record (JSONL).")
     ap.add_argument(
         "--config",
@@ -336,6 +341,11 @@ def main() -> int:
         default=None,
         help="Experiment config. The default has the repair loop off; a tuning "
         "run needs one that turns it on.",
+    )
+    ap.add_argument(
+        "--prefer-agent-workspace",
+        action="store_true",
+        help="Score the agent's working tree even if the gate did not commit.",
     )
     args = ap.parse_args()
 

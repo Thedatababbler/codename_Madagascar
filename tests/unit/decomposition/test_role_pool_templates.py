@@ -187,7 +187,9 @@ def test_a_dropped_repair_slot_falls_back_to_gating_once_at_the_end() -> None:
     _compile(payload)
 
 
-def _materialize(template_id: str, agents: list[dict]) -> dict:
+def _materialize(
+    template_id: str, agents: list[dict], harness_command: list[str] | None = None
+) -> dict:
     plan = parse_plan_payload(
         {
             "milestones": [
@@ -207,9 +209,15 @@ def _materialize(template_id: str, agents: list[dict]) -> dict:
         generated_root=root,
         milestone=plan.milestones[0],
         agent_backend="codex_sdk",
-        harness_command=["python", "check.py"],
+        harness_command=harness_command or ["python", "check.py"],
     )
     return yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+
+
+#: A harness that can hold the authored suite. Custody is wired only when the
+#: command can be told where to put it, so a benchmark whose harness has no such
+#: flag keeps the old shape.
+SPEC_HARNESS = ["python", "check.py", "--spec-tests", "/tmp/frozen"]
 
 
 def _compile(payload: dict):
@@ -247,11 +255,7 @@ def test_generated_template_graphs_compile() -> None:
             "test_first",
             [
                 {"slot": "test_author", "role": "test_author", "mandate": "a"},
-                {
-                    "slot": "builder",
-                    "role": "test_driven_implementer",
-                    "mandate": "b",
-                },
+                {"slot": "builder", "role": "implementer", "mandate": "b"},
                 {"slot": "repairer", "role": "gate_repairer", "mandate": "c"},
             ],
         ),
@@ -269,14 +273,14 @@ def test_test_first_gates_after_the_builder_not_after_the_test_author() -> None:
         "test_first",
         [
             {"slot": "test_author", "role": "test_author", "mandate": "a"},
-            {"slot": "builder", "role": "test_driven_implementer", "mandate": "b"},
+            {"slot": "builder", "role": "implementer", "mandate": "b"},
             {"slot": "repairer", "role": "gate_repairer", "mandate": "c"},
         ],
     )
     graph = OrchestraGraph(**payload)
     edges = {(e.source_node, e.destination_node) for e in graph.edges}
     author = next(n.node_id for n in graph.nodes if "test_author" in n.node_id)
-    builder = next(n.node_id for n in graph.nodes if "test_driven_implementer" in n.node_id)
+    builder = next(n.node_id for n in graph.nodes if n.node_id.endswith("implementer"))
 
     assert (author, builder) in edges
     assert (builder, "repository_tests_probe") in edges
@@ -286,12 +290,73 @@ def test_test_first_gates_after_the_builder_not_after_the_test_author() -> None:
     assert by_id[author]["backend"]["require_git_diff"] is True
 
 
+TEST_FIRST_AGENTS = [
+    {"slot": "test_author", "role": "test_author", "mandate": "a"},
+    {"slot": "builder", "role": "implementer", "mandate": "b"},
+    {"slot": "repairer", "role": "gate_repairer", "mandate": "c"},
+]
+
+
+def _test_first_graph() -> OrchestraGraph:
+    return OrchestraGraph(**_materialize("test_first", TEST_FIRST_AGENTS, SPEC_HARNESS))
+
+
+def test_the_authored_suite_leaves_the_workspace_before_the_builder_starts() -> None:
+    """The implementer must not be able to read what it is ranked against.
+
+    A suite it can run is a suite it passes whole: the first two tasks to run
+    this template scored 38/38, 29/29 and 51/51 on their own suites while
+    failing three quarters of the held-out one (EXP-20260811-01). Custody sits
+    between the two agents and takes the files away.
+    """
+    graph = _test_first_graph()
+    by_id = {node.node_id: node for node in graph.nodes}
+    edges = {(e.source_node, e.destination_node) for e in graph.edges}
+    author = next(n for n in by_id if "test_author" in n)
+    builder = next(n for n in by_id if n.endswith("implementer"))
+
+    assert "authored_suite_custody" in by_id
+    assert by_id["authored_suite_custody"].command[-1] == "--take-custody"
+    assert (author, "authored_suite_custody") in edges
+    assert ("authored_suite_custody", builder) in edges
+
+
+def test_the_builder_never_receives_the_authors_patch() -> None:
+    """Deleting the files is not enough on its own.
+
+    A change artifact carries the whole diff, so leaving the author wired into
+    the builder would quote the suite into its prompt from a workspace that no
+    longer contains it.
+    """
+    graph = _test_first_graph()
+    edges = {(e.source_node, e.destination_node) for e in graph.edges}
+    author = next(n.node_id for n in graph.nodes if "test_author" in n.node_id)
+    builder = next(n.node_id for n in graph.nodes if n.node_id.endswith("implementer"))
+
+    assert (author, builder) not in edges
+    builder_node = next(n for n in graph.nodes if n.node_id == builder)
+    assert "suite_custody" in builder_node.input_slots
+    assert "upstream_change" not in builder_node.input_slots
+
+
+def test_a_graph_with_custody_in_it_still_compiles() -> None:
+    _compile(_materialize("test_first", TEST_FIRST_AGENTS, SPEC_HARNESS))
+
+
+def test_custody_is_skipped_when_the_harness_cannot_hold_a_suite() -> None:
+    """RealBench's harness takes no such flag, and its graphs must not change."""
+    payload = _materialize("test_first", TEST_FIRST_AGENTS)
+    node_ids = {node["node_id"] for node in payload["nodes"]}
+
+    assert "authored_suite_custody" not in node_ids
+
+
 def test_test_first_skips_the_repairer_when_the_authored_gate_passes() -> None:
     payload = _materialize(
         "test_first",
         [
             {"slot": "test_author", "role": "test_author", "mandate": "a"},
-            {"slot": "builder", "role": "test_driven_implementer", "mandate": "b"},
+            {"slot": "builder", "role": "implementer", "mandate": "b"},
             {"slot": "repairer", "role": "gate_repairer", "mandate": "c"},
         ],
     )
@@ -299,7 +364,7 @@ def test_test_first_skips_the_repairer_when_the_authored_gate_passes() -> None:
     scheduler = Scheduler(max_parallel_nodes=4)
     state = _state(graph)
     author = next(n.node_id for n in graph.nodes if "test_author" in n.node_id)
-    builder = next(n.node_id for n in graph.nodes if "test_driven_implementer" in n.node_id)
+    builder = next(n.node_id for n in graph.nodes if n.node_id.endswith("implementer"))
     repairer = next(n.node_id for n in graph.nodes if "gate_repairer" in n.node_id)
 
     state.node_status[author] = NodeStatus.SUCCEEDED

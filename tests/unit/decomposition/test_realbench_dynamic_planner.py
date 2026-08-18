@@ -13,7 +13,7 @@ from orchestra.decomposition.realbench_plan import build_plan_from_draft
 from orchestra.decomposition.schemas import DecompositionLimits, TaskPlan
 from orchestra.decomposition.validator import validate_task_plan
 from orchestra.ir.graph import load_graph
-from orchestra.ir.nodes import AgentNodeSpec
+from orchestra.ir.nodes import AgentNodeSpec, HarnessNodeSpec
 from orchestra.realbench.milestone_planner import (
     MilestonePlanError,
     build_planner_prompt,
@@ -348,6 +348,9 @@ def test_build_plan_from_draft_validates_as_taskplan(tmp_path: Path) -> None:
     assert (harness_dir / "freeze_crs_index.contracts.json").is_file()
     assert not (workspace / "adamas_milestone_contracts.json").exists()
     assert not (workspace / "MILESTONE.md").exists()
+    gate_graph = load_graph(gate.local_graph_template)
+    gate_harness = next(n for n in gate_graph.nodes if isinstance(n, HarnessNodeSpec))
+    assert "--spec-tests" in list(gate_harness.command or [])
 
 
 def _public_workspace(tmp_path: Path) -> Path:
@@ -420,6 +423,39 @@ def test_runner_falls_back_to_public_design_plan(tmp_path: Path, monkeypatch) ->
     graph_path = plan.subtasks[0].local_graph_template
     assert Path(graph_path).is_relative_to(tmp_path)
     assert not (workspace / "scripts").exists()
+
+
+def test_runner_replays_a_frozen_plan_file(tmp_path: Path, monkeypatch) -> None:
+    """A/B arms must not resample the planner; the frozen draft is the plan."""
+    from orchestra.cli import run_realbench_codex_decomp_baseline as runner
+    from orchestra.codeprojecteval.ab import save_draft
+
+    draft = parse_plan_payload(_risk_payload())
+    frozen = save_draft(draft, tmp_path / "frozen.json")
+
+    def boom(**_: object) -> None:
+        raise AssertionError("plan_milestones must not run when a plan file is set")
+
+    monkeypatch.setattr(runner, "plan_milestones", boom)
+
+    plan, _ = runner.build_dynamic_task_plan(
+        "benbovy_xproj",
+        workspace=_public_workspace(tmp_path),
+        plan_path=tmp_path / "run" / "plan.yaml",
+        harness_dir=tmp_path / "run" / "harness",
+        experiment={"decomposition": {"min_subtasks": 1, "max_subtasks": 6}},
+        agent_backend="codex_sdk",
+        contracts_dir=CONTRACTS,
+        plan_file=frozen,
+    )
+
+    assert [s.subtask_id for s in plan.subtasks] == [
+        "freeze_crs_index",
+        "implement_accessors",
+    ]
+    assert json.loads(
+        (tmp_path / "run" / "milestone_plan_draft.json").read_text(encoding="utf-8")
+    )["split"]
 
 
 def test_plan_draft_json_is_serializable(tmp_path: Path) -> None:

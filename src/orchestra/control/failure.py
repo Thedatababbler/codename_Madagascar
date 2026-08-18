@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from orchestra.backends.base import AgentRunStatus
 from orchestra.control.task_state import SubtaskFailureReason, SubtaskStatus
+from orchestra.harness.progress import MARKER as SCORE_MARKER
 from orchestra.runtime.errors import GraphDeadlockError
 from orchestra.runtime.state import GraphExecutionResult, NodeStatus
 from orchestra.schemas.artifacts import RepositoryHarnessResultArtifact
@@ -41,9 +42,24 @@ async def _harness_failed_message(
                 continue
             payload = RepositoryHarnessResultArtifact.model_validate(art.payload)
             if not payload.passed:
-                detail = (payload.stderr_summary or payload.stdout_summary or "").strip()
+                detail = _readable_detail(
+                    payload.stderr_summary or payload.stdout_summary or ""
+                )
                 return detail or "repository harness reported passed=false"
     return None
+
+
+def _readable_detail(text: str) -> str:
+    """The part of a harness report a prompt may quote back to an agent.
+
+    The score marker is machine data — a JSON line listing every stage and the
+    identity of every test that failed, including the authored suite the
+    implementer is deliberately not allowed to read. It reaches the selector
+    through ``parse_progress``; letting it also reach the next candidate's
+    prompt would hand that candidate the yardstick.
+    """
+    kept = [line for line in text.splitlines() if not line.startswith(SCORE_MARKER)]
+    return "\n".join(kept).strip()
 
 
 def reason_from_backend_status(

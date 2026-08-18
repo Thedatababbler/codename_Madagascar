@@ -107,6 +107,7 @@ script are AdaMAS-owned files kept outside that repository. Held-out
 from __future__ import annotations
 
 import argparse
+import ast
 import compileall
 import hashlib
 import importlib
@@ -182,16 +183,23 @@ class Progress:
         self.spec_tests = False
         self.stages = [e for e in self.stages if e["stage"] != "spec_tests"]
 
-    def record(self, stage, passed_units, total_units):
+    def record(self, stage, passed_units, total_units, failed_tests=None):
         if stage not in self.weights:
             return
-        self.stages.append(
-            {
-                "stage": stage,
-                "passed_units": int(passed_units),
-                "total_units": int(total_units),
-            }
-        )
+        entry = {
+            "stage": stage,
+            "passed_units": int(passed_units),
+            "total_units": int(total_units),
+        }
+        # Which tests failed, not just how many. A tuning loop comparing designs
+        # against one frozen suite needs to know which tests *moved*: a test every
+        # candidate fails and a test every candidate passes both carry a constant,
+        # and a constant cannot rank anything while still consuming the score's
+        # range. Only behavioural stages report this; the structural stages have no
+        # per-test identity to report.
+        if failed_tests:
+            entry["failed_tests"] = sorted({str(t) for t in failed_tests})
+        self.stages.append(entry)
 
     def score(self):
         """Weighted progress in [0, 1]; 1.0 only when every stage fully passed.
@@ -226,7 +234,10 @@ class Progress:
 
 
 def _pytest_counts(output):
-    """(passed, total) from pytest's summary line, or (0, 0) if unreadable.
+    """(passed, total, ran) from pytest's summary line, or zeros if unreadable.
+
+    ``ran`` excludes errors because an error is usually a module that could not
+    be imported, which stands for however many cases it holds rather than one.
 
     Parsing text is unpleasant, but the alternative is requiring a report plugin
     inside every one of the dataset's virtual environments.
@@ -244,8 +255,8 @@ def _pytest_counts(output):
             elif word.startswith("error"):
                 errors = int(count)
         if passed or failed or errors:
-            return passed, passed + failed + errors
-    return 0, 0
+            return passed, passed + failed + errors, passed + failed
+    return 0, 0, 0
 
 
 def _missing_third_party(exc, root, packages):
@@ -269,8 +280,29 @@ def _has_tests(directory):
     )
 
 
+def _failed_test_ids(output):
+    """Node ids pytest reported as failed or errored, from its short summary.
+
+    ``-rfE`` prints one line per failure as ``FAILED path::Class::test - reason``
+    and one per collection error as ``ERROR path``. A collection error has no node
+    id, so the file stands in for it: what matters is that the same unrunnable file
+    is identified the same way for every candidate.
+    """
+    ids = set()
+    for line in (output or "").splitlines():
+        line = line.strip()
+        for prefix in ("FAILED ", "ERROR "):
+            if not line.startswith(prefix):
+                continue
+            rest = line[len(prefix):].strip()
+            if not rest:
+                continue
+            ids.add(rest.split(" - ", 1)[0].strip())
+    return ids
+
+
 def _run_pytest(cwd, target, *, timeout, import_root=None):
-    """Run one suite and return (passed, total, tail). Never raises."""
+    """Run one suite: (passed, total, ran, tail, failed_ids). Never raises."""
     env = dict(os.environ)
     roots = [str(import_root or cwd)]
     existing = env.get("PYTHONPATH", "")
@@ -292,6 +324,9 @@ def _run_pytest(cwd, target, *, timeout, import_root=None):
         # unimportable file would report zero for every other file's tests and
         # flatten the gradient this stage exists to provide.
         "--continue-on-collection-errors",
+        # Name the failures. Also improves the feedback tail, since the short
+        # summary lands at the end of the output where the tail is taken from.
+        "-rfE",
         str(target),
     ]
     try:
@@ -305,19 +340,33 @@ def _run_pytest(cwd, target, *, timeout, import_root=None):
             check=False,
         )
     except subprocess.TimeoutExpired:
-        return 0, 0, "timed out"
-    passed, total = _pytest_counts(proc.stdout)
-    return passed, total, (proc.stdout or "")[-2000:]
+        return 0, 0, 0, "timed out", set()
+    passed, total, ran = _pytest_counts(proc.stdout)
+    return (
+        passed,
+        total,
+        ran,
+        (proc.stdout or "")[-2000:],
+        _failed_test_ids(proc.stdout),
+    )
 
 
 def _freeze_spec_suite(root, source_rel, frozen_dir):
-    """Copy the authored suite out of the workspace, once, and keep it in sync.
+    """Move the authored suite out of the workspace, once, and keep it out.
 
-    The copy lives beside the manifest, outside the repository, so no later
-    agent can edit what it is scored against. Every candidate in a fast-loop
-    search therefore grades against the suite the first attempt authored, which
-    is what makes their quality scores comparable at all — a candidate that
-    rewrote the tests would be marking its own exam.
+    The copy lives beside the manifest, outside the repository, for two
+    reasons. The first was tamper protection: every candidate in a fast-loop
+    search grades against the suite the first attempt authored, and a candidate
+    that rewrote the tests would be marking its own exam.
+
+    The second is why the workspace copy is now deleted rather than restored. A
+    suite the implementer can read and run is a suite it satisfies completely --
+    the first two tasks to run this way scored 38/38, 29/29 and 51/51 -- which
+    leaves the behavioural axis exactly as degenerate as the gate it was built
+    to replace (EXP-20260811-01). Grading reads the frozen copy, so taking the
+    suite away costs the score nothing. Custody normally happens between the
+    author and the implementer; doing it here as well means a graph wired
+    without that step still cannot leave the suite lying around.
     """
     frozen = Path(frozen_dir)
     source = Path(root) / source_rel
@@ -336,14 +385,8 @@ def _freeze_spec_suite(root, source_rel, frozen_dir):
             shutil.rmtree(staging, ignore_errors=True)
         if not frozen.is_dir():
             return False
-    # Keep the workspace copy identical to the frozen one, so an agent reading
-    # the suite to implement against it sees exactly what it will be scored on.
-    if source.resolve() != frozen.resolve():
+    if source.exists() and source.resolve() != frozen.resolve():
         shutil.rmtree(source, ignore_errors=True)
-        try:
-            shutil.copytree(frozen, source)
-        except OSError:
-            pass
     return True
 
 
@@ -373,7 +416,7 @@ def _vacuous_count(frozen_dir, pristine_repo, timeout):
         )
     except OSError:
         return 0
-    passed, total, _ = _run_pytest(scratch, frozen, timeout=timeout)
+    passed, total, _ran, _tail, _failed = _run_pytest(scratch, frozen, timeout=timeout)
     shutil.rmtree(scratch, ignore_errors=True)
     try:
         cache.write_text(
@@ -382,6 +425,74 @@ def _vacuous_count(frozen_dir, pristine_repo, timeout):
     except OSError:
         pass
     return passed
+
+
+def _looks_like_test_class(node):
+    """Classes pytest collects: ``Test*`` by default, plus unittest subclasses."""
+    if node.name.startswith("Test"):
+        return True
+    return any("TestCase" in ast.dump(base) for base in node.bases)
+
+
+def _authored_case_count(frozen_dir):
+    """Cases the author wrote, counted from source without importing anything.
+
+    pytest reports a module it cannot import as a single error rather than as
+    the cases it holds, so the collected total shrinks exactly when the code
+    under test is broken -- dividing the worst work by the smallest
+    denominator, and paying a candidate for breaking an import. Counting the
+    source keeps the denominator a property of the suite.
+    """
+    total = 0
+    for path in sorted(Path(frozen_dir).rglob("*.py")):
+        if path.name == "conftest.py" or "__pycache__" in path.parts:
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, SyntaxError, ValueError):
+            continue
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if node.name.startswith("test"):
+                    total += 1
+            elif isinstance(node, ast.ClassDef) and _looks_like_test_class(node):
+                total += len(
+                    [
+                        item
+                        for item in node.body
+                        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and item.name.startswith("test")
+                    ]
+                )
+    return total
+
+
+def _pinned_case_total(frozen_dir, collected):
+    """The suite's size, held fixed across every run that grades against it.
+
+    Source counting cannot see cases a decorator multiplies, so a collection
+    that found more than the source suggests raises the pin and is remembered
+    beside the suite. The pin never falls: a later run that collects fewer has
+    lost tests, and lost tests are failures, not a smaller exam.
+    """
+    frozen = Path(frozen_dir)
+    cache = frozen.parent / (frozen.name + ".size.json")
+    pinned = 0
+    if cache.is_file():
+        try:
+            pinned = int(json.loads(cache.read_text(encoding="utf-8"))["pinned"])
+        except Exception:  # noqa: BLE001
+            pinned = 0
+    static = _authored_case_count(frozen)
+    updated = max(pinned, static, int(collected or 0))
+    if updated != pinned:
+        try:
+            cache.write_text(
+                json.dumps({"pinned": updated, "static": static}), encoding="utf-8"
+            )
+        except OSError:
+            pass
+    return updated
 
 
 def main() -> int:
@@ -400,6 +511,11 @@ def main() -> int:
         default="",
         help="runner-owned directory holding this milestone's frozen authored suite",
     )
+    parser.add_argument(
+        "--take-custody",
+        action="store_true",
+        help="only move the authored suite out of the workspace, then exit 0",
+    )
     args = parser.parse_args()
 
     root = Path.cwd()
@@ -412,6 +528,26 @@ def main() -> int:
     check_dir = str(manifest.get("check_tests_dir") or "check_tests")
     spec_dir_rel = str(manifest.get("spec_tests_dir") or "spec_tests")
 
+    if args.take_custody:
+        # Runs between the author and the implementer, and grades nothing: the
+        # point is that the implementer starts from a workspace with no suite in
+        # it. Always exits 0, because a milestone whose author produced nothing
+        # must still be allowed to proceed -- ungraded, and saying so.
+        if not args.spec_tests:
+            print("FAIL: --take-custody requires --spec-tests", file=sys.stderr)
+            return 2
+        if _freeze_spec_suite(root, spec_dir_rel, args.spec_tests):
+            kept = len(
+                [p for p in Path(args.spec_tests).rglob("*.py") if p.name != "conftest.py"]
+            )
+            print(
+                "CUSTODY " + spec_dir_rel + " -> " + str(args.spec_tests)
+                + " (" + str(kept) + " file(s)); the workspace copy is gone"
+            )
+        else:
+            print("NOTE no authored suite at " + spec_dir_rel + "; behaviour ungraded")
+        return 0
+
     # Graded but never gating. The authored suite states behaviour the documents
     # only describe, so parts of it may be unsatisfiable or simply wrong; a
     # milestone that failed it must still be able to freeze and let the next one
@@ -421,6 +557,11 @@ def main() -> int:
         if args.spec_tests and _freeze_spec_suite(root, spec_dir_rel, args.spec_tests)
         else None
     )
+    if args.spec_tests and spec_frozen is None:
+        # Said out loud because the milestone still passes: a template that
+        # authored a suite and arrives without one has no behavioural axis, and
+        # the cause is upstream of the score.
+        print("NOTE no authored suite at " + spec_dir_rel + "; behaviour ungraded")
     progress = Progress(args.level, spec_tests=spec_frozen is not None)
     graded_spec = [False]
 
@@ -437,23 +578,35 @@ def main() -> int:
             vacuous = _vacuous_count(
                 spec_frozen, manifest.get("pristine_repo") or "", args.timeout
             )
-            passed, total, tail = _run_pytest(root, spec_frozen, timeout=args.timeout)
+            passed, collected, ran, tail, failed = _run_pytest(
+                root, spec_frozen, timeout=args.timeout
+            )
+            total = _pinned_case_total(spec_frozen, collected)
             gradable = total - vacuous
             if gradable <= 0:
                 print(
                     "SKIP spec_tests: nothing gradable "
-                    + "(collected " + str(total) + ", vacuous " + str(vacuous) + ")"
+                    + "(collected " + str(collected) + ", vacuous " + str(vacuous) + ")"
                 )
                 progress.drop_spec_stage()
             else:
-                progress.record("spec_tests", max(0, passed - vacuous), gradable)
+                progress.record(
+                    "spec_tests", max(0, passed - vacuous), gradable, failed
+                )
+                # Counts only. This stdout becomes the failure feedback attached
+                # to the next candidate's prompt, so printing the pytest tail
+                # would hand an implementer the assertions of a suite it is
+                # deliberately not allowed to read. Failed test *ids* still
+                # travel in the score marker, which the selector reads and no
+                # prompt does.
+                uncollected = max(0, total - ran)
                 print(
                     "SPEC spec_tests "
                     + str(max(0, passed - vacuous)) + "/" + str(gradable)
-                    + " (vacuous " + str(vacuous) + " excluded)"
+                    + " (vacuous " + str(vacuous) + " excluded"
+                    + ("; " + str(uncollected) + " not collected" if uncollected else "")
+                    + ")"
                 )
-                if passed < total:
-                    print(tail[-800:])
         progress.emit()
         return code
 
@@ -618,6 +771,9 @@ def main() -> int:
         # pytest; those judge style, not whether the milestone works.
         "-o",
         "addopts=",
+        # Name the failures, so this stage can serve as the behavioural axis on a
+        # milestone that authored no suite of its own.
+        "-rfE",
         *selection,
     ]
     try:
@@ -635,8 +791,10 @@ def main() -> int:
         progress.record("tests", 0, 1)
         return finish(1)
     tail = (proc.stdout or "")[-4000:]
-    passed_tests, total_tests = _pytest_counts(proc.stdout)
-    progress.record("tests", passed_tests, total_tests or 1)
+    passed_tests, total_tests, _ran_tests = _pytest_counts(proc.stdout)
+    progress.record(
+        "tests", passed_tests, total_tests or 1, _failed_test_ids(proc.stdout)
+    )
     if proc.returncode != 0:
         print("FAIL check_tests:", file=sys.stderr)
         print(tail, file=sys.stderr)

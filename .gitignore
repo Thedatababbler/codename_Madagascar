@@ -14,3 +14,8 @@ outputs/*
 # by a `git add -A`, which put 12M lines and six LFS objects that no longer
 # exist on the server into a code branch and made the branch unpushable.
 data/
+
+# Rendered result reports. Regenerate from `outputs/` with the scripts in
+# `scripts/make_*_pdf.py`; the numbers in them are only meaningful next to the
+# run directories, which are not in version control either.
+docs/reports/

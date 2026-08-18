@@ -2,22 +2,26 @@ template_id: test_first
 title: Author the tests, then implement against them
 when_to_use: >
   One agent turns the design documents into an executable test suite before any
-  code exists, a second implements against it, and the acceptance gate runs
-  immediately after. Use when the milestone's risk is that "done" is decided by
-  whoever implements it — the documents are prose, the gate only checks that
-  symbols exist, and nothing else states what the behaviour should be. The
-  authored suite is frozen once written and scores the milestone, so this is
-  also the only template whose quality signal can tell two implementations
-  apart.
+  code exists, that suite is moved out of the workspace, a second agent
+  implements from the documents alone, and the acceptance gate runs immediately
+  after. Use when the milestone's risk is that "done" is decided by whoever
+  implements it — the documents are prose, the gate only checks that symbols
+  exist, and nothing else states what the behaviour should be. The suite is
+  frozen once written and scores the milestone without gating it, so this is the
+  only template whose quality signal can tell two implementations apart. The
+  implementer never reads it: a suite it can run is a suite it passes whole,
+  which measures nothing.
 slots:
   - id: test_author
     default_role: test_author
     allowed_roles:
       - test_author
   - id: builder
-    default_role: test_driven_implementer
+    # Not test_driven_implementer: that role's whole premise is a suite it can
+    # read, and this template's suite is taken out of the workspace before this
+    # slot starts.
+    default_role: implementer
     allowed_roles:
-      - test_driven_implementer
       - implementer
       - contract_author
       - integrator

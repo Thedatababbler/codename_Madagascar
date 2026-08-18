@@ -160,11 +160,19 @@ agent_1 → probe(acceptance) ─[passed]─────────────
 
 ## 公开 harness 等级
 
-| level | 检查 |
-|-------|------|
-| discovery | `compileall` |
-| implementation | compileall + import 期望模块 |
-| integration | 上述 + UML `package.json` exports 符号存在 |
+| level | 退出码（门） | 分数 |
+|-------|------|------|
+| discovery | `compileall` | `compile` |
+| implementation | compileall + import 期望模块 + milestone contracts | 上述 + 若有自写套件则 `spec_tests`（只记分，不改退出码） |
+| integration | 上述 + UML `package.json` exports 符号存在 | 同上 |
+
+形式检查（编译 / 导入 / UML 符号）仍是前置：过不了说明仓是坏的，不能提交。
+自写 `spec_tests/` 是行为轴：作者写完后由 `--take-custody` 取走，实现者看不到；
+门把它记进 `ADAMAS_HARNESS_SCORE` 的 `spec_tests` 阶段，质量搜索读这个阶段，
+隐藏 `proj_with_test` 仍只离线打分。没有套件时行为分为 `None`，质量触发不开。
+计划必须是 `test_first`（有 `test_author`）且 binder 带 `--spec-tests`，custody
+才会插入；`solo` 计划写不出套件。用 `scripts/rewrite_plans_to_test_first.py`
+改冻结草案，不要为了凑套件去改规划器。
 
 这些检查只由 `public_design/tree.txt` 与 `package.json` 生成，**不是** hidden tests 的代理全集。
 

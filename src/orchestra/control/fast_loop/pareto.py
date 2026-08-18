@@ -9,9 +9,10 @@ that the frontier of a real milestone might be degenerate was unobservable.
 
 Three axes, per the archive:
 
-* **quality** (maximize) -- the graded acceptance score of the candidate's own
-  run. Never the held-out suite: that is not available at milestone time and a
-  loop that could see it would be tuning on the test set.
+* **quality** (maximize) -- the behavioural slice of the candidate's own graded
+  acceptance score, falling back to the blended score when the harness reports no
+  behavioural stage. Never the held-out suite: that is not available at milestone
+  time and a loop that could see it would be tuning on the test set.
 * **cost** (minimize) -- attributed USD.
 * **stability** (maximize) -- a monotone inverse of the count of stability
   incidents, i.e. whether the machinery ran, independent of whether the code it
@@ -105,6 +106,61 @@ class ParetoSelectionConfig:
         )
 
 
+def discriminating_quality(
+    candidates: Sequence[CandidateRecord],
+) -> dict[str, float]:
+    """Quality over the behavioural tests that actually differ across the pool.
+
+    Every candidate of one search is graded against a single frozen suite, so a test
+    they all pass and a test they all fail are both constants. They still occupy the
+    score's range: on the recorded imapclient search, 43 of 58 authored tests passed
+    for every candidate and 7 failed for every candidate, so 50 of 58 units of the
+    axis were fixed and the 8 that moved were reported at 8/58 of their size
+    (EXP-20260810-05). Removing the constant part is not a reweighting -- it is
+    declining to average a measurement with a constant.
+
+    Returns an empty mapping when the pool cannot support the comparison: fewer than
+    two measured candidates, a stage that reports no per-test identities, or suites
+    of different sizes, which would mean the candidates were not graded against the
+    same yardstick. Callers fall back to the raw behavioural score.
+
+    When every candidate failed exactly the same tests the pool is genuinely tied on
+    behaviour, and every candidate is given 1.0 -- equal, so the axis defers to cost
+    and stability rather than inventing a difference.
+    """
+    measured = [
+        c
+        for c in candidates
+        if c.status in EXECUTED_STATUSES and c.behaviour_total is not None
+    ]
+    if len(measured) < 2:
+        return {}
+    totals = {c.behaviour_total for c in measured}
+    if len(totals) != 1:
+        return {}
+    total = next(iter(totals))
+    if not total or total <= 0:
+        return {}
+    failed_sets = {c.candidate_id: set(c.behaviour_failures) for c in measured}
+    # A candidate reporting no identities while its counts say tests failed has not
+    # told us *which*, so the pool cannot be split into constant and varying parts.
+    for cand in measured:
+        implied_failures = total - round((cand.behaviour_score or 0.0) * total)
+        if implied_failures > 0 and not failed_sets[cand.candidate_id]:
+            return {}
+    union: set[str] = set().union(*failed_sets.values()) if failed_sets else set()
+    intersection: set[str] = (
+        set.intersection(*failed_sets.values()) if failed_sets else set()
+    )
+    varying = union - intersection
+    if not varying:
+        return {c.candidate_id: 1.0 for c in measured}
+    return {
+        cid: (len(varying) - len(failed & varying)) / len(varying)
+        for cid, failed in failed_sets.items()
+    }
+
+
 def objective_vector(candidate: CandidateRecord) -> dict[str, dict[str, object]]:
     """The candidate's three axes, each carrying whether it is known.
 
@@ -124,9 +180,23 @@ def objective_vector(candidate: CandidateRecord) -> dict[str, dict[str, object]]
         latency_ms=candidate.latency_ms,
         furthest_stage=candidate.furthest_stage,
     )
-    quality_known = (
-        candidate.harness_score is not None or candidate.quality_score is not None
+    # Prefer the behavioural slice over the blended score. The blend adds three
+    # stages that every committed candidate passes outright, so it reports real
+    # differences at roughly a third of their size -- enough to push them under the
+    # quality epsilon and be recorded as ties (EXP-20260810-05). Falling back to
+    # the blend keeps milestones whose harness reports no behavioural stage
+    # comparable exactly as they were.
+    quality = (
+        candidate.comparable_quality
+        if candidate.comparable_quality is not None
+        else candidate.behaviour_score
     )
+    quality_known = quality is not None
+    if not quality_known:
+        quality = objective.effective_score
+        quality_known = (
+            candidate.harness_score is not None or candidate.quality_score is not None
+        )
     # `estimated_cost_usd` is a float defaulting to 0.0, not an optional, so an
     # unpriced candidate arrives here looking free -- and free dominates
     # everything. A candidate that spent tokens cannot have cost exactly zero, so
@@ -135,7 +205,7 @@ def objective_vector(candidate: CandidateRecord) -> dict[str, dict[str, object]]
     cost_known = cost > 0.0 or objective.total_tokens == 0
     return {
         QUALITY: {
-            "value": objective.effective_score if quality_known else None,
+            "value": quality if quality_known else None,
             "available": quality_known,
         },
         COST: {"value": cost, "available": cost_known},

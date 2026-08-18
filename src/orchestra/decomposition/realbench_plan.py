@@ -23,6 +23,7 @@ from orchestra.realbench.public_harness import (
     parse_expected_modules,
     parse_package_exports,
     public_check_command,
+    spec_tests_path_for,
 )
 from orchestra.realbench.subgraph_builder import (
     REALBENCH_PROMPT_PROFILE,
@@ -290,6 +291,12 @@ def realbench_harness_binder(
             harness_dir=Path(harness_dir),
             level=milestone.role,
             contracts_path=contracts_path,
+            # Passed unconditionally, not only for a test-first template: a
+            # milestone that authored no suite finds nothing to freeze and scores
+            # exactly as it did before this stage existed.
+            spec_tests_path=spec_tests_path_for(
+                Path(harness_dir), milestone.milestone_id
+            ),
         )
 
     return bind
@@ -416,6 +423,9 @@ def _bind_runner_harness(
                 harness_dir=Path(harness_dir),
                 level=role,
                 contracts_path=contracts_path,
+                spec_tests_path=spec_tests_path_for(
+                    Path(harness_dir), str(sub["subtask_id"])
+                ),
             ),
         )
 

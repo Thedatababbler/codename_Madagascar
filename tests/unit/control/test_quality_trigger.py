@@ -55,27 +55,27 @@ class TestWhenItFires:
     def test_off_by_default(self):
         assert QualityTrigger().enabled is False
         assert (
-            QualityTrigger().fires(gate_passed=True, harness_score=0.0) is False
+            QualityTrigger().fires(gate_passed=True, behaviour_score=0.0) is False
         )
 
     def test_fires_only_below_the_threshold(self):
         trigger = QualityTrigger(enabled=True, min_score=0.8)
 
-        assert trigger.fires(gate_passed=True, harness_score=0.79) is True
-        assert trigger.fires(gate_passed=True, harness_score=0.8) is False
-        assert trigger.fires(gate_passed=True, harness_score=1.0) is False
+        assert trigger.fires(gate_passed=True, behaviour_score=0.79) is True
+        assert trigger.fires(gate_passed=True, behaviour_score=0.8) is False
+        assert trigger.fires(gate_passed=True, behaviour_score=1.0) is False
 
     def test_never_fires_on_a_failed_gate(self):
         """That path is the existing repair loop; firing here would double-search."""
         trigger = QualityTrigger(enabled=True, min_score=0.8)
 
-        assert trigger.fires(gate_passed=False, harness_score=0.1) is False
+        assert trigger.fires(gate_passed=False, behaviour_score=0.1) is False
 
     def test_an_unmeasured_score_does_not_fire(self):
         """Otherwise it would search every run and nothing could ever satisfy it."""
         trigger = QualityTrigger(enabled=True, min_score=0.8)
 
-        assert trigger.fires(gate_passed=True, harness_score=None) is False
+        assert trigger.fires(gate_passed=True, behaviour_score=None) is False
 
     def test_a_threshold_outside_zero_to_one_is_refused(self):
         with pytest.raises(ValueError, match="min_score"):

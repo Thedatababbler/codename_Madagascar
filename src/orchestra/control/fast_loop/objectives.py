@@ -26,6 +26,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from orchestra.harness.progress import behaviour_score as harness_behaviour_score
+
 DEFAULT_GATE_WEIGHT = 1.0
 DEFAULT_HARNESS_WEIGHT = 0.5
 DEFAULT_TOKEN_WEIGHT = 0.05
@@ -48,10 +50,27 @@ class MilestoneObjective:
     latency_ms: int | None = None
     furthest_stage: str = ""
     stages: list[dict[str, Any]] = field(default_factory=list)
+    #: Set when the milestone's result came from a fast-loop candidate, whose stage
+    #: breakdown is not the one recorded on the attempt. Left unset otherwise and
+    #: derived from `stages`.
+    behaviour: float | None = None
 
     @property
     def total_tokens(self) -> int:
         return self.prompt_tokens + self.completion_tokens
+
+    @property
+    def behaviour_score(self) -> float | None:
+        """The part of the graded score that measures whether the code works.
+
+        Recorded alongside the blend rather than instead of it, because the two
+        answer different questions and the blend is what the gate's weights say.
+        Tuning reads this one: the structural stages saturate, so the blend cannot
+        express "passed but poor" (EXP-20260810-05).
+        """
+        if self.behaviour is not None:
+            return self.behaviour
+        return harness_behaviour_score(self.stages)
 
     @property
     def effective_score(self) -> float:
@@ -73,6 +92,7 @@ class MilestoneObjective:
             "candidate_id": self.candidate_id,
             "gate_passed": self.gate_passed,
             "harness_score": self.harness_score,
+            "behaviour_score": self.behaviour_score,
             "effective_score": self.effective_score,
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,
@@ -141,17 +161,23 @@ def milestone_objectives(state: Any) -> list[MilestoneObjective]:
         # reports no score at all whenever the loop is switched off, which is
         # every A/B run.
         stages: list[dict[str, Any]] = []
+        behaviour: float | None = None
         for attempt in getattr(sub, "attempts", None) or []:
             score = (getattr(attempt, "metadata", None) or {}).get("harness_score")
             if score is not None and (harness_score is None or score > harness_score):
                 harness_score = float(score)
                 stage = str((attempt.metadata or {}).get("furthest_stage") or "")
                 stages = list((attempt.metadata or {}).get("harness_stages") or [])
+                behaviour = None
         for candidate in getattr(fast_loop_state, "candidates", None) or []:
             score = getattr(candidate, "harness_score", None)
             if score is not None and (harness_score is None or score > harness_score):
                 harness_score = score
                 stage = getattr(candidate, "furthest_stage", "") or ""
+                # A candidate carries no stage breakdown, so behaviour has to come
+                # across explicitly or the record would report the *attempt's*
+                # behaviour next to the *candidate's* blended score.
+                behaviour = getattr(candidate, "behaviour_score", None)
         rows.append(
             MilestoneObjective(
                 milestone_id=subtask_id,
@@ -168,6 +194,7 @@ def milestone_objectives(state: Any) -> list[MilestoneObjective]:
                 estimated_cost_usd=cost,
                 furthest_stage=stage,
                 stages=stages,
+                behaviour=behaviour,
             )
         )
     return rows

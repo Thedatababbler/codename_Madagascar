@@ -1,5 +1,237 @@
 # Changelog
 
+## 2026-08-15 — RealBench's public gate now grades an authored suite
+
+The RealBench public check used to emit no stages (`score=null, stages=[]`).
+Every committed milestone therefore had `behaviour_score=None`, and the quality
+trigger could not fire even when the hidden `proj_with_test` suite scored 0.
+The formal checks (compile / import / UML exports) stay as the pass/fail
+prerequisite; they do not become the thing a search ranks.
+
+**What changed.** The public check now follows the CodeProjectEval gate:
+
+- `--spec-tests` / `--take-custody` move `spec_tests/` out of the workspace.
+- A `spec_tests` stage is graded into `ADAMAS_HARNESS_SCORE` and never changes
+  the exit code. No suite means the stage is absent and scores stay structural.
+- `realbench_harness_binder` always passes a per-milestone frozen path, so a
+  `test_first` plan inserts custody. A `solo` plan still authors nothing.
+- Implementer prompts still do not name `spec_tests/`. The acceptance paragraph
+  now says the public check is structural.
+
+Hidden evaluation is unchanged. Frozen RealBench plans that are still `solo`
+need `scripts/rewrite_plans_to_test_first.py` before a search arm can see a
+behavioural score.
+
+## 2026-08-15 — A scorer killed by its own memory cap was published as 0.000
+
+Official gpt-5.4 `csvs-to-sqlite` was recorded as `pass_rate=0.000` in the
+no-search and search arms. Both repositories score 17/25. The held-out pytest
+ran under a 2048 MB `RLIMIT_AS`, and `import pandas` maps past that, so the
+interpreter died before pytest wrote a line — a nonzero exit with empty stdout,
+which parsed as zero passes, zero failures, zero errors. In the record it is
+indistinguishable from an empty repository, and it falls hardest on the tasks
+that import a scientific stack.
+
+**What changed.**
+
+- Address-space cap is 8192 MB. It has to clear what an honest suite *reserves*,
+  not what it uses.
+- A nonzero exit that wrote nothing to stdout *or* stderr is `status=timeout`
+  with `pass_rate=None`. pytest reports its own errors, so silence means the
+  process never got to run the suite.
+- Results carry `stderr_tail` beside `tail`. A conftest that will not import
+  writes only to stderr, so `portalocker`'s three unscored arms recorded an
+  empty reason for a suite that could not be collected at all.
+
+## 2026-08-14 — Hidden scoring no longer publishes 0.0 when the suite times out
+
+Official Codex `bplustree` solo was recorded as `pass_rate=0.000` because the
+held-out pytest session hit the 20-minute wall (`--eval-timeout 1200`,
+`--per-test-timeout 5`). A 356-case suite that spends five seconds on each hang
+already exceeds that wall, so the scorer returned zeros and the sweep treated
+them as a measured score.
+
+**What changed.**
+
+- Session wall default is 6 hours (`21600`); per-test hang cut-off is 30s.
+- CPU limit stays separate (`3600s`) so a busy loop cannot inherit the wall.
+- A session that does not finish — wall clock or `SIGXCPU` with no summary —
+  leaves `pass_rate` as `None` (`status=timeout`). The sweep copies that:
+  timeout is unmeasured, not a scored zero.
+
+LCB / RealBench per-test budgets are unchanged.
+
+## 2026-08-11 — A broken import used to shrink the exam instead of failing it
+
+Four candidates of one milestone came back scored out of 36, 31, 36 and 31 against
+a single frozen suite (EXP-20260811-03). The suite was never in doubt — it is
+written once per milestone and every candidate read the same 36 authored cases.
+`pytest` reports a module it cannot import as **one error, not as the cases it
+holds**, and the harness took its denominator from that summary line. So the exam
+shrank precisely when a candidate's code was broken enough to break an import: the
+worst work was divided by the smallest denominator, and losing a whole test file
+scored better than failing its assertions. `discriminating_quality` refuses to
+engage unless every candidate shares a `behaviour_total`, so it quietly stood down
+and selection compared raw ratios taken against different exams.
+
+**What changed.** The suite's size is now a property of the suite:
+
+- `_authored_case_count` walks the frozen suite's source with `ast` and counts the
+  cases pytest would collect — module-level `test*` functions, and `test*` methods
+  of any `Test*` class or `unittest.TestCase` subclass. Authors write
+  `class ConnectionSetupTests(unittest.TestCase)` as often as `class TestFoo`, and
+  a counter that knows only the prefix reads such a file as empty.
+- `_pinned_case_total` keeps that number beside the frozen copy and never lets it
+  fall. A collection that finds more than the source shows — a parametrised case
+  multiplied by a decorator — raises the pin and is remembered for later runs.
+- Cases that never ran are failures, and the gate log says so:
+  `SPEC spec_tests 4/7 (vacuous 0 excluded; 3 not collected)` where it used to
+  report `4/4` and look healthy.
+
+No published number moves. The held-out suite has been pinned since the ceiling fix
+and is scored by a different path; this only affects the behavioural axis the fast
+loop ranks candidates on, which was never trustworthy between candidates until now.
+
+## 2026-08-11 — The authored suite is taken away before the implementer sees it
+
+Yesterday's fix stopped the builders deleting the suite. It worked, and the result
+was worse than the bug: every milestone scored a perfect behavioural stage — 38/38
+on imapclient, 29/29 then 51/51 on simpy — while the same code failed roughly three
+quarters of the held-out suite. A test the implementer can read and run is a test it
+satisfies, so the axis that was added to tell two implementations apart ranked them
+all at 1.0, which is exactly the saturation the blended harness score already had.
+
+The suite was left readable deliberately: it was meant to be an executable statement
+of the behaviour owed, better than prose. That premise is fine for getting work done
+and fatal for measuring it, and the measurement is what the milestone needs.
+
+**What changed.** In a `test_first` milestone whose harness can hold a frozen suite,
+a custody step now runs between the two agents:
+
+- `harness.py --take-custody` copies `spec_tests/` to the frozen path and deletes the
+  workspace copy. It does not grade: it runs before any implementation exists.
+- The graph wires that step after the test author, and cuts the change edge from the
+  author to the builder. Deleting the files alone would not have been enough — a
+  change artifact carries the whole diff, so the suite would have been quoted into
+  the builder's prompt from a workspace that no longer contained it. The builder
+  waits on the custody report instead, which is also what stops it starting early.
+- Only the author is told about `spec_tests/`, and it is now told the directory is
+  taken out of the workspace afterwards. The builder and repairer hear nothing: they
+  run after custody, so there is nothing left for them to preserve, and naming a
+  directory they cannot see would only send them looking for it.
+- The builder slot no longer defaults to `test_driven_implementer`, whose whole
+  premise is a suite it can read; the four frozen `test_first` plans are rebound to
+  `implementer`.
+- Four leaks are closed. The gate no longer prints the authored suite's pytest tail;
+  harness failure messages are stripped of the machine-readable score line before
+  they reach an agent, since that line names every failed test; and every harness
+  report is now redacted at the point it is rendered into a prompt, because a
+  contract serialises each input artifact whole. That last one mattered most: the
+  custody step's own report says where it moved the suite to, in absolute terms, and
+  the change list names the suite's files — so the agent that could no longer see the
+  tests was being handed a path to them. The stored report keeps everything; only the
+  copy that reaches a prompt is stripped, so the selector still ranks on the
+  identities and a human still debugs from the full output.
+
+**Also fixed: a module that collects no tests is now pinned at zero.** The suite-size
+counter recorded only modules pytest reported cases for, so imapclient's helper base
+class and simpy's version check were missing from the pin — which the ceiling could
+not distinguish from a module nobody had pinned, so it counted them statically and
+withheld both pass rates. Every held-out module the dataset ships is now seeded at
+zero before counting. The totals do not move (267 and 149) and the two withheld runs
+are published at 0.255 and 0.483.
+
+Scoring is unchanged, because grading always ran against the frozen copy rather than
+the workspace one. Hiding the suite costs nothing and is verified end to end: an
+offline milestone runs both agents under the real runtime and asserts the implementer
+finds no `spec_tests/` in its workspace, no trace of it in its prompt, and the
+milestone still scores a behavioural stage.
+
+**It works.** Four paid runs the same afternoon (EXP-20260811-02) put every
+behavioural score between 0.55 and 0.96 where the visible suite had scored 1.00 on
+every milestone, and imapclient's candidates separated within each milestone —
+35/43 against 36/43 on the first, 31/41 against 32/41 on the second — so the
+frontier has something to rank for the first time. Those levels were read before
+the denominator was pinned the same evening: the second milestone's suite holds 51
+cases, ten of which no candidate's code could load, so 0.756 there is really 0.608.
+The comparison within each milestone stands, because all of its candidates were
+divided by the same wrong number; the absolute levels are upper bounds. A control config with the search turned off and everything else held
+fixed ships alongside, as `configs/experiments/codeprojecteval_nosearch_multi.yaml`.
+
+## 2026-08-10 — The builders were deleting the suite they were meant to implement
+
+The first `test_first` run finished looking healthy — two milestones, both gates
+passed, a working implementation and a held-out rate of 0.578 — and recorded no
+behavioural score at all. Both milestones' test authors wrote a suite (their diffs
+name the files); both builders' diffs, taken from the same workspace minutes later,
+contain no `spec_tests/` at all, and the gate found nothing to freeze.
+
+Nothing in the framework removed it. The builders did, and they were following
+orders: the shipping paragraph every editing agent receives says *ship only files
+`docs/directory_tree.txt` describes: no notes, plans, logs, scratch directories*. No
+design document mentions `spec_tests/`, so to a tidy agent it is exactly the scratch
+directory that sentence is about. The rule was written when nothing but the agent
+itself created files.
+
+**What changed.** In a milestone whose plan contains a `test_author`, every editing
+agent's prompt now states the exemption, immediately after the rule it exempts:
+
+- The builder and the repairer are told the suite is the executable statement of the
+  behaviour they owe, that it wins over the prose where the two disagree, that it is
+  evidence rather than workspace material, and that it must be in the repository when
+  they stop.
+- The test author is told the same exemption in one line: the directory it is about to
+  create is expected to be there.
+- A milestone with no test author says nothing about `spec_tests/`, and a read-only
+  reviewer gets no shipping paragraph and so no exemption either.
+
+The gate also now prints `NOTE no authored suite at spec_tests; behaviour ungraded`
+when it was given a frozen-suite path and found nothing to freeze. That run passed
+every check while silently losing the axis it existed to produce; "no suite reached
+the gate" and "no suite was ever authored" must not look the same in the log.
+
+## 2026-08-10 — Quality is read off the stage that can move, not the blend
+
+Yesterday's quality trigger could not fire. It compared the graded harness score
+against a threshold, and on CodeProjectEval that score has almost no room to vary: a
+milestone only commits once compile, imports and contracts have all passed outright,
+and those stages carry 0.6 to 0.7 of the weight. Every committed milestone on record
+scores exactly **1.0**. At `min_score: 0.8` the trigger was unreachable on every
+repository it was written to open up, and no blended threshold would have worked,
+because the reachable band is about 0.02 wide.
+
+The 0.307–0.375 figures the config comment offered as evidence that scores "sit well
+under 0.8" are held-out pass rates. The loop cannot see those and must not tune on
+them; quoting them next to a threshold the loop *does* evaluate is how the mistake
+survived review.
+
+**What changed.** A behavioural score — the fraction passing of `spec_tests`, or of
+the dataset's visible `tests` when nothing was authored — is now computed wherever a
+graded score is, carried on `CandidateRecord` and on the milestone objective record,
+and read by the two places that were reading the blend:
+
+- `QualityTrigger.fires` thresholds on behaviour, recalibrated to `min_score: 0.9`.
+  Behaviour spans 0.79–0.86 on the recorded runs, so the threshold now has somewhere
+  to sit that distinguishes milestones instead of rejecting or admitting all of them.
+- The Pareto **quality** axis prefers behaviour over the blend. This was quietly
+  costing the search its resolution: the 0.069 spread between the best and worst
+  recorded designs arrives at the selector as 0.021 once diluted by three saturated
+  stages, which is inside the 0.02 quality epsilon and therefore *a tie*. The epsilon
+  derivation in `docs/fast_loop_pareto_protocol.md` was written against a
+  behavioural reading; the code was not doing that reading.
+
+Absent behaviour falls back to the blend, so milestones whose harness reports no
+stage breakdown rank exactly as before. An absent or empty behavioural stage reports
+`None` rather than 0.0 — authoring no tests must not be the best-scoring design's
+only competition, and a milestone gated by plain `pytest` must not rank below one that
+failed to import.
+
+**What it does not fix.** Behaviour only moves if the milestone authored a suite.
+Without one it reads the visible `check_tests`, which the recorded runs pass 9/9, so
+behaviour is 1.0 and the trigger is silent again by a different route. Only the
+`test_first` template authors a suite and no frozen plan selects it. See
+EXP-20260810-05.
+
 ## 2026-08-10 — A passing gate is no longer the end of the search
 
 The fast loop lived in one branch of `ReadySubtaskScheduler`: the one where a

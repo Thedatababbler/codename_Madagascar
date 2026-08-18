@@ -12,6 +12,7 @@ from orchestra.control.fast_loop.objectives import (
 )
 from orchestra.control.fast_loop.pareto import (
     ParetoSelectionConfig,
+    discriminating_quality,
     frontier,
     select_from_frontier,
 )
@@ -129,12 +130,22 @@ class ParetoCandidateSelector:
         self.fallback = fallback or DeterministicCandidateSelector()
         self.last_frontier: list[str] = []
         self.last_rule: str = ""
+        self.last_discriminating: dict[str, float] = {}
 
     def select(
         self,
         candidates: Sequence[CandidateRecord],
         budget: FastLoopBudget,
     ) -> CandidateRecord | None:
+        # Recorded on the candidates before the frontier is built, so what the
+        # selector compared is what a later reader sees. Comparing over the tests
+        # that differ is only possible with the whole pool in hand, which is here
+        # and not in `objective_vector`.
+        self.last_discriminating = discriminating_quality(candidates)
+        for cand in candidates:
+            refined = self.last_discriminating.get(cand.candidate_id)
+            if refined is not None:
+                cand.comparable_quality = refined
         points = frontier(candidates, self.config)
         self.last_frontier = [c.candidate_id for c in points]
         winner = select_from_frontier(points, self.config)

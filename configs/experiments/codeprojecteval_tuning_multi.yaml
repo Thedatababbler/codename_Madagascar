@@ -18,21 +18,51 @@ experiment:
   # and paid full price for the privilege (EXP-20260810-04).
   #
   # The quality trigger below searches a milestone whose gate passed but whose
-  # graded score is poor, which is what makes those three usable. A passing gate
+  # behavioural score is poor, which is what makes those three usable. A passing gate
   # means "safe to build on", not "good": EXP-20260810-03 measured nine imapclient
   # candidates at exactly 1.0 on the gate with held-out rates from 0.307 to 0.375.
+  #
+  # A precondition: the milestone must produce a behavioural stage that can move.
+  # Without an authored suite the behavioural stage is the dataset's visible
+  # `check_tests`, which the recorded runs pass 9/9, so behaviour reads 1.0 and the
+  # trigger stays silent. Only the `test_first` template authors a suite, and the
+  # frozen plans predate it, so the arm replays plans rewritten onto that template
+  # (`outputs/cpe_tuning_multi/plans/<task>.multi.test_first.json`).
+  #
+  # Rewriting the plans was necessary and not sufficient. In the first such run both
+  # builders deleted the authored suite before the gate could copy it out -- the
+  # shipping rule they follow forbids files no document describes, and no document
+  # describes `spec_tests/` -- so both milestones reported no behavioural stage and
+  # this trigger stayed silent again (EXP-20260810-06). The prompts now state the
+  # exemption and the gate says so when a suite never arrives; a run whose gate log
+  # carries `NOTE no authored suite` is measuring nothing here, whatever it scored.
+  #
+  # Necessary and still not sufficient: with the suite present but readable, every
+  # milestone scored it perfectly and the trigger had nothing to fire on
+  # (EXP-20260811-01). The suite is now taken out of the workspace between the author
+  # and the implementer, so a behavioural score below 1.0 is again possible. Runs
+  # before 2026-08-11 are not comparable on this axis.
   tuning:
     fast_loop_candidates: 3
     design_search: true
     quality_trigger:
       enabled: true
-      # Search a milestone that passed but scored below this. 0.8 rather than 1.0
-      # deliberately: at 1.0 every milestone that is not perfect is searched, which
-      # multiplies the cost of a run by the candidate count almost every time and
-      # spends most of it on milestones that were nearly right. The recorded
-      # imapclient scores sit well under 0.8, and a milestone above it has little
-      # headroom for one atomic edit to recover.
-      min_score: 0.8
+      # Compared against the *behavioural* stage of the graded score, not the blend.
+      # An earlier version of this file set 0.8 against the blend and claimed the
+      # recorded imapclient scores sat well under it. They did not: every committed
+      # milestone on record scored exactly 1.0 blended, because compile, imports and
+      # contracts all pass outright and hold 0.6-0.7 of the weight. The trigger was
+      # inert on every repository it was written for (EXP-20260810-05). The 0.307 to
+      # 0.375 figures that comment was reaching for are held-out pass rates, which
+      # the loop cannot see and must not tune on.
+      #
+      # On the behavioural axis the same runs span 0.79 to 0.86, so 0.9 fires on all
+      # of them. That is the intended reading of "passed but poor" here and it is not
+      # cheap: it searches every milestone, which costs roughly the candidate count
+      # in extra spend. A lower threshold spends less by searching only the worst,
+      # at the price of a much smaller tuning population -- the exact problem this
+      # config exists to solve.
+      min_score: 0.9
     pareto:
       rule: quality_first
       epsilon:

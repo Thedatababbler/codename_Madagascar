@@ -14,12 +14,36 @@ from orchestra.backends.base import (
 )
 from orchestra.backends.errors import BackendCapabilityError
 from orchestra.backends.registry import AgentBackendRegistry
+from orchestra.harness.progress import redact_hidden_suite
 from orchestra.ir.artifacts import ArtifactEnvelope
 from orchestra.ir.contracts import AgentContract
 from orchestra.ir.nodes import AgentNodeSpec
 from orchestra.prompts.render import render_contract
 from orchestra.runtime.backend import RunContext
 from orchestra.runtime.state import NodeExecutionResult
+
+
+def _agent_visible(
+    inputs: dict[str, ArtifactEnvelope],
+) -> dict[str, ArtifactEnvelope]:
+    """The inputs as an agent may read them.
+
+    A contract renders every input artifact into the prompt as JSON, whole. That
+    is right for a repository change and wrong for a harness report, which
+    carries the authored suite the agent is being ranked against — its path, its
+    filenames and the identity of every test of it that failed. The stored
+    artifact keeps all of it; the copy that reaches the prompt does not.
+    """
+    return {
+        slot: (
+            artifact.model_copy(
+                update={"payload": redact_hidden_suite(artifact.payload)}
+            )
+            if artifact.artifact_type == "RepositoryHarnessResultArtifact"
+            else artifact
+        )
+        for slot, artifact in inputs.items()
+    }
 
 
 class AgentNodeExecutor:
@@ -42,7 +66,7 @@ class AgentNodeExecutor:
         contract = self.contracts[node.contract_id]
         if len(node.output_slots) != 1:
             raise ValueError("Agent nodes must declare exactly one output slot")
-        messages = list(render_contract(contract, inputs))
+        messages = list(render_contract(contract, _agent_visible(inputs)))
         if node.prompt_prelude:
             prelude = str(node.prompt_prelude).strip()
             if prelude:

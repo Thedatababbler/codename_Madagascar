@@ -64,15 +64,424 @@
    as `tuning.quality_trigger`, and enabled only in
    `configs/experiments/codeprojecteval_tuning_multi.yaml`.
 
-9. **Report a quality search separately from a repair search.** Both run the same
+9. **Hidden scoring that times out is unmeasured, never a 0.** The held-out
+   session wall is 6 hours and each case may run 30s (`eval_codeprojecteval.py`,
+   `run_codeprojecteval_sweep.py`). A session that does not finish leaves
+   `pass_rate` as `None` with `status=timeout`. Do not average that as 0.000
+   (official Codex bplustree solo on 2026-08-14 did this under the old 20-minute
+   / 5s defaults). LCB / RealBench per-test budgets are a different exam.
+   The same holds for a scorer the harness kills: the address-space cap is
+   8192 MB because pandas maps past 2 GB on import, and a nonzero exit that
+   wrote nothing to either stream is `status=timeout` with no rate, not a zero
+   (EXP-20260815-01). Records now keep `stderr_tail` as well as `tail`, since a
+   conftest that will not import reports itself only on stderr.
+
+10. **Report a quality search separately from a repair search.** Both run the same
    machinery through the same fast loop, but one is recovering a milestone that
    failed and the other is refining one that passed. `FastLoopState.search_reason`
    records which; averaging them together mixes a repair rate with a refinement
    rate and neither number then means anything. A quality search that declines is
    a success, not a failure, and is recorded as one.
 
-**Last updated:** 2026-08-10 (UTC) — denominator audit and task census
-(EXP-20260810-04)
+11. **Read tuning signals off the stage that can still move, never off a blended
+    score.** A committed CodeProjectEval milestone has passed compile, imports and
+    contracts outright, and those hold 0.6–0.7 of the graded score's weight, so the
+    blend is pinned above 0.9 however little of the code works. Anything comparing
+    designs or thresholding on "poor" must read the behavioural stage
+    (`spec_tests`, else `tests`): the trigger shipped reading the blend and could
+    not fire on any milestone ever recorded (EXP-20260810-05). The same arithmetic
+    shrinks a real 0.069 quality gap to 0.021, i.e. inside the quality epsilon, so a
+    blended axis also reports genuinely different designs as ties.
+
+12. **A correlation study needs candidates that differ.** The authored-suite probe
+    was run against nine candidates whose held-out rates span 0.021 in standard
+    deviation, and returned r = −0.204 with p ≈ 0.6 — which is not evidence about
+    the axis, it is evidence the population was flat. Before spending on a validation
+    run, check the spread of the thing being predicted; if it is inside its own noise,
+    the study cannot come back either way and the money buys a number that reads like
+    a result.
+
+13. **A new artifact in the workspace needs an exemption from every rule that
+    forbids it.** Every editing agent is told to ship only files the design
+    documents describe. `spec_tests/` is described by no document, so both builders
+    in the first `test_first` run deleted the suite they were supposed to implement
+    against, and the run passed every check while recording no behavioural score at
+    all (EXP-20260810-06). Whenever a role starts producing something the other
+    roles have never seen, re-read what those roles were already told about files
+    they did not create — and state the exemption after the rule, not before it.
+
+14. **A missing measurement must not look like a passing one.** The lost suite was
+    invisible in the summary: the milestone committed, the gate passed, and the
+    behavioural stage was simply absent, which reads identically to a milestone that
+    authored nothing. Any optional stage whose absence changes what an experiment can
+    conclude has to announce the absence — the gate now prints
+    `NOTE no authored suite ...` — and the run summary has to carry it.
+
+15. **A yardstick the candidate can read is not a measurement.** The authored suite
+    was left in the workspace so the implementer could treat it as an executable
+    spec. Every milestone then scored a perfect behavioural stage — 38/38, 29/29,
+    51/51 — while the same code failed most of the held-out suite
+    (EXP-20260811-01), which is the saturation the axis was introduced to escape.
+    The suite is now taken out of the workspace between the two agents. Whenever a
+    metric is computed from something a candidate can see, assume the candidate
+    will optimise the metric instead of the goal, and check what the metric looks
+    like when it does.
+
+16. **Hiding a file is not hiding it; count every channel that renders it.** With
+    the suite deleted from the workspace, four separate paths still carried it into
+    agent prompts: the author's change artifact quoted the whole diff, the gate's
+    pytest tail quoted the assertions, the score line named every failed test, and
+    the custody step's own report gave the absolute path it had moved the suite to.
+    Three of the four were found only by writing the assertion "this string appears
+    nowhere the agent can read" and running it, rather than by reasoning about the
+    design. Anything an agent is not supposed to see needs that assertion at the
+    render boundary, not at the filesystem.
+
+17. **RealBench's formal gate is a prerequisite, not a quality signal.** Compile,
+    import and UML-export checks pass on a repository that does not work
+    (EXP-20260815-02: five search arms committed with `score=null, stages=[]`,
+    hidden `proj_with_test` at 0–0.5, quality trigger never fired). The public
+    check now grades an authored `spec_tests/` suite the way CodeProjectEval
+    does — score, not exit code — and the quality trigger reads that stage.
+    A `solo` plan still authors nothing, so `behaviour_score` stays `None` and
+    search still will not start. Rewrite frozen drafts with
+    `scripts/rewrite_plans_to_test_first.py` before a search arm; do not change
+    the planner to force a split just to get a suite. Hidden evaluation stays
+    offline.
+
+**Last updated:** 2026-08-17 (UTC) — official gpt-5.4 blind solo on the seven
+one-segment CodeProjectEval tasks (EXP-20260817-01)
+
+---
+
+### EXP-20260817-01 — official Codex solo, no search, no gate language
+- **Status:** canonical (n=1, seven one-segment tasks)
+- **Date:** 2026-08-17 (UTC)
+- **Question:** what does one official gpt-5.4 Codex agent score when it is
+  handed only the design documents — no authored suite, no hidden-test
+  language, no AdaMAS gate description, no search?
+- **Artefacts:** `outputs/cpe_official_solo/slice_solo_blind.jsonl`,
+  `outputs/cpe_official_solo/ab-*-solo-r1-20260817T151257Z`
+
+The seven tasks never had a `solo` run. Their official three-arm table used
+`single` / `nosearch` / `search`, all `test_first`. This batch is the missing
+single-agent cell. Endpoint is `api.openai.com`, model `gpt-5.4`. Each trial
+is one implementer, 20-minute wall, then hidden `unit_tests`. If the gate
+refused to commit, scoring still reads the agent's working tree.
+
+| task | solo (this) | official single | official nosearch | official search | solo $ | wall |
+|---|---|---|---|---|---|---|
+| tinydb | 0.824 | 0.804 | 0.848 | **0.882** | 0.40 | 2.3 min |
+| deprecated | 0.562 | 0.591 | 0.591 | **0.602** | 0.32 | 1.6 min |
+| parsel | 0.272 | 0.264 | 0.256 | **0.276** | 0.65 | 3.1 min |
+| csvs-to-sqlite | 0.640 | 0.000 (empty) | **0.680** | **0.680** | 0.59 | 3.5 min |
+| python-hl7 | **0.530** | 0.000 (empty) | 0.000 (empty) | 0.430 | 0.74 | 3.7 min |
+| portalocker | unscored | unscored | unscored | unscored | 0.58 | 4.7 min |
+| voluptuous | **0.633** | 0.000 (empty) | 0.000 (empty) | 0.000 (refused) | 0.74 | 3.6 min |
+
+Seven trials, 4.7 minutes wall, **$4.02** on the logged official list price.
+portalocker is the same `LockerType` collection abort as the other three arms.
+
+On the four tasks where the gated arms actually committed code, solo lands
+inside the same band (tinydb / deprecated / parsel / csvs-to-sqlite). On the
+three where the gate left an empty repository, solo is the first real score:
+python-hl7 0.530 (above search's 0.430) and voluptuous 0.633 (the search arm
+had discarded a 0.696 candidate for failing the gate). n=1; do not treat a
+single-task gap as an effect.
+
+---
+
+### EXP-20260815-02 — RealBench, smolagents on xiaoai, three arms
+- **Status:** canonical (n=1, five level-2 tasks)
+- **Date:** 2026-08-15 (UTC)
+- **Question:** on RealBench, with smolagents talking to xiaoai gpt-5.4, does
+  single / no-search / search separate?
+- **Artefacts:** `outputs/realbench_xiaoai/slice_xiaoai_20260815T091426Z.jsonl`
+
+The planner produced one milestone on all five tasks, so single and no-search
+are the same frozen plan run twice. Search was armed (`fast_loop_candidates: 2`,
+quality trigger 0.94) but `fast_loop_history` is empty on every search arm:
+walls are 0.7–4 minutes, which is one pass, not a candidate loop. The first
+attempt at this slice died in 6 seconds on `max_tokens` (xiaoai now wants
+`max_completion_tokens` for gpt-5); that batch is void. This table is the
+rerun after the factory remap.
+
+| task | single | 不搜索 | 搜索 | 搜了？ |
+|---|---|---|---|---|
+| AlienMajik_SnoopR | 0.400 | 0.000（没提交） | **0.500** | 否 |
+| FreddyRodgers_emojichef | **0.466** | 0.411 | 0.425 | 否 |
+| benbovy_xproj | 0.000（没提交） | 0.069 | **0.138** | 否 |
+| encore-ecosystem_NodeFlow | 0 | 0 | 0 | 否 |
+| dkweiss31_floquet | 0（提交了） | 0（没提交） | 0（提交了） | 否 |
+
+This is not a decomposition result: nothing was split. It is also not a search
+result: the loop never ran. The spread between single and no-search is n=1
+variance on the same config (SnoopR 0.400 vs an empty commit; emojichef 0.466
+vs 0.411).
+
+---
+
+### EXP-20260815-01 — why the official gpt-5.4 zeros were zeros
+- **Status:** canonical (re-scoring of an existing batch; no new paid runs)
+- **Date:** 2026-08-15 (UTC)
+- **Question:** of the seven official Codex / gpt-5.4 tasks, four arms published
+  0.000 and three published nothing. How many of those are the code failing?
+- **Artefacts:** `outputs/cpe_official/ab-*-r1-20260815T012058Z`,
+  `outputs/cpe_official/ab-{tinydb,deprecated,parsel}-*-r1-20260814T211020Z`
+
+Four distinct causes, only two of which are about the code.
+
+| cause | arms | what was published | what is true |
+|---|---|---|---|
+| scorer killed at the 2 GB address-space cap | csvs-to-sqlite nosearch, search | 0.000 | **0.680** each (17/25) |
+| dataset conftest imports a symbol no design document names | portalocker ×3 | unscored | `portalocker.portalocker.LockerType` aborts collection; aliasing it scores 0.619 / 0.556 / 0.635 (single / no-search / search) |
+| gate failed, so nothing was committed and the suite met an empty repository | python-hl7 single + nosearch, voluptuous single + nosearch, csvs-to-sqlite single | 0.000 | true zero, but of the run, not of the code |
+| fast loop refused to commit a non-valid winner | voluptuous search | run_failed | the discarded candidate scores **0.696** (112/161) |
+
+The memory cap is the serious one: at 2048 MB the interpreter died before pytest
+wrote a line, and a nonzero exit with empty stdout parsed as zero passes. It is
+indistinguishable in the record from an empty repository, and it silently
+punishes exactly the tasks that import a scientific stack. Cap is now 8192 MB
+and a silent nonzero exit is unmeasured
+(`tests/unit/decomposition/test_codeprojecteval_scoring.py`).
+
+The other three are all-or-nothing shapes rather than measurement faults, and
+they cost more than the arithmetic suggests. A milestone contract that reads
+`voluptuous.Extra` as "callable or class" fails a sentinel object
+(`Extra = _ExtraToken()`) whose behaviour scored 0.679; the gate then blocks the
+commit, and the held-out suite scores an empty directory at 0.000. One symbol —
+`hl7.Container`, `voluptuous.Extra`, `LockerType` — decides the whole task.
+Corrected, search is at least no-search on 5 of the 6 measurable tasks (four
+wins, one tie at 0.680) and loses only the one where it refused to commit.
+
+portalocker under the alias is the one place no-search lands *below* single
+(0.556 vs 0.619), and the whole gap is one deadlock: its `BoundedSemaphore`
+recursed through `utils.py:499 acquire` and never returned, so four cases in
+`test_semaphore.py` and `test_timeout_behaviour.py` died on the 30s per-test
+cut-off and the module pair took two minutes. Single and search pass the same
+twelve cases in 0.29s. Search's own margin over single is one case
+(`test_rlock_behaviour.py`), which is noise at n=1.
+
+---
+
+### EXP-20260811-02 — the hidden suite, with search and without
+- **Status:** canonical (four paid runs, n=1 per cell)
+- **Date:** 2026-08-11 (UTC)
+- **Question:** with the authored suite taken out of the workspace, does the
+  behavioural axis move at all — and if it does, is Pareto search worth its price?
+- **Model:** `gpt-5.3-codex-spark`; not comparable with any gpt-5.4 batch.
+- **Design:** same frozen `test_first` plans, same custody, same scoring, in both
+  arms. The only difference is `fast_loop_candidates: 3` + quality trigger versus
+  `0` and no trigger (`configs/experiments/codeprojecteval_nosearch_multi.yaml`).
+- **Artefacts:** `outputs/cpe_tuning_multi/slice_hidden_search_20260811.jsonl`,
+  `outputs/cpe_nosearch_multi/slice_nosearch_20260811.jsonl`
+
+| task | arm | held-out | $ | wall | committed | behaviour per milestone |
+|---|---|---|---|---|---|---|
+| imapclient | suite visible, search on | 0.255 | 4.81 | 22 min | 2/2 | 1.00 |
+| imapclient | hidden, no search | 0.210 | 5.44 | 34 min | 1/2 | 0.727, gate failed |
+| imapclient | hidden, search on | **0.487** | 17.32 | 70 min | 2/2 | 0.837, 0.549 |
+| simpy | suite visible, search on | 0.483 | 16.71 | 66 min | 2/2 | 1.00, 1.00 |
+| simpy | hidden, no search | 0.463 | 8.07 | 25 min | 2/2 | 0.667, 0.955 |
+| simpy | hidden, search on | 0.564 | 8.17 | 38 min | 2/2 | 0.920, 0.905 |
+
+**The axis moves.** Every behavioural score under custody lands between 0.55 and
+0.96, against 1.00 on every milestone of the visible run. More to the point, the
+three candidates of imapclient's first milestone scored 0.756, 0.780 and 0.837 — a
+spread of 0.081, four times the 0.02 quality epsilon. This is the first frontier on
+this dataset whose quality axis can tell candidates apart rather than declaring
+them tied and falling through to price.
+
+**Search paid on imapclient and did not run on simpy.** On imapclient it searched
+both milestones, committed one that the no-search arm left failing, and took the
+held-out rate from 0.210 to 0.487 for $5.44 -> $17.32, i.e. 3.2x the money for
++0.277. On simpy it fired on neither milestone, because both scored 0.92 and 0.90
+against a trigger threshold of 0.9. **The simpy rows are therefore two samples of
+the same configuration, and the 0.463 -> 0.564 gap between them is n=1 variance,
+not an effect of search.** Do not quote it as one.
+
+**No single-agent baseline in this batch.** The solo arm was attempted immediately
+afterwards, on the same tasks and the same model, with plans merged from these very
+`test_first` plans so the one agent inherits their combined wall clock
+(`outputs/cpe_solo_spark/plans/`). Both trials died about ninety seconds in with
+`stream disconnected before completion`, and the endpoint then reported
+`model_cooldown ... reset 149h` for `gpt-5.3-codex-spark`: these four runs spent the
+quota. Nothing about the arm is known to be broken — the graph materialises and
+dry-runs correctly, one agent, one gate, no custody. So every number here compares
+decompositions with each other, and none of them compares against plain Codex.
+
+**The threshold is now the binding parameter, and 0.9 is in the wrong place.**
+It was chosen when behaviour was either 1.0 or absent. Observed behaviour now
+spans 0.55 to 0.96, so 0.9 searches almost everything on imapclient and nothing on
+simpy — the same knife-edge, in both directions, on the two repositories the
+B-stage is built from. Calibrate it against this distribution before spending the
+nine-run batch.
+
+---
+
+### EXP-20260811-01 — test_first on imapclient and simpy: the suite survives, the score does not get published
+- **Status:** canonical (two paid runs, n=1 each; a precondition check, not a result)
+- **Date:** 2026-08-11 (UTC)
+- **Question:** before spending the three-task × three-repetition budget, does
+  `test_first` run to completion on tasks other than pyjwt?
+- **Model:** `gpt-5.3-codex-spark` (gpt-5.4 in cooldown), so **none of these numbers
+  are comparable with any gpt-5.4 batch.**
+- **Artefacts:** `outputs/cpe_tuning_multi/slice_imapclient_simpy.jsonl`,
+  `outputs/cpe_tuning_multi/ab-{imapclient,simpy}-multi.test_first-r1-20260810T231358Z/`
+
+| task | $ | wall | milestones committed | held-out counts | rate | fast loop |
+|---|---|---|---|---|---|---|
+| imapclient | 4.81 | 22.3 min | 2/2 | passed 68, failed 185, error 2 of 267 | 0.255 | not entered |
+| simpy | 16.71 | 66.1 min | 2/2 | passed 72, failed 77 of 149 | 0.483 | milestone 2, 3 candidates |
+
+**The suite now survives, and it saturates.** Both runs graded a `spec_tests` stage
+on every milestone — the rule-12 fix holds — and every one of them was perfect:
+imapclient 38/38, simpy 29/29 then 51/51. A yardstick the implementer is allowed to
+read is a yardstick it optimises to completion, so the behavioural axis is degenerate
+in exactly the way the blended score was. The quality trigger cannot fire on it.
+**Resolved by taking the suite away.** The asymmetry this needed is now structural:
+a custody step runs between the author and the implementer, copies `spec_tests/` to
+the frozen path and deletes the workspace copy, and the change edge from author to
+implementer is cut so the suite cannot arrive as a quoted patch instead. The
+implementer works from the design documents alone and is graded on a suite it never
+saw. Nothing about scoring changed — grading always read the frozen copy — so the
+axis costs the same and is no longer something a candidate can aim at. The numbers
+above stay on record as the saturated baseline the next `test_first` batch is
+compared against.
+
+**Neither pass rate was published, and the reason is a pin gap, not a failed run.**
+Both tasks list one held-out module that is absent from
+`configs/codeprojecteval_suite_sizes.json` — `unit_tests/imapclient_test.py` (a
+helper base class) and simpy's `unit_tests/test_version.py`. Modules that collect
+zero tests were omitted when the file was pinned, and `denominator_faults()` cannot
+tell "omitted because empty" from "guessed", so it withholds the rate under rule 7.
+The counts are on disk (0.255 and 0.483 respectively) but must not be quoted as
+scores until the pin covers every module the dataset ships. **This blocks the whole
+B-stage: nine runs would all come back unscored.** Fix the pin first.
+
+**Fixed, and the rates are now published: imapclient 0.255, simpy 0.483.** The
+counter only recorded modules pytest reported at least one case for, so a module
+that collects nothing was missing from the pin and indistinguishable from one nobody
+had pinned. It now seeds every held-out module the dataset ships at zero, the two
+modules are pinned at 0, both totals are unchanged (267 and 149), and the stored
+counts were rescored in place as `pass_rate_pinned`. The B-stage is unblocked. Note
+that both rates are `gpt-5.3-codex-spark` and are not comparable with any gpt-5.4
+number.
+
+**Whether a gate can fail is a property of the model, not of the repository.**
+EXP-20260810-04 excluded simpy from fast-loop work because its gate passes first
+time — under gpt-5.4. Under spark, simpy's milestone 2 failed its gate on
+`check_tests/test_benchmark.py::test_store_sim` (the run's event count is 188 where
+the test asserts 191), the loop entered, three candidates ran (feedback, added gate
+repairer, raised budget) and the raised-budget candidate committed at behaviour
+0.902. Search cost $8.23 of the run's $16.71, of which the selected branch was
+$4.40. So "which tasks can exercise the fast loop" has to be re-answered per model,
+and the population is wider for weak models than the audit implied.
+
+---
+
+### EXP-20260810-06 — The first test_first run: the suite was deleted before it could be graded
+- **Status:** canonical (one paid run, then offline forensics and a fix)
+- **Date:** 2026-08-10 (UTC)
+- **Question:** with the frozen plans rewritten onto `test_first`, does the
+  behavioural axis actually appear, and does the quality trigger fire?
+- **Cost:** one pyjwt run on `gpt-5.3-codex-spark`, $5.59, 28 min wall clock.
+
+**The run looked like a success and measured nothing.** Two milestones planned, two
+committed, both gates passed, held-out rate 0.578. Neither gate report contains a
+`spec_tests` stage, so behaviour was `None` on both milestones, the quality trigger
+never fired, and the fast loop never ran. The arm cost full price and bought no
+tuning — the same outcome as EXP-20260810-04, arrived at through a new route.
+
+**What the artifacts say.** Both test authors wrote a suite: their
+`RepositoryChangeArtifact`s name five and six files under `spec_tests/`. Both
+builders ran afterwards in the same workspace, at the same base revision, and their
+diffs — computed as `git diff HEAD` plus untracked files, so an untracked
+`spec_tests/` would appear — contain nothing but the implementation. The directory
+was physically gone by then, and the workspaces on disk still have no `spec_tests/`
+while the implementation sits there untracked.
+
+**Nothing in the framework removed it.** The subtask workspace is forked once per
+attempt and never reset between agent nodes; `snapshot` is read-only; the only
+`reset --hard`/`clean -fdx` in the tree is the fast-loop rollback, which runs on
+failure paths this run never took; `upstream_change` is prompt wiring, not a
+filesystem operation. Which leaves the builders — and their prompts told them to do
+it. Every editing agent receives *"Ship only files docs/directory_tree.txt describes:
+no notes, plans, logs, scratch directories"*. No document mentions `spec_tests/`.
+
+**Fix:** in a milestone whose plan contains a `test_author`, the builder and the
+repairer are now told the suite is their specification, is read-only evidence, and
+must be present when they stop — stated after the shipping rule, so it reads as the
+exception to it. The test author gets the one-line version. The gate prints
+`NOTE no authored suite at spec_tests; behaviour ungraded` when it was handed a
+frozen-suite path and found nothing to freeze, so this cannot recur silently.
+- **Standing rules this produced:** rules 12 and 13.
+
+**What this says about the money.** The three-task run (④) was blocked on a
+precondition everyone believed was met by rewriting the plans onto `test_first`.
+Rewriting the plans was necessary and not sufficient: the template only produces an
+axis if the suite survives to the gate. One $5.59 probe answered that; nine runs
+would have cost roughly $50–150 and answered it nine times.
+
+---
+
+### EXP-20260810-05 — The authored suite discriminates; the trigger reading it did not
+- **Status:** canonical (one paid probe, then offline analysis and a fix)
+- **Date:** 2026-08-10 (UTC)
+- **Question:** does the authored-suite score rank designs the way the held-out suite
+  does, and is the quality trigger ready for a three-task run?
+- **Cost:** one `test_author` call on `gpt-5.3-codex-spark` (~3 min); everything else
+  offline against candidate patches already on disk.
+
+**The axis is not degenerate, which was the point of building it.** The acceptance
+gate scored all nine imapclient candidates at exactly 1.0 (EXP-20260810-03). The
+authored suite scores them 0.793–0.862 — 46, 49 or 50 of 58 tests. So the thing
+`test_first` was added to fix is fixed: designs are now separable at milestone time
+without touching the held-out suite.
+
+**Whether it ranks them *correctly* is unanswerable on this population, and the
+study was underpowered before it started.** r = −0.204, n = 9, p ≈ 0.6. The
+held-out rates it was asked to predict have a standard deviation of 0.021 around a
+mean of 0.339; the per-test breakdown says the same thing from the other side — 43
+of 58 authored tests pass for every candidate and 7 fail for every candidate, so
+only 8 discriminate, and no single one of them separates the held-out means by more
+than 0.03. Both suites agree these nine candidates are the same work. Nothing about
+the axis's direction can be concluded, and the answer was not available at this
+price.
+- **Standing rule this produced:** rule 11.
+
+**The paid finding was a bug the probe was not looking for.** Checking why the
+threshold was set at 0.8 showed that every committed milestone on record scores
+exactly **1.0** on the graded harness score — not the 0.307–0.375 the config comment
+claimed, which were held-out pass rates the loop cannot see. Structural stages hold
+0.6–0.7 of the weight and all pass, so:
+
+| level | non-behavioural weight | blended score at behaviour 0.79–0.86 |
+| --- | --- | --- |
+| implementation | 0.60 | 0.917 – 0.945 |
+| integration | 0.70 | 0.938 – 0.959 |
+
+At `min_score: 0.8` the trigger could not fire on any milestone ever recorded, and no
+blended threshold both fires on bad milestones and spares good ones, because the band
+is 0.02 wide. `tuning.quality_trigger` — the whole mechanism for widening the
+population past imapclient — was inert on every repository it was written for.
+- **Fix:** quality comparison and the trigger both read the behavioural stage;
+  `min_score` recalibrated to 0.9 on that axis. Standing rule 10.
+- **Second-order consequence:** the epsilon analysis in
+  `docs/fast_loop_pareto_protocol.md` was derived against the blend, so
+  `quality: 0.02` was tighter than it looked — a 0.069 behavioural gap arrived at the
+  selector as 0.021 and counted as a tie. On the behavioural axis 0.02 now means what
+  the document says it means: about one authored test in 58.
+
+**A precondition for the three-task run that is not yet met.** Behaviour only has
+somewhere to move if the milestone authored a suite. Without one the behavioural
+stage is the dataset's visible `check_tests`, which the recorded runs pass 9/9, so
+behaviour reads 1.0 and the trigger stays silent — the same inertness by a different
+route. Only `test_first` authors a suite, and no frozen plan selects it: the template
+postdates them, and the planner is instructed to prefer the cheapest template that
+addresses the milestone's risk. Either the frozen plans are rewritten onto
+`test_first` (mechanical — every builder role in all four plans is already in that
+template's allowed set) or the arm is replanned and the planner may still decline.
 
 ---
 
@@ -1233,3 +1642,96 @@ does bind is `timeout_seconds` (1200s author, 1500s repairer) and `max_steps`.
 excluded by the condition guard for replaying a legacy four-agent plan under the
 new builder. Treat the two positive deltas as consistent with the floor
 mechanism, not as measured effect sizes.
+## EXP-20260811-03 — One agent vs two milestones vs two milestones plus search
+
+**Status:** `canonical` for mechanism, `underpowered` for effect size (n=1 per
+cell, except simpy solo n=2)
+**Batches:** `outputs/cpe_54_{solo,nosearch,search}/ab-*-20260811T19*`
+**Plans:** `outputs/cpe_54_*/plans/`; the solo plans are
+`merge_to_single_agent` applied to the very `test_first` plans the other two arms
+run, so the one agent inherits their combined wall clock (7800s / 7500s).
+**Model:** `gpt-5.4` throughout. `gpt-5.3-codex-spark` went into a 149-hour
+provider cooldown after EXP-20260811-02 spent its quota, so this batch is
+internally comparable but not comparable with the spark numbers above.
+
+| repo | one agent | two milestones | two milestones + search |
+|---|---|---|---|
+| imapclient | 0.000 ($0.45, 6m) | 0.090 ($1.95, 24m) | 0.288 ($6.77, 65m) |
+| simpy | 0.738 / 0.799 ($0.4, 6-15m) | 0.799 ($1.37, 17m) | 0.805 ($1.25, 18m) |
+
+**The two repositories say opposite things, and the difference is whether the
+model can do the job alone.** On simpy every arm lands between 0.738 and 0.805,
+and the spread between the two solo repeats (0.061) is wider than any gap
+between arms. Decomposition bought nothing there. On imapclient the ordering is
+clean and large: one agent 0.000, decomposition 0.090, decomposition plus search
+0.288. Read together these are one finding, not two: **structure pays where the
+task is beyond the model's one-pass reach, and is dead weight where it is not.**
+Any benchmark that averages these two tasks reports a number belonging to
+neither.
+
+**Where the solo zero comes from.** The single agent stopped after 6.4 minutes
+of a 130-minute budget and declared itself done. It was not empty work: 40 files,
+148KB of patch, compile clean, all 17 modules importing, 45/47 milestone
+contracts, harness score 0.591. It failed the terminal gate, and because a change
+only freezes behind a passing gate, nothing committed and the hidden suite scored
+an empty repository. Applying that discarded patch by hand scores **0.180**
+(48/267). So the honest reading of the imapclient column is 0.180 vs 0.090 vs
+0.288: the single agent's *code* beat the two-milestone arm's code, and only the
+commit rule made it a zero. What decomposition reliably buys here is the same
+thing EXP-20260809-04 found — the floor, not the ceiling — and what beat both was
+search.
+
+**Search fired on one task and not the other, for the documented reason.** On
+imapclient the authored suite put the milestones at 0.77-0.86, below the 0.9
+quality trigger, so the fast loop evaluated three candidates per milestone
+(`cand_add_gate_repairer`, `cand_budget`, `cand_feedback`) and spent 8.65M tokens
+against the no-search arm's 2.20M. On simpy the same trigger saw 29/30 and 16/16
+and never fired, so that arm is a no-search run with a different name; its +0.007
+is noise. The 3.5x cost for 3.2x the score on imapclient is the real trade.
+
+**A measurement flaw inside the fast loop, and it was not the obvious one.**
+This milestone's four candidates were scored out of 36, 31, 36 and 31. The suite
+was never in doubt — `_freeze_spec_suite` writes once per milestone and every
+candidate read the same 36 authored cases. The denominator moved because
+`pytest` reports a module it cannot import as **one error rather than as the
+cases it holds**, and the harness derived the total from that line. So the
+denominator shrank exactly when a candidate's code was broken enough to break an
+import, dividing the worst work by the smallest exam and paying a candidate for
+losing a whole test file. `discriminating_quality` requires equal
+`behaviour_total` to engage, so it silently declined and selection fell back to
+comparing raw ratios taken against different denominators.
+
+Fixed the same day: the suite's size is now counted from its source with an AST
+walk at grading time, pinned beside the frozen copy, and never allowed to fall —
+a collection that finds more than the source shows (a parametrised case) raises
+the pin and is remembered. Cases that never ran count as failures. The gate log
+now says `SPEC spec_tests 4/7 (vacuous 0 excluded; 3 not collected)` instead of
+quietly reporting 4/4. None of the numbers in the table above move: they are the
+held-out suite, which was always pinned.
+
+Re-graded offline against the candidate workspaces this run left behind, with no
+API calls:
+
+| candidate | as scored | re-graded | cases that never ran |
+|---|---|---|---|
+| `cand_add_gate_repairer` | 31/36 = 0.861 | 31/36 = 0.861 | 0 |
+| first pass (incumbent) | 25/31 = 0.806 | 25/36 = 0.694 | 6 |
+| `cand_budget` | 25/31 = 0.806 | 25/36 = 0.694 | 6 |
+| `cand_feedback` | 24/31 = 0.774 | 24/36 = 0.667 | 6 |
+
+The winner does not change here and the order is the same, so this run chose
+correctly by luck: three of the four were being credited for six cases their code
+could not even load, and the margin between best and worst was reported as 0.087
+when it was 0.194. The larger repair is that all four now share a denominator, so
+`discriminating_quality` — which stands down when they differ — can do the ranking
+it was written for instead of falling back to incomparable ratios.
+
+**Infrastructure caveat — the endpoint was shedding streams all evening.** Every
+run logged 30-40 `stream disconnected - retrying sampling request` warnings; the
+Codex CLI absorbs up to five per request and the backend retries the node up to
+six times. Two solo attempts (one on spark, one on 5.4) were killed outright by
+it before the third completed, and one imapclient search run lost a candidate's
+`contract_author` to a dropped stream, never passed milestone 1, and is voided at
+`outputs/cpe_54_search/VOID-infra-*`. **More agents means more exposure**, so a
+degraded endpoint biases against exactly the arms with the most nodes. The runs
+in the table completed without a node-level infra failure.

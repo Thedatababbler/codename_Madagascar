@@ -69,6 +69,33 @@ def test_fast_loop_attempt_budget():
     assert code is CandidateRejectionReason.BUDGET_EXCEEDED
 
 
+def test_the_incumbent_does_not_spend_an_attempt_it_already_paid_for():
+    """It is the initial attempt, so the base count already includes it.
+
+    Counted twice, a quality search configured for three candidates generates two
+    and rejects the third as "max_attempts_per_subtask exhausted" — which is what
+    the first pyjwt quality search did (EXP-20260810-06).
+    """
+    tracker = FastLoopBudgetTracker(FastLoopBudget(max_attempts_per_subtask=2))
+    state = _state()
+    state.candidates = [
+        CandidateRecord(
+            candidate_id="incumbent_first_pass",
+            attempt_id=1,
+            graph_hash="h",
+            parent_graph_hash="h",
+            edits=[],
+            status=CandidateStatus.COMMITTED,
+            cost=CostRecord(backend_calls=2),
+            metadata={"incumbent": True},
+        )
+    ]
+
+    ok, reason, _code = tracker.can_start_candidate(state)
+
+    assert ok is True, reason
+
+
 def test_fast_loop_backend_call_budget():
     tracker = FastLoopBudgetTracker(FastLoopBudget(max_total_backend_calls=2))
     state = _state()

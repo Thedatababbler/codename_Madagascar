@@ -78,6 +78,7 @@ from orchestra.llm.openai_compatible_async import OpenAICompatibleAsyncClient
 from orchestra.realbench.milestone_planner import plan_milestones
 from orchestra.realbench.subgraph_builder import (
     CODEPROJECTEVAL_PROMPT_PROFILE,
+    CODEPROJECTEVAL_SOLO_BASELINE_PROFILE,
     generated_contracts_dir,
     prepare_generated_root,
 )
@@ -136,18 +137,21 @@ def _selected_model_name(agent_backend: str) -> str:
     return os.getenv("CODEX_MODEL", "gpt-5.4")
 
 
-def _build_problem(task_id: str, prd: str) -> ProblemArtifact:
+def _build_problem(task_id: str, prd: str, *, blind: bool = False) -> ProblemArtifact:
+    brief = (
+        "Implement the complete Python project described by docs/PRD.md, "
+        "docs/architecture_design.md, the UML documents and "
+        "docs/directory_tree.txt in the workspace."
+    )
+    if not blind:
+        brief += (
+            " The repository ships a visible `check_tests/` suite that must "
+            "pass; do not modify it."
+        )
     return ProblemArtifact(
         question_id=task_id,
         title=task_id,
-        statement=(
-            f"CodeProjectEval task `{task_id}`.\n\n"
-            "Implement the complete Python project described by docs/PRD.md, "
-            "docs/architecture_design.md, the UML documents and "
-            "docs/directory_tree.txt in the workspace. The repository ships a "
-            "visible `check_tests/` suite that must pass; do not modify it.\n\n"
-            f"{prd[:12000]}"
-        ),
+        statement=f"CodeProjectEval task `{task_id}`.\n\n{brief}\n\n{prd[:12000]}",
         difficulty="project",
         platform="codeprojecteval",
         starter_code="",
@@ -186,6 +190,7 @@ def build_cpe_task_plan(
             f"missing environment for {task_id}: {env_python}. Run "
             "scripts/probe_codeprojecteval_env.py first."
         )
+    blind = bool(experiment.get("blind_baseline"))
 
     if plan_file is not None:
         draft = load_draft(Path(plan_file), max_milestones=int(deco_cfg.get("max_subtasks", 6)))
@@ -203,6 +208,31 @@ def build_cpe_task_plan(
             f"risk-first planner unavailable for {task_id}; refusing to fall back "
             "to template segmentation"
         )
+    if blind:
+        from dataclasses import replace as _replace
+
+        from orchestra.realbench.milestone_planner import MilestoneAcceptance
+
+        draft = _replace(
+            draft,
+            milestones=[
+                _replace(
+                    milestone,
+                    acceptance=MilestoneAcceptance(),
+                    agents=[
+                        _replace(
+                            agent,
+                            mandate=(
+                                "Implement the entire repository yourself, end "
+                                "to end, from the design documents alone."
+                            ),
+                        )
+                        for agent in milestone.agents
+                    ],
+                )
+                for milestone in draft.milestones
+            ],
+        )
     _write_json(plan_path.parent / "milestone_plan_draft.json", draft.to_dict())
 
     def bind(milestone: Any) -> list[str]:
@@ -211,22 +241,27 @@ def build_cpe_task_plan(
             role=milestone.role,
             focus_paths=list(milestone.focus_paths),
             milestone_id=milestone.milestone_id,
-            extra_checks=list(milestone.acceptance.checks) or None,
-            acceptance_criteria=list(milestone.acceptance.criteria) or None,
-            corner_cases=list(milestone.acceptance.corner_cases) or None,
+            extra_checks=None if blind else (list(milestone.acceptance.checks) or None),
+            acceptance_criteria=(
+                None if blind else (list(milestone.acceptance.criteria) or None)
+            ),
+            corner_cases=None if blind else (list(milestone.acceptance.corner_cases) or None),
         )
         path = contracts_path_for(harness_dir, milestone.milestone_id)
         path.write_text(json.dumps(contracts, indent=2), encoding="utf-8")
-        return check_command(
-            harness_dir=harness_dir,
-            level=milestone.role,
-            env_python=env_python,
-            contracts_path=path,
-            # Passed unconditionally, not only for a test-first template: a
-            # milestone that authored no suite finds nothing to freeze and scores
-            # exactly as it did before this stage existed.
-            spec_tests_path=spec_tests_path_for(harness_dir, milestone.milestone_id),
-        )
+        command_kw: dict[str, Any] = {
+            "harness_dir": harness_dir,
+            "level": milestone.role,
+            "env_python": env_python,
+            "contracts_path": path,
+        }
+        if not blind:
+            # A milestone that authored no suite finds nothing to freeze and
+            # scores exactly as it did before this stage existed.
+            command_kw["spec_tests_path"] = spec_tests_path_for(
+                harness_dir, milestone.milestone_id
+            )
+        return check_command(**command_kw)
 
     payload = build_plan_from_draft(
         task_id=task_id,
@@ -238,7 +273,11 @@ def build_cpe_task_plan(
         model_name=_selected_model_name(agent_backend),
         harness_binder=bind,
         benchmark="codeprojecteval",
-        prompt_profile=CODEPROJECTEVAL_PROMPT_PROFILE,
+        prompt_profile=(
+            CODEPROJECTEVAL_SOLO_BASELINE_PROFILE
+            if blind
+            else CODEPROJECTEVAL_PROMPT_PROFILE
+        ),
         harness_timeout_seconds=harness_timeout,
     )
     plan_path.parent.mkdir(parents=True, exist_ok=True)
@@ -398,7 +437,11 @@ async def _run_one(
         harness_timeout=harness_timeout,
         plan_file=plan_file,
     )
-    problem = _build_problem(task_id, task.read(task.prd_path))
+    problem = _build_problem(
+        task_id,
+        task.read(task.prd_path),
+        blind=bool(experiment.get("blind_baseline")),
+    )
     selected_model = _selected_model_name(agent_backend)
 
     logging.basicConfig(

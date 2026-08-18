@@ -37,6 +37,25 @@ GENERATED_GRAPHS_DIRNAME = "graphs"
 _CODEX_TOOLS: list[str] = []
 _SMOLAGENTS_TOOLS: list[str] = list(REPOSITORY_TOOL_IDS)
 
+# The authored suite is a directory no design document mentions, and the shipping
+# rule tells an agent to ship only what the documents describe. Left implicit,
+# that rule is read as an instruction to delete the suite: the builders in the
+# first test-first run each removed it before the gate could copy it out, which
+# left the milestone with no behavioural score at all. The author is therefore
+# told, in as many words, that this one directory is expected to be there.
+#
+# Only the author. Every later agent runs after custody has moved the suite out
+# of the workspace, so there is nothing for them to preserve, read, or delete —
+# and nothing to say to them about it. Naming a directory they cannot see would
+# only invite them to look for it.
+_AUTHORED_SUITE_EXPECTED = (
+    "`spec_tests/` is the exception to the rule above: it is written for this "
+    "milestone rather than described by the documents, and it must be present in "
+    "the repository when you stop. It is then moved out of the workspace and "
+    "becomes the fixed yardstick this milestone is scored against; no later "
+    "agent sees it.\n"
+)
+
 
 @dataclass(frozen=True)
 class DatasetPromptProfile:
@@ -58,9 +77,11 @@ REALBENCH_PROMPT_PROFILE = DatasetPromptProfile(
     read_first="Read TASK.md, REQUIREMENTS.md and public_design/ before editing.\n",
     acceptance=(
         "After you stop, AdaMAS runs a {role}-level acceptance check "
-        "outside this repository (imports every module of the public tree at its "
-        "documented path and asserts the UML-exported symbols are importable from "
-        "there). Symbols must be reachable at the exact module path public_design "
+        "outside this repository: it compiles the declared packages, imports every "
+        "module of the public tree at its documented path, and asserts the "
+        "UML-exported symbols are importable from there. That check is "
+        "structural: it asks whether the symbols exist, not whether they behave. "
+        "Symbols must be reachable at the exact module path public_design "
         "declares, not only at their definition site.\n"
         "Re-export a package's public surface from its `__init__.py`: consumers "
         "import from the package path, so a subpackage's exported names must also "
@@ -94,6 +115,25 @@ CODEPROJECTEVAL_PROMPT_PROFILE = DatasetPromptProfile(
         "import from the package path, so a subpackage's exported names must also "
         "be reachable at the parent package.\n"
     ),
+    shipping=(
+        "Ship only files docs/directory_tree.txt describes: no notes, plans, logs, "
+        "scratch directories, or duplicate copies of the package. Files you invent "
+        "do not exist when your code is evaluated elsewhere, so nothing may import "
+        "them.\n"
+    ),
+)
+
+# One Codex agent, design documents only. Used as the single-agent baseline:
+# no AdaMAS gate description, no authored-suite language, no hidden-suite
+# language. The dataset may still ship a visible `check_tests/` directory;
+# this profile does not name it, so the agent is not pointed at a yardstick.
+CODEPROJECTEVAL_SOLO_BASELINE_PROFILE = DatasetPromptProfile(
+    label="CodeProjectEval Python repository",
+    read_first=(
+        "Read docs/PRD.md, docs/architecture_design.md, the UML documents and "
+        "docs/directory_tree.txt before editing.\n"
+    ),
+    acceptance="",
     shipping=(
         "Ship only files docs/directory_tree.txt describes: no notes, plans, logs, "
         "scratch directories, or duplicate copies of the package. Files you invent "
@@ -173,7 +213,9 @@ def _system_prompt(
     )
     role_block = f"{role.prompt.strip()}\n\n" if role is not None else ""
     title = role.title if role is not None else agent.role_id
-    shipping = profile.shipping if role is None or role.edits_repository else ""
+    edits = role is None or role.edits_repository
+    shipping = profile.shipping if edits else ""
+    suite = _AUTHORED_SUITE_EXPECTED if edits and agent.role == "test_author" else ""
     return (
         f"You are the {title} on milestone `{milestone.milestone_id}` of a "
         f"{profile.label}.\n\n"
@@ -189,6 +231,7 @@ def _system_prompt(
         "import them. Extend them, do not redesign or rename them.\n"
         f"{profile.acceptance.format(role=milestone.gate_level)}"
         f"{shipping}"
+        f"{suite}"
         "Do not access parent directories, look for reference implementations, or "
         "create subagents."
     )
@@ -351,6 +394,21 @@ def build_milestone_graph(
     )
     probe_id = "repository_tests_probe"
 
+    # A suite the implementer can read is a suite it satisfies completely, which
+    # is no way to tell two implementations apart (EXP-20260811-01). So the
+    # author's work is taken out of the workspace before anyone can build
+    # against it, by a harness step wired between them. Two things have to go:
+    # the files, which custody deletes, and the author's own change artifact,
+    # whose patch would otherwise quote the whole suite into the next agent's
+    # prompt — so consumers wait on the custody report instead of that patch.
+    custody_slot = next((s for s, agent, _ in bound if agent.role == "test_author"), None)
+    if custody_slot is not None and (
+        "--spec-tests" not in harness_command
+        or not any(custody_slot in sources for sources in incoming.values())
+    ):
+        custody_slot = None
+    custody_id = "authored_suite_custody"
+
     nodes: list[dict[str, Any]] = []
     edges: list[dict[str, Any]] = []
 
@@ -362,7 +420,8 @@ def build_milestone_graph(
         # Distinct slot names per upstream: one shared slot would resolve to the
         # first active edge only, so a fan-in agent would silently see one of
         # its two upstream reports.
-        for position, source_slot in enumerate(incoming.get(slot_id, [])):
+        sources = incoming.get(slot_id, [])
+        for position, source_slot in enumerate(s for s in sources if s != custody_slot):
             name = "upstream_change" if position == 0 else f"upstream_change_{position + 1}"
             input_slots[name] = "RepositoryChangeArtifact"
             edges.append(
@@ -372,6 +431,20 @@ def build_milestone_graph(
                     "source_output": "repository_change",
                     "destination_node": node_id,
                     "destination_input": name,
+                }
+            )
+        if custody_slot is not None and custody_slot in sources:
+            # Unconditional, and the reason this node cannot start early: the
+            # suite has to be out of the workspace before the implementer looks
+            # at it, and an input it must wait for is how that is enforced.
+            input_slots["suite_custody"] = "RepositoryHarnessResultArtifact"
+            edges.append(
+                {
+                    "edge_id": f"custody_to_{node_id}"[:96],
+                    "source_node": custody_id,
+                    "source_output": "result",
+                    "destination_node": node_id,
+                    "destination_input": "suite_custody",
                 }
             )
         if slot.runs_if_gate_failed and early_slot:
@@ -418,6 +491,24 @@ def build_milestone_graph(
         if agent_backend == "smolagents_code":
             node["tools"] = list(_SMOLAGENTS_TOOLS)
         nodes.append(node)
+
+    if custody_slot is not None:
+        nodes.append(
+            _harness_node(
+                node_id=custody_id,
+                harness_command=[*harness_command, "--take-custody"],
+                timeout_seconds=harness_timeout_seconds,
+            )
+        )
+        edges.append(
+            {
+                "edge_id": "author_to_custody",
+                "source_node": node_for_slot[custody_slot],
+                "source_output": "repository_change",
+                "destination_node": custody_id,
+                "destination_input": "repository_change",
+            }
+        )
 
     terminal_slot = bound[-1][0]
     terminal_agent = node_for_slot[terminal_slot]

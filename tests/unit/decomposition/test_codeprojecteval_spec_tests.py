@@ -53,6 +53,46 @@ def test_add_larger_operands():
     assert Widget.add(2, 5) == 7
 """
 
+# Three more cases in a file whose import fails until `demo_pkg.extra` exists.
+EXTRA_SUITE = """from demo_pkg.extra import triple
+
+
+def test_triple_of_one():
+    assert triple(1) == 3
+
+
+def test_triple_of_two():
+    assert triple(2) == 6
+
+
+def test_triple_of_zero():
+    assert triple(0) == 0
+"""
+
+# The style pytest collects by base class rather than by name.
+UNITTEST_SUITE = """import unittest
+
+from demo_pkg.extra import triple
+
+
+class TripleBehaviour(unittest.TestCase):
+    def test_triple_of_one(self):
+        self.assertEqual(triple(1), 3)
+
+    def test_triple_of_two(self):
+        self.assertEqual(triple(2), 6)
+"""
+
+PARAMETRIZED_SUITE = """import pytest
+
+from demo_pkg import Widget
+
+
+@pytest.mark.parametrize("a,b,expected", [(1, 2, 3), (2, 5, 7), (0, 0, 0)])
+def test_add_cases(a, b, expected):
+    assert Widget.add(a, b) == expected
+"""
+
 
 def _dataset(tmp_path: Path) -> Path:
     root = tmp_path / "dataset" / "demo"
@@ -137,6 +177,16 @@ class Harness:
         target.mkdir(exist_ok=True)
         (target / name).write_text(suite, encoding="utf-8")
 
+    def custody(self) -> subprocess.CompletedProcess[str]:
+        """The step the graph runs between the author and the implementer."""
+        return subprocess.run(
+            [*self.command, "--take-custody"],
+            cwd=self.ws,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
     def run(self, *, with_spec: bool = True) -> tuple[int, dict]:
         command = self.command if with_spec else self.command_without_spec
         proc = subprocess.run(command, cwd=self.ws, capture_output=True, text=True, check=False)
@@ -167,6 +217,24 @@ def test_a_milestone_that_authored_nothing_scores_exactly_as_before(
     assert with_flag["score"] == without_flag["score"] == 1.0
     assert Harness.stage(with_flag, "spec_tests") is None
     assert [s["weight"] for s in with_flag["stages"]] == [0.3, 0.4, 0.3]
+
+
+def test_a_milestone_that_lost_its_suite_says_so(tmp_path: Path) -> None:
+    """The first test-first run scored no behaviour at all and looked healthy.
+
+    Each builder deleted `spec_tests/` before the gate could copy it out, so the
+    stage was simply absent and the milestone passed. Absence and "nothing was
+    ever authored" are indistinguishable in the score, so the gate log has to
+    separate them.
+    """
+    harness = Harness(tmp_path)
+    harness.implement()
+
+    code, report = harness.run()
+
+    assert code == 0
+    assert Harness.stage(report, "spec_tests") is None
+    assert "NOTE no authored suite at spec_tests" in report["stdout"]
 
 
 def test_the_authored_suite_is_graded_but_never_gates(tmp_path: Path) -> None:
@@ -216,6 +284,41 @@ def test_two_designs_tied_on_structure_separate_on_behaviour(tmp_path: Path) -> 
     assert good_report["score"] == 1.0 and bad_report["score"] == 0.8
 
 
+def test_the_failing_tests_are_named_not_just_counted(tmp_path: Path) -> None:
+    """A tuning search needs to know which tests moved, not how many.
+
+    Two designs failing the same count of tests may be failing different tests, and
+    a design's advantage may sit entirely inside a handful that vary while dozens of
+    others pass for everybody. Counts cannot express either.
+    """
+    harness = Harness(tmp_path)
+    harness.implement(WRONG_ADD)
+    harness.author()
+
+    _code, report = harness.run()
+    stage = Harness.stage(report, "spec_tests")
+
+    assert stage is not None
+    named = stage.get("failed_tests") or []
+    assert named, "the behavioural stage reported no identities"
+    assert len(named) == stage["total_units"] - stage["passed_units"]
+    assert all("::" in nodeid for nodeid in named)
+    assert any("add" in nodeid for nodeid in named)
+
+
+def test_a_fully_passing_behavioural_stage_names_nothing(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    harness.implement(REFERENCE)
+    harness.author()
+
+    _code, report = harness.run()
+    stage = Harness.stage(report, "spec_tests")
+
+    assert stage is not None
+    assert stage["passed_units"] == stage["total_units"]
+    assert not stage.get("failed_tests")
+
+
 def test_the_suite_is_frozen_so_a_later_agent_cannot_mark_its_own_exam(
     tmp_path: Path,
 ) -> None:
@@ -232,19 +335,58 @@ def test_the_suite_is_frozen_so_a_later_agent_cannot_mark_its_own_exam(
 
     assert Harness.stage(second, "spec_tests") == Harness.stage(first, "spec_tests")
     assert second["score"] == first["score"]
-    # And the workspace copy is put back, so an implementer reads the real yardstick.
-    assert "test_add_sums" in (harness.ws / "spec_tests" / "test_spec.py").read_text()
+    # And the workspace copy is gone rather than restored: an implementer that
+    # can read the yardstick passes all of it and ranks against nothing.
+    assert not (harness.ws / "spec_tests").exists()
+
+
+def test_custody_takes_the_suite_out_of_the_workspace_without_grading(
+    tmp_path: Path,
+) -> None:
+    """It runs before any implementation exists, so it must not run the gate."""
+    harness = Harness(tmp_path)
+    harness.author()
+
+    proc = harness.custody()
+
+    assert proc.returncode == 0
+    assert (harness.frozen / "test_spec.py").is_file()
+    assert not (harness.ws / "spec_tests").exists()
+    assert "ADAMAS_HARNESS_SCORE" not in proc.stdout, "custody must not score"
+
+
+def test_a_suite_in_custody_still_scores_the_milestone(tmp_path: Path) -> None:
+    """Hiding the yardstick must cost nothing: grading reads the frozen copy."""
+    harness = Harness(tmp_path)
+    harness.author()
+    harness.custody()
+    harness.implement(WRONG_ADD)
+
+    _code, report = harness.run()
+    stage = Harness.stage(report, "spec_tests")
+
+    assert stage is not None
+    assert (stage["passed_units"], stage["total_units"]) == (2, 4)
+
+
+def test_custody_is_harmless_when_the_author_wrote_nothing(tmp_path: Path) -> None:
+    """A milestone whose author failed still has to reach its implementer."""
+    harness = Harness(tmp_path)
+
+    proc = harness.custody()
+
+    assert proc.returncode == 0
+    assert not harness.frozen.exists()
 
 
 def test_the_frozen_suite_survives_a_deleted_workspace_copy(tmp_path: Path) -> None:
+    """Every run after the first grades a workspace with no suite in it."""
     harness = Harness(tmp_path)
     harness.implement(WRONG_ADD)
     harness.author()
     _, first = harness.run()
+    assert not (harness.ws / "spec_tests").exists()
 
-    for leftover in (harness.ws / "spec_tests").iterdir():
-        leftover.unlink()
-    (harness.ws / "spec_tests").rmdir()
     _, second = harness.run()
 
     assert Harness.stage(second, "spec_tests") == Harness.stage(first, "spec_tests")
@@ -397,6 +539,99 @@ def test_an_unimportable_file_does_not_flatten_the_rest_of_the_suite(
     # Four real tests pass; the unimportable file counts as one failed unit.
     assert (spec["passed_units"], spec["total_units"]) == (4, 5)
     assert 0.7 < report["score"] < 1.0
+
+
+def test_an_unimportable_file_costs_every_test_it_holds(tmp_path: Path) -> None:
+    """pytest reports a module it cannot import as one error, not as its cases.
+
+    Left alone that shrinks the denominator exactly when the code is broken, so
+    the worst work is divided by the smallest exam. EXP-20260811-03 measured one
+    milestone's four candidates scored out of 36, 31, 36 and 31 against a single
+    frozen suite for this reason.
+    """
+    harness = Harness(tmp_path)
+    harness.implement(REFERENCE)
+    harness.author()
+    harness.author(suite=EXTRA_SUITE, name="test_extra.py")
+
+    _, report = harness.run()
+
+    spec = Harness.stage(report, "spec_tests")
+    assert spec is not None
+    assert (spec["passed_units"], spec["total_units"]) == (4, 7)
+    assert "SPEC spec_tests 4/7 (vacuous 0 excluded; 3 not collected)" in report["stdout"]
+    named = spec.get("failed_tests") or []
+    assert any("test_extra.py" in nodeid for nodeid in named), (
+        "the file that never ran has to be named, or the search cannot see it"
+    )
+
+
+def test_two_designs_are_graded_against_the_same_denominator(tmp_path: Path) -> None:
+    """The invariant the fast loop rests on: one milestone, one exam.
+
+    Candidates fork a workspace but share the frozen suite, so a denominator
+    that tracks the candidate's own code makes their scores incomparable — and
+    rewards the candidate that broke an import over one that merely failed the
+    assertions.
+    """
+    harness = Harness(tmp_path)
+    harness.implement(REFERENCE)
+    harness.author()
+    harness.author(suite=EXTRA_SUITE, name="test_extra.py")
+    extra = harness.ws / "demo_pkg" / "extra.py"
+    extra.write_text("def triple(n):\n    return n * 3\n", encoding="utf-8")
+
+    _, whole = harness.run()
+    extra.unlink()
+    _, broken = harness.run()
+
+    whole_stage = Harness.stage(whole, "spec_tests")
+    broken_stage = Harness.stage(broken, "spec_tests")
+    assert whole_stage is not None and broken_stage is not None
+    assert whole_stage["total_units"] == broken_stage["total_units"] == 7
+    assert whole_stage["passed_units"] == 7
+    assert broken_stage["passed_units"] == 4
+    assert broken["score"] < whole["score"]
+
+
+def test_unittest_classes_are_counted_whatever_they_are_named(tmp_path: Path) -> None:
+    """pytest collects any TestCase subclass; the count has to agree with it.
+
+    Authors write `class ConnectionSetupTests(unittest.TestCase)` as often as
+    `class TestConnection`, and a counter that only knows the `Test*` prefix
+    reads such a suite as empty.
+    """
+    harness = Harness(tmp_path)
+    harness.implement(REFERENCE)
+    harness.author(suite=UNITTEST_SUITE, name="test_case_style.py")
+
+    _, report = harness.run()
+
+    spec = Harness.stage(report, "spec_tests")
+    assert spec is not None
+    # The file cannot be imported, so its cases are counted from source alone.
+    assert (spec["passed_units"], spec["total_units"]) == (0, 2)
+
+
+def test_a_suite_that_collects_more_than_its_source_shows_keeps_the_larger_size(
+    tmp_path: Path,
+) -> None:
+    """A decorator can multiply one function into several cases.
+
+    Counting source alone would under-report those, so the pin rises to what
+    pytest actually collected and is remembered for the runs that follow.
+    """
+    harness = Harness(tmp_path)
+    harness.implement(REFERENCE)
+    harness.author(suite=PARAMETRIZED_SUITE, name="test_parametrized.py")
+
+    _, report = harness.run()
+
+    spec = Harness.stage(report, "spec_tests")
+    assert spec is not None
+    assert (spec["passed_units"], spec["total_units"]) == (3, 3)
+    pinned = harness.frozen.parent / (harness.frozen.name + ".size.json")
+    assert json.loads(pinned.read_text()) == {"pinned": 3, "static": 1}
 
 
 def test_the_pristine_baseline_withholds_the_reference_implementation(

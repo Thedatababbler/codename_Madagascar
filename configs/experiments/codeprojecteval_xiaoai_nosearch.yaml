@@ -1,0 +1,43 @@
+experiment:
+  name: codeprojecteval_xiaoai_nosearch
+  benchmark: codeprojecteval
+  # xiaoai.plus is OpenAI-compatible chat, not the Codex runtime.
+  agent_backend: smolagents_code
+  dataset_root: /root/codex-benchmarks/projectgen/datasets/CodeProjectEval/python-subset
+  contracts_dir: configs/contracts
+  output_root: outputs/cpe_xiaoai
+  harness_timeout_seconds: 900
+  seed: 20260814
+
+  tuning:
+    fast_loop_candidates: 0
+    design_search: false
+    quality_trigger:
+      enabled: false
+    gate_weight: 1.0
+    harness_weight: 0.5
+    token_weight: 0.05
+    token_reference: 1000000
+    allow_cost_to_outrank_gate: false
+
+decomposition:
+  dynamic_planner: true
+  min_subtasks: 1
+  max_subtasks: 4
+  max_dependency_depth: 4
+  require_public_keystone_harness: true
+
+runtime:
+  max_parallel_nodes_per_task: 2
+
+pareto:
+  enabled: false
+
+slow_loop:
+  enabled: false
+
+fast_loop:
+  max_candidates: 0
+
+logging:
+  level: INFO

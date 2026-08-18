@@ -33,7 +33,12 @@ from orchestra.cli.run_m5_codex_demo import (
     _write_trace_md,
 )
 from orchestra.cli.validate_graph import build_compiler
-from orchestra.control.fast_loop.schemas import FastLoopBudget
+from orchestra.cli.run_codeprojecteval_decomp import (
+    _fast_loop_budget,
+    read_tuning_config,
+)
+from orchestra.codeprojecteval.ab import load_draft
+from orchestra.control.fast_loop.selector import DeterministicCandidateSelector
 from orchestra.control.ready_scheduler import ReadySubtaskScheduler
 from orchestra.control.slow_loop.controller import SlowLoopController
 from orchestra.control.slow_loop.schemas import SlowLoopBudget, SlowLoopConfig
@@ -341,13 +346,13 @@ def build_dynamic_task_plan(
     experiment: dict[str, Any],
     agent_backend: str,
     contracts_dir: str = "configs/contracts",
+    plan_file: Path | None = None,
 ) -> tuple[TaskPlan, str]:
     """Build + validate a milestone TaskPlan; return the plan and contracts dir.
 
-    A risk-first planner draft wins when available (its milestones ship their own
-    generated subgraphs and contracts); otherwise the deterministic
-    public_design plan is used unchanged. Either way every milestone is bound to
-    runner-owned harness assets under ``harness_dir``.
+    A frozen ``plan_file`` is replayed as-is so A/B arms share one planner
+    sample. Otherwise a risk-first planner draft wins when available; the
+    public_design template is a fail-closed fallback, never an experiment arm.
     """
     deco_cfg = dict(experiment.get("decomposition") or {})
     catalog = resolve_graph_catalog(experiment, agent_backend=agent_backend)
@@ -358,14 +363,19 @@ def build_dynamic_task_plan(
     )
     effective_contracts_dir = str(generated_contracts_dir(generated_root))
 
-    dynamic_cfg = deco_cfg.get("dynamic_planner")
-    draft = plan_milestones(
-        task_id=task_id,
-        workspace=workspace,
-        agent_backend=agent_backend,
-        enable=None if dynamic_cfg is None else bool(dynamic_cfg),
-        max_milestones=int(deco_cfg.get("max_subtasks", 6)),
-    )
+    if plan_file is not None:
+        draft = load_draft(
+            Path(plan_file), max_milestones=int(deco_cfg.get("max_subtasks", 6))
+        )
+    else:
+        dynamic_cfg = deco_cfg.get("dynamic_planner")
+        draft = plan_milestones(
+            task_id=task_id,
+            workspace=workspace,
+            agent_backend=agent_backend,
+            enable=None if dynamic_cfg is None else bool(dynamic_cfg),
+            max_milestones=int(deco_cfg.get("max_subtasks", 6)),
+        )
     if draft is not None:
         candidate_payload = build_plan_from_draft(
             task_id=task_id,
@@ -502,6 +512,8 @@ async def _run_one(
     dry_run: bool,
     allow_config_drift: bool,
     agent_backend: str,
+    plan_file: Path | None = None,
+    arm: str = "planner",
 ) -> dict[str, Any]:
     started_at = datetime.now(UTC)
     wall_started = time.perf_counter()
@@ -531,6 +543,7 @@ async def _run_one(
     public_manifest = materialize_public_harness(source_repo, harness_dir=harness_dir)
     os.environ["ADAMAS_PUBLIC_CHECK_SCRIPT"] = public_manifest.script_path
     os.environ["ADAMAS_PUBLIC_CHECK_MANIFEST"] = public_manifest.manifest_path
+    tuning = read_tuning_config(config)
     plan, contracts_dir = build_dynamic_task_plan(
         task_id,
         workspace=source_repo,
@@ -539,6 +552,7 @@ async def _run_one(
         experiment=experiment,
         agent_backend=agent_backend,
         contracts_dir=contracts_dir,
+        plan_file=plan_file,
     )
     requirements = (source_repo / "REQUIREMENTS.md").read_text(encoding="utf-8")
     problem = _build_problem(task, requirements)
@@ -559,13 +573,15 @@ async def _run_one(
     logger = logging.getLogger("realbench_decomp_baseline")
     logger.info(
         "task=%s backend=%s model=%s run_dir=%s source_repo=%s subtasks=%s "
-        "slow_loop=off fast_loop=off public_keystone=on",
+        "slow_loop=off fast_loop_candidates=%s arm=%s public_keystone=on",
         task_id,
         agent_backend,
         selected_model,
         run_dir,
         source_repo,
         [s.subtask_id for s in plan.subtasks],
+        tuning.candidates,
+        arm,
     )
 
     deco_dir = _dump_decomposition(
@@ -587,7 +603,9 @@ async def _run_one(
         "fast_loop": config.get("fast_loop"),
         "agent_backend": agent_backend,
         "selected_model": selected_model,
-        "adaptation": "disabled_oneshot",
+        "adaptation": "fast_loop" if tuning.candidates else "disabled_oneshot",
+        "arm": arm,
+        "plan_file": str(plan_file) if plan_file else None,
         "decomposition_mode": "dynamic_public_harness",
         "decomposition_source": str(
             plan.metadata.get("decomposition_source") or "public_design"
@@ -630,7 +648,8 @@ async def _run_one(
             "source_repo": str(source_repo),
             "run_dir": str(run_dir),
             "slow_loop_enabled": False,
-            "fast_loop_max_candidates": 0,
+            "fast_loop_max_candidates": tuning.candidates,
+            "arm": arm,
             "graph_hashes": graph_hashes,
         }
         _write_json(run_dir / "summary.json", summary)
@@ -715,14 +734,15 @@ async def _run_one(
         graph_id=compiled.graph.graph_id,
     )
 
-    # Hard-disable adaptation loops for this baseline.
+    # Slow loop stays off. The fast loop is sized from experiment.tuning so a
+    # search arm can retry a milestone; candidates=0 is the no-search baseline.
     slow_loop_config = SlowLoopConfig(
         enabled=False,
         budget=SlowLoopBudget(max_updates_per_task=0, max_candidates_per_update=0),
         allowed_backend_assignments={"coding": [agent_backend]},
         backend_model_pools={agent_backend: [selected_model]},
     )
-    fast_budget = FastLoopBudget(max_candidates=0, max_total_backend_calls=0)
+    fast_budget = _fast_loop_budget(tuning.candidates, plan)
     slow_loop = SlowLoopController(
         config=slow_loop_config,
         checkpoint_store=task_checkpoint_store,
@@ -734,6 +754,14 @@ async def _run_one(
         contracts_dir=contracts_dir,
         source_repo=str(source_repo.resolve()),
         budget=fast_budget,
+        selector=(
+            None
+            if tuning.design_search
+            else DeterministicCandidateSelector(weights=tuning.weights)
+        ),
+        pareto=tuning.pareto,
+        design_search=tuning.design_search,
+        quality_trigger=tuning.quality_trigger,
         slow_loop=slow_loop,
         slow_loop_config=slow_loop_config,
         max_concurrent_subtasks=runtime_cap,
@@ -768,7 +796,7 @@ async def _run_one(
                 "subtask_ids": [s.subtask_id for s in plan.subtasks],
                 "realbench_task_id": task_id,
                 "slow_loop_enabled": False,
-                "fast_loop_max_candidates": 0,
+                "fast_loop_max_candidates": tuning.candidates,
                 "agent_backend": agent_backend,
                 "selected_model": selected_model,
             },
@@ -807,7 +835,9 @@ async def _run_one(
         "started_at": started_at.isoformat(),
         "pareto_enabled": False,
         "slow_loop_enabled": False,
-        "fast_loop_max_candidates": 0,
+        "fast_loop_max_candidates": tuning.candidates,
+        "arm": arm,
+        "plan_file": str(plan_file) if plan_file else None,
         "agent_backend": agent_backend,
         "selected_model": selected_model,
         "decomposition_status": plan.decomposition_status.value,
@@ -844,7 +874,8 @@ async def _run_one(
         "task": task,
         **backend_manifest,
         "slow_loop_enabled": False,
-        "fast_loop_max_candidates": 0,
+        "fast_loop_max_candidates": tuning.candidates,
+        "arm": arm,
         "agent_backend": agent_backend,
         "selected_backend_family": agent_backend,
         "selected_model": selected_model,
@@ -859,7 +890,7 @@ async def _run_one(
         "workspace_isolation_policy": "shared_subtask_git_fork",
         "seed": experiment.get("seed"),
         "budget": {
-            "fast_loop_max_candidates": 0,
+            "fast_loop_max_candidates": tuning.candidates,
             "slow_loop_max_updates_per_task": 0,
             "max_concurrent_subtasks": runtime_cap,
         },
@@ -943,7 +974,13 @@ async def _run(args: argparse.Namespace) -> int:
         "tasks": selected,
         "config": str(config_path),
         "slow_loop_enabled": False,
-        "fast_loop_max_candidates": 0,
+        "fast_loop_max_candidates": int(
+            ((config.get("experiment") or {}).get("tuning") or {}).get(
+                "fast_loop_candidates", 0
+            )
+        ),
+        "arm": getattr(args, "arm", "planner"),
+        "plan_file": getattr(args, "plan_file", None),
         "agent_backend": agent_backend,
         "selected_backend_family": agent_backend,
         "selected_model": _selected_model_name(agent_backend),
@@ -980,6 +1017,8 @@ async def _run(args: argparse.Namespace) -> int:
             dry_run=bool(args.dry_run),
             allow_config_drift=bool(args.allow_config_drift),
             agent_backend=agent_backend,
+            plan_file=Path(args.plan_file) if getattr(args, "plan_file", None) else None,
+            arm=str(getattr(args, "arm", "planner")),
         )
         results.append(summary)
         print(json.dumps(summary, indent=2, sort_keys=True, ensure_ascii=False))
@@ -1028,6 +1067,15 @@ def main() -> int:
         "--task-id",
         action="append",
         help="Optional task filter; may be repeated. Default: all five baseline tasks.",
+    )
+    parser.add_argument(
+        "--plan-file",
+        help="Replay a frozen planner draft so A/B arms share one sample.",
+    )
+    parser.add_argument(
+        "--arm",
+        default="planner",
+        help="Label recorded in summaries, e.g. single / nosearch / search.",
     )
     parser.add_argument(
         "--dry-run",

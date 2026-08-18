@@ -50,6 +50,14 @@ def _resource_caps(memory_mb: int, cpu_seconds: int):  # noqa: ANN202
     handle: one generated implementation held the harness for 20 minutes while
     growing to 6.7 GB. Address-space and CPU limits kill such a run immediately
     instead of letting it decide how long scoring takes.
+
+    CPU seconds are not the session wall clock. A large suite can wait on I/O
+    for hours and still be a real exam; a busy loop must not inherit that budget.
+
+    The address-space ceiling has to clear what an honest suite reserves, not
+    what it uses: importing pandas alone maps well past 2 GB, and at 2048 the
+    interpreter died before pytest printed a line, which the caller then read as
+    an empty repository (EXP-20260815 official csvs-to-sqlite, really 17/25).
     """
 
     def apply() -> None:
@@ -61,19 +69,48 @@ def _resource_caps(memory_mb: int, cpu_seconds: int):  # noqa: ANN202
     return apply
 
 
-def resolve_canonical_repo(batch_dir: Path, task_id: str) -> Path:
+def _source_py_count(repo: Path) -> int:
+    return sum(
+        1
+        for p in repo.rglob("*.py")
+        if p.is_file()
+        and not any(part in SKIP_NAMES or part == "__pycache__" for part in p.parts)
+    )
+
+
+def resolve_canonical_repo(
+    batch_dir: Path, task_id: str, *, prefer_agent_workspace: bool = False
+) -> Path:
     """The committed repository, not the pristine workspace the run started from.
 
     Milestones execute in per-subtask forks and merge into the task's canonical
     repository; the batch-level workspace stays at the dataset inputs.
+
+    ``prefer_agent_workspace`` is for a baseline that must be scored even when
+    the gate refused to commit: pick the fork with the most agent-written
+    Python rather than an empty canonical tree.
     """
     task_dir = batch_dir / task_id / "tasks"
+    committed: Path | None = None
     if task_dir.is_dir():
         for plan_dir in sorted(task_dir.iterdir()):
             repo = plan_dir / "canonical" / "repo"
             if repo.is_dir():
-                return repo
-    return batch_dir / "workspaces" / task_id
+                committed = repo
+                break
+    fallback = batch_dir / "workspaces" / task_id
+    if not prefer_agent_workspace:
+        return committed or fallback
+    candidates = [p for p in [committed, fallback] if p is not None and p.is_dir()]
+    if task_dir.is_dir():
+        candidates.extend(
+            p
+            for p in task_dir.glob("**/workspaces/*/repo")
+            if p.is_dir()
+        )
+    if not candidates:
+        return fallback
+    return max(candidates, key=_source_py_count)
 
 
 def _copy_generated(source: Path, dest: Path) -> list[str]:
@@ -127,8 +164,9 @@ def score_task(
     dataset_root: Path,
     env_root: Path,
     timeout: int,
-    per_test_timeout: int = 60,
-    memory_mb: int = 2048,
+    per_test_timeout: int = 30,
+    memory_mb: int = 8192,
+    cpu_seconds: int = 3600,
 ) -> dict:
     task = load_task(task_id, dataset_root=dataset_root)
     python = env_root / task_id / "bin" / "python"
@@ -172,7 +210,7 @@ def score_task(
                 text=True,
                 timeout=timeout,
                 check=False,
-                preexec_fn=_resource_caps(memory_mb, timeout),  # noqa: PLW1509
+                preexec_fn=_resource_caps(memory_mb, cpu_seconds),  # noqa: PLW1509
             )
         except subprocess.TimeoutExpired:
             ceiling = analyze_ceiling(
@@ -185,17 +223,44 @@ def score_task(
                 "passed": 0,
                 "failed": 0,
                 "error": 0,
-                "pass_rate": 0.0,
-                "pass_rate_reachable": 0.0,
+                # Never a scored zero: the suite did not finish, so there is
+                # no rate. Publishing 0.0 here made a hung eval look like an
+                # empty repository (EXP-20260814 official bplustree solo).
+                "pass_rate": None,
+                "pass_rate_reachable": None,
                 "reachable_ceiling": ceiling.reachable_ceiling,
                 "tests_total": ceiling.tests_total,
                 "tests_reachable": ceiling.tests_reachable,
             }
 
     tail = (proc.stdout or "")[-6000:]
+    stderr_tail = (proc.stderr or "")[-6000:]
     counts = _parse_counts(tail)
     observed = counts["passed"] + counts["failed"] + counts["error"]
     ceiling = analyze_ceiling(task, collected=_suite_sizes(task_id, task, python))
+    # SIGXCPU / SIGKILL with no summary is the same as a wall timeout: unmeasured.
+    # So is a nonzero exit that said nothing at all on either stream: pytest
+    # always reports its own errors, so silence means the interpreter died
+    # before running the suite (a resource cap), which is not a verdict on the
+    # code under test.
+    died_silently = (
+        proc.returncode != 0 and not tail.strip() and not stderr_tail.strip()
+    )
+    if observed == 0 and (proc.returncode not in {0, 1, 2, 3, 4, 5} or died_silently):
+        return {
+            "task_id": task_id,
+            "status": "timeout",
+            "returncode": proc.returncode,
+            "shipped_top_level": shipped,
+            "passed": 0,
+            "failed": 0,
+            "error": 0,
+            "pass_rate": None,
+            "pass_rate_reachable": None,
+            "reachable_ceiling": ceiling.reachable_ceiling,
+            "tests_total": ceiling.tests_total,
+            "tests_reachable": ceiling.tests_reachable,
+        }
     faults = denominator_faults(ceiling, passed=counts["passed"])
     reachable_unsound = reachable_is_unsound(ceiling, passed=counts["passed"])
     return {
@@ -223,6 +288,9 @@ def score_task(
         "estimated_modules": ceiling.estimated_modules,
         "blocked_modules": ceiling.blocked_modules,
         "tail": tail[-1200:],
+        # A conftest that fails to import writes only to stderr, so a record
+        # carrying stdout alone showed an empty reason for a zeroed suite.
+        "stderr_tail": stderr_tail[-1200:],
     }
 
 
@@ -231,12 +299,20 @@ def main() -> int:
     ap.add_argument("batch_dir", type=Path)
     ap.add_argument("--dataset-root", type=Path, default=DEFAULT_DATASET_ROOT)
     ap.add_argument("--env-root", type=Path, default=DEFAULT_ENV_ROOT)
-    ap.add_argument("--timeout", type=int, default=1200)
-    # 15s x a few hundred hanging tests overruns any sane wall clock; these are
-    # unit tests, so a test still running after 5s is a hang, not slow work.
-    ap.add_argument("--per-test-timeout", type=int, default=5)
-    ap.add_argument("--memory-mb", type=int, default=2048)
+    ap.add_argument("--timeout", type=int, default=21600)
+    # Per-test hang protection stays on so one infinite loop cannot eat the
+    # wall clock. 30s is slow work, not a hang. The session budget must cover
+    # a large suite if every case uses that full allotment (bplustree ~356
+    # cases × 30s > the old 20-minute wall, which then published 0.0).
+    ap.add_argument("--per-test-timeout", type=int, default=30)
+    ap.add_argument("--memory-mb", type=int, default=8192)
+    ap.add_argument("--cpu-seconds", type=int, default=3600)
     ap.add_argument("--out", type=Path, default=None)
+    ap.add_argument(
+        "--prefer-agent-workspace",
+        action="store_true",
+        help="Score the agent's working tree even if the gate did not commit.",
+    )
     args = ap.parse_args()
 
     workspaces = args.batch_dir / "workspaces"
@@ -247,12 +323,17 @@ def main() -> int:
     for ws in sorted(p for p in workspaces.iterdir() if p.is_dir()):
         result = score_task(
             ws.name,
-            workspace=resolve_canonical_repo(args.batch_dir, ws.name),
+            workspace=resolve_canonical_repo(
+                args.batch_dir,
+                ws.name,
+                prefer_agent_workspace=args.prefer_agent_workspace,
+            ),
             dataset_root=args.dataset_root,
             env_root=args.env_root,
             timeout=args.timeout,
             per_test_timeout=args.per_test_timeout,
             memory_mb=args.memory_mb,
+            cpu_seconds=args.cpu_seconds,
         )
         results.append(result)
 

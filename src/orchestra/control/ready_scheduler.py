@@ -70,7 +70,12 @@ from orchestra.control.task_state import (
     WorkspaceCommitStatus,
 )
 from orchestra.decomposition.schemas import TaskPlan
-from orchestra.harness.progress import best_harness_progress
+from orchestra.harness.progress import (
+    behaviour_failures,
+    behaviour_score,
+    behaviour_total,
+    best_harness_progress,
+)
 from orchestra.ir.artifacts import ArtifactBundle, ArtifactEnvelope
 from orchestra.ir.graph import OrchestraGraph, load_graph
 from orchestra.ir.nodes import NodeKind
@@ -1554,12 +1559,15 @@ class ReadySubtaskScheduler:
         harness_score, harness_stages, furthest_stage = await best_harness_progress(
             result, self.artifact_store
         )
+        milestone_behaviour = behaviour_score(harness_stages)
         if harness_score is not None:
             sub.attempts[-1].metadata["harness_score"] = harness_score
             sub.attempts[-1].metadata["furthest_stage"] = furthest_stage
             sub.attempts[-1].metadata["harness_stages"] = [
                 stage.model_dump(mode="json") for stage in harness_stages
             ]
+            if milestone_behaviour is not None:
+                sub.attempts[-1].metadata["behaviour_score"] = milestone_behaviour
         initial_cost = _cost_from_graph_result(result)
 
         if status is SubtaskStatus.COMMITTED:
@@ -1583,7 +1591,7 @@ class ReadySubtaskScheduler:
             sub.attempts[-1].error = None
             local_state.subtasks[subtask_id] = sub
             if not self.quality_trigger.fires(
-                gate_passed=True, harness_score=harness_score
+                gate_passed=True, behaviour_score=milestone_behaviour
             ):
                 return await self._finalize_worker_result(
                     local_state=local_state,
@@ -1604,6 +1612,9 @@ class ReadySubtaskScheduler:
                 attempt_id=len(sub.attempts),
                 graph_hash=graph.content_hash,
                 harness_score=harness_score,
+                behaviour_score=milestone_behaviour,
+                behaviour_failures=behaviour_failures(harness_stages),
+                behaviour_total=behaviour_total(harness_stages),
                 furthest_stage=furthest_stage or "",
                 cost=initial_cost,
             )
