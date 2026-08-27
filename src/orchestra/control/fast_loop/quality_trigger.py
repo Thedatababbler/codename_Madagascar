@@ -186,4 +186,5 @@ def quality_search_diagnosis(
         ),
         furthest_stage=incumbent.furthest_stage,
         focus_node_id=gate_feeding_agent(graph) if graph is not None else None,
+        behaviour_failures=list(incumbent.behaviour_failures),
     )

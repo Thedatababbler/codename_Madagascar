@@ -280,22 +280,27 @@ def _check_custody_precedes_consumers(
     return out
 
 
-def _has_custody_step(
+def _custody_harness_ids(
     graph: OrchestraGraph, nodes: Mapping[str, NodeSpec]
-) -> bool:
-    """Whether some harness feeds a ``suite_custody`` input.
+) -> set[str]:
+    """Harnesses that take the authored suite out rather than grade a change.
 
-    Recognised by what it feeds rather than by node id, so a renamed custody step
-    is still recognised and a graph without one is not checked against a rule that
-    does not apply to it.
+    Recognised by what they feed rather than by node id, so a renamed custody
+    step is still recognised and a graph without one is not checked against a
+    rule that does not apply to it.
     """
+    out: set[str] = set()
     for edge in graph.edges:
         if edge.destination_input != CUSTODY_SLOT:
             continue
         source = nodes.get(edge.source_node)
         if source is not None and source.node_kind is NodeKind.HARNESS:
-            return True
-    return False
+            out.add(source.node_id)
+    return out
+
+
+def _has_custody_step(graph: OrchestraGraph, nodes: Mapping[str, NodeSpec]) -> bool:
+    return bool(_custody_harness_ids(graph, nodes))
 
 
 def _role_id(pool: RolePool, node_id: str) -> str:
@@ -505,10 +510,20 @@ def _check_template_id(
 def _harness_nodes_grading_change(
     graph: OrchestraGraph, nodes: Mapping[str, NodeSpec]
 ) -> list[str]:
+    """Harnesses whose result is a verdict on the change, so custody is not one.
+
+    Custody reads the author's change and reports like a gate does, but it
+    decides nothing — it exists to move the suite out of the workspace. Counted
+    as a gate, a ``test_first`` milestone with no repair slot looks like it pays
+    for an early probe nobody reads.
+    """
+    custody = _custody_harness_ids(graph, nodes)
     graded: list[str] = []
     for edge in graph.edges:
         destination = nodes.get(edge.destination_node)
         if destination is None or destination.node_kind is not NodeKind.HARNESS:
+            continue
+        if destination.node_id in custody:
             continue
         if edge.destination_input == CHANGE_SLOT and destination.node_id not in graded:
             graded.append(destination.node_id)

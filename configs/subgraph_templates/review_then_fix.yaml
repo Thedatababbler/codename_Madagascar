@@ -18,6 +18,7 @@ slots:
     allowed_roles:
       - contract_critic
       - spec_auditor
+      - behaviour_critic
   - id: fixer
     default_role: gate_repairer
     allowed_roles:

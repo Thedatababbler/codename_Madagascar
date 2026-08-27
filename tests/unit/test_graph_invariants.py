@@ -107,6 +107,43 @@ def test_every_shipped_template_satisfies_every_invariant(template_id: str) -> N
     )
 
 
+def test_custody_is_not_counted_as_a_gate_the_milestone_pays_for() -> None:
+    """A `test_first` milestone that dropped its repair slot is legal.
+
+    Custody reads the author's change and reports like a gate does, so counting
+    it as one made this shape look like it ran an early probe with nothing behind
+    it. The template fixtures all fill the repair slot, which hid it.
+    """
+    plan = parse_plan_payload(
+        {
+            "milestones": [
+                {
+                    "milestone_id": "m_no_repairer",
+                    "title": "T",
+                    "objective": "build the thing",
+                    "risk_rationale": "downstream depends on it",
+                    "gate_level": "implementation",
+                    "template_id": "test_first",
+                    "agents": TEMPLATE_AGENTS["test_first"][:2],
+                }
+            ]
+        },
+        max_agents=4,
+    )
+    root = prepare_generated_root(
+        Path(tempfile.mkdtemp()), base_contracts_dir="configs/contracts"
+    )
+    path, _ = materialize_milestone_subgraph(
+        generated_root=root,
+        milestone=plan.milestones[0],
+        agent_backend="codex_sdk",
+        harness_command=SPEC_HARNESS,
+    )
+    graph = OrchestraGraph(**yaml.safe_load(Path(path).read_text(encoding="utf-8")))
+    assert any(node.node_id == "authored_suite_custody" for node in graph.nodes)
+    assert_graph_invariants(graph, pool=_pool(), expected_template_id="test_first")
+
+
 def test_a_read_only_agent_spliced_after_the_builder_makes_the_gate_score_nothing() -> None:
     """The defect `add_role_agent` has today, pinned.
 
@@ -123,11 +160,27 @@ def test_a_read_only_agent_spliced_after_the_builder_makes_the_gate_score_nothin
         graph,
         [AddRoleAgentEdit(role_id="spec_auditor", after_node_id=builder)],
         role_pool=_pool(),
+        # The edit is still defective; what changed is that the pipeline now
+        # refuses its result. Turned off here so the defect stays observable.
+        check_invariants=False,
     )
 
     violations = check_graph_invariants(edited, pool=_pool())
     assert [v.invariant for v in violations] == ["gate_scores_editing_agent"]
     assert "empty diff" in violations[0].message
+
+
+def test_the_edit_pipeline_refuses_that_candidate_rather_than_running_it() -> None:
+    """What the validator buys: the defect above costs a rejection, not a run."""
+    graph = _graph("test_first", harness_command=SPEC_HARNESS)
+    builder = _node_id(graph, "builder")
+
+    with pytest.raises(LocalEditError, match="empty diff"):
+        apply_local_edits(
+            graph,
+            [AddRoleAgentEdit(role_id="spec_auditor", after_node_id=builder)],
+            role_pool=_pool(),
+        )
 
 
 def test_the_repairs_branch_survives_that_edit_even_though_the_score_does_not() -> None:
@@ -146,6 +199,7 @@ def test_the_repairs_branch_survives_that_edit_even_though_the_score_does_not() 
         graph,
         [AddRoleAgentEdit(role_id="spec_auditor", after_node_id=builder)],
         role_pool=_pool(),
+        check_invariants=False,
     )
 
     gate_report = [

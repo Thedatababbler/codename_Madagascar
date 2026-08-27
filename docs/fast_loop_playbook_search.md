@@ -8,9 +8,15 @@ proposes replacing the fixed order with **playbooks keyed on a diagnosed failure
 class**: a change chosen because something was measured about *why* the milestone
 failed, rather than because it sat early in a hardcoded list.
 
-Nothing here is implemented. Status: design, agreed in outline on 2026-08-17.
-The selection half of the loop — frontier, epsilon, `require_gate_pass`, the
-incumbent — is unchanged and out of scope.
+Status: design, agreed in outline on 2026-08-17. The playbook table and a
+second generator now exist (`playbooks.py`, `PlaybookCandidateGenerator`) and
+sit beside the atomic-edit generator rather than replacing it. Diagnosis is
+still the lookup: a class is inferred from `reason` / `furthest_stage` until
+`llm_diagnosis.py` writes `failure_class`. The default controller path is
+unchanged — `playbook_search=True` is how the new generator is selected, and
+setting it together with `design_search` is an error. The selection half of
+the loop — frontier, epsilon, `require_gate_pass`, the incumbent — is
+unchanged and out of scope.
 
 ## What is actually wrong with the search today
 
@@ -130,9 +136,11 @@ topology search.
 
 ## Playbooks
 
-New module, `orchestra/control/fast_loop/playbooks.py`, mapping a class to an
-ordered list of `(playbook_id, reason, list[LocalEdit])`. The feedback-only
-anchor is always index zero and does not count as a playbook.
+Module `orchestra/control/fast_loop/playbooks.py` maps
+`(failure_class, template_id)` to an ordered list of playbooks. A playbook is
+either an edit-layer recipe (bound to a slot at generation time) or a
+`TemplateSwitch`. The feedback-only anchor is always index zero of
+`PlaybookCandidateGenerator` and does not count as a playbook.
 
 Two playbooks are worth writing down before the topology ones because they are
 cheap and independent of the gaps below.
@@ -178,7 +186,7 @@ template plus a slot assignment**, not a list of edits:
 
 ```
 pb_tf_diagnose_before_repair:
-    template: test_first_diagnosed      # new template file
+    template: test_first_diagnosed      # exists, planner_selectable: false
     slots: {test_author: test_author, builder: <keep>, critic: behaviour_critic,
             repairer: gate_repairer}
 ```
@@ -210,7 +218,7 @@ rather than a diagnosis.
 | Priority | Playbook | Layer | Action |
 |----------|----------|-------|--------|
 | 1 | `pb_tf_failures_to_repairer` | edit | per-test failure list into the repairer's prompt |
-| 2 | `pb_tf_diagnose_before_repair` | plan | a `test_first` variant with a read-only `behaviour_critic` slot in the failure branch, `runs_if_gate_failed: true`, so it costs nothing when the gate passes |
+| 2 | `pb_tf_diagnose_before_repair` | plan | recompile as `test_first_diagnosed` — a read-only `behaviour_critic` between the failing gate and the repairer, `runs_if_gate_failed: true`, so it costs nothing when the gate passes |
 | 3 | `pb_tf_second_repairer` | plan | a second `gate_repairer` slot behind the same condition — two repair rounds |
 | 4 | `pb_tf_builder_budget` | edit | steps and wall-clock on the builder; only when the class is `budget` |
 
@@ -297,33 +305,53 @@ topology action.
 Parameter playbooks — prompt, budget, model, session — stay in the edit layer,
 where they are safe and already work.
 
-## Blocking gaps that remain
+## Blocking gaps
 
-### 1. The read-only pool has no unused angle
+### 1. The read-only pool has no unused angle — closed
 
 `spec_auditor` and `contract_critic` are both spent by `parallel_audit`, and both
-read documents rather than evidence. The proposed addition is
-`behaviour_critic`: read the gate's `spec_tests` failure list and report which
-assertion's *meaning* the implementer misread. It is the only angle no existing
-role covers — one reads the design documents, one reads the frozen contracts, and
-nobody reads what the tests observed.
+read documents rather than evidence. `behaviour_critic` is the angle neither
+covers: it reads what the code does when it runs — the acceptance gate's failing
+test *names*, or the documented examples worked through by hand — and reports
+which reading of the requirement the implementer took. It is read-only, and
+`review_then_fix`'s reviewer slot accepts it, which is what makes
+`pb_solo_to_review_fix` and `pb_rtf_swap_angle` reachable.
 
-### 2. No template hosts a judge
+The prompt is explicit that the suite is not in the repository and that
+reconstructing it from the names is out of bounds, because a fix aimed at a test
+name satisfies the name and nothing else.
 
-`parallel_audit`'s fixer arbitrates and edits in one slot. A judge position — a
-read-only slot that reconciles several reports and ranks them, leaving the fixer
-to execute a ruling — needs a template that declares it. Adding one template file
-is cheaper than adding an edit type, but it is still new plan-layer surface, and
-the planner will not choose it until the prompt catalogue describes when to.
+### 2. No template hosts a read-only slot behind a gate — closed for `test_first`
 
-### 3. Candidate attribution has no vocabulary yet
+The concern was that a new template widens what the *planner* may choose, so a
+run comparing search against no search would be measuring two changes at once.
+Templates now carry `planner_selectable`, and `catalog_lines` — the only thing
+that renders the catalogue into the planner prompt — skips the ones set to
+`false`. A shape can therefore exist for a playbook to recompile into while
+staying invisible to planning, and offering it to the planner later is a
+one-line change made deliberately rather than as a side effect.
 
-`CandidateRecord` records `edits` and `graph_hash`. A plan-layer candidate differs
-from its parent by a template pair and a slot assignment, neither of which has a
-field. Without one, per-playbook win rates cannot be aggregated across runs and
-the playbook granularity argued for above does not actually exist.
+`configs/subgraph_templates/test_first_diagnosed.yaml` is the first such shape
+and is what playbook 2 recompiles into: `test_author -> builder -> critic ->
+repairer`, early gate after `builder`, with both `critic` and `repairer` marked
+`runs_if_gate_failed`, so a milestone that passes first time pays for neither.
+The critic is declared before the repairer because the compiler freezes the last
+agent it instantiates, and a read-only agent in that position would hand the
+acceptance harness an empty diff to grade; `_require_an_editing_terminal` refuses
+any assignment that ends that way, naming the slot.
 
-## The validator that has to exist either way
+Still open for `parallel_audit`: a judge position — a read-only slot that
+reconciles several reports and ranks them, leaving the fixer to execute a ruling.
+It needs its own template, and it stays deferred because the planner has never
+chosen `parallel_audit`, so nothing would recompile from it.
+
+### 3. Candidate attribution has no vocabulary — closed
+
+`LocalCandidate` and `CandidateRecord` carry `playbook_id`, and `plan_recompile`
+records the template pair, the full slot assignment and the slots that actually
+moved. `edits` is empty for a plan-layer candidate, so it could not have stood in.
+
+## The validator that has to exist either way — closed
 
 Whichever layer produces a shape, one class of failure is silent: a conditional
 edge whose source does not emit the field the condition reads. The candidate runs,
@@ -331,10 +359,11 @@ a stage does not, and the frontier records the result as though the design had
 been evaluated. `EdgeCondition.evaluate` returns `False` for a missing field, so
 there is nothing to catch.
 
-Assert, after producing any candidate graph, that every conditional edge's source
-node emits `condition.source_field`, and reject with `INVALID_GRAPH_EDIT`
-otherwise. It belongs beside the rest of the invariant list in
-`docs/topology_and_edit.md`, checked in both layers.
+`orchestra.ir.graph_invariants` states this and eight others, and both producers
+now check them: `build_milestone_graph` raises, because a violation there is a
+compiler defect and not something a caller can recover from, and
+`apply_local_edits` rejects with `LocalEditError`, which the generators already
+turn into `INVALID_GRAPH_EDIT`.
 
 ## Budget
 

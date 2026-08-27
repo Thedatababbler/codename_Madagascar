@@ -1,8 +1,17 @@
 """Risk-first dynamic milestone planner for RealBench repository tasks.
 
-The planner answers one question: *does this task contain a decision whose
-failure would silently invalidate everything built afterwards?* Milestones exist
-only to fence such blast-radius risks — never to mirror the directory tree.
+A milestone is a unit that is built, graded and frozen on its own, and the
+planner may create more than one for exactly two reasons, recorded in
+``split_reason``:
+
+* ``risk_gate`` — a decision whose failure would silently invalidate everything
+  built afterwards, fenced so it is graded before anything depends on it.
+* ``independent_subsystem`` — capabilities that do not import each other, split
+  so each gets its own acceptance gate and budget.
+
+Neither licenses mirroring the directory tree: an unargued split is folded back
+into the final milestone, and independence means no import relation in either
+direction rather than separate folders.
 
 Everything here is fail-closed: an unusable LLM answer yields ``None`` and the
 caller keeps the deterministic public_design plan.
@@ -36,6 +45,14 @@ from orchestra.roles.templates import (
 # it controls; it is not a description of the agents that run inside.
 GateLevel = Literal["discovery", "implementation", "integration"]
 Role = GateLevel  # Legacy alias for callers that still import ``Role``.
+
+#: Why a plan has more than one milestone. ``risk_gate`` fences a decision whose
+#: failure would invalidate everything built afterwards. ``independent_subsystem``
+#: separates capabilities that do not import each other, so each gets its own
+#: gate and budget — a decomposition hypothesis in its own right, and one the
+#: planner used to be forbidden from proposing.
+SplitReason = Literal["risk_gate", "independent_subsystem"]
+SPLIT_REASONS: frozenset[str] = frozenset({"risk_gate", "independent_subsystem"})
 
 PLAN_ENV_FLAG = "ADAMAS_REALBENCH_DYNAMIC_PLAN"
 PLAN_MODEL_ENV = "ADAMAS_REALBENCH_PLANNER_MODEL"
@@ -94,8 +111,12 @@ class MilestoneDraft:
     milestone_id: str
     title: str
     objective: str
+    #: Why this milestone exists as its own unit, read together with
+    #: ``split_reason``: what breaks downstream for a ``risk_gate``, why nothing
+    #: imports across the seam for an ``independent_subsystem``.
     risk_rationale: str
     gate_level: GateLevel
+    split_reason: SplitReason = "risk_gate"
     template_id: str = FALLBACK_TEMPLATE_ID
     depends_on: list[str] = field(default_factory=list)
     focus_paths: list[str] = field(default_factory=list)
@@ -429,6 +450,9 @@ def parse_plan_payload(
             gate_level = (
                 "integration" if index == len(raw_milestones) - 1 else "implementation"
             )
+        split_reason = str(item.get("split_reason") or "").strip()
+        if split_reason not in SPLIT_REASONS:
+            split_reason = "risk_gate"
         # A milestone may only depend on milestones already declared: keeps the
         # DAG acyclic by construction regardless of what the model emitted.
         depends_on = [
@@ -437,6 +461,14 @@ def parse_plan_payload(
         ]
         depends_on = [dep for dep in depends_on if dep in known_ids]
         if not depends_on and known_ids:
+            # Chained to the previous milestone even when the planner declared
+            # independence. The edge is execution order, not a claim about
+            # imports: it keeps the canonical workspace history linear, so every
+            # milestone forks a tree containing everything committed before it
+            # and can read what earlier milestones actually built. Letting
+            # independent milestones run in one wave would trade that guarantee
+            # for parallelism this benchmark does not need, and would put two
+            # workers on the same base revision.
             depends_on = [known_ids[-1]]
 
         acceptance_raw = item.get("acceptance")
@@ -461,6 +493,7 @@ def parse_plan_payload(
                 objective=objective[:4000],
                 risk_rationale=str(item.get("risk_rationale") or "").strip()[:1000],
                 gate_level=gate_level,  # type: ignore[arg-type]
+                split_reason=split_reason,  # type: ignore[arg-type]
                 template_id=template.template_id,
                 depends_on=depends_on,
                 focus_paths=_focus_paths(item.get("focus_paths")),
@@ -485,8 +518,10 @@ def parse_plan_payload(
     if not milestones:
         raise MilestonePlanError("no milestone survived validation")
 
-    # A split plan is only worth its overhead when the early milestones justify
-    # themselves as risk gates; otherwise collapse to the terminal milestone.
+    # A split plan is only worth its overhead when the early milestones say why
+    # they exist -- as a risk gate, or as a subsystem nothing else imports.
+    # Either way the justification is the rationale text, so an unargued split
+    # collapses to the terminal milestone whatever ``split_reason`` claims.
     if len(milestones) > 1 and not any(m.risk_rationale for m in milestones[:-1]):
         milestones = [milestones[-1]]
 
@@ -589,23 +624,46 @@ def render_planner_prompt(
 
     return f"""You plan milestones for an autonomous repository-implementation run.
 
-# The only reason a milestone may exist
-A milestone is a *risk gate*. Create one only when some decision would, if made
-wrong, silently invalidate the work that comes after it — shared keys/IDs that
-must line up across modules, a base class or protocol every module implements,
-a serialization/return-shape contract, a cross-module invariant.
-If nothing in this task carries that kind of blast radius, return exactly ONE
-milestone covering the whole repository. One milestone is the expected answer.
+# The two reasons a milestone may exist
+A milestone is built, graded and frozen on its own. Exactly two things justify
+more than one, and you must say which applies in `split_reason`:
+
+1. `risk_gate` — a decision that would, if made wrong, silently invalidate
+   everything built afterwards: shared keys/IDs that must line up across
+   modules, a base class or protocol every module implements, a
+   serialization/return-shape contract, a cross-module invariant. Fencing it in
+   its own milestone gets it graded before anything is built on top of it.
+2. `independent_subsystem` — two parts of this repository implement separate
+   capabilities and neither imports the other, so either could be built and
+   graded without the other existing. Splitting them buys each its own
+   acceptance gate and its own budget.
+
+If neither applies, return exactly ONE milestone covering the whole repository.
+One milestone remains the expected answer for most tasks.
 
 # Forbidden ways to split
-- Splitting by directory, package, or file count.
+- Splitting by directory, package, or file count. `independent_subsystem`
+  requires that no import relation exists in either direction: two packages
+  that import each other, or that both import a third one you are also
+  creating, belong in one milestone. If the shared part is the risk, make it a
+  `risk_gate` milestone instead and let the rest depend on it.
 - Milestones that only read, review, document, or "map" the code.
 - Milestones whose failure would merely cost some local rework.
 - More than {max_milestones} milestones.
 
+Milestones run in the order you declare them, each starting from a repository
+containing everything the earlier ones committed, and each receives a log of
+what they changed and the symbols their gates froze. That holds even for
+`independent_subsystem` milestones, so declare the one that owns shared ground
+first.
+
 # What every milestone must carry
-1. `risk_rationale`: what breaks downstream if this milestone is wrong. Leave it
-   empty only for a single whole-repository milestone.
+1. `split_reason`, and a `risk_rationale` arguing it: for `risk_gate`, what
+   breaks downstream if this milestone is wrong; for `independent_subsystem`,
+   which other subsystems it is separate from and why nothing imports across
+   that seam. A non-final milestone with an empty rationale is dropped and its
+   scope folded into the final one, so an unargued split costs you the split.
+   Leave both at their defaults only for a single whole-repository milestone.
 2. `acceptance`: how a machine decides the milestone is done.
    - `criteria`: observable statements about behaviour.
    - `corner_cases`: edge inputs/states that must not regress.
@@ -660,7 +718,8 @@ Return ONLY a JSON object:
       "milestone_id": "snake_case_id",
       "title": "...",
       "objective": "what to build, concretely",
-      "risk_rationale": "what downstream work breaks if this is wrong",
+      "split_reason": "risk_gate|independent_subsystem",
+      "risk_rationale": "what breaks downstream if wrong, or why nothing imports across the seam",
       "gate_level": "discovery|implementation|integration",
       "template_id": "one of the template ids above",
       "depends_on": ["earlier_milestone_id"],
@@ -738,9 +797,10 @@ def plan_milestones(
                 {
                     "role": "system",
                     "content": (
-                        "You decompose repository tasks into risk gates and emit "
+                        "You decompose repository tasks into milestones and emit "
                         "only JSON. You prefer one milestone unless a genuine "
-                        "blast-radius risk exists."
+                        "blast-radius risk exists, or two subsystems are "
+                        "genuinely independent of each other."
                     ),
                 },
                 {"role": "user", "content": prompt},

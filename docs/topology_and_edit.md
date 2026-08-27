@@ -30,10 +30,25 @@ the prompt by `catalog_lines`:
 | `parallel_audit` | `author -> {spec_review ‖ contract_review} -> fixer` | — |
 | `test_first` | `test_author -> builder -> repairer?` | after `builder` |
 
-**Roles** live in `configs/roles/*.yaml`. Eleven of them, each carrying a prompt,
+One more template exists but is deliberately absent from that catalogue, because
+`catalog_lines` skips any template marked `planner_selectable: false`:
+
+| Template | Shape | Early gate | Reachable by |
+|----------|-------|------------|--------------|
+| `test_first_diagnosed` | `test_author -> builder -> critic -> repairer` | after `builder` | playbook recompilation only |
+
+It splits `test_first`'s repair pass in two: a read-only critic reads the failure
+list and reports which behaviour is wrong, and the repairer executes that
+finding. Both sit behind the failing gate, so a milestone that passes first time
+pays for neither. It is withheld from the planner so that a run comparing search
+against no search moves one thing — how a failed milestone is repaired — rather
+than also changing how every task is decomposed.
+
+**Roles** live in `configs/roles/*.yaml`. Twelve of them, each carrying a prompt,
 `edits_repository`, and default `max_tokens` / `max_steps` / `timeout_seconds`.
-Only two are read-only: `spec_auditor` (reads the design documents) and
-`contract_critic` (reads frozen contracts). Everything else writes.
+Only three are read-only: `spec_auditor` (reads the design documents),
+`contract_critic` (reads frozen contracts) and `behaviour_critic` (reads the
+evidence of the code running). Everything else writes.
 
 The planner returns, per milestone, a `template_id` and an `agents` list of
 `{slot, role, mandate}`, optionally overriding `focus_paths`, `max_tokens`,
@@ -216,24 +231,32 @@ What this buys:
   gaps above from the critical path.
 * `metadata["template_id"]` stays true.
 
-What it costs, and must be handled:
+What it cost, and how each was handled — `orchestra.control.fast_loop.plan_candidates`:
 
 * A candidate is no longer a small delta on its parent; the milestone recompiles.
   Cost stays comparable because every candidate already re-runs from the last
   committed snapshot, but graph lineage becomes template-to-template rather than
-  an edit list, and `CandidateRecord` has to record the template pair and the slot
-  assignment for attribution to survive.
-* The frozen authored suite must stay the same suite. Recompiling regenerates the
-  custody wiring, and a candidate scored against a different `spec_tests` is not
-  on the frontier's yardstick — see `docs/fast_loop_pareto_protocol.md` on why
-  the suite is frozen once per milestone.
-* Contracts are written to `configs/contracts` at compile time, so per-candidate
-  compilation needs contract ids that do not collide across candidates.
-* The fast loop currently receives an `OrchestraGraph` and no `MilestoneDraft`.
-  It does not need the full draft — `metadata` already carries `template_id` and
-  `agent_roster`, which is enough to refill slots — but the mandate text lives in
-  the generated contracts, so those have to be read or the roster's
-  `contract_path` followed.
+  an edit list. `CandidateRecord.plan_recompile` records the template pair, the
+  slot assignment and the slots that moved, since `edits` is empty here.
+* The frozen authored suite must stay the same suite. The parent's harness
+  command is copied verbatim rather than rebuilt, and that command is what names
+  the suite — see `docs/fast_loop_pareto_protocol.md` on why the suite is frozen
+  once per milestone.
+* Contracts are written to the run's contracts directory at compile time, so a
+  candidate compiles under a `contract_namespace` of its own and cannot overwrite
+  the attempt it is compared against. The registry the run's compiler read at
+  construction is updated in place when a graph names a contract it has not seen;
+  left stale, the candidate fails to compile and is recorded as an illegal design
+  rather than as a directory nobody re-read.
+* The fast loop receives an `OrchestraGraph` and no `MilestoneDraft`, and the
+  compiled nodes do not carry the objective, the acceptance checks or the
+  mandates — those go into contract prompts. So `materialize_milestone_subgraph`
+  writes the draft beside the graph and records its path, along with the
+  generated root and the prompt profile. A graph compiled by any other route
+  cannot be recompiled and says so rather than guessing.
+* A switch may not name a role its target slot forbids. The planner degrades to
+  the slot default when handed an illegal role, because a planner is an LLM; a
+  playbook is code, and a role it names and does not get is a bug.
 
 ## Invariants any topology change must preserve
 
@@ -246,6 +269,8 @@ Checklist for reviewing a proposed shape change, whichever layer produces it.
    keeps both a change input and a gate input.
 3. **At most one early probe**, and if one exists, at least one node behind
    `passed is_false`. An early gate with nothing waiting on failure is dead cost.
+   The custody step is not a probe: it reads the author's change and reports like
+   a gate, but it decides nothing.
 4. **Custody stays between `test_author` and every consumer**, and no change edge
    carries the author's patch into an implementer. The implementer must not be
    able to read `spec_tests`.
@@ -259,8 +284,15 @@ Checklist for reviewing a proposed shape change, whichever layer produces it.
    `private_evaluator` tools.
 9. **`metadata["template_id"]` describes the graph** it is attached to.
 
-Items 1 and 6 are the two that current edit-layer code can violate without
-raising anything, and they are the reason this document exists.
+Items 1 and 6 are the two that edit-layer code can violate without raising
+anything, and they are the reason this document exists.
+
+The list is `orchestra.ir.graph_invariants`, and both producers check it.
+`build_milestone_graph` raises: it composes from a template whose own rules were
+checked at load time, so a violation is a compiler defect rather than something a
+caller can be handed. `apply_local_edits` raises `LocalEditError`, which the
+candidate generators already turn into `INVALID_GRAPH_EDIT`. Tests that exist to
+observe an unfixed edit defect pass `check_invariants=False`; nothing else should.
 
 ## Related
 

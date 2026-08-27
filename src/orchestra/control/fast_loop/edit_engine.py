@@ -20,6 +20,7 @@ from orchestra.control.fast_loop.schemas import (
 from orchestra.ir.compiler import GraphCompiler
 from orchestra.ir.edges import EdgeSpec
 from orchestra.ir.graph import OrchestraGraph
+from orchestra.ir.graph_invariants import check_graph_invariants
 from orchestra.ir.nodes import (
     AgentNodeSpec,
     HarnessNodeSpec,
@@ -53,8 +54,17 @@ def apply_local_edits(
     max_timeout_seconds: float | None = None,
     max_steps_cap: int | None = None,
     role_pool: RolePool | None = None,
+    check_invariants: bool = True,
 ) -> OrchestraGraph:
-    """Deep-copy base graph, apply edits, re-validate, and recompute hash lineage."""
+    """Deep-copy base graph, apply edits, re-validate, and recompute hash lineage.
+
+    ``check_invariants`` rejects an edit whose result is well-formed but
+    meaningless — a gate grading a reviewer's empty diff, a branch behind a
+    condition its source cannot satisfy. Those do not raise on their own: the
+    candidate runs, a number comes back, and the frontier records it as though a
+    design had been measured. Tests that exist to observe an unfixed edit defect
+    turn it off; nothing else should.
+    """
     graph = base_graph.clone()
     parent_hash = base_graph.content_hash
     lineage: list[dict[str, Any]] = list(graph.metadata.get("edit_lineage") or [])
@@ -80,6 +90,13 @@ def apply_local_edits(
         compiler.compile(graph)
     else:
         _validate_dag(graph)
+    if check_invariants:
+        violations = check_graph_invariants(graph, pool=role_pool)
+        if violations:
+            raise LocalEditError(
+                "edit produced a graph that runs but measures nothing: "
+                + "; ".join(str(v) for v in violations)
+            )
     # Touch content_hash to ensure canonicalization succeeds.
     _ = graph.content_hash
     return graph

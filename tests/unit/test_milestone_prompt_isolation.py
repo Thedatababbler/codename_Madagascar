@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 from orchestra.control.ready_scheduler import (
@@ -9,6 +10,7 @@ from orchestra.control.ready_scheduler import (
     _with_prompt_prelude,
 )
 from orchestra.executors.agent import AgentNodeExecutor
+from orchestra.ir.artifacts import ArtifactEnvelope
 from orchestra.ir.contracts import AgentContract
 from orchestra.ir.graph import load_graph
 from orchestra.ir.nodes import AgentNodeSpec
@@ -40,6 +42,82 @@ def test_prelude_carries_brief_and_prior_milestone_memory(tmp_path: Path) -> Non
     assert "implement_accessors" in prelude
     assert "freeze_index" in prelude
     assert "xproj/index.py" in prelude
+
+
+def test_memory_carries_what_the_committing_agent_said_it_decided(
+    tmp_path: Path,
+) -> None:
+    """A file list says which modules moved, never what was settled inside them.
+
+    The changelog used to record a fixed caption, so a later milestone learned
+    that `serializer.py` had changed and had to re-derive the format from the
+    diff. The committing agent's own closing text is the cheapest statement of
+    that, and it already rides along on the frozen change artifact.
+    """
+    run_dir = tmp_path / "run"
+    account = (
+        "Froze the record layout: 8-byte big-endian length prefix followed by a "
+        "varint payload. Callers must use Entry.from_bytes rather than slicing."
+    )
+    produced = [
+        ArtifactEnvelope(
+            artifact_id="a1",
+            artifact_type="RepositoryChangeArtifact",
+            producer_node_id="freeze_change",
+            task_id="t",
+            created_at=datetime.now(UTC),
+            payload={
+                "workspace_ref": "ws",
+                "thread_id": "th",
+                "changed_files": ["pkg/serializer.py"],
+                "patch": "diff",
+                "final_response": account,
+            },
+            content_hash="h",
+        )
+    ]
+
+    ReadySubtaskScheduler._append_milestone_memory(  # noqa: SLF001
+        run_dir=run_dir,
+        subtask_id="freeze_records",
+        role="implementation",
+        change_set=None,
+        revision="abc123",
+        agent_account=ReadySubtaskScheduler._committing_agent_account(  # noqa: SLF001
+            produced
+        ),
+    )
+    prelude = ReadySubtaskScheduler._milestone_prompt_prelude(  # noqa: SLF001
+        subtask_metadata={"milestone_brief": "# Milestone `build_tree`"},
+        run_dir=run_dir,
+    )
+
+    assert "8-byte big-endian length prefix" in prelude
+    assert "Entry.from_bytes" in prelude
+    assert "canonical commit for subtask" not in prelude
+
+
+def test_memory_falls_back_to_a_caption_when_the_agent_said_nothing(
+    tmp_path: Path,
+) -> None:
+    """A backend that reports no closing text must not silence the entry."""
+    run_dir = tmp_path / "run"
+
+    ReadySubtaskScheduler._append_milestone_memory(  # noqa: SLF001
+        run_dir=run_dir,
+        subtask_id="freeze_records",
+        role="implementation",
+        change_set=None,
+        revision="abc123",
+        agent_account=ReadySubtaskScheduler._committing_agent_account([]),  # noqa: SLF001
+    )
+
+    prelude = ReadySubtaskScheduler._milestone_prompt_prelude(  # noqa: SLF001
+        subtask_metadata={"milestone_brief": "# Milestone `build_tree`"},
+        run_dir=run_dir,
+    )
+    assert "freeze_records" in prelude
+    assert "canonical commit for subtask freeze_records" in prelude
 
 
 def test_prelude_is_empty_without_a_brief(tmp_path: Path) -> None:

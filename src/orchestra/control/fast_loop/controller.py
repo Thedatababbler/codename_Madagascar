@@ -21,6 +21,8 @@ from orchestra.control.fast_loop.candidate_generator import (
 from orchestra.control.fast_loop.capability import validate_candidate_against_capabilities
 from orchestra.control.fast_loop.diagnosis import diagnose_subtask_failure
 from orchestra.control.fast_loop.pareto import ParetoSelectionConfig
+from orchestra.control.fast_loop.plan_candidates import register_new_contracts
+from orchestra.control.fast_loop.playbook_generator import PlaybookCandidateGenerator
 from orchestra.control.fast_loop.quality_trigger import quality_search_diagnosis
 from orchestra.control.fast_loop.schemas import (
     BackendModelPool,
@@ -89,6 +91,7 @@ class FastLoopController:
         model_pools: Mapping[str, BackendModelPool] | None = None,
         pareto: ParetoSelectionConfig | None = None,
         design_search: bool = False,
+        playbook_search: bool = False,
         clock=None,
         persist_checkpoints: bool = True,
     ) -> None:
@@ -102,8 +105,17 @@ class FastLoopController:
         # candidate is what makes a frontier readable, and a frontier is what makes
         # varying the design worth paying for. Enabling one without the other
         # produces either an unreadable frontier or a search with nothing to
-        # search over.
-        if design_search:
+        # search over. Playbook search is a different generator on the same
+        # selector; setting both would leave a run ambiguous about which table
+        # produced its candidates.
+        if playbook_search and design_search:
+            raise ValueError("playbook_search and design_search are mutually exclusive")
+        if playbook_search:
+            self.generator = generator or PlaybookCandidateGenerator(
+                compiler=self.compiler,
+            )
+            self.selector = selector or ParetoCandidateSelector(pareto)
+        elif design_search:
             self.generator = generator or DesignSearchCandidateGenerator(
                 compiler=self.compiler,
                 model_pools=model_pools,
@@ -161,6 +173,8 @@ class FastLoopController:
             graph_hash=cand.graph.content_hash,
             parent_graph_hash=cand.parent_graph_hash,
             edits=list(cand.edits),
+            playbook_id=cand.playbook_id,
+            plan_recompile=cand.plan_recompile,
             status=status,
             session_policy=cand.session_policy,
             rejection_reason=cand.rejection_reason,
@@ -352,6 +366,8 @@ class FastLoopController:
                 graph=candidate_graph,
                 session_policy=record.session_policy,
                 generation_reason=str(record.metadata.get("generation_reason") or ""),
+                playbook_id=record.playbook_id,
+                plan_recompile=record.plan_recompile,
             )
             caps = self._caps_for_graph(candidate_graph)
             compat = validate_candidate_against_capabilities(local_candidate, caps)
@@ -638,6 +654,11 @@ class FastLoopController:
             allow_config_drift=False,
             subtask_id=subtask_id,
             workspace_ref=cand_ws.path if cand_ws else context.workspace_ref,
+        )
+        register_new_contracts(
+            compiler=self.compiler,
+            graph=candidate_graph,
+            contracts_dir=self.contracts_dir,
         )
         compiled = self.compiler.compile(candidate_graph)
         try:

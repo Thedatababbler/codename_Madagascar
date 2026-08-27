@@ -69,6 +69,14 @@ class SubgraphTemplate:
     # agent of a multi-milestone plan into one milestone, and dropping the
     # overflow would silently hand that arm less compute.
     extensible: bool = False
+    # Whether the planner is offered this shape when it decomposes a task. A
+    # template exists for two audiences: the planner choosing a shape up front,
+    # and a playbook recompiling a milestone that already failed. Offering a new
+    # shape to the planner changes the distribution of plans, so a run comparing
+    # search against no search would be measuring two changes at once. Templates
+    # added for the search alone therefore stay out of the catalogue until the
+    # search has shown they are worth having.
+    planner_selectable: bool = True
 
     def slots_for(self, count: int) -> list[TemplateSlot]:
         """Slots to instantiate for ``count`` agents, extending a chain if asked."""
@@ -218,6 +226,7 @@ def parse_template(payload: Any, *, source: str = "<memory>") -> SubgraphTemplat
         edges=edges,
         early_gate_after=early_gate_after,
         extensible=bool(payload.get("extensible", False)),
+        planner_selectable=bool(payload.get("planner_selectable", True)),
     )
 
 
@@ -290,7 +299,9 @@ def default_templates(
 
 
 def catalog_lines(templates: dict[str, SubgraphTemplate]) -> list[str]:
+    """The shapes a planner may choose from, which is not every shape that exists."""
     return [
         templates[key].catalog_entry()
         for key in sorted(templates, key=lambda k: (templates[k].agent_count, k))
+        if templates[key].planner_selectable
     ]

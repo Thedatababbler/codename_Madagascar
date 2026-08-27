@@ -156,6 +156,14 @@ class FailureDiagnosis(BaseModel):
     # naming the anchor explicitly is better than letting the generator fall back
     # to whichever agent happens to be first.
     focus_node_id: str | None = None
+    # ``budget`` / ``functional`` / ``design``. Empty means the generator infers
+    # from ``reason`` and ``furthest_stage``. Filled in once LLM diagnosis exists;
+    # the playbook table already keys on it.
+    failure_class: str = ""
+    #: Named tests the gate reported as failing. Computed for the selector but
+    #: never put in a prompt until a playbook does it; carried here so that
+    #: playbook can bind without reaching back into harness artifacts.
+    behaviour_failures: list[str] = Field(default_factory=list)
 
 
 class CostRecord(BaseModel):
@@ -223,6 +231,31 @@ class WorkspaceChangeSet(BaseModel):
     file_manifest_hash: str = ""
 
 
+class PlanRecompile(BaseModel):
+    """How a plan-layer candidate differs from the attempt it is compared against.
+
+    An edit-layer candidate is its parent plus a list of edits, so ``edits`` says
+    everything about it. A plan-layer candidate is a different template with its
+    slots refilled and the milestone recompiled, and no edit describes that.
+    Without somewhere to record the pair, a winning candidate carries no account
+    of what it changed and win rates cannot be aggregated across runs — which is
+    the whole compensation for giving up attribution at edit granularity.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    template_id: str
+    parent_template_id: str = ""
+    #: Slot id to the pool role filling it, in the template's own slot order.
+    slots: dict[str, str] = Field(default_factory=dict)
+    #: Slots whose role differs from the parent's, plus slots the parent did not
+    #: have. The delta, as opposed to the assignment it is a delta on.
+    changed_slots: list[str] = Field(default_factory=list)
+    #: Separates this candidate's generated contracts and graph from the ones it
+    #: is compared against, which share a directory for the length of a run.
+    contract_namespace: str = ""
+
+
 class LocalCandidate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -232,6 +265,12 @@ class LocalCandidate(BaseModel):
     graph: OrchestraGraph
     session_policy: SessionPolicy = SessionPolicy.FRESH
     generation_reason: str
+    #: Which playbook produced this candidate, empty for the anchor and for the
+    #: fixed-order generators. Recorded on the candidate rather than derived from
+    #: its edits because two playbooks may emit the same edit for different
+    #: reasons, and it is the reason whose win rate is worth aggregating.
+    playbook_id: str = ""
+    plan_recompile: PlanRecompile | None = None
     compatibility_rejected: bool = False
     rejection_reason: CandidateRejectionReason | None = None
     rejection_message: str | None = None
@@ -265,6 +304,11 @@ class CandidateRecord(BaseModel):
     graph_hash: str
     parent_graph_hash: str
     edits: list[LocalEdit]
+    #: Carried over from the candidate so a frontier read after the fact still
+    #: says which playbook each entry came from and, for a plan-layer candidate,
+    #: what it recompiled. `edits` is empty for those, so it cannot stand in.
+    playbook_id: str = ""
+    plan_recompile: PlanRecompile | None = None
     workspace_ref: WorkspaceRef | None = None
     backend_sessions: list[BackendSessionRecord] = Field(default_factory=list)
     output_artifact_ids: list[str] = Field(default_factory=list)

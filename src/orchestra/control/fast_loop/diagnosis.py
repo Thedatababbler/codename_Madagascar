@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from orchestra.control.fast_loop.schemas import FailureDiagnosis
 from orchestra.control.task_state import SubtaskFailureReason, SubtaskState, SubtaskStatus
+from orchestra.harness.progress import behaviour_failures
 from orchestra.ir.graph import OrchestraGraph
 from orchestra.ir.nodes import NodeKind
 from orchestra.runtime.state import GraphExecutionResult, NodeExecutionResult, NodeStatus
@@ -106,10 +107,15 @@ def diagnose_subtask_failure(
     # result. Carried onto the diagnosis so candidate generation can pick an edit
     # aimed at the stage that failed.
     furthest_stage = ""
+    named_failures: list[str] = []
     for attempt in subtask_state.attempts:
-        stage = (attempt.metadata or {}).get("furthest_stage")
+        meta = attempt.metadata or {}
+        stage = meta.get("furthest_stage")
         if stage:
             furthest_stage = str(stage)
+        stages = meta.get("harness_stages")
+        if stages:
+            named_failures = behaviour_failures(stages)
 
     base_kwargs = {
         "reason": reason,
@@ -117,6 +123,7 @@ def diagnose_subtask_failure(
         "failed_node_ids": failed_ids,
         "primary_failed_node_id": primary,
         "furthest_stage": furthest_stage,
+        "behaviour_failures": named_failures,
     }
 
     if reason is SubtaskFailureReason.HARNESS:

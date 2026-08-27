@@ -70,11 +70,27 @@ class TestAddRoleAgent:
         assert len(inserted.prompt_prelude) > len("WORKSPACE CONTEXT")
 
     def test_a_read_only_role_is_not_asked_for_a_diff_it_will_not_produce(self) -> None:
+        # Anchored on the author rather than the fixer: the fixer feeds the gate,
+        # and inserting a read-only role there hands the gate an empty diff to
+        # grade, which the invariant check now refuses outright.
         edited = apply_local_edits(
-            _graph(), [AddRoleAgentEdit(role_id="spec_auditor", after_node_id=FIXER)]
+            _graph(), [AddRoleAgentEdit(role_id="spec_auditor", after_node_id=AUTHOR)]
         )
         inserted = next(n for n in edited.nodes if n.node_id.endswith("__spec_auditor"))
         assert inserted.resolved_backend().require_git_diff is False
+
+    def test_splicing_a_read_only_role_in_front_of_the_gate_is_refused(self) -> None:
+        """The edit is legal on its own terms and produces a meaningless score.
+
+        `_add_role_agent` re-sources every outgoing edge of its anchor, so the
+        acceptance harness ends up grading the inserted node. A reviewer's diff is
+        empty, so the milestone would be scored on a change nobody made.
+        """
+        with pytest.raises(LocalEditError, match="empty diff"):
+            apply_local_edits(
+                _graph(),
+                [AddRoleAgentEdit(role_id="spec_auditor", after_node_id=FIXER)],
+            )
 
     def test_parallel_placement_of_an_editing_role_is_refused(self) -> None:
         with pytest.raises(LocalEditError, match="share one workspace"):
@@ -118,19 +134,41 @@ class TestDropAgent:
 
 
 class TestRewireEdge:
-    def test_gating_an_agent_edge_on_an_upstream_failure(self) -> None:
+    def test_gating_an_edge_on_a_field_its_source_emits(self) -> None:
         edited = apply_local_edits(
             _graph(),
             [
                 RewireEdgeEdit(
                     edge_id="link_reviewer_to_fixer",
-                    condition=EdgeCondition(source_field="passed", operator="is_false"),
+                    condition=EdgeCondition(
+                        source_field="changed_files", operator="not_equals", value=[]
+                    ),
                 )
             ],
         )
         edge = next(e for e in edited.edges if e.edge_id == "link_reviewer_to_fixer")
         assert edge.condition is not None
-        assert edge.condition.operator == "is_false"
+        assert edge.condition.source_field == "changed_files"
+
+    def test_gating_an_agent_edge_on_a_harness_field_is_refused(self) -> None:
+        """`passed` reaches an edge only from a harness, and this edge has an agent.
+
+        `EdgeCondition.evaluate` returns False for a field it cannot find, so this
+        gate would never open and the fixer would simply never run — a design the
+        frontier would score as though it had been evaluated.
+        """
+        with pytest.raises(LocalEditError, match="silently disabled"):
+            apply_local_edits(
+                _graph(),
+                [
+                    RewireEdgeEdit(
+                        edge_id="link_reviewer_to_fixer",
+                        condition=EdgeCondition(
+                            source_field="passed", operator="is_false"
+                        ),
+                    )
+                ],
+            )
 
     def test_the_condition_guarding_the_commit_cannot_be_cleared(self) -> None:
         with pytest.raises(LocalEditError, match="guards the commit"):
@@ -160,7 +198,9 @@ def test_every_topology_edit_leaves_the_base_graph_untouched() -> None:
         DropAgentEdit(node_id=REVIEWER),
         RewireEdgeEdit(
             edge_id="link_reviewer_to_fixer",
-            condition=EdgeCondition(source_field="passed", operator="is_false"),
+            condition=EdgeCondition(
+                source_field="changed_files", operator="not_equals", value=[]
+            ),
         ),
     ):
         edited = apply_local_edits(base, [edit])

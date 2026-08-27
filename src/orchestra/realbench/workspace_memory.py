@@ -13,6 +13,7 @@ from typing import Any
 
 CHANGELOG_NAME = "ADAMAS_CHANGELOG.md"
 MEMORY_DIRNAME = "adamas_memory"
+SUMMARY_MAX_CHARS = 1200
 
 
 def memory_dir_for_run(run_dir: Path) -> Path:
@@ -63,7 +64,17 @@ def append_changelog_entry(
     else:
         lines.append("  - (none recorded)")
     if summary and str(summary).strip():
-        lines.append(f"- summary: {str(summary).strip()[:500]}")
+        # Roomier than a one-line label because this now carries the committing
+        # agent's own account of what it decided, not a fixed caption: the
+        # interface shapes and formats a later milestone must extend do not fit
+        # in a clause. Four milestones at this cap stay well inside the
+        # changelog's own read limit.
+        text = str(summary).strip()[:SUMMARY_MAX_CHARS]
+        if "\n" in text or len(text) > 120:
+            lines.append("- summary:")
+            lines.extend(f"  > {line}" for line in text.splitlines())
+        else:
+            lines.append(f"- summary: {text}")
     if extra:
         for key in sorted(extra):
             lines.append(f"- {key}: {extra[key]}")
@@ -92,7 +103,10 @@ def memory_brief_for_milestone(memory_dir: Path) -> str:
     return (
         "## Shared milestone memory\n"
         "Earlier milestones already committed the changes below into the "
-        "repository you now see. Extend them; do not redo or rename them.\n\n"
+        "repository you now see. Extend them; do not redo or rename them.\n"
+        "Each `summary` is the committing agent's own account of what it decided. "
+        "Treat it as the fastest way to find what a module already settled, and "
+        "the code as the authority when the two disagree.\n\n"
         "<changelog_excerpt>\n"
         f"{text.strip()}\n"
         "</changelog_excerpt>\n"

@@ -122,6 +122,95 @@ def test_parse_plan_payload_keeps_risk_gate_and_sanitizes() -> None:
     assert draft.milestones[1].depends_on == ["freeze_crs_index"]
 
 
+def _independent_payload() -> dict:
+    """Two subsystems neither of which imports the other."""
+    return {
+        "rationale": "The CLI and the storage engine share nothing.",
+        "milestones": [
+            {
+                "milestone_id": "storage_engine",
+                "title": "Storage engine",
+                "objective": "Implement the on-disk pager.",
+                "split_reason": "independent_subsystem",
+                "risk_rationale": (
+                    "Separate from the CLI: neither imports the other, so each "
+                    "can be built and graded on its own."
+                ),
+                "role": "implementation",
+                "acceptance": {
+                    "checks": [
+                        {
+                            "type": "callable_or_class",
+                            "module": "pkg.storage",
+                            "symbol": "Pager",
+                            "required_levels": ["implementation"],
+                        }
+                    ]
+                },
+                "agents": [{"role_id": "pager_dev", "mandate": "write the pager"}],
+            },
+            {
+                "milestone_id": "command_line",
+                "title": "Command line",
+                "objective": "Implement the CLI surface.",
+                "split_reason": "independent_subsystem",
+                "risk_rationale": "Separate from the storage engine.",
+                "role": "integration",
+                "agents": [{"role_id": "cli_dev", "mandate": "write the cli"}],
+            },
+        ],
+    }
+
+
+def test_independent_subsystem_is_a_legitimate_split() -> None:
+    """A split argued as independence survives, and says so in the draft.
+
+    Splitting by capability used to be forbidden outright, so a planner that saw
+    two unrelated subsystems had no way to say so and returned one milestone
+    covering both.
+    """
+    draft = parse_plan_payload(_independent_payload())
+
+    assert draft.split is True
+    assert [m.split_reason for m in draft.milestones] == [
+        "independent_subsystem",
+        "independent_subsystem",
+    ]
+
+
+def test_split_reason_survives_a_frozen_draft_round_trip() -> None:
+    """An A/B replays a frozen draft, so a lost reason changes the arm's prompt."""
+    once = parse_plan_payload(_independent_payload())
+
+    twice = parse_plan_payload(json.loads(json.dumps(once.to_dict())))
+
+    assert [m.split_reason for m in twice.milestones] == [
+        m.split_reason for m in once.milestones
+    ]
+
+
+def test_an_unknown_split_reason_falls_back_to_risk_gate() -> None:
+    payload = _independent_payload()
+    payload["milestones"][0]["split_reason"] = "because I felt like it"
+
+    draft = parse_plan_payload(payload)
+
+    assert draft.milestones[0].split_reason == "risk_gate"
+
+
+def test_independent_milestones_still_run_in_declaration_order() -> None:
+    """Independence is a claim about imports, not a licence to run concurrently.
+
+    The canonical workspace is a single linear history, and every milestone reads
+    what earlier ones committed by forking it. Letting two milestones that
+    declared no dependency start from the same revision would put two workers on
+    one base and make that guarantee conditional.
+    """
+    draft = parse_plan_payload(_independent_payload())
+
+    assert draft.milestones[1].depends_on == ["storage_engine"]
+
+
 def test_parse_plan_payload_collapses_split_without_risk() -> None:
     payload = {
         "rationale": "split by package",
@@ -234,7 +323,11 @@ def test_planner_prompt_uses_public_inputs_only(tmp_path: Path) -> None:
         task_id="benbovy_xproj", workspace=tmp_path, agent_backend="codex_sdk"
     )
 
-    assert "risk gate" in prompt
+    # Both legitimate reasons to split are offered, and the ban on mirroring the
+    # tree survives the second one: `independent_subsystem` is a claim about
+    # imports, and without that ban it reads as permission to split by folder.
+    assert "risk_gate" in prompt
+    assert "independent_subsystem" in prompt
     assert "Splitting by directory" in prompt
     assert "xproj.index" in prompt
     assert "proj_with_test" not in prompt
@@ -343,6 +436,9 @@ def test_build_plan_from_draft_validates_as_taskplan(tmp_path: Path) -> None:
     assert "Why this milestone gates the rest" in brief
     assert "Corner cases" in brief
     assert "Agent roster" in brief
+    # Nothing was frozen before the first milestone, so it is told about nothing.
+    assert "Contracts frozen by earlier milestones" not in brief
+    assert gate.metadata["inherited_frozen_contracts"] == {}
     assert gate.budget.max_llm_calls == len(gate.metadata["agent_roster"])
     # Contracts are frozen beside the run; the workspace keeps dataset files only.
     assert (harness_dir / "freeze_crs_index.contracts.json").is_file()
@@ -351,6 +447,89 @@ def test_build_plan_from_draft_validates_as_taskplan(tmp_path: Path) -> None:
     gate_graph = load_graph(gate.local_graph_template)
     gate_harness = next(n for n in gate_graph.nodes if isinstance(n, HarnessNodeSpec))
     assert "--spec-tests" in list(gate_harness.command or [])
+
+
+def test_a_later_milestone_is_told_which_symbols_earlier_gates_froze(
+    tmp_path: Path,
+) -> None:
+    """Naming the frozen symbols is what makes "do not redesign them" actionable.
+
+    Every generated prompt already says earlier contracts are load-bearing, but
+    the brief never said which they were, so an agent could rename a symbol whose
+    existence it was never told about — and the gate that froze it does not run
+    again to catch that.
+    """
+    draft = parse_plan_payload(_risk_payload())
+    payload = build_plan_from_draft(
+        task_id="benbovy_xproj",
+        draft=draft,
+        workspace=_public_workspace(tmp_path),
+        generated_root=prepare_generated_root(tmp_path, base_contracts_dir=CONTRACTS),
+        harness_dir=tmp_path / "harness",
+        agent_backend="codex_sdk",
+    )
+
+    gate, terminal = payload["subtasks"]
+    assert terminal["metadata"]["inherited_frozen_contracts"] == {
+        "freeze_crs_index": ["xproj.index.CRSIndex"]
+    }
+    brief = terminal["metadata"]["milestone_brief"]
+    assert "Contracts frozen by earlier milestones" in brief
+    assert "xproj.index.CRSIndex" in brief
+    assert "freeze_crs_index" in brief
+    # A gate the planner never attached a symbol check to contributes nothing,
+    # rather than an empty heading the agent has to interpret.
+    assert "(none)" not in brief
+    del gate
+
+
+def test_an_independent_subsystem_is_not_told_it_gates_the_rest(
+    tmp_path: Path,
+) -> None:
+    """The risk-gate framing is false across a seam nothing imports.
+
+    Told that downstream milestones import what it freezes, an agent designs for
+    consumers that will never exist and reads another subsystem's absence as its
+    own missing dependency.
+    """
+    payload = build_plan_from_draft(
+        task_id="pkg",
+        draft=parse_plan_payload(_independent_payload()),
+        workspace=_public_workspace(tmp_path),
+        generated_root=prepare_generated_root(tmp_path, base_contracts_dir=CONTRACTS),
+        harness_dir=tmp_path / "harness",
+        agent_backend="codex_sdk",
+    )
+
+    brief = payload["subtasks"][0]["metadata"]["milestone_brief"]
+    assert "Why this milestone stands alone" in brief
+    assert "Why this milestone gates the rest" not in brief
+    assert "Downstream milestones import what you freeze here" not in brief
+    assert payload["subtasks"][0]["metadata"]["split_reason"] == "independent_subsystem"
+
+
+def test_an_independent_subsystem_still_inherits_the_other_ones_contracts(
+    tmp_path: Path,
+) -> None:
+    """Independence is the planner's claim; the shared workspace is the fact.
+
+    A later milestone forks a tree containing the earlier subsystem's code
+    whether or not it declared a dependency on it, so it can import and rename
+    those symbols. Listing them is how a mistaken independence claim stays
+    survivable instead of silent.
+    """
+    payload = build_plan_from_draft(
+        task_id="pkg",
+        draft=parse_plan_payload(_independent_payload()),
+        workspace=_public_workspace(tmp_path),
+        generated_root=prepare_generated_root(tmp_path, base_contracts_dir=CONTRACTS),
+        harness_dir=tmp_path / "harness",
+        agent_backend="codex_sdk",
+    )
+
+    assert payload["subtasks"][1]["metadata"]["inherited_frozen_contracts"] == {
+        "storage_engine": ["pkg.storage.Pager"]
+    }
 
 
 def _public_workspace(tmp_path: Path) -> Path:

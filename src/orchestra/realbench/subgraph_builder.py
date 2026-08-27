@@ -13,6 +13,7 @@ evidence rather than an implicit prompt string.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 from dataclasses import dataclass
@@ -21,6 +22,8 @@ from typing import Any
 
 import yaml
 
+from orchestra.ir.graph import OrchestraGraph
+from orchestra.ir.graph_invariants import assert_graph_invariants
 from orchestra.realbench.milestone_planner import AgentDraft, MilestoneDraft
 from orchestra.roles.pool import RolePool, default_role_pool
 from orchestra.roles.templates import (
@@ -70,9 +73,15 @@ class DatasetPromptProfile:
     read_first: str
     acceptance: str
     shipping: str
+    #: Names this profile in a compiled graph's metadata. Two CodeProjectEval
+    #: profiles share a ``label``, so the label cannot identify one, and a
+    #: plan-layer candidate recompiling a milestone has to reach the same prompt
+    #: the original agents were given.
+    profile_id: str = ""
 
 
 REALBENCH_PROMPT_PROFILE = DatasetPromptProfile(
+    profile_id="realbench",
     label="RealBench Python repository",
     read_first="Read TASK.md, REQUIREMENTS.md and public_design/ before editing.\n",
     acceptance=(
@@ -96,6 +105,7 @@ REALBENCH_PROMPT_PROFILE = DatasetPromptProfile(
 )
 
 CODEPROJECTEVAL_PROMPT_PROFILE = DatasetPromptProfile(
+    profile_id="codeprojecteval",
     label="CodeProjectEval Python repository",
     read_first=(
         "Read docs/PRD.md, docs/architecture_design.md, the UML documents and "
@@ -128,6 +138,7 @@ CODEPROJECTEVAL_PROMPT_PROFILE = DatasetPromptProfile(
 # language. The dataset may still ship a visible `check_tests/` directory;
 # this profile does not name it, so the agent is not pointed at a yardstick.
 CODEPROJECTEVAL_SOLO_BASELINE_PROFILE = DatasetPromptProfile(
+    profile_id="codeprojecteval_solo_baseline",
     label="CodeProjectEval Python repository",
     read_first=(
         "Read docs/PRD.md, docs/architecture_design.md, the UML documents and "
@@ -141,6 +152,17 @@ CODEPROJECTEVAL_SOLO_BASELINE_PROFILE = DatasetPromptProfile(
         "them.\n"
     ),
 )
+
+
+#: Every profile a compiled graph may name, so one can be recovered from its id.
+PROMPT_PROFILES: dict[str, DatasetPromptProfile] = {
+    profile.profile_id: profile
+    for profile in (
+        REALBENCH_PROMPT_PROFILE,
+        CODEPROJECTEVAL_PROMPT_PROFILE,
+        CODEPROJECTEVAL_SOLO_BASELINE_PROFILE,
+    )
+}
 
 
 def default_model_name(agent_backend: str) -> str:
@@ -631,7 +653,7 @@ def build_milestone_graph(
         # Omitted when empty so a plain compilation's payload — and therefore its
         # content hash — is exactly what it was before variants existed.
         metadata["variant"] = variant
-    return {
+    payload = {
         "graph_id": graph_id[:96],
         "version": "1.0",
         "initial_artifact_slots": {"problem": "ProblemArtifact"},
@@ -640,6 +662,15 @@ def build_milestone_graph(
         "nodes": nodes,
         "edges": edges,
     }
+    # Raised rather than returned: this layer composes the graph from a template
+    # whose own rules were checked at load time, so a violation here is a defect
+    # in the compiler and not something a caller can be handed to recover from.
+    assert_graph_invariants(
+        OrchestraGraph.model_validate(payload),
+        pool=role_pool,
+        expected_template_id=shape.template_id,
+    )
+    return payload
 
 
 def materialize_role_graph(
@@ -716,6 +747,23 @@ def materialize_milestone_subgraph(
         variant=contract_namespace,
     )
     stem = milestone.milestone_id + (f"__{contract_namespace}" if contract_namespace else "")
+    draft_path = graphs_dir / f"{stem}.draft.json"
+    draft_path.write_text(
+        json.dumps(milestone.to_dict(), indent=2, sort_keys=True), encoding="utf-8"
+    )
+    # A compiled graph does not contain the milestone it was compiled from: the
+    # objective, the acceptance checks and each agent's mandate go into contract
+    # prompts and are not recoverable from the nodes. The fast loop is handed a
+    # graph and nothing else, so a candidate that wants a different template has
+    # to be able to find its way back to the draft, the directory the contracts
+    # live in, and the prompt profile the agents were written against.
+    graph["metadata"].update(
+        {
+            "milestone_draft_path": str(draft_path),
+            "generated_root": str(root),
+            "prompt_profile": profile.profile_id,
+        }
+    )
     graph_path = graphs_dir / f"{stem}.yaml"
     graph_path.write_text(
         yaml.safe_dump(graph, sort_keys=False, allow_unicode=True), encoding="utf-8"

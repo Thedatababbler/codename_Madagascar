@@ -213,7 +213,59 @@ def _subtask(
     }
 
 
-def _milestone_brief(milestone: MilestoneDraft, roster: list[dict[str, Any]]) -> str:
+def frozen_contract_lines(milestone: MilestoneDraft) -> list[str]:
+    """The symbols this milestone's gate pins, as ``module.symbol`` strings.
+
+    These are exactly the contracts later milestones are told not to redesign,
+    and the planner already named them in ``acceptance.checks``. Only the
+    symbol-bearing check types say anything a consumer can import; a bare
+    ``import`` or ``module_file_exists`` check pins a file, not an interface.
+    """
+    out: list[str] = []
+    for check in milestone.acceptance.checks:
+        if not isinstance(check, dict):
+            continue
+        if check.get("type") not in {"export", "callable_or_class"}:
+            continue
+        module = str(check.get("module") or "").strip()
+        symbol = str(check.get("symbol") or "").strip()
+        if module and symbol:
+            out.append(f"{module}.{symbol}")
+    return out
+
+
+def _frozen_contracts_section(frozen: dict[str, list[str]]) -> list[str]:
+    """Render what earlier milestones pinned, grouped by the milestone that did.
+
+    The brief already tells every agent that earlier contracts are load-bearing
+    and must be extended rather than renamed. Without this section that
+    instruction names nothing: an agent cannot avoid redesigning a symbol whose
+    existence it was never told about, and the acceptance gate of the milestone
+    that froze it does not run again to catch the rename.
+    """
+    named = {mid: symbols for mid, symbols in frozen.items() if symbols}
+    if not named:
+        return []
+    lines = [
+        "## Contracts frozen by earlier milestones",
+        "Each symbol below is already importable at the path shown and is graded "
+        "by the milestone that froze it. Extend or import them; renaming, moving "
+        "or narrowing any of them breaks consumers this milestone never touches.",
+        "",
+    ]
+    for milestone_id in sorted(named):
+        lines.append(f"- from `{milestone_id}`:")
+        lines.extend(f"  - `{symbol}`" for symbol in sorted(set(named[milestone_id])))
+    lines.append("")
+    return lines
+
+
+def _milestone_brief(
+    milestone: MilestoneDraft,
+    roster: list[dict[str, Any]],
+    *,
+    frozen_contracts: dict[str, list[str]] | None = None,
+) -> str:
     lines = [
         f"# Milestone `{milestone.milestone_id}`",
         "",
@@ -225,14 +277,30 @@ def _milestone_brief(milestone: MilestoneDraft, roster: list[dict[str, Any]]) ->
         "",
     ]
     if milestone.risk_rationale:
-        lines += [
-            "## Why this milestone gates the rest",
-            milestone.risk_rationale,
-            "",
-            "Downstream milestones import what you freeze here. Later agents are "
-            "instructed to extend, not redesign, these contracts.",
-            "",
-        ]
+        # An independent subsystem is told the opposite of what a risk gate is
+        # told. "Downstream milestones import what you freeze here" is the whole
+        # point of a gate, and simply false across a seam nothing imports --
+        # said there it invites an agent to design for consumers that will never
+        # exist, and to treat another subsystem's absence as its own problem.
+        if milestone.split_reason == "independent_subsystem":
+            lines += [
+                "## Why this milestone stands alone",
+                milestone.risk_rationale,
+                "",
+                "Nothing outside this milestone imports what you build, and you "
+                "import nothing another milestone is building. Implement your own "
+                "scope completely rather than stubbing toward work you cannot see.",
+                "",
+            ]
+        else:
+            lines += [
+                "## Why this milestone gates the rest",
+                milestone.risk_rationale,
+                "",
+                "Downstream milestones import what you freeze here. Later agents are "
+                "instructed to extend, not redesign, these contracts.",
+                "",
+            ]
     if milestone.acceptance.criteria:
         lines += ["## Acceptance criteria"]
         lines += [f"- {item}" for item in milestone.acceptance.criteria]
@@ -241,6 +309,7 @@ def _milestone_brief(milestone: MilestoneDraft, roster: list[dict[str, Any]]) ->
         lines += ["## Corner cases"]
         lines += [f"- {item}" for item in milestone.acceptance.corner_cases]
         lines += [""]
+    lines += _frozen_contracts_section(frozen_contracts or {})
     if milestone.focus_paths:
         lines += ["## Focus paths"]
         lines += [f"- `{p}`" for p in milestone.focus_paths]
@@ -328,6 +397,12 @@ def build_plan_from_draft(
     bind = harness_binder or realbench_harness_binder(
         workspace=Path(workspace), harness_dir=Path(harness_dir)
     )
+    # Accumulated over declaration order rather than the dependency DAG, because
+    # the canonical workspace is linear: every milestone forks the tree that all
+    # earlier commits already landed in, whether or not it declared them as
+    # dependencies. A brief listing only transitive dependencies would hide
+    # symbols the agent can nonetheless see, import and rename.
+    frozen_so_far: dict[str, list[str]] = {}
     for index, milestone in enumerate(draft.milestones):
         graph_path, roster = materialize_milestone_subgraph(
             generated_root=Path(generated_root),
@@ -353,17 +428,26 @@ def build_plan_from_draft(
                 "expected_outputs": outputs,
                 "metadata": {
                     "role": milestone.role,
-                    "milestone_brief": _milestone_brief(milestone, roster),
+                    "milestone_brief": _milestone_brief(
+                        milestone, roster, frozen_contracts=frozen_so_far
+                    ),
                     "focus_paths": list(milestone.focus_paths),
                     "public_harness_level": milestone.role,
                     "risk_rationale": milestone.risk_rationale,
+                    "split_reason": milestone.split_reason,
                     "acceptance": milestone.acceptance.to_dict(),
                     "agent_roster": roster,
                     "milestone_index": index,
                     "milestone_count": total,
+                    "inherited_frozen_contracts": {
+                        mid: list(symbols) for mid, symbols in frozen_so_far.items()
+                    },
                 },
             }
         )
+        pinned = frozen_contract_lines(milestone)
+        if pinned:
+            frozen_so_far[milestone.milestone_id] = pinned
 
     ids = [s["subtask_id"] for s in subtasks]
     dependents = {sid: 0 for sid in ids}

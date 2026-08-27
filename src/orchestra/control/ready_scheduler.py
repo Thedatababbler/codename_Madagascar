@@ -243,6 +243,7 @@ class ReadySubtaskScheduler:
         selector: DeterministicCandidateSelector | None = None,
         pareto: ParetoSelectionConfig | None = None,
         design_search: bool = False,
+        playbook_search: bool = False,
         quality_trigger: QualityTrigger | None = None,
         allow_concurrent_subtasks: bool = False,
         slow_loop: SlowLoopController | None = None,
@@ -272,6 +273,7 @@ class ReadySubtaskScheduler:
             selector=selector,
             pareto=pareto,
             design_search=design_search,
+            playbook_search=playbook_search,
             workspace_manager=self._candidate_ws,
             persist_checkpoints=False,
         )
@@ -1059,6 +1061,9 @@ class ReadySubtaskScheduler:
                 ),
                 change_set=result.workspace_change_set,
                 revision=record.committed_revision,
+                agent_account=self._committing_agent_account(
+                    list(result.produced_artifacts or [])
+                ),
             )
         except Exception:  # noqa: BLE001 — memory must not fail the commit
             pass
@@ -1115,6 +1120,25 @@ class ReadySubtaskScheduler:
         return brief.rstrip() + ("\n\n" + memory if memory else "\n")
 
     @staticmethod
+    def _committing_agent_account(produced: list[ArtifactEnvelope]) -> str:
+        """What the agent whose change is being frozen said it did.
+
+        A file list tells a later milestone which modules moved, never what was
+        decided inside them: the shape a symbol was given, the format a record
+        was serialized in, the error type a caller must now expect. That is in
+        the agent's own closing text, which survives ``freeze_repository_change``
+        untouched, and without it a milestone that must extend an earlier one has
+        to re-derive its decisions by reading the diff.
+        """
+        for artifact in produced:
+            if artifact.artifact_type != "RepositoryChangeArtifact":
+                continue
+            text = str(artifact.payload.get("final_response") or "").strip()
+            if text:
+                return text
+        return ""
+
+    @staticmethod
     def _append_milestone_memory(
         *,
         run_dir: str | Path | None,
@@ -1122,6 +1146,7 @@ class ReadySubtaskScheduler:
         role: str,
         change_set: WorkspaceChangeSet | None,
         revision: str | None,
+        agent_account: str = "",
     ) -> None:
         if not run_dir:
             return
@@ -1143,7 +1168,7 @@ class ReadySubtaskScheduler:
             role=role or None,
             changed_files=[f for f in files if f],
             revision=revision,
-            summary=f"canonical commit for subtask {subtask_id}",
+            summary=agent_account or f"canonical commit for subtask {subtask_id}",
         )
 
     @staticmethod
