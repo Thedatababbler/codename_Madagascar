@@ -1,0 +1,60 @@
+# Playbook search arm. Not comparable with outputs/realbench_xiaoai: the
+# candidates are a different table, so they must not share a results directory.
+experiment:
+  name: realbench_xiaoai_playbook
+  seed: 20260815
+  agent_backend: smolagents_code
+  graph_config: configs/graphs/smolagents_realbench_public_integration.yaml
+  contracts_dir: configs/contracts
+  output_root: outputs/realbench_xiaoai_playbook
+  dataset_root: /root/codex-benchmarks/realbench_codex_vanilla/vendor/realbench/datasets/unpacked/datasets/projs_filtered_uml/level2
+
+  tuning:
+    playbook_search: true
+    design_search: false
+    fast_loop_candidates: 3
+    diagnosis:
+      mode: llm
+      min_confidence: 0.5
+      model: gpt-5.4
+    quality_trigger:
+      enabled: true
+      min_score: 0.94
+    pareto:
+      rule: quality_first
+      epsilon:
+        quality: 0.02
+        cost: 0.08
+        stability: 0.0
+      require_gate_pass: true
+    gate_weight: 1.0
+    harness_weight: 0.5
+    token_weight: 0.05
+    token_reference: 1000000
+    allow_cost_to_outrank_gate: false
+
+decomposition:
+  dynamic_planner: true
+  min_subtasks: 1
+  max_subtasks: 4
+  max_dependency_depth: 4
+  require_public_keystone_harness: true
+  graph_catalog:
+    discovery: configs/graphs/smolagents_realbench_public_discovery.yaml
+    implementation: configs/graphs/smolagents_realbench_public_implementation.yaml
+    integration: configs/graphs/smolagents_realbench_public_integration.yaml
+
+runtime:
+  max_parallel_nodes_per_task: 2
+
+pareto:
+  enabled: false
+
+slow_loop:
+  enabled: false
+
+fast_loop:
+  max_candidates: 0
+
+logging:
+  level: INFO

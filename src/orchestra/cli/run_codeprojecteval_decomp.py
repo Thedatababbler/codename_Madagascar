@@ -49,6 +49,7 @@ from orchestra.codeprojecteval.harness import (
     contracts_path_for,
     spec_tests_path_for,
 )
+from orchestra.control.fast_loop.llm_diagnosis import DiagnosisConfig
 from orchestra.control.fast_loop.objectives import (
     DEFAULT_GATE_WEIGHT,
     DEFAULT_HARNESS_WEIGHT,
@@ -325,6 +326,17 @@ class TuningConfig:
     # picked by a weighted sum. With it on, each candidate is the parent plus one
     # atomic design edit and the trade-offs between them are kept as a frontier.
     design_search: bool
+    playbook_search: bool
+    # The control arm: fast_loop_candidates identical anchor designs,
+    # resampled, under the same Pareto selector as playbook search.
+    anchor_search: bool
+    # Persistence search: probe the anchor design N times, intersect the
+    # failures with the incumbent's, diagnose that persistent set (rules, then
+    # the model, then a named default) and spend the remaining slots on the
+    # table with the specialist the diagnosis chose.
+    persistence_search: bool
+    persistence_probe_samples: int
+    diagnosis: DiagnosisConfig
     pareto: ParetoSelectionConfig
     quality_trigger: QualityTrigger
 
@@ -350,10 +362,27 @@ def read_tuning_config(config: dict[str, Any]) -> TuningConfig:
         token_reference=int(tuning.get("token_reference", 1_000_000)),
         allow_cost_to_outrank_gate=bool(tuning.get("allow_cost_to_outrank_gate", False)),
     )
+    design_search = bool(tuning.get("design_search", False))
+    playbook_search = bool(tuning.get("playbook_search", False))
+    anchor_search = bool(tuning.get("anchor_search", False))
+    persistence_search = bool(tuning.get("persistence_search", False))
+    persistence_probe_samples = int(tuning.get("persistence_probe_samples", 2))
+    if persistence_probe_samples < 1:
+        raise ValueError("persistence_probe_samples must be at least 1")
+    if sum(map(bool, (design_search, playbook_search, anchor_search, persistence_search))) > 1:
+        raise ValueError(
+            "playbook_search, design_search, anchor_search and persistence_search "
+            "are mutually exclusive"
+        )
     return TuningConfig(
         candidates=candidates,
         weights=weights,
-        design_search=bool(tuning.get("design_search", False)),
+        design_search=design_search,
+        playbook_search=playbook_search,
+        anchor_search=anchor_search,
+        persistence_search=persistence_search,
+        persistence_probe_samples=persistence_probe_samples,
+        diagnosis=DiagnosisConfig.from_mapping(tuning.get("diagnosis")),
         pareto=ParetoSelectionConfig.from_mapping(tuning.get("pareto")),
         quality_trigger=QualityTrigger.from_mapping(tuning.get("quality_trigger")),
     )
@@ -600,11 +629,21 @@ async def _run_one(
         # so the scalar one is only supplied when design search is off.
         selector=(
             None
-            if tuning.design_search
+            if (
+                tuning.design_search
+                or tuning.playbook_search
+                or tuning.anchor_search
+                or tuning.persistence_search
+            )
             else DeterministicCandidateSelector(weights=tuning_weights)
         ),
         pareto=tuning.pareto,
         design_search=tuning.design_search,
+        playbook_search=tuning.playbook_search,
+        anchor_search=tuning.anchor_search,
+        persistence_search=tuning.persistence_search,
+        persistence_probe_samples=tuning.persistence_probe_samples,
+        diagnosis_config=tuning.diagnosis,
         quality_trigger=tuning.quality_trigger,
         slow_loop=SlowLoopController(
             config=slow_loop_config, checkpoint_store=task_checkpoint_store
@@ -697,6 +736,11 @@ async def _run_one(
             "harness_weight": tuning_weights.harness_weight,
             "token_weight": tuning_weights.token_weight,
             "design_search": tuning.design_search,
+            "playbook_search": tuning.playbook_search,
+            "anchor_search": tuning.anchor_search,
+            "persistence_search": tuning.persistence_search,
+            "persistence_probe_samples": tuning.persistence_probe_samples,
+            "diagnosis": tuning.diagnosis.to_dict(),
             "selection_rule": tuning.pareto.rule,
             "epsilon": dict(tuning.pareto.epsilon),
         },

@@ -6,13 +6,20 @@ import logging
 import time
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 from orchestra.backends.base import ArtifactRef
 from orchestra.backends.capabilities import BackendCapabilities
 from orchestra.backends.catalog import capabilities_for
 from orchestra.cli.validate_graph import build_compiler
+from orchestra.control.backend_usage import append_usage_records
 from orchestra.control.failure import classify_subtask_outcome
-from orchestra.control.fast_loop.budget import FastLoopBudgetTracker, spent_from_state
+from orchestra.control.fast_loop.budget import (
+    FastLoopBudgetTracker,
+    add_costs,
+    remaining_budget,
+    spent_from_state,
+)
 from orchestra.control.fast_loop.candidate_generator import (
     DesignSearchCandidateGenerator,
     LocalCandidateGenerator,
@@ -20,16 +27,25 @@ from orchestra.control.fast_loop.candidate_generator import (
 )
 from orchestra.control.fast_loop.capability import validate_candidate_against_capabilities
 from orchestra.control.fast_loop.diagnosis import diagnose_subtask_failure
+from orchestra.control.fast_loop.llm_diagnosis import DiagnosisConfig, refine_diagnosis
 from orchestra.control.fast_loop.pareto import ParetoSelectionConfig
 from orchestra.control.fast_loop.plan_candidates import register_new_contracts
 from orchestra.control.fast_loop.playbook_generator import PlaybookCandidateGenerator
 from orchestra.control.fast_loop.quality_trigger import quality_search_diagnosis
+from orchestra.roles.pool import default_role_pool
+from orchestra.control.fast_loop.persistence import (
+    apply_role_floor,
+    default_role,
+    persistence_ledger,
+    persistent_failures,
+)
 from orchestra.control.fast_loop.schemas import (
     BackendModelPool,
     CandidateRecord,
     CandidateRejectionReason,
     CandidateStatus,
     CostRecord,
+    FailureDiagnosis,
     FastLoopBudget,
     FastLoopState,
     LocalCandidate,
@@ -73,6 +89,19 @@ from orchestra.workspaces.base import WorkspaceRef
 logger = logging.getLogger(__name__)
 
 
+def candidate_task_id(task_id: str, subtask_id: str, candidate_id: str) -> str:
+    """Checkpoint identity for one candidate run.
+
+    The subtask belongs in the key. Two milestones of one task draw candidate
+    ids from the same table, so "task + candidate" collides the moment a second
+    milestone searches: the checkpoint store finds the first milestone's record
+    under that name and rejects the run as config drift, which kills every
+    candidate of the second search in milliseconds and leaves that milestone
+    falling back to its incumbent with nothing to compare against.
+    """
+    return f"{task_id}__{subtask_id}__candidate__{candidate_id}"
+
+
 class FastLoopController:
     """Diagnose → generate ≤K candidates → isolate → evaluate → select → commit."""
 
@@ -92,6 +121,10 @@ class FastLoopController:
         pareto: ParetoSelectionConfig | None = None,
         design_search: bool = False,
         playbook_search: bool = False,
+        anchor_search: bool = False,
+        persistence_search: bool = False,
+        persistence_probe_samples: int = 2,
+        diagnosis_config: DiagnosisConfig | None = None,
         clock=None,
         persist_checkpoints: bool = True,
     ) -> None:
@@ -108,11 +141,46 @@ class FastLoopController:
         # search over. Playbook search is a different generator on the same
         # selector; setting both would leave a run ambiguous about which table
         # produced its candidates.
-        if playbook_search and design_search:
-            raise ValueError("playbook_search and design_search are mutually exclusive")
-        if playbook_search:
+        modes = (playbook_search, design_search, anchor_search, persistence_search)
+        if sum(map(bool, modes)) > 1:
+            raise ValueError(
+                "playbook_search, design_search, anchor_search and persistence_search "
+                "are mutually exclusive"
+            )
+        self.persistence_search = bool(persistence_search)
+        self.persistence_probe_samples = max(1, int(persistence_probe_samples))
+        self.probe_generator = None
+        if persistence_search:
+            # Two phases on one budget. Phase one resamples the anchor design
+            # `persistence_probe_samples` times and intersects the failure lists
+            # with the incumbent's: what fails every time is the defect, what
+            # flips is luck. Phase two spends the remaining slots on the table,
+            # diagnosed from that persistent set and with the specialist chosen
+            # from it, judged by the same Pareto selector as everything else.
+            self.probe_generator = PlaybookCandidateGenerator(
+                compiler=self.compiler,
+                contracts_dir=contracts_dir,
+                anchor_repeat=True,
+            )
             self.generator = generator or PlaybookCandidateGenerator(
                 compiler=self.compiler,
+                contracts_dir=contracts_dir,
+            )
+            self.selector = selector or ParetoCandidateSelector(pareto)
+        elif anchor_search:
+            # The playbook table's control arm: identical anchors resampled,
+            # judged by the same Pareto selector, so the only variable against
+            # a playbook run is where the candidates came from.
+            self.generator = generator or PlaybookCandidateGenerator(
+                compiler=self.compiler,
+                contracts_dir=contracts_dir,
+                anchor_repeat=True,
+            )
+            self.selector = selector or ParetoCandidateSelector(pareto)
+        elif playbook_search:
+            self.generator = generator or PlaybookCandidateGenerator(
+                compiler=self.compiler,
+                contracts_dir=contracts_dir,
             )
             self.selector = selector or ParetoCandidateSelector(pareto)
         elif design_search:
@@ -129,6 +197,7 @@ class FastLoopController:
             self.selector = selector or DeterministicCandidateSelector()
         self.budget = budget or FastLoopBudget()
         self.budget_tracker = FastLoopBudgetTracker(self.budget, clock=clock)
+        self.diagnosis_config = diagnosis_config or DiagnosisConfig()
         self.capabilities = dict(capabilities or {})
         # When False, scheduler coordinator owns shared task checkpoints.
         self.persist_checkpoints = persist_checkpoints
@@ -185,6 +254,244 @@ class FastLoopController:
                 "graph": cand.graph.model_dump(mode="json"),
             },
         )
+
+    async def _run_pending_candidates(
+        self,
+        *,
+        state: TaskExecutionState,
+        fl_state: FastLoopState,
+        context: RunContext,
+        initial_artifacts: Any,
+        base_ws: Any,
+    ) -> None:
+        """Compile and execute every PENDING record, in order, within budget."""
+        for record in fl_state.candidates:
+            if record.status is not CandidateStatus.PENDING:
+                continue
+
+            ok, reason, code = self.budget_tracker.can_start_candidate(fl_state)
+            if not ok:
+                fl_state.exhausted = True
+                record.status = CandidateStatus.REJECTED
+                record.rejection_reason = code or CandidateRejectionReason.BUDGET_EXCEEDED
+                record.rejection_message = reason
+                record.failure_message = reason
+                # Reject remaining pending without launching.
+                for other in fl_state.candidates:
+                    if other.status is CandidateStatus.PENDING and other is not record:
+                        other.status = CandidateStatus.REJECTED
+                        other.rejection_reason = CandidateRejectionReason.BUDGET_EXCEEDED
+                        other.rejection_message = reason
+                state.state_version += 1
+                await self._save_checkpoint(state)
+                break
+
+            graph_payload = record.metadata.get("graph")
+            if not graph_payload:
+                record.status = CandidateStatus.REJECTED
+                record.rejection_reason = CandidateRejectionReason.MISSING_GRAPH
+                record.rejection_message = "missing candidate graph payload"
+                continue
+            candidate_graph = OrchestraGraph.model_validate(graph_payload)
+            local_candidate = LocalCandidate(
+                candidate_id=record.candidate_id,
+                parent_graph_hash=record.parent_graph_hash,
+                edits=list(record.edits),
+                graph=candidate_graph,
+                session_policy=record.session_policy,
+                generation_reason=str(record.metadata.get("generation_reason") or ""),
+                playbook_id=record.playbook_id,
+                plan_recompile=record.plan_recompile,
+            )
+            caps = self._caps_for_graph(candidate_graph)
+            compat = validate_candidate_against_capabilities(local_candidate, caps)
+            if not compat.compatible:
+                record.status = CandidateStatus.REJECTED
+                record.rejection_reason = (
+                    compat.rejection_reason or CandidateRejectionReason.OTHER
+                )
+                record.rejection_message = compat.reason
+                record.failure_message = compat.reason
+                state.state_version += 1
+                await self._save_checkpoint(state)
+                continue
+
+            await self._evaluate_candidate(
+                state=state,
+                fl_state=fl_state,
+                record=record,
+                candidate_graph=candidate_graph,
+                context=context,
+                initial_artifacts=initial_artifacts,
+                base_ws=base_ws,
+            )
+            state.state_version += 1
+            await self._save_checkpoint(state)
+
+
+
+    async def _persistence_phase_two(
+        self,
+        *,
+        state: TaskExecutionState,
+        fl_state: FastLoopState,
+        sub: SubtaskState,
+        subtask_id: str,
+        base_graph: OrchestraGraph,
+        incumbent: CandidateRecord,
+        context: RunContext,
+        initial_artifacts: Any,
+        base_ws: Any,
+    ) -> None:
+        """Intersect the probe samples, diagnose the persistent set, spend the rest.
+
+        Idempotent across a resume: phase-two records are recognisable by
+        their metadata, and a phase two that declined leaves a note.
+        """
+        if any(c.metadata.get("persistence_phase") == 2 for c in fl_state.candidates):
+            self._score_persistence(fl_state)
+            return
+        if any(str(n).startswith("persistence:") for n in fl_state.notes):
+            return
+
+        probes = [c for c in fl_state.candidates if c.metadata.get("persistence_phase") == 1]
+        summary = persistent_failures([incumbent, *probes])
+        fl_state.persistence = summary.to_dict()
+        fl_state.notes.append(
+            f"persistence: samples={summary.samples} "
+            f"persistent={len(summary.persistent)} flaky={len(summary.flaky)}"
+        )
+        if summary.samples < 2 or not summary.persistent:
+            # Every failure flipped at least once: the defect is luck, and the
+            # probes already are the right tool for that. Nothing to diagnose.
+            fl_state.notes.append("persistence: no persistent failures; phase two declined")
+            state.state_version += 1
+            await self._save_checkpoint(state)
+            return
+
+        pool = getattr(self.generator, "role_pool", None) or default_role_pool()
+        diagnosis = fl_state.diagnosis.model_copy(
+            update={
+                "behaviour_failures": list(summary.persistent),
+                "persistence_samples": summary.samples,
+            }
+        )
+        # Rules first, the model only for what the rules cannot name, a named
+        # default last -- and the source of the choice always written down.
+        diagnosis = apply_role_floor(diagnosis, pool)
+        if not diagnosis.recommended_role and self.diagnosis_config.mode == "llm":
+            diagnosis = self._refine_lookup(
+                lookup=diagnosis,
+                graph=base_graph,
+                subtask_state=sub,
+                state=state,
+                fl_state=fl_state,
+                context=context,
+                subtask_id=subtask_id,
+            )
+        diagnosis = default_role(diagnosis, pool)
+        fl_state.diagnosis = diagnosis
+
+        remaining = max(1, self.budget.max_candidates - len(probes))
+        caps = self._caps_for_graph(base_graph)
+        generated = self.generator.generate(
+            graph=base_graph,
+            diagnosis=diagnosis,
+            # +1 because index zero of the draft list is always the anchor,
+            # which phase one has already sampled.
+            budget=self.budget.model_copy(update={"max_candidates": remaining + 1}),
+            capabilities=caps,
+            search_reason="quality",
+        )
+        picked = [c for c in generated if c.playbook_id][:remaining]
+        if not picked:
+            fl_state.notes.append("persistence: table produced no candidate; phase two declined")
+            state.state_version += 1
+            await self._save_checkpoint(state)
+            return
+        for cand in picked:
+            record = self._record_from_local(cand, attempt_id=fl_state.base_attempt_id + 1)
+            record.metadata.update(
+                {
+                    "persistence_phase": 2,
+                    "persistent_failures": list(summary.persistent),
+                    "recommended_role": diagnosis.recommended_role,
+                    "recommended_reviewer": diagnosis.recommended_reviewer,
+                    "role_source": diagnosis.role_source,
+                    "diagnosis_source": diagnosis.diagnosis_source,
+                    "failure_class": diagnosis.failure_class,
+                }
+            )
+            fl_state.candidates.append(record)
+        state.state_version += 1
+        await self._save_checkpoint(state)
+
+        await self._run_pending_candidates(
+            state=state,
+            fl_state=fl_state,
+            context=context,
+            initial_artifacts=initial_artifacts,
+            base_ws=base_ws,
+        )
+        self._score_persistence(fl_state)
+
+    @staticmethod
+    def _score_persistence(fl_state: FastLoopState) -> None:
+        """Write the ledger: what each phase-two candidate did about the persistent set."""
+        for record in fl_state.candidates:
+            if record.metadata.get("persistence_phase") != 2:
+                continue
+            if "persistence_ledger" in record.metadata:
+                continue
+            if record.behaviour_score is None:
+                continue
+            record.metadata["persistence_ledger"] = persistence_ledger(
+                record, list(record.metadata.get("persistent_failures") or [])
+            )
+
+    def _refine_lookup(
+        self,
+        *,
+        lookup: FailureDiagnosis,
+        graph: OrchestraGraph,
+        subtask_state: SubtaskState,
+        state: TaskExecutionState,
+        fl_state: FastLoopState,
+        context: RunContext,
+        subtask_id: str,
+    ) -> FailureDiagnosis:
+        """Replace the lookup class when the LLM is confident; otherwise keep it."""
+        history = [
+            record.playbook_id
+            for record in fl_state.candidates
+            if record.playbook_id
+        ]
+        diagnosis, call = refine_diagnosis(
+            lookup=lookup,
+            graph=graph,
+            subtask_state=subtask_state,
+            config=self.diagnosis_config,
+            remaining=remaining_budget(self.budget, fl_state),
+            playbook_history=history,
+            artifact_dir=Path(context.run_dir) / "fast_loop" / "diagnosis",
+            task_id=state.task_id,
+            subtask_id=subtask_id,
+            attempt_id=len(subtask_state.attempts),
+        )
+        if call.usage is not None:
+            state.backend_usage_records = append_usage_records(
+                state.backend_usage_records, [call.usage]
+            )
+            fl_state.control_plane_cost = add_costs(
+                fl_state.control_plane_cost,
+                CostRecord(
+                    prompt_tokens=int(call.usage.prompt_tokens or 0),
+                    completion_tokens=int(call.usage.completion_tokens or 0),
+                    estimated_cost_usd=float(call.usage.estimated_cost_usd or 0.0),
+                    backend_calls=1,
+                ),
+            )
+        return diagnosis
 
     async def run(
         self,
@@ -252,6 +559,17 @@ class FastLoopController:
                 c.candidate_id == incumbent.candidate_id for c in fl_state.candidates
             ):
                 fl_state.candidates.append(incumbent)
+        elif self.diagnosis_config.mode == "llm":
+            diagnosis = self._refine_lookup(
+                lookup=diagnosis,
+                graph=base_graph,
+                subtask_state=sub,
+                state=state,
+                fl_state=fl_state,
+                context=context,
+                subtask_id=subtask_id,
+            )
+            fl_state.diagnosis = diagnosis
 
         self.budget_tracker.mark_started(fl_state)
 
@@ -293,18 +611,35 @@ class FastLoopController:
                 await self._save_checkpoint(state)
                 return state
             caps = self._caps_for_graph(base_graph)
-            generated = self.generator.generate(
-                graph=base_graph,
-                diagnosis=diagnosis,
-                budget=self.budget,
-                capabilities=caps,
+            probing = (
+                self.persistence_search
+                and incumbent is not None
+                and self.probe_generator is not None
             )
-            for cand in generated:
-                fl_state.candidates.append(
-                    self._record_from_local(
-                        cand, attempt_id=fl_state.base_attempt_id + 1
-                    )
+            if probing:
+                probes = min(self.persistence_probe_samples, self.budget.max_candidates)
+                generated = self.probe_generator.generate(
+                    graph=base_graph,
+                    diagnosis=diagnosis,
+                    budget=self.budget.model_copy(update={"max_candidates": probes}),
+                    capabilities=caps,
+                    search_reason="quality",
                 )
+            else:
+                generated = self.generator.generate(
+                    graph=base_graph,
+                    diagnosis=diagnosis,
+                    budget=self.budget,
+                    capabilities=caps,
+                    search_reason="quality" if incumbent is not None else "failure",
+                )
+            for cand in generated:
+                record = self._record_from_local(
+                    cand, attempt_id=fl_state.base_attempt_id + 1
+                )
+                if probing:
+                    record.metadata["persistence_phase"] = 1
+                fl_state.candidates.append(record)
             state.state_version += 1
             await self._save_checkpoint(state)
 
@@ -331,68 +666,25 @@ class FastLoopController:
             )
             sub.workspace_ref = base_ws.path
 
-        for record in fl_state.candidates:
-            if record.status is not CandidateStatus.PENDING:
-                continue
-
-            ok, reason, code = self.budget_tracker.can_start_candidate(fl_state)
-            if not ok:
-                fl_state.exhausted = True
-                record.status = CandidateStatus.REJECTED
-                record.rejection_reason = code or CandidateRejectionReason.BUDGET_EXCEEDED
-                record.rejection_message = reason
-                record.failure_message = reason
-                # Reject remaining pending without launching.
-                for other in fl_state.candidates:
-                    if other.status is CandidateStatus.PENDING and other is not record:
-                        other.status = CandidateStatus.REJECTED
-                        other.rejection_reason = CandidateRejectionReason.BUDGET_EXCEEDED
-                        other.rejection_message = reason
-                state.state_version += 1
-                await self._save_checkpoint(state)
-                break
-
-            graph_payload = record.metadata.get("graph")
-            if not graph_payload:
-                record.status = CandidateStatus.REJECTED
-                record.rejection_reason = CandidateRejectionReason.MISSING_GRAPH
-                record.rejection_message = "missing candidate graph payload"
-                continue
-            candidate_graph = OrchestraGraph.model_validate(graph_payload)
-            local_candidate = LocalCandidate(
-                candidate_id=record.candidate_id,
-                parent_graph_hash=record.parent_graph_hash,
-                edits=list(record.edits),
-                graph=candidate_graph,
-                session_policy=record.session_policy,
-                generation_reason=str(record.metadata.get("generation_reason") or ""),
-                playbook_id=record.playbook_id,
-                plan_recompile=record.plan_recompile,
-            )
-            caps = self._caps_for_graph(candidate_graph)
-            compat = validate_candidate_against_capabilities(local_candidate, caps)
-            if not compat.compatible:
-                record.status = CandidateStatus.REJECTED
-                record.rejection_reason = (
-                    compat.rejection_reason or CandidateRejectionReason.OTHER
-                )
-                record.rejection_message = compat.reason
-                record.failure_message = compat.reason
-                state.state_version += 1
-                await self._save_checkpoint(state)
-                continue
-
-            await self._evaluate_candidate(
+        await self._run_pending_candidates(
+            state=state,
+            fl_state=fl_state,
+            context=context,
+            initial_artifacts=initial_artifacts,
+            base_ws=base_ws,
+        )
+        if self.persistence_search and incumbent is not None:
+            await self._persistence_phase_two(
                 state=state,
                 fl_state=fl_state,
-                record=record,
-                candidate_graph=candidate_graph,
+                sub=sub,
+                subtask_id=subtask_id,
+                base_graph=base_graph,
+                incumbent=incumbent,
                 context=context,
                 initial_artifacts=initial_artifacts,
                 base_ws=base_ws,
             )
-            state.state_version += 1
-            await self._save_checkpoint(state)
 
         winner = self.selector.select(fl_state.candidates, self.budget)
         # Recorded whether or not a winner emerged: a search that ended with an
@@ -646,7 +938,9 @@ class FastLoopController:
 
         run_context = RunContext(
             run_id=f"{context.run_id}:{record.candidate_id}",
-            task_id=f"{context.task_id}__candidate__{record.candidate_id}",
+            task_id=candidate_task_id(
+                context.task_id, subtask_id, record.candidate_id
+            ),
             run_dir=context.run_dir,
             limits=context.limits,
             semaphores=context.semaphores,
@@ -655,10 +949,12 @@ class FastLoopController:
             subtask_id=subtask_id,
             workspace_ref=cand_ws.path if cand_ws else context.workspace_ref,
         )
+        agent_executor = getattr(self.runtime.executors, "agent", None)
         register_new_contracts(
             compiler=self.compiler,
             graph=candidate_graph,
             contracts_dir=self.contracts_dir,
+            executor_contracts=getattr(agent_executor, "contracts", None),
         )
         compiled = self.compiler.compile(candidate_graph)
         try:

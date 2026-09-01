@@ -39,6 +39,9 @@ class _Usage:
 class _Candidate:
     harness_score: float | None
     furthest_stage: str = ""
+    candidate_id: str | None = None
+    status: str = ""
+    behaviour_score: float | None = None
 
 
 @dataclass
@@ -174,6 +177,8 @@ def test_tuning_is_off_unless_a_config_asks_for_it() -> None:
     # Design search changes what a candidate is, so it must never arrive by
     # default in a run whose purpose is to measure something else.
     assert tuning.design_search is False
+    assert tuning.playbook_search is False
+    assert tuning.diagnosis.mode == "deterministic"
 
 
 def test_the_shipped_codeprojecteval_config_keeps_tuning_off() -> None:
@@ -215,8 +220,63 @@ def test_a_config_can_widen_the_search_and_set_its_tolerances() -> None:
     assert tuning.pareto.epsilon["quality"] > 0.0
 
 
+def test_playbook_search_and_design_search_cannot_share_a_config() -> None:
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        read_tuning_config(
+            {
+                "experiment": {
+                    "tuning": {"design_search": True, "playbook_search": True}
+                }
+            }
+        )
+
+
+def test_the_playbook_experiment_config_arms_the_new_generator() -> None:
+    import yaml
+
+    config = yaml.safe_load(
+        open("configs/experiments/codeprojecteval_official_playbook.yaml", encoding="utf-8")
+    )
+    tuning = read_tuning_config(config)
+    assert tuning.playbook_search is True
+    assert tuning.design_search is False
+    assert tuning.candidates == 3
+    assert tuning.diagnosis.mode == "llm"
+
+
 def test_an_unknown_selection_rule_is_refused_before_the_run_starts() -> None:
     with pytest.raises(ValueError, match="unknown fast-loop selection rule"):
         read_tuning_config(
             {"experiment": {"tuning": {"pareto": {"rule": "vibes"}}}}
         )
+
+
+def test_a_discarded_candidate_does_not_lend_its_scores_to_the_winner() -> None:
+    """The row describes what was committed, not the best number on the list.
+
+    A candidate can top both axes and still be discarded — failing the
+    milestone's contracts scores its quality at zero however good its behaviour
+    was. Reporting that candidate's numbers beside the *selected* candidate's id
+    overstates the milestone, and does so in the direction of a design the
+    selector deliberately refused.
+    """
+    winner = _Candidate(0.9625, "spec_tests")
+    winner.candidate_id = "cand_feedback"
+    winner.status = "committed"
+    winner.behaviour_score = 0.90625
+    loser = _Candidate(0.963889, "spec_tests")
+    loser.candidate_id = "cand_pb_tf_q_improve_after_gate"
+    loser.status = "discarded"
+    loser.behaviour_score = 0.9375
+
+    state = _State(
+        subtasks={"m1": _Sub(_Status("committed"))},
+        fast_loop_states={
+            "m1": _FastLoop([winner, loser], selected_candidate_id="cand_feedback")
+        },
+    )
+    row = milestone_objectives(state)[0]
+
+    assert row.candidate_id == "cand_feedback"
+    assert row.harness_score == 0.9625
+    assert row.behaviour == 0.90625

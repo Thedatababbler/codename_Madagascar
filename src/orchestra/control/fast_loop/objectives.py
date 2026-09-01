@@ -169,15 +169,44 @@ def milestone_objectives(state: Any) -> list[MilestoneObjective]:
                 stage = str((attempt.metadata or {}).get("furthest_stage") or "")
                 stages = list((attempt.metadata or {}).get("harness_stages") or [])
                 behaviour = None
-        for candidate in getattr(fast_loop_state, "candidates", None) or []:
+        # Only the candidate that won may set these numbers. Taking the best
+        # score over the whole draft list -- as this did unconditionally --
+        # reports a design the selector threw out: a candidate can top both axes
+        # and still be discarded for failing the milestone's contracts, and its
+        # scores would then be published beside the *selected* candidate's id,
+        # overstating every searched milestone in the direction of a rejected
+        # design.
+        #
+        # A milestone that committed nothing has no winner, and there the best
+        # candidate's reach is the only thing separating it from a milestone
+        # that produced nothing at all, so the search over the list stands.
+        candidates = list(getattr(fast_loop_state, "candidates", None) or [])
+        selected_id = getattr(fast_loop_state, "selected_candidate_id", None)
+
+        def _won(candidate: Any) -> bool:
+            status = getattr(candidate, "status", "")
+            if str(getattr(status, "value", status)) == "committed":
+                return True
+            return bool(
+                selected_id
+                and getattr(candidate, "candidate_id", None) == selected_id
+            )
+
+        winners = [c for c in candidates if _won(c)]
+        for candidate in winners or candidates:
             score = getattr(candidate, "harness_score", None)
-            if score is not None and (harness_score is None or score > harness_score):
-                harness_score = score
-                stage = getattr(candidate, "furthest_stage", "") or ""
-                # A candidate carries no stage breakdown, so behaviour has to come
-                # across explicitly or the record would report the *attempt's*
-                # behaviour next to the *candidate's* blended score.
-                behaviour = getattr(candidate, "behaviour_score", None)
+            if score is None:
+                continue
+            if not winners and harness_score is not None and score <= harness_score:
+                continue
+            harness_score = score
+            stage = getattr(candidate, "furthest_stage", "") or ""
+            # A candidate carries no stage breakdown, so behaviour has to come
+            # across explicitly or the record would report the *attempt's*
+            # behaviour next to the *candidate's* blended score.
+            behaviour = getattr(candidate, "behaviour_score", None)
+            if winners:
+                break
         rows.append(
             MilestoneObjective(
                 milestone_id=subtask_id,

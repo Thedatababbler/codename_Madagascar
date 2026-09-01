@@ -7,6 +7,24 @@ when_to_use: >
   must happen in a fixed order, such as substrate before behaviour, or
   behaviour before public wiring.
 slots:
+  # The authored suite is the behavioural measurement instrument: without it
+  # the quality axis reads the dataset's visible checks, which recorded runs
+  # pass whole, and behaviour is a constant 1.0 (EXP-20260810-05). Every
+  # planner-selectable template therefore opens with this slot. Custody wiring
+  # keys on the role, so the suite is moved out of the workspace before any
+  # writer starts (subgraph_builder), exactly as in `test_first`.
+  - id: test_author
+    default_role: test_author
+    # Optional on purpose, in both directions. At plan time the planner prompt
+    # says to always assign it, and required would not enforce that anyway --
+    # the parser never synthesises agents. At search time a recompile MUST
+    # skip it when the parent had none: _fill_slots fills required slots with
+    # their default, and a test_author synthesised mid-search would author a
+    # fresh suite and take custody of it, silently swapping the yardstick the
+    # incumbent was graded against.
+    required: false
+    allowed_roles:
+      - test_author
   - id: first
     default_role: contract_author
     allowed_roles:
@@ -31,6 +49,8 @@ slots:
       - dependency_resolver
       - scope_pruner
 edges:
+  - from: test_author
+    to: first
   - from: first
     to: second
   - from: second

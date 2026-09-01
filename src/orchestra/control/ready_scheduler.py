@@ -28,6 +28,7 @@ from orchestra.control.canonical_workspace import (
 )
 from orchestra.control.failure import classify_subtask_outcome
 from orchestra.control.fast_loop.controller import FastLoopController
+from orchestra.control.fast_loop.llm_diagnosis import DiagnosisConfig
 from orchestra.control.fast_loop.pareto import ParetoSelectionConfig
 from orchestra.control.fast_loop.quality_trigger import (
     QualityTrigger,
@@ -244,6 +245,10 @@ class ReadySubtaskScheduler:
         pareto: ParetoSelectionConfig | None = None,
         design_search: bool = False,
         playbook_search: bool = False,
+        anchor_search: bool = False,
+        persistence_search: bool = False,
+        persistence_probe_samples: int = 2,
+        diagnosis_config: DiagnosisConfig | None = None,
         quality_trigger: QualityTrigger | None = None,
         allow_concurrent_subtasks: bool = False,
         slow_loop: SlowLoopController | None = None,
@@ -274,6 +279,10 @@ class ReadySubtaskScheduler:
             pareto=pareto,
             design_search=design_search,
             playbook_search=playbook_search,
+            anchor_search=anchor_search,
+            persistence_search=persistence_search,
+            persistence_probe_samples=persistence_probe_samples,
+            diagnosis_config=diagnosis_config,
             workspace_manager=self._candidate_ws,
             persist_checkpoints=False,
         )

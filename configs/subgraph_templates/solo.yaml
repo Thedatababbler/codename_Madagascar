@@ -1,5 +1,11 @@
 template_id: solo
 title: Single agent
+# Withdrawn from the planner catalogue on 2026-08-31: a solo milestone has no
+# test_author slot, so its behaviour axis reads the dataset's visible checks
+# and saturates at 1.0, leaving the quality search blind (EXP-20260810-05).
+# The file stays because 31 frozen milestones compile from it and the
+# pb_solo_* playbooks recompile out of it; deleting it would break replays.
+planner_selectable: false
 when_to_use: >
   One agent does the whole milestone. The right answer whenever the work fits in
   a single agent's budget and no second pass would see anything the first one

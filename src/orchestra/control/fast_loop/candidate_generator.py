@@ -41,6 +41,7 @@ class LocalCandidateGenerator(Protocol):
         diagnosis: FailureDiagnosis,
         budget: FastLoopBudget,
         capabilities: Mapping[str, BackendCapabilities],
+        search_reason: str = "failure",
     ) -> list[LocalCandidate]: ...
 
 
@@ -112,8 +113,10 @@ class RuleBasedLocalCandidateGenerator:
         diagnosis: FailureDiagnosis,
         budget: FastLoopBudget,
         capabilities: Mapping[str, BackendCapabilities],
+        search_reason: str = "failure",
     ) -> list[LocalCandidate]:
         """Return accepted + capability-rejected candidates (all audited)."""
+        del search_reason
         if diagnosis.infrastructure_related or not diagnosis.retryable:
             return []
 
@@ -342,9 +345,11 @@ class DesignSearchCandidateGenerator:
         diagnosis: FailureDiagnosis,
         budget: FastLoopBudget,
         capabilities: Mapping[str, BackendCapabilities],
+        search_reason: str = "failure",
     ) -> list[LocalCandidate]:
         if diagnosis.infrastructure_related or not diagnosis.retryable:
             return []
+        del search_reason
         agent_id = _target_agent_id(graph, diagnosis)
         if agent_id is None:
             return []

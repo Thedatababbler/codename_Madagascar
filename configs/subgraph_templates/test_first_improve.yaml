@@ -1,0 +1,59 @@
+template_id: test_first_improve
+title: Author the tests, implement, then harden the behaviours that still fail
+# Reachable by a quality-search playbook recompiling a passing `test_first`
+# milestone, not by the planner. Offering it up front would change how tasks
+# are decomposed as well as how they are polished.
+planner_selectable: false
+when_to_use: >
+  `test_first` after the gate has already passed but the behavioural score is
+  still poor. The builder cannot see the suite, so it does not know which
+  named behaviours leaked through. An improver runs on every candidate of
+  this shape and is told only those names. The first-pass graph stays
+  `test_first`; only a quality-search candidate pays for this extra writer.
+  The early gate sits after the improver, not the builder: a probe there
+  freezes the improver's change on a pass, and on a failure hands the exact
+  report -- a dropped contract symbol, a broken import -- to a conditional
+  repairer. Without it this shape lost the safety net `test_first` has, and a
+  builder omission sailed uncaught into the final gate, scoring the whole
+  candidate zero (both official probes of 2026-08-31, same two symbols).
+slots:
+  - id: test_author
+    default_role: test_author
+    allowed_roles:
+      - test_author
+  - id: builder
+    default_role: implementer
+    allowed_roles:
+      - implementer
+      - contract_author
+      - integrator
+  - id: improver
+    default_role: edge_case_hardener
+    allowed_roles:
+      - edge_case_hardener
+      - gate_repairer
+      - implementer
+      - integrator
+  # Declared last so an instantiated repairer is the terminal agent; when the
+  # probe passes it is skipped and the freeze takes the improver's change, the
+  # same wiring `test_first` uses. Optional: a parent plan that never
+  # instantiated a repairer recompiles without one, and the builder then skips
+  # the probe entirely (no runs_if_gate_failed slot bound), degrading to the
+  # old single-gate shape rather than refusing.
+  - id: repairer
+    default_role: gate_repairer
+    required: false
+    runs_if_gate_failed: true
+    allowed_roles:
+      - gate_repairer
+      - implementer
+      - integrator
+      - dependency_resolver
+edges:
+  - from: test_author
+    to: builder
+  - from: builder
+    to: improver
+  - from: improver
+    to: repairer
+early_gate_after: improver

@@ -1,11 +1,17 @@
-"""Playbooks keyed on a failure class and the milestone's current shape.
+"""Playbooks keyed on why the search ran, then on class and shape.
+
+Failure search and quality search are different questions and have different
+tables. A failure playbook assumes the gate did not pass. A quality playbook
+assumes it did, and that the behavioural score was still poor. Mixing them
+sends a repairer that only runs behind a failing gate into a search whose
+premise is a passing gate.
 
 A playbook is a named recipe, not a compiled candidate. Edit-layer ones become
 ``LocalEdit``s once they know which node to attach to; plan-layer ones become a
 ``TemplateSwitch``. The table is the whole reachable design space: the generator
 picks from it, it does not invent.
 
-The feedback-only anchor is not in this catalogue. It is always index zero of
+The feedback-only anchor is not in either catalogue. It is always index zero of
 the draft list and does not count as a playbook — without it there is no way to
 say what a playbook bought.
 """
@@ -39,6 +45,13 @@ class FailureClass(StrEnum):
     DESIGN = "design"
 
 
+class SearchReason(StrEnum):
+    """Why the fast loop is running, which is not why the milestone failed."""
+
+    FAILURE = "failure"
+    QUALITY = "quality"
+
+
 class PlaybookBindError(ValueError):
     """Raised when a playbook cannot be bound to this graph."""
 
@@ -61,6 +74,11 @@ _MINIMUM_PASSING = (
     "or add features the gate did not name."
 )
 
+_QUALITY_GUARD = (
+    "Do not delete spec_tests, check_tests, or documented public symbols. "
+    "Do not reconstruct hidden tests. Improve the named behaviours only."
+)
+
 
 @dataclass(frozen=True)
 class Playbook:
@@ -79,6 +97,9 @@ class Playbook:
     steps_delta: int = 0
     timeout_delta: int = 0
     extra_prompt: str = ""
+    #: After a plan-layer recompile, attach the failure list to these slots of
+    #: the *new* graph. Empty means ``target`` when that is set.
+    feedback_slots: tuple[str, ...] = ()
     switch_template: str = ""
     switch_slots: tuple[tuple[str, str], ...] = ()
     #: Copy a parent slot's role onto a differently named slot of the target
@@ -87,6 +108,19 @@ class Playbook:
     carry: tuple[tuple[str, str], ...] = ()
     stage_slot: str = ""
     swap_reviewer: bool = False
+    #: Slots of the target template whose role comes from the diagnosis rather
+    #: than from this row: ``recommended_role`` (an editing role) fills
+    #: ``role_from_diagnosis``, ``recommended_reviewer`` fills
+    #: ``reviewer_from_diagnosis``. Empty recommendation keeps the row's own
+    #: default, and a role the target slot does not accept is ignored rather
+    #: than sent to the recompile, which would reject the whole candidate.
+    role_from_diagnosis: str = ""
+    reviewer_from_diagnosis: str = ""
+    #: Which search this row belongs to. Default is failure: existing rows were
+    #: written for a gate that did not pass. Quality rows must opt in.
+    search_reasons: frozenset[SearchReason] = field(
+        default_factory=lambda: frozenset({SearchReason.FAILURE})
+    )
 
     @property
     def layer(self) -> str:
@@ -104,6 +138,7 @@ class PlaybookContext:
     anchor_node_id: str
     behaviour_failures: list[str]
     pool: RolePool
+    search_reason: SearchReason = SearchReason.FAILURE
     nodes_by_slot: dict[str, str] = field(default_factory=dict)
     roles_by_slot: dict[str, str] = field(default_factory=dict)
 
@@ -137,19 +172,53 @@ def infer_failure_class(diagnosis: FailureDiagnosis) -> FailureClass:
     return FailureClass.FUNCTIONAL
 
 
+def catalog_for(
+    search_reason: SearchReason,
+    catalog: tuple[Playbook, ...] | None = None,
+) -> tuple[Playbook, ...]:
+    """The table for this search, or an explicit override.
+
+    Quality and failure do not share a default table. An override is for tests
+    that want a stub catalogue, and is still filtered by ``search_reasons``.
+    """
+    if catalog is not None:
+        return catalog
+    if search_reason is SearchReason.QUALITY:
+        return QUALITY_CATALOG
+    return CATALOG
+
+
 def playbooks_for(
     template_id: str,
-    failure_class: FailureClass,
+    failure_class: FailureClass | None = None,
     *,
+    search_reason: SearchReason = SearchReason.FAILURE,
     catalog: tuple[Playbook, ...] | None = None,
 ) -> list[Playbook]:
-    """The ordered playbooks for this shape and class.
+    """The ordered playbooks for this search, shape, and (on failure) class.
 
-    A template with its own rows hides the generic fallbacks, so a ``test_first``
-    functional failure gets the repairer-targeted list rather than the same
-    idea aimed at whichever agent happened to fail.
+    Quality search ignores ``failure_class``: the class is a failure diagnosis,
+    and a passing milestone has none. A template with its own rows hides the
+    generic fallbacks, so a ``test_first`` functional failure gets the
+    repairer-targeted list rather than the same idea aimed at whichever agent
+    happened to fail.
     """
-    rows = catalog if catalog is not None else CATALOG
+    rows = [
+        playbook
+        for playbook in catalog_for(search_reason, catalog)
+        if search_reason in playbook.search_reasons
+    ]
+    if search_reason is SearchReason.QUALITY:
+        specific = [
+            playbook
+            for playbook in rows
+            if playbook.templates and template_id in playbook.templates
+        ]
+        if specific:
+            return specific
+        return [playbook for playbook in rows if not playbook.templates]
+    if failure_class is None:
+        raise TypeError("failure_class is required when search_reason is failure")
     specific = [
         playbook
         for playbook in rows
@@ -172,6 +241,7 @@ def context_for(
     diagnosis: FailureDiagnosis,
     anchor_node_id: str,
     pool: RolePool | None = None,
+    search_reason: SearchReason = SearchReason.FAILURE,
 ) -> PlaybookContext:
     role_pool = pool or default_role_pool()
     template_id = template_id_of(graph)
@@ -184,6 +254,7 @@ def context_for(
         anchor_node_id=anchor_node_id,
         behaviour_failures=list(diagnosis.behaviour_failures),
         pool=role_pool,
+        search_reason=search_reason,
         nodes_by_slot=nodes,
         roles_by_slot=roles,
     )
@@ -228,9 +299,15 @@ def bind_edits(playbook: Playbook, ctx: PlaybookContext) -> list[LocalEdit]:
     if playbook.include_failure_list:
         if not ctx.behaviour_failures:
             raise PlaybookBindError(f"{playbook.playbook_id} has no named failures")
+        formatter = (
+            _format_quality_failures
+            if ctx.search_reason is SearchReason.QUALITY
+            else _format_failures
+        )
         edits.append(
             PromptFeedbackEdit(
-                node_id=node_id, feedback=_format_failures(ctx.behaviour_failures)
+                node_id=node_id,
+                feedback=formatter(ctx.behaviour_failures, ctx.diagnosis),
             )
         )
     if playbook.steps_delta or playbook.timeout_delta:
@@ -263,12 +340,72 @@ def bind_switch(playbook: Playbook, ctx: PlaybookContext) -> TemplateSwitch:
         if nxt is None:
             raise PlaybookBindError(f"{playbook.playbook_id} has no reviewer to swap")
         slots["reviewer"] = nxt
+    for slot_id, role in (
+        (playbook.role_from_diagnosis, ctx.diagnosis.recommended_role),
+        (playbook.reviewer_from_diagnosis, ctx.diagnosis.recommended_reviewer),
+    ):
+        if slot_id and role and _target_accepts(playbook.switch_template, slot_id, role, ctx.pool):
+            slots[slot_id] = role
     return TemplateSwitch(
         template_id=playbook.switch_template,
         slots=slots,
         playbook_id=playbook.playbook_id,
         reason=playbook.reason,
     )
+
+
+def bind_recompile_feedback(playbook: Playbook, ctx: PlaybookContext) -> list[LocalEdit]:
+    """Prompt notes for a plan-layer candidate, bound to the *new* graph.
+
+    Recompile produces a different roster. Names and guards have to land on the
+    slot that will actually run — an improver the parent never had — not on the
+    parent builder the switch left behind.
+    """
+    slots = playbook.feedback_slots or ((playbook.target,) if playbook.target else ())
+    if not slots:
+        return []
+    if not playbook.include_failure_list and not playbook.extra_prompt:
+        return []
+    edits: list[LocalEdit] = []
+    formatter = (
+        _format_quality_failures
+        if ctx.search_reason is SearchReason.QUALITY
+        else _format_failures
+    )
+    for slot in slots:
+        node_id = ctx.node_for(slot)
+        if node_id is None:
+            raise PlaybookBindError(
+                f"{playbook.playbook_id} has no node for slot {slot!r} on the "
+                "recompiled graph"
+            )
+        if playbook.include_failure_list:
+            if not ctx.behaviour_failures:
+                raise PlaybookBindError(f"{playbook.playbook_id} has no named failures")
+            edits.append(
+                PromptFeedbackEdit(
+                    node_id=node_id,
+                    feedback=formatter(ctx.behaviour_failures, ctx.diagnosis),
+                )
+            )
+        if playbook.extra_prompt:
+            edits.append(PromptFeedbackEdit(node_id=node_id, feedback=playbook.extra_prompt))
+    return edits
+
+
+def _target_accepts(template_id: str, slot_id: str, role: str, pool: RolePool) -> bool:
+    """Whether the target template's slot may hold ``role``; unknown means no."""
+    if pool.get(role) is None:
+        return False
+    from orchestra.roles.templates import default_templates
+
+    template = default_templates().get(template_id)
+    if template is None:
+        return False
+    try:
+        return template.slot(slot_id).accepts(role)
+    except Exception:  # noqa: BLE001 -- an unknown slot is simply not filled
+        return False
 
 
 def role_for_stage(stage: str) -> str:
@@ -284,13 +421,62 @@ def _next_reviewer(current: str | None) -> str | None:
     return None
 
 
-def _format_failures(names: list[str]) -> str:
-    listed = "\n".join(f"- {name}" for name in names)
+def _short_test_name(name: str) -> str:
+    text = str(name).strip()
+    if "::" in text:
+        left, right = text.rsplit("::", 1)
+        return f"{left.rsplit('.', 1)[-1]}::{right}"
+    if "/" in text:
+        return text.rsplit("/", 1)[-1]
+    return text.rsplit(".", 1)[-1]
+
+
+def _format_failures(
+    names: list[str], diagnosis: FailureDiagnosis | None = None
+) -> str:
+    listed = "\n".join(f"- {_short_test_name(name)}" for name in names)
     return (
         "The acceptance gate failed these tests (names only; the suite is not "
         "in this repository):\n"
         f"{listed}\n"
         "Act on the behaviours these names state. Do not reconstruct the tests."
+    )
+
+
+def _format_quality_failures(
+    names: list[str], diagnosis: FailureDiagnosis | None = None
+) -> str:
+    listed = "\n".join(f"- {_short_test_name(name)}" for name in names)
+    named = len(names)
+    total = diagnosis.behaviour_total if diagnosis is not None else None
+    passed = diagnosis.behaviour_passed if diagnosis is not None else None
+    count = ""
+    samples = diagnosis.persistence_samples if diagnosis is not None else 0
+    if total is not None and passed is not None:
+        failed = max(0, total - passed)
+        count = f" The suite ran {total} tests and {passed} passed."
+        if samples > 1:
+            count += (
+                f" These {named} behaviours failed in every one of {samples} "
+                "independent attempts at this milestone; behaviours that passed "
+                "in at least one attempt are not listed. They are systematic, "
+                "not flaky -- re-running will not fix them, a change will."
+            )
+        elif named and named < failed:
+            count += (
+                f" The gate named {named} of the {failed} failures; "
+                "treat the list as incomplete."
+            )
+        elif named:
+            count += f" Named failures ({named}):"
+    return (
+        "The acceptance gate passed, but these behaviours still fail (names "
+        "only; the suite is not in this repository)."
+        f"{count}\n"
+        f"{listed}\n"
+        "Fix these behaviours without regressing what already passes. Do not "
+        "reconstruct the tests. Do not delete spec_tests, check_tests, or "
+        "documented public symbols."
     )
 
 
@@ -362,6 +548,14 @@ CATALOG: tuple[Playbook, ...] = (
         templates=frozenset({"test_first"}),
         switch_template="test_first_diagnosed",
         switch_slots=(("critic", "behaviour_critic"),),
+    ),
+    Playbook(
+        playbook_id="pb_tf_second_repairer",
+        reason="two repair rounds behind the same failing gate",
+        classes=_FUNCTIONAL,
+        templates=frozenset({"test_first"}),
+        switch_template="test_first_double_repair",
+        switch_slots=(("second_repairer", "gate_repairer"),),
     ),
     Playbook(
         playbook_id="pb_tf_builder_budget",
@@ -503,15 +697,121 @@ CATALOG: tuple[Playbook, ...] = (
     ),
 )
 
+_QUALITY = frozenset({SearchReason.QUALITY})
+_NO_CLASS = frozenset()
+
+QUALITY_CATALOG: tuple[Playbook, ...] = (
+    # Cheap first: the gate already passed, so the next dollar has to change
+    # what a writer sees or who writes. A repairer behind a failing gate is
+    # the wrong person; an improver who never hears the names is a no-op.
+    #
+    # `pb_tf_q_failures_to_builder` used to sit here and was removed after
+    # losing to the anchor three times out of three (-9.4pp, -31pp, and once
+    # scoring identically to the incumbent). It differed from the anchor by
+    # exactly one thing -- the named tests in the builder's prompt -- so those
+    # are controlled measurements of that addition, and it does not pay. The
+    # reason it cannot: `test_first` blinds the builder to the suite on
+    # purpose, and the edit re-runs it FRESH, so the names do not repair the
+    # named behaviours, they re-roll the whole substrate while biasing it
+    # toward a handful of names out of a much larger graded set.
+    Playbook(
+        playbook_id="pb_tf_q_improve_after_gate",
+        reason="recompile so an improver runs after the passing builder, told the named leaks",
+        classes=_NO_CLASS,
+        templates=frozenset({"test_first"}),
+        target="improver",
+        include_failure_list=True,
+        extra_prompt=_QUALITY_GUARD,
+        switch_template="test_first_improve",
+        # The hardener is only the default. A diagnosis that names the specialist
+        # the persistent failures call for overrides it (2026-08-31: semantic
+        # misreads were handed to a corner-case hardener twice, by this constant).
+        switch_slots=(("improver", "edge_case_hardener"),),
+        role_from_diagnosis="improver",
+        search_reasons=_QUALITY,
+    ),
+    Playbook(
+        playbook_id="pb_tf_q_diagnose_then_improve",
+        reason="a critic reads the named leaks, then an improver acts",
+        classes=_NO_CLASS,
+        templates=frozenset({"test_first"}),
+        include_failure_list=True,
+        extra_prompt=_QUALITY_GUARD,
+        feedback_slots=("critic", "improver"),
+        switch_template="test_first_quality_diagnosed",
+        switch_slots=(
+            ("critic", "behaviour_critic"),
+            ("improver", "edge_case_hardener"),
+        ),
+        role_from_diagnosis="improver",
+        reviewer_from_diagnosis="critic",
+        search_reasons=_QUALITY,
+    ),
+    # Already on an improve shape: do not switch to the same shape again.
+    Playbook(
+        playbook_id="pb_tf_q_failures_to_improver",
+        reason="put the named weak behaviours into the improver's prompt",
+        classes=_NO_CLASS,
+        templates=frozenset({"test_first_improve", "test_first_quality_diagnosed"}),
+        target="improver",
+        include_failure_list=True,
+        extra_prompt=_QUALITY_GUARD,
+        search_reasons=_QUALITY,
+    ),
+    Playbook(
+        playbook_id="pb_tf_q_improver_budget",
+        reason="more steps and wall-clock on the improver",
+        classes=_NO_CLASS,
+        templates=frozenset({"test_first_improve", "test_first_quality_diagnosed"}),
+        target="improver",
+        steps_delta=2,
+        timeout_delta=30,
+        search_reasons=_QUALITY,
+    ),
+    Playbook(
+        playbook_id="pb_tf_q_diagnose_from_improve",
+        reason="split the improve pass: a critic reads the names, then the improver acts",
+        classes=_NO_CLASS,
+        templates=frozenset({"test_first_improve"}),
+        include_failure_list=True,
+        extra_prompt=_QUALITY_GUARD,
+        feedback_slots=("critic", "improver"),
+        switch_template="test_first_quality_diagnosed",
+        switch_slots=(("critic", "behaviour_critic"),),
+        search_reasons=_QUALITY,
+    ),
+    # Hidden by any template-specific row.
+    Playbook(
+        playbook_id="pb_q_failures_to_agent",
+        reason="put the named weak behaviours into the anchored agent's prompt",
+        classes=_NO_CLASS,
+        include_failure_list=True,
+        extra_prompt=_QUALITY_GUARD,
+        search_reasons=_QUALITY,
+    ),
+    Playbook(
+        playbook_id="pb_q_anchor_budget",
+        reason="more steps and wall-clock on the anchored agent",
+        classes=_NO_CLASS,
+        steps_delta=2,
+        timeout_delta=30,
+        search_reasons=_QUALITY,
+    ),
+)
+
 
 __all__ = [
     "CATALOG",
+    "QUALITY_CATALOG",
     "FailureClass",
     "Playbook",
     "PlaybookBindError",
     "PlaybookContext",
+    "SearchReason",
     "bind_edits",
+    "bind_recompile_feedback",
     "bind_switch",
+    "catalog_for",
     "context_for",
     "infer_failure_class",
     "playbook_applies",

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from orchestra.control.fast_loop.playbooks import (
+    CATALOG,
+    QUALITY_CATALOG,
     FailureClass,
+    SearchReason,
     infer_failure_class,
     playbooks_for,
 )
@@ -19,6 +22,7 @@ def test_test_first_functional_opens_with_the_repairer_then_the_critic() -> None
     assert _ids("test_first", FailureClass.FUNCTIONAL) == [
         "pb_tf_failures_to_repairer",
         "pb_tf_diagnose_before_repair",
+        "pb_tf_second_repairer",
     ]
 
 
@@ -68,6 +72,61 @@ def test_timeout_and_an_early_stage_infer_as_budget() -> None:
     )
     assert infer_failure_class(timeout) is FailureClass.BUDGET
     assert infer_failure_class(early) is FailureClass.BUDGET
+
+
+def test_quality_search_has_its_own_test_first_table() -> None:
+    assert [
+        p.playbook_id
+        for p in playbooks_for("test_first", search_reason=SearchReason.QUALITY)
+    ] == [
+        "pb_tf_q_improve_after_gate",
+        "pb_tf_q_diagnose_then_improve",
+    ]
+
+
+def test_quality_search_on_an_improve_shape_targets_the_improver() -> None:
+    assert [
+        p.playbook_id
+        for p in playbooks_for("test_first_improve", search_reason=SearchReason.QUALITY)
+    ] == [
+        "pb_tf_q_failures_to_improver",
+        "pb_tf_q_improver_budget",
+        "pb_tf_q_diagnose_from_improve",
+    ]
+    assert [
+        p.playbook_id
+        for p in playbooks_for(
+            "test_first_quality_diagnosed", search_reason=SearchReason.QUALITY
+        )
+    ] == [
+        "pb_tf_q_failures_to_improver",
+        "pb_tf_q_improver_budget",
+    ]
+
+
+def test_quality_search_does_not_offer_failure_playbooks() -> None:
+    quality_ids = {
+        p.playbook_id
+        for p in playbooks_for("test_first", search_reason=SearchReason.QUALITY)
+    }
+    failure_ids = set(_ids("test_first", FailureClass.FUNCTIONAL))
+    assert quality_ids.isdisjoint(failure_ids)
+    assert "pb_tf_failures_to_repairer" not in quality_ids
+
+
+def test_failure_search_does_not_offer_quality_playbooks() -> None:
+    failure_ids = set(_ids("test_first", FailureClass.FUNCTIONAL))
+    assert "pb_tf_q_failures_to_builder" not in failure_ids
+    assert {p.playbook_id for p in CATALOG}.isdisjoint(
+        {p.playbook_id for p in QUALITY_CATALOG}
+    )
+
+
+def test_quality_search_on_an_unknown_template_uses_the_generic_row() -> None:
+    assert [
+        p.playbook_id
+        for p in playbooks_for("no_such_shape", search_reason=SearchReason.QUALITY)
+    ] == ["pb_q_failures_to_agent", "pb_q_anchor_budget"]
 
 
 def test_a_named_class_wins_over_inference() -> None:

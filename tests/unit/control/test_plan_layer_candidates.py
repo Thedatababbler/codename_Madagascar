@@ -412,8 +412,14 @@ def test_the_variant_is_not_offered_to_the_planner() -> None:
     """
     templates = load_templates("configs/subgraph_templates", pool=_pool())
     assert "test_first_diagnosed" in templates
+    assert "test_first_double_repair" in templates
+    assert "test_first_improve" in templates
+    assert "test_first_quality_diagnosed" in templates
     catalogue = "\n".join(catalog_lines(templates))
     assert "test_first_diagnosed" not in catalogue
+    assert "test_first_double_repair" not in catalogue
+    assert "test_first_improve" not in catalogue
+    assert "test_first_quality_diagnosed" not in catalogue
     assert "test_first" in catalogue
 
 
@@ -521,6 +527,35 @@ def test_the_candidate_compiles_once_its_new_contracts_are_registered() -> None:
     )
 
 
+def test_register_new_contracts_updates_the_executor_registry_too() -> None:
+    """A candidate that compiles still dies if the executor has the old map."""
+    base = _solo()
+    contracts_dir = str(Path(base.metadata["generated_root"]) / "contracts")
+    compiler = build_compiler(contracts_dir)
+    candidate = recompile_candidate(
+        base_graph=base,
+        switch=TemplateSwitch(
+            template_id="gate_then_repair", slots={"repairer": "gate_repairer"}
+        ),
+        candidate_id="cand_executor",
+    )
+    executor_contracts = dict(compiler.contracts)
+    named = {
+        node.contract_id
+        for node in candidate.graph.nodes
+        if node.node_kind is NodeKind.AGENT and node.contract_id
+    }
+    assert not named <= set(executor_contracts)
+    assert register_new_contracts(
+        compiler=compiler,
+        graph=candidate.graph,
+        contracts_dir=contracts_dir,
+        executor_contracts=executor_contracts,
+    )
+    assert named <= set(executor_contracts)
+    assert named <= set(compiler.contracts)
+
+
 def test_a_graph_compiled_by_another_route_says_it_cannot_be_recompiled() -> None:
     base = _solo()
     stripped = base.model_copy(
@@ -538,3 +573,57 @@ def test_a_graph_compiled_by_another_route_says_it_cannot_be_recompiled() -> Non
             ),
             candidate_id="cand_no_draft",
         )
+
+
+def test_candidate_checkpoints_are_scoped_to_their_milestone() -> None:
+    """Two milestones draft the same candidate ids, so the key needs the subtask.
+
+    Without it the second searching milestone finds the first one's checkpoint
+    under its own name, the store calls that config drift, and every candidate
+    dies in milliseconds — the milestone then commits its incumbent because the
+    search it paid for produced nothing to compare against.
+    """
+    from orchestra.control.fast_loop.controller import candidate_task_id
+
+    first = candidate_task_id("rb_imapclient", "freeze_shared_api", "cand_feedback")
+    second = candidate_task_id("rb_imapclient", "implement_behaviour", "cand_feedback")
+
+    assert first != second
+    assert "freeze_shared_api" in first and "implement_behaviour" in second
+
+
+def test_every_planner_selectable_template_carries_the_suite_author_slot() -> None:
+    """The authored suite is the behavioural measurement, so no shape the
+    planner may choose can lack the slot that authors it -- a milestone without
+    one saturates behaviour at 1.0 and the quality search goes blind
+    (EXP-20260810-05). `solo` is withdrawn from the catalogue for exactly that
+    reason, and stays compilable only for frozen-plan replays.
+    """
+    templates = default_templates()
+    for template in templates.values():
+        if not template.planner_selectable:
+            continue
+        assert any(s.slot_id == "test_author" for s in template.slots), (
+            template.template_id
+        )
+    assert not templates["solo"].planner_selectable
+    lines = "\n".join(catalog_lines(templates))
+    assert "`solo`" not in lines
+
+
+def test_recompiling_from_solo_does_not_author_a_new_suite() -> None:
+    """The yardstick is fixed when the milestone freezes; a search must not
+    re-author it. The target template's test_author slot is optional precisely
+    so that _fill_slots skips it when the parent had none -- a synthesised
+    suite author would take custody of a fresh suite and grade this candidate
+    against different tests than its incumbent.
+    """
+    candidate = recompile_candidate(
+        base_graph=_solo(),
+        switch=TemplateSwitch(
+            template_id="gate_then_repair", slots={"repairer": "gate_repairer"}
+        ),
+        candidate_id="cand_no_new_suite",
+    )
+    assert "test_author" not in candidate.plan_recompile.slots
+    assert _roles(candidate.graph) == ["implementer", "gate_repairer"]

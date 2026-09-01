@@ -164,6 +164,29 @@ class FailureDiagnosis(BaseModel):
     #: never put in a prompt until a playbook does it; carried here so that
     #: playbook can bind without reaching back into harness artifacts.
     behaviour_failures: list[str] = Field(default_factory=list)
+    #: How many behavioural tests the gate ran, and how many passed. The named
+    #: list is often a subset of the failures; a playbook needs the totals to
+    #: say so instead of implying the list is complete.
+    behaviour_total: int | None = None
+    behaviour_passed: int | None = None
+    #: ``lookup`` until an LLM classification is applied. A failed or refused
+    #: classification leaves this as ``lookup`` so a run is never ambiguous
+    #: about which diagnoser produced the class the playbooks keyed on.
+    diagnosis_source: str = "lookup"
+    diagnosis_confidence: float = 0.0
+    diagnosis_rationale: str = ""
+    #: Which pool role should fill the slot a playbook marks ``role_from_diagnosis``.
+    #: Always a role id from the fixed pool -- an editing role for
+    #: ``recommended_role``, a read-only one for ``recommended_reviewer`` -- so the
+    #: reachable space stays enumerable. Empty means the playbook's own default.
+    recommended_role: str = ""
+    recommended_reviewer: str = ""
+    #: ``rule:<why>`` / ``llm`` / ``default``. A run must never be ambiguous
+    #: about who chose the specialist.
+    role_source: str = ""
+    #: >1 when ``behaviour_failures`` is the intersection over that many samples
+    #: of one design, i.e. the persistent set rather than one attempt's list.
+    persistence_samples: int = 0
 
 
 class CostRecord(BaseModel):
@@ -397,6 +420,8 @@ class FastLoopState(BaseModel):
     selected_execution_cost: CostRecord = Field(default_factory=CostRecord)
     infra_retries_used: int = 0
     started_monotonic: float | None = None
+    # Persistence search only: the probe samples and their failure intersection.
+    persistence: dict[str, Any] | None = None
 
     @model_validator(mode="before")
     @classmethod

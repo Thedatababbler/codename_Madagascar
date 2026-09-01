@@ -1,0 +1,64 @@
+template_id: test_first_quality_diagnosed
+title: Author the tests, implement, then diagnose the leaks and harden them
+# Reachable by a quality-search playbook recompiling a passing `test_first`
+# milestone, not by the planner. The critic and improver always run: the
+# premise is a gate that already passed. The repairer is different -- its gate
+# is the mid-graph probe on the improver's change, which can fail even though
+# the milestone's first pass did not, and that is the one conditional slot.
+planner_selectable: false
+when_to_use: >
+  `test_first` after the gate has already passed but the behavioural score is
+  still poor, and naming the leaks for the builder was not enough. The builder
+  cannot see the suite, so it does not know which named behaviours leaked
+  through. A read-only critic reads those names and reports which behaviour
+  the implementer misread; an improver executes that finding. Both run on
+  every candidate of this shape. The first-pass graph stays `test_first`;
+  only a quality-search candidate pays for these extra agents.
+slots:
+  - id: test_author
+    default_role: test_author
+    allowed_roles:
+      - test_author
+  - id: builder
+    default_role: implementer
+    allowed_roles:
+      - implementer
+      - contract_author
+      - integrator
+  - id: critic
+    default_role: behaviour_critic
+    allowed_roles:
+      - behaviour_critic
+      - spec_auditor
+      - contract_critic
+  # The read-only critic must not be terminal, or the harness grades an empty
+  # diff; the improver and the optional repairer below both edit.
+  - id: improver
+    default_role: edge_case_hardener
+    allowed_roles:
+      - edge_case_hardener
+      - gate_repairer
+      - implementer
+      - integrator
+  # See test_first_improve: probe after the improver, repair on its failure,
+  # freeze the improver's change on a pass. Optional, so a parent plan without
+  # a repairer degrades to the single final gate instead of refusing.
+  - id: repairer
+    default_role: gate_repairer
+    required: false
+    runs_if_gate_failed: true
+    allowed_roles:
+      - gate_repairer
+      - implementer
+      - integrator
+      - dependency_resolver
+edges:
+  - from: test_author
+    to: builder
+  - from: builder
+    to: critic
+  - from: critic
+    to: improver
+  - from: improver
+    to: repairer
+early_gate_after: improver

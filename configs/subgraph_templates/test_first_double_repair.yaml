@@ -1,0 +1,51 @@
+template_id: test_first_double_repair
+title: Author the tests, implement, then repair twice behind the same gate
+# Reachable by a playbook recompiling a failed `test_first` milestone, not by the
+# planner. Two repair rounds only pay for themselves after the gate has failed,
+# and offering this shape up front would change how tasks are decomposed as well
+# as how they are repaired.
+planner_selectable: false
+when_to_use: >
+  `test_first` with two repairers behind the same failing gate. The first
+  repairer acts on the raw failure list; the second reads what that pass left
+  and tries again. Both sit behind the failing gate, so a milestone that
+  passes first time pays for neither. Use when one repair pass is not enough
+  to close the named failures.
+slots:
+  - id: test_author
+    default_role: test_author
+    allowed_roles:
+      - test_author
+  - id: builder
+    default_role: implementer
+    allowed_roles:
+      - implementer
+      - contract_author
+      - integrator
+  - id: repairer
+    default_role: gate_repairer
+    runs_if_gate_failed: true
+    allowed_roles:
+      - gate_repairer
+      - implementer
+      - integrator
+      - dependency_resolver
+  # Declared last so the compiler freezes this agent's change, not the first
+  # repairer's. Both edit, so either would be a legal terminal; the second
+  # one is the one that saw the first pass.
+  - id: second_repairer
+    default_role: gate_repairer
+    runs_if_gate_failed: true
+    allowed_roles:
+      - gate_repairer
+      - implementer
+      - integrator
+      - dependency_resolver
+edges:
+  - from: test_author
+    to: builder
+  - from: builder
+    to: repairer
+  - from: repairer
+    to: second_repairer
+early_gate_after: builder

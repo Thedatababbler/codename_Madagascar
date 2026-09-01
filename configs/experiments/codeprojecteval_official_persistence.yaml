@@ -1,0 +1,67 @@
+# Persistence-search arm. Same k as the playbook arm, split in two phases:
+# two resamples of the anchor design, then the failure lists of those and the
+# incumbent are intersected -- what fails every time is the defect, what flips
+# is luck (2026-08-31 anchor arm: 5 persistent, 2 flaky out of 7). The last
+# slot goes to the quality table diagnosed from that persistent set only, with
+# the improver's role chosen from it: deterministic rules first, the model for
+# what rules cannot name, a named default last. Each phase-two candidate
+# carries a ledger of which persistent failures it actually fixed, which is
+# what decides whether that recommendation keeps being trusted. Own results
+# directory: not comparable row-for-row with the other arms.
+experiment:
+  name: codeprojecteval_official_persistence
+  benchmark: codeprojecteval
+  agent_backend: codex_sdk
+  dataset_root: /root/codex-benchmarks/projectgen/datasets/CodeProjectEval/python-subset
+  contracts_dir: configs/contracts
+  output_root: outputs/cpe_official_persistence
+  harness_timeout_seconds: 900
+  seed: 20260814
+
+  tuning:
+    playbook_search: false
+    design_search: false
+    persistence_search: true
+    persistence_probe_samples: 2
+    fast_loop_candidates: 3
+    diagnosis:
+      mode: llm
+      min_confidence: 0.5
+      model: gpt-5.4
+    quality_trigger:
+      enabled: true
+      min_score: 0.9
+    pareto:
+      rule: quality_first
+      epsilon:
+        quality: 0.02
+        cost: 0.08
+        stability: 0.0
+      require_gate_pass: true
+    gate_weight: 1.0
+    harness_weight: 0.5
+    token_weight: 0.05
+    token_reference: 1000000
+    allow_cost_to_outrank_gate: false
+
+decomposition:
+  dynamic_planner: true
+  min_subtasks: 1
+  max_subtasks: 4
+  max_dependency_depth: 4
+  require_public_keystone_harness: true
+
+runtime:
+  max_parallel_nodes_per_task: 2
+
+pareto:
+  enabled: false
+
+slow_loop:
+  enabled: false
+
+fast_loop:
+  max_candidates: 0
+
+logging:
+  level: INFO

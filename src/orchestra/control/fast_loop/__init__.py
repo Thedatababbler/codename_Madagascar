@@ -3,8 +3,15 @@
 from orchestra.control.fast_loop.capability import validate_candidate_against_capabilities
 from orchestra.control.fast_loop.controller import FastLoopController
 from orchestra.control.fast_loop.diagnosis import diagnose_subtask_failure
+from orchestra.control.fast_loop.llm_diagnosis import DiagnosisConfig, refine_diagnosis
 from orchestra.control.fast_loop.playbook_generator import PlaybookCandidateGenerator
-from orchestra.control.fast_loop.playbooks import FailureClass, Playbook, playbooks_for
+from orchestra.control.fast_loop.playbooks import (
+    QUALITY_CATALOG,
+    FailureClass,
+    Playbook,
+    SearchReason,
+    playbooks_for,
+)
 from orchestra.control.fast_loop.schemas import (
     BackendModelPool,
     CandidateRecord,
@@ -27,6 +34,7 @@ __all__ = [
     "CandidateRejectionReason",
     "CandidateStatus",
     "DeterministicCandidateSelector",
+    "DiagnosisConfig",
     "FailureDiagnosis",
     "FastLoopBudget",
     "FastLoopController",
@@ -34,12 +42,15 @@ __all__ = [
     "FastLoopState",
     "LocalCandidate",
     "Playbook",
+    "QUALITY_CATALOG",
     "PlaybookCandidateGenerator",
+    "SearchReason",
     "LocalEdit",
     "PlanRecompile",
     "SessionPolicyEdit",
     "WorkspaceChangeSet",
     "diagnose_subtask_failure",
     "playbooks_for",
+    "refine_diagnosis",
     "validate_candidate_against_capabilities",
 ]

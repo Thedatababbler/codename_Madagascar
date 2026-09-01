@@ -161,6 +161,14 @@ def gate_feeding_agent(graph: OrchestraGraph) -> str | None:
     return agents[-1]
 
 
+def _passed_count(incumbent: CandidateRecord) -> int | None:
+    total = incumbent.behaviour_total
+    score = incumbent.behaviour_score
+    if total is None or score is None:
+        return None
+    return max(0, min(total, int(round(score * total))))
+
+
 def quality_search_diagnosis(
     incumbent: CandidateRecord, graph: OrchestraGraph | None = None
 ) -> FailureDiagnosis:
@@ -187,4 +195,6 @@ def quality_search_diagnosis(
         furthest_stage=incumbent.furthest_stage,
         focus_node_id=gate_feeding_agent(graph) if graph is not None else None,
         behaviour_failures=list(incumbent.behaviour_failures),
+        behaviour_total=incumbent.behaviour_total,
+        behaviour_passed=_passed_count(incumbent),
     )

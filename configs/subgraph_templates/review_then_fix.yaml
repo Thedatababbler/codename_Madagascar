@@ -7,6 +7,24 @@ when_to_use: >
   acceptance gate cannot see — a wrong shape, a moved symbol, a narrowed
   signature — rather than an outright failure.
 slots:
+  # The authored suite is the behavioural measurement instrument: without it
+  # the quality axis reads the dataset's visible checks, which recorded runs
+  # pass whole, and behaviour is a constant 1.0 (EXP-20260810-05). Every
+  # planner-selectable template therefore opens with this slot. Custody wiring
+  # keys on the role, so the suite is moved out of the workspace before any
+  # writer starts (subgraph_builder), exactly as in `test_first`.
+  - id: test_author
+    default_role: test_author
+    # Optional on purpose, in both directions. At plan time the planner prompt
+    # says to always assign it, and required would not enforce that anyway --
+    # the parser never synthesises agents. At search time a recompile MUST
+    # skip it when the parent had none: _fill_slots fills required slots with
+    # their default, and a test_author synthesised mid-search would author a
+    # fresh suite and take custody of it, silently swapping the yardstick the
+    # incumbent was graded against.
+    required: false
+    allowed_roles:
+      - test_author
   - id: author
     default_role: implementer
     allowed_roles:
@@ -26,6 +44,8 @@ slots:
       - implementer
       - integrator
 edges:
+  - from: test_author
+    to: author
   - from: author
     to: reviewer
   - from: reviewer

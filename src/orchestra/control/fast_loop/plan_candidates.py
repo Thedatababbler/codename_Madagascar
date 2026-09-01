@@ -29,7 +29,7 @@ from pathlib import Path
 
 from orchestra.control.fast_loop.schemas import LocalCandidate, PlanRecompile
 from orchestra.ir.compiler import GraphCompiler
-from orchestra.ir.contracts import load_contracts
+from orchestra.ir.contracts import AgentContract, load_contracts
 from orchestra.ir.graph import OrchestraGraph, load_graph
 from orchestra.ir.nodes import NodeKind
 from orchestra.realbench.milestone_planner import (
@@ -162,27 +162,36 @@ def register_new_contracts(
     compiler: GraphCompiler,
     graph: OrchestraGraph,
     contracts_dir: str | Path,
+    executor_contracts: dict[str, AgentContract] | None = None,
 ) -> bool:
-    """Load contracts ``graph`` names that ``compiler`` has not seen, if any.
+    """Load contracts ``graph`` names that the run's registries have not seen.
 
     A recompiled milestone writes one fresh contract per agent into the run's
     contracts directory — the same directory the compiler read once, when it was
     built. Without this the candidate fails to compile and is recorded as a
     rejection, which reads as an illegal design rather than a stale registry.
 
-    Updated in place rather than rebuilt so that every holder of the compiler,
-    the candidate generator included, sees the same registry. Returns whether
-    anything was loaded; nothing is read on the common path where a graph names
-    only contracts already known.
+    The executor keeps its own copy, loaded at CLI start. Updating only the
+    compiler lets the candidate compile and then die at runtime with a KeyError
+    on the new ``contract_id``. Both maps are updated in place so every holder
+    sees the same registry. Returns whether anything was loaded; nothing is
+    read on the common path where a graph names only contracts already known.
     """
     named = {
         node.contract_id
         for node in graph.nodes
         if node.node_kind is NodeKind.AGENT and getattr(node, "contract_id", "")
     }
-    if named <= set(compiler.contracts):
+    compiler_stale = not named <= set(compiler.contracts)
+    executor_stale = executor_contracts is not None and not named <= set(
+        executor_contracts
+    )
+    if not compiler_stale and not executor_stale:
         return False
-    compiler.contracts.update(load_contracts(str(contracts_dir)))
+    loaded = load_contracts(str(contracts_dir))
+    compiler.contracts.update(loaded)
+    if executor_contracts is not None:
+        executor_contracts.update(loaded)
     return True
 
 

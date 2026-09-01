@@ -26,6 +26,10 @@ import yaml
 
 from orchestra.backends.factory import resolve_backend_registry
 from orchestra.backends.health import healthcheck_used_backends
+from orchestra.cli.run_codeprojecteval_decomp import (
+    _fast_loop_budget,
+    read_tuning_config,
+)
 from orchestra.cli.run_m5_codex_demo import (
     _dump_decomposition,
     _dump_post_run,
@@ -33,10 +37,6 @@ from orchestra.cli.run_m5_codex_demo import (
     _write_trace_md,
 )
 from orchestra.cli.validate_graph import build_compiler
-from orchestra.cli.run_codeprojecteval_decomp import (
-    _fast_loop_budget,
-    read_tuning_config,
-)
 from orchestra.codeprojecteval.ab import load_draft
 from orchestra.control.fast_loop.selector import DeterministicCandidateSelector
 from orchestra.control.ready_scheduler import ReadySubtaskScheduler
@@ -649,6 +649,9 @@ async def _run_one(
             "run_dir": str(run_dir),
             "slow_loop_enabled": False,
             "fast_loop_max_candidates": tuning.candidates,
+            "playbook_search": tuning.playbook_search,
+            "design_search": tuning.design_search,
+            "diagnosis": tuning.diagnosis.to_dict(),
             "arm": arm,
             "graph_hashes": graph_hashes,
         }
@@ -756,11 +759,13 @@ async def _run_one(
         budget=fast_budget,
         selector=(
             None
-            if tuning.design_search
+            if tuning.design_search or tuning.playbook_search
             else DeterministicCandidateSelector(weights=tuning.weights)
         ),
         pareto=tuning.pareto,
         design_search=tuning.design_search,
+        playbook_search=tuning.playbook_search,
+        diagnosis_config=tuning.diagnosis,
         quality_trigger=tuning.quality_trigger,
         slow_loop=slow_loop,
         slow_loop_config=slow_loop_config,
@@ -836,6 +841,9 @@ async def _run_one(
         "pareto_enabled": False,
         "slow_loop_enabled": False,
         "fast_loop_max_candidates": tuning.candidates,
+        "playbook_search": tuning.playbook_search,
+        "design_search": tuning.design_search,
+        "diagnosis": tuning.diagnosis.to_dict(),
         "arm": arm,
         "plan_file": str(plan_file) if plan_file else None,
         "agent_backend": agent_backend,

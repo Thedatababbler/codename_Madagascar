@@ -81,20 +81,42 @@ def merge_to_single_milestone(
                 focus.append(path)
         agents.extend(milestone.agents)
 
+    # One authored suite per milestone: the chain leads with a test_author
+    # slot now, so keep the first suite author the merged milestones brought
+    # (its suite grades the merged milestone) and drop the rest -- each graded
+    # a milestone that no longer exists separately, and there is one slot.
+    suite_authors = [a for a in agents if a.role_id == "test_author"]
+    agents = suite_authors[:1] + [a for a in agents if a.role_id != "test_author"]
+
     # Role ids must stay unique inside one subgraph; two milestones may both
     # have named their agent `implementer`.
     seen: dict[str, int] = {}
     # Slot ids come from the template itself rather than being spelled out here,
     # so renaming a slot in chain.yaml cannot silently unbind these agents.
-    chain_slots = default_templates()[template_id].slots_for(len(agents))
+    # Each agent takes the first free slot that accepts its role, so a writer
+    # cannot land on the suite-author slot, where a reload would swap its role
+    # for the slot's default. A role no slot accepts falls back to the first
+    # free writer slot -- the pre-suite behaviour, where the reload downgrade
+    # is deliberate. The +1 keeps enough writer slots when no suite author
+    # came; the suite slot is recognised by what it accepts, not by its name.
+    available = list(default_templates()[template_id].slots_for(len(agents) + 1))
     unique_agents = []
-    for index, agent in enumerate(agents):
+    for agent in agents:
+        index = next(
+            (i for i, s in enumerate(available) if s.accepts(agent.role_id)),
+            None,
+        )
+        if index is None:
+            index = next(
+                i for i, s in enumerate(available) if not s.accepts("test_author")
+            )
+        slot = available.pop(index)
         count = seen.get(agent.role_id, 0) + 1
         seen[agent.role_id] = count
         unique_agents.append(
             replace(
                 agent,
-                slot_id=chain_slots[index].slot_id,
+                slot_id=slot.slot_id,
                 role_id=agent.role_id if count == 1 else f"{agent.role_id}_{count}",
             )
         )

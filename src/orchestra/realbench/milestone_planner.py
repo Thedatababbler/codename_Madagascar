@@ -347,7 +347,14 @@ def _parse_agents(
     """
     items = [item for item in (raw if isinstance(raw, list) else []) if isinstance(item, dict)]
     items = items[: max(max_agents, len(template.slots))]
-    slots = template.slots_for(len(items))
+    # Optional declared slots (the suite author above all) may go unfilled, so
+    # an extensible template needs that much headroom past len(items): without
+    # it the last overflow agent's extension slot id is never generated and the
+    # agent is silently dropped on reload -- unequal compute dressed as a
+    # round-trip. Surplus generated slots are harmless; binding filters by the
+    # slot ids the agents actually name.
+    headroom = sum(1 for slot in template.slots if not slot.required)
+    slots = template.slots_for(len(items) + headroom)
     # `slot` is what the planner is asked for; `slot_id` is what `to_dict` writes.
     # Accepting both makes a frozen draft round-trip to the same slot assignment
     # instead of silently falling back to declaration order, which a replay of a
@@ -688,10 +695,13 @@ first.
 # Subgraph template catalogue
 {template_catalogue}
 
-Prefer the cheapest template that addresses the milestone's actual risk.
-`solo` is the expected answer for a milestone with no internal risk seam; extra
+Prefer the cheapest template that addresses the milestone's actual risk; extra
 slots cost real budget and are only worth it when the added agent sees something
-the previous one could not.
+the previous one could not. Every template opens with a `test_author` slot:
+that agent turns the design documents into an executable suite which is moved
+out of the workspace before any writer starts and then grades the milestone's
+behaviour. Always assign it — a milestone without it cannot be scored on
+behaviour, only on structure.
 
 # Role pool
 Pick each slot's role from this fixed pool; a role you invent will be replaced
