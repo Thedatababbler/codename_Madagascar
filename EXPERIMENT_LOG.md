@@ -1735,3 +1735,105 @@ it before the third completed, and one imapclient search run lost a candidate's
 `outputs/cpe_54_search/VOID-infra-*`. **More agents means more exposure**, so a
 degraded endpoint biases against exactly the arms with the most nodes. The runs
 in the table completed without a node-level infra failure.
+
+## EXP-20260831-01 — Playbook search vs resampling: the table loses to best-of-n, and persistence diagnosis finds what resampling cannot
+
+Five paid runs of the frozen plan `outputs/cpe_tuning/plans/imapclient.multi.test_first.json`
+on 2026-08-31 / 09-01, all through a local CLIProxyAPI in front of ChatGPT
+subscriptions (Codex OAuth; `qandy1992` Plus for the first two, `zqin30` prolite
+after), model `gpt-5.4`. **Channel differs from every earlier entry**, which used
+an API key or the xiaoai relay; the derived costs below are token × list price and
+are comparable, the quota consumed is not. Runs, in `outputs/cpe_official_*`:
+
+| run | arm | outcome |
+|---|---|---|
+| `cpe-20260831T062032Z` | playbook k=3 | aborted 11.6 min in: `GraphCompilationError: Missing contract` raised inside candidate *generation*; no usage recorded |
+| `cpe-20260831T070623Z` | playbook k=3 | 55 min, $6.46; M1 searched, M2's three candidates dead in 46–151 ms (`CheckpointDriftError`) |
+| `cpe-20260831T083458Z` | playbook k=3 | 89 min, $10.31; both milestones searched |
+| `cpe-20260831T180037Z` | anchor k=3 | 56 min, ~$6; M1 not triggered, M2 four same-design samples |
+| `cpe-20260901T072336Z` | persistence k=3 | 71 min, $8.6; M1 phase two declined, M2 diagnosed |
+
+**Three defects, each found by a run and each masked by a green test suite.**
+The generator's validation compile after a plan-layer recompile ran before the
+controller registered the new contracts; every generator test passes no compiler,
+where `apply_local_edits` skips the compile. Candidate checkpoints were keyed on
+`task + candidate` with no milestone, so the second searching milestone found the
+first one's records and every candidate died as config drift — invisible before
+because M1 had never searched. `milestone_objectives` took the best harness score
+over the whole draft list and published it beside the selected candidate's id,
+crediting M1 with 0.9375 from a design the selector had discarded when the
+committed one scored 0.906. All three fixed with tests that fail without the fix.
+
+**The improve shape scored zero twice on the same two symbols, and it was not the
+improver.** `imapclient.response_types.Quota` and `MailboxQuotaRoots` were missing
+from the improve candidate in both complete runs. The improver's
+`response_types.py` was byte-identical to the builder's: the builder omitted them,
+in every candidate. The parent `test_first` has an early gate after the builder
+and a repairer behind it, which restored them every time; `test_first_improve`
+had neither. Fixed by putting the early gate *after the improver* with an
+optional repairer — a pass freezes the improver's change, a failure hands the
+exact report to a repair — which reuses the existing wiring unchanged. The naive
+alternative, a conditional repairer between builder and improver, races: the
+scheduler resolves an input on the first edge carrying a payload and does not
+wait for a repairer that may still run.
+
+**No playbook has beaten the anchor.** Across both complete playbook runs, six
+playbook appearances, zero wins; the anchor (`concise_feedback` + fresh session)
+won every search it did not lose to the incumbent. `pb_tf_q_failures_to_builder`
+differed from the anchor by exactly the named-test list and lost 0.8125 vs 0.906,
+0.397 vs 0.707, and tied the incumbent once; removed from the table.
+`pb_tf_q_improve_after_gate` tied the anchor to four decimals on run-2 M2 at 2.1×
+the cost and was correctly discarded on the cost axis.
+
+**Resampling explains most of it.** The anchor arm ran three copies of the anchor
+design on M2 (suite of 23): 17, 18, 16 passed, incumbent 16. Best-of-3 gained
++8.7pp; playbook search's best gain was +5.9pp. Same-design σ is **one test**
+(0.043), and `epsilon.quality` is 0.02, half a test — the selector has been
+treating one-test noise as a real gap. Cross-run scores are worse: the suite is
+re-authored per run, so M1's first pass read 0.875, 0.829, 0.970 and 0.857 on one
+plan. Only within-run comparisons share a yardstick.
+
+**Persistence: what fails every time is a different population from what
+flips.** Intersecting the four M2 samples: five tests failed in all four (fetch
+uid/sequence keys, search return type, oauth2 token cache, config default
+section, client-from-config), two flipped. The entire best-of-3 gain was the two
+flippers; four independent draws never touched the five. Resampling's ceiling on
+that milestone is 18/23, and nothing but a change moves it.
+
+**The persistence arm.** Two anchor probes, intersect with the incumbent, then
+the table diagnosed from the persistent set with the improver's role chosen from
+it. M1: 0 persistent, 4 flaky, phase two declined, best-of-3 committed 0.9655.
+M2 (suite of 24): 4 persistent, 2 flaky; the LLM diagnoser — running for the
+first time in this project, every earlier run having been a quality search it was
+excluded from — returned `functional`, 0.89, `implementer` + `behaviour_critic`,
+with a rationale that cited 18/24, the stage results and the four names, and ruled
+out budget and public-surface causes; $0.013, 13 s. The phase-two candidate ran
+`implementer` as improver and **fixed 2 of the 4 persistent failures**
+(client-from-config, oauth2 cache), the two flippers passed, and it still lost:
+its re-rolled builder introduced three new `*_requires_server_capability`
+failures the incumbent never had. The capability change sits in the builder's
+patch and the improver's patch carries it untouched. 18 + 2 + 2 − 3 = 19/24
+against the best anchor's 20/24; the ledger says the diagnosis had execution
+value, the shape threw it away.
+
+| M2 candidate | passed | persistent fixed | new failures |
+|---|---|---|---|
+| incumbent | 18/24 | — | — |
+| anchor r1 | 19/24 | 0/4 | 0 |
+| anchor r2 (committed) | 20/24 | 0/4 | 0 |
+| improve, `implementer` from diagnosis | 19/24 | **2/4** | 3 (builder) |
+
+M2 spend: $3.70 here, $3.80 anchor arm, $3.98 playbook arm — the same money, k
+unchanged at 3, reallocated.
+
+**What follows.** A candidate that acts on the incumbent's committed workspace
+with only the improver, told the persistent set, is the design the data points
+at: it cannot lose the 18 the incumbent already passes to a builder re-roll, it
+attacks the tests resampling cannot reach, and it costs one agent instead of
+three. Then `epsilon.quality` to the measured noise (≈0.05), and the ledger
+aggregated per (class, role) before any recommendation is trusted by default.
+Template changes made alongside: every planner-selectable template now carries
+an optional `test_author` slot (custody keys on the role, so the suite — the only
+non-saturated behaviour axis — is reachable from any shape), and `solo` is
+withdrawn from the planner catalogue. One run, one ledger entry; 2/4 is an
+observation, not a rate.

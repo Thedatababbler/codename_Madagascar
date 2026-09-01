@@ -36,6 +36,7 @@ One more template exists but is deliberately absent from that catalogue, because
 | Template | Shape | Early gate | Reachable by |
 |----------|-------|------------|--------------|
 | `test_first_diagnosed` | `test_author -> builder -> critic -> repairer` | after `builder` | playbook recompilation only |
+| `test_first_double_repair` | `test_author -> builder -> repairer -> second_repairer` | after `builder` | playbook recompilation only |
 
 It splits `test_first`'s repair pass in two: a read-only critic reads the failure
 list and reports which behaviour is wrong, and the repairer executes that

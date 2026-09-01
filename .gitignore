@@ -19,3 +19,5 @@ data/
 # `scripts/make_*_pdf.py`; the numbers in them are only meaningful next to the
 # run directories, which are not in version control either.
 docs/reports/
+# Local backups of .env made before editing; they hold the same secrets.
+.env.bak*

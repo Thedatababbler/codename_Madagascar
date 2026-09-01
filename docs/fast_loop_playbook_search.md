@@ -8,15 +8,16 @@ proposes replacing the fixed order with **playbooks keyed on a diagnosed failure
 class**: a change chosen because something was measured about *why* the milestone
 failed, rather than because it sat early in a hardcoded list.
 
-Status: design, agreed in outline on 2026-08-17. The playbook table and a
-second generator now exist (`playbooks.py`, `PlaybookCandidateGenerator`) and
-sit beside the atomic-edit generator rather than replacing it. Diagnosis is
-still the lookup: a class is inferred from `reason` / `furthest_stage` until
-`llm_diagnosis.py` writes `failure_class`. The default controller path is
-unchanged — `playbook_search=True` is how the new generator is selected, and
-setting it together with `design_search` is an error. The selection half of
-the loop — frontier, epsilon, `require_gate_pass`, the incumbent — is
-unchanged and out of scope.
+Status (2026-09-01): the table, the generator, the LLM diagnoser and the
+experiment wiring are in place and have been paid for end to end (EXP-20260831-01).
+Four search modes exist and are mutually exclusive under `experiment.tuning`:
+`playbook_search`, `design_search`, `anchor_search` (the control arm: k copies of
+the anchor design, resampled) and `persistence_search` (two anchor probes, then
+the table diagnosed from the failures that survived every sample). The default
+controller path is still the lookup plus the atomic-edit generator. The
+selection half of the loop — frontier, epsilon, `require_gate_pass`, the
+incumbent — is unchanged, but see "Noise floor" below: its `epsilon.quality`
+is half a test at the suite sizes measured, and the same-design noise is one.
 
 ## What is actually wrong with the search today
 
@@ -85,7 +86,7 @@ room for a third playbook.
 
 ## Diagnosis
 
-New module, `orchestra/control/fast_loop/llm_diagnosis.py`. Input is deliberately
+Module `orchestra/control/fast_loop/llm_diagnosis.py`. Input is deliberately
 narrow:
 
 * the failure reason and the exit signal name (`SIGXCPU` and friends);
@@ -95,7 +96,28 @@ narrow:
 * remaining milestone budget.
 
 Output is a fixed JSON object: `failure_class`, `confidence`, `target_node_id`,
-`rationale`, `evidence`.
+`recommended_role`, `recommended_reviewer`, `rationale`, `evidence`. The two role
+fields are ids from the fixed pool — an editing role and a read-only one — and a
+playbook slot marked `role_from_diagnosis` / `reviewer_from_diagnosis` takes them
+in place of its constant. The space stays enumerable: an id outside the pool, or
+of the wrong kind, is dropped rather than trusted, and a role the target slot
+does not accept is ignored at binding rather than sent to a recompile that
+would reject the whole candidate.
+
+Three things stand between the model and the candidate. **Rules first**: when
+every persistent failure falls in one category (imports stage; all public-surface
+names; all corner-case names) the role is chosen deterministically and the model
+is not consulted. **Consistency**: `budget` claimed for a run that reached the
+behavioural tests with no exit signal is refused. **A named default last**:
+`implementer`, recorded as `role_source: default`, never silence. Every
+diagnosis-driven candidate carries a ledger of which persistent failures it
+actually fixed; aggregated per (class, role) that decides whether a
+recommendation keeps its slot. The model proposes, the harness disposes.
+
+Until 2026-09-01 the diagnoser ran only on the failure path, and every paid run
+had been a quality search, so it had never run at all; its class also merely
+filtered rows, and `functional` and `design` share a row group. It now runs on
+the quality path inside `persistence_search`, on the persistent set.
 
 Four properties are not negotiable.
 
@@ -160,7 +182,78 @@ The Codex backend ignores it, and CodeProjectEval and RealBench both run Codex,
 so the edit would be a no-op dressed as a change. Revisit if a
 `structured_llm` arm is ever tuned.
 
+## Quality search has its own table
+
+A quality search starts from a gate that already passed. The failure table's
+first `test_first` row is `pb_tf_failures_to_repairer`, and that repairer is
+marked `runs_if_gate_failed`. Sending it into a quality search is a candidate
+that compiles, runs, and does nothing. So quality has `QUALITY_CATALOG`, keyed
+on template only — there is no failure class to key on — and the two catalogues
+share no `playbook_id`.
+
+The quality table is cheapest-first. Each row has to change what a writer sees
+or who writes. After a plan-layer switch the named leaks are rebound onto the
+*new* graph, because the parent builder is not the person who will run.
+
+### `test_first` (quality)
+
+| Priority | Playbook | Layer | Action |
+|----------|----------|-------|--------|
+| 1 | `pb_tf_q_improve_after_gate` | plan | recompile as `test_first_improve`; names land on `improver`, whose role is `role_from_diagnosis` (default `edge_case_hardener`) |
+| 2 | `pb_tf_q_diagnose_then_improve` | plan | recompile as `test_first_quality_diagnosed`; names land on `critic` and `improver`; both roles from the diagnosis |
+
+`k=3` is the anchor plus both rows. Both templates are `planner_selectable:
+false`, and both now carry the early gate **after the improver** with an optional
+`repairer` behind it: a probe there freezes the improver's change on a pass and
+hands a failure — a dropped contract symbol, a broken import — to a conditional
+repair, which is the safety net `test_first` has and the improve shapes lacked.
+Without it the improve candidate scored zero twice on the same two omitted
+symbols (EXP-20260831-01), symbols the builder had left out in every candidate
+and the parent shape's repairer had quietly restored each time.
+
+`pb_tf_q_failures_to_builder` — named leaks into the parent builder's prompt —
+was row 1 and was removed after losing to the anchor three times out of three
+(−9.4pp, −31pp, and once identical to the incumbent). It differed from the anchor
+by exactly the named list, so those are controlled measurements of that
+addition. `test_first` blinds the builder to the suite on purpose, and the edit
+re-runs it FRESH: the names re-roll the whole substrate biased toward a handful
+of tests, they do not repair anything.
+
+The named list the harness returns is often a subset of the failures. The
+quality prompt therefore says how many tests ran, how many passed, and that
+the list is incomplete when the named count is smaller than `total - passed`.
+Names are shortened to `Class::test` so the prompt is readable.
+
+### Already on an improve shape
+
+Do not switch `test_first_improve` to itself. The rows are: names on the
+improver; more budget on the improver; then a critic in front of that
+improver (`test_first_quality_diagnosed`).
+
+A plan-layer candidate used to leave `edits` empty. Quality switches that
+carry names now record those prompt edits on the candidate; `plan_recompile`
+is still what describes the shape change.
+
+Recompiled contracts land in the run's contracts directory. Both the
+compiler registry *and* the agent executor's copy have to be updated —
+updating only the compiler lets the candidate compile and then die at
+runtime with a `KeyError` on the new `contract_id`.
+
 ## Topology playbooks, per template
+
+### The suite slot is on every template now
+
+Only `test_first` authored a suite, and only an authored suite gives a behaviour
+axis that is not saturated at 1.0 — which is why the frozen plans were rewritten
+to it (`scripts/rewrite_plans_to_test_first.py`), and why the census below is
+89% one template. Custody keys on the `test_author` *role*, not the template, so
+since 2026-09-01 every planner-selectable template opens with an optional
+`test_author` slot, the planner prompt says to always assign it, and `solo` is
+withdrawn from the catalogue (`planner_selectable: false`; the file stays for
+frozen-plan replays and the `pb_solo_*` recompiles). The slot is optional so a
+search recompile never synthesises a suite author mid-search — that would author
+a fresh suite and grade the candidate against different tests than its
+incumbent.
 
 ### Which templates are worth designing for
 
@@ -219,7 +312,7 @@ rather than a diagnosis.
 |----------|----------|-------|--------|
 | 1 | `pb_tf_failures_to_repairer` | edit | per-test failure list into the repairer's prompt |
 | 2 | `pb_tf_diagnose_before_repair` | plan | recompile as `test_first_diagnosed` — a read-only `behaviour_critic` between the failing gate and the repairer, `runs_if_gate_failed: true`, so it costs nothing when the gate passes |
-| 3 | `pb_tf_second_repairer` | plan | a second `gate_repairer` slot behind the same condition — two repair rounds |
+| 3 | `pb_tf_second_repairer` | plan | recompile as `test_first_double_repair` — two `gate_repairer` slots behind the same failing gate |
 | 4 | `pb_tf_builder_budget` | edit | steps and wall-clock on the builder; only when the class is `budget` |
 
 Hard invariant: no playbook may put `spec_tests` within the builder's reach.
@@ -349,7 +442,8 @@ chosen `parallel_audit`, so nothing would recompile from it.
 
 `LocalCandidate` and `CandidateRecord` carry `playbook_id`, and `plan_recompile`
 records the template pair, the full slot assignment and the slots that actually
-moved. `edits` is empty for a plan-layer candidate, so it could not have stood in.
+moved. `edits` is empty for a bare plan-layer candidate; a quality switch that
+then binds the named leaks records those prompt edits as well.
 
 ## The validator that has to exist either way — closed
 
@@ -364,6 +458,34 @@ now check them: `build_milestone_graph` raises, because a violation there is a
 compiler defect and not something a caller can recover from, and
 `apply_local_edits` rejects with `LocalEditError`, which the generators already
 turn into `INVALID_GRAPH_EDIT`.
+
+## Persistence diagnosis
+
+One attempt's failure list mixes tests the code gets wrong with tests this sample
+was unlucky on. Best-of-n resampling harvests the second kind and cannot touch
+the first: in the anchor arm four independent samples of one design failed the
+same five tests every time and flipped on two, and the whole +8.7pp of best-of-3
+was those two. The intersection over samples separates them.
+
+`persistence_search` spends the same `k`: `persistence_probe_samples` (default 2)
+anchor resamples, intersect with the incumbent, then the remaining slots on the
+table diagnosed from the persistent set only. Only samples whose gate passed
+count. An empty intersection declines phase two — every failure flipped, so
+resampling was the right tool and the probes already were it. In
+EXP-20260831-01 the persistent set stabilised at the third sample both times.
+
+## Noise floor and epsilon
+
+Three same-design samples in one search scored 16, 17 and 18 of 23: the noise
+floor is **one test**, σ ≈ 0.04. `epsilon.quality` is 0.02, half a test, so a
+one-test lead is treated as a real quality gap and can be paid for at any cost.
+Recommended: 0.05, so a one-test difference falls to the cost axis and two are
+needed to win on quality. Not yet applied; n=3 is a crude estimate and every
+anchor or persistence run adds free samples.
+
+Cross-run behaviour scores are **not comparable**: the suite is authored per run,
+so the yardstick moves (M1 first passes: 0.875, 0.829, 0.970, 0.857 across four
+runs of one plan). Only within-run comparisons, which share a suite, are clean.
 
 ## Budget
 
@@ -391,9 +513,10 @@ Under `experiment.tuning`:
       model: gpt-5.4
 ```
 
-`playbook_search` and `design_search` are mutually exclusive and setting both is
-an error: a run must not be ambiguous about which generator produced its
-candidates.
+`playbook_search`, `design_search`, `anchor_search` and `persistence_search`
+(with `persistence_probe_samples`) are mutually exclusive and setting more than
+one is an error: a run must not be ambiguous about which generator produced its
+candidates. Each arm has its own experiment yaml and `output_root`.
 
 ## Experiment discipline
 
