@@ -272,7 +272,12 @@ def template_id_of(graph: OrchestraGraph) -> str:
 
 def playbook_applies(playbook: Playbook, ctx: PlaybookContext) -> bool:
     """Skip a playbook that would be a no-op on this graph."""
-    if playbook.include_failure_list and not ctx.behaviour_failures:
+    # An edit-layer row whose whole content is the named list has nothing to
+    # say without names. A plan-layer row changes the shape regardless; the
+    # names ride along when the gate produced any (a compile failure names
+    # none, and that is exactly when a shape with a dependency resolver is
+    # the right move).
+    if playbook.include_failure_list and not ctx.behaviour_failures and playbook.layer == "edit":
         return False
     if playbook.layer == "edit" and ctx.node_for(playbook.target) is None:
         return False
@@ -379,9 +384,7 @@ def bind_recompile_feedback(playbook: Playbook, ctx: PlaybookContext) -> list[Lo
                 f"{playbook.playbook_id} has no node for slot {slot!r} on the "
                 "recompiled graph"
             )
-        if playbook.include_failure_list:
-            if not ctx.behaviour_failures:
-                raise PlaybookBindError(f"{playbook.playbook_id} has no named failures")
+        if playbook.include_failure_list and ctx.behaviour_failures:
             edits.append(
                 PromptFeedbackEdit(
                     node_id=node_id,
@@ -548,6 +551,13 @@ CATALOG: tuple[Playbook, ...] = (
         templates=frozenset({"test_first"}),
         switch_template="test_first_diagnosed",
         switch_slots=(("critic", "behaviour_critic"),),
+        # The pair comes from the diagnosis: the reviewer angle the failure
+        # calls for, and the writer it should hand its report to. The
+        # constants above are only what stands when nothing was diagnosed.
+        reviewer_from_diagnosis="critic",
+        role_from_diagnosis="repairer",
+        include_failure_list=True,
+        feedback_slots=("critic", "repairer"),
     ),
     Playbook(
         playbook_id="pb_tf_second_repairer",
@@ -556,6 +566,9 @@ CATALOG: tuple[Playbook, ...] = (
         templates=frozenset({"test_first"}),
         switch_template="test_first_double_repair",
         switch_slots=(("second_repairer", "gate_repairer"),),
+        role_from_diagnosis="second_repairer",
+        include_failure_list=True,
+        feedback_slots=("repairer", "second_repairer"),
     ),
     Playbook(
         playbook_id="pb_tf_builder_budget",
@@ -592,10 +605,13 @@ CATALOG: tuple[Playbook, ...] = (
         templates=frozenset({"solo"}),
         switch_template="gate_then_repair",
         switch_slots=(("repairer", "gate_repairer"),),
+        role_from_diagnosis="repairer",
+        include_failure_list=True,
+        feedback_slots=("repairer",),
     ),
     Playbook(
         playbook_id="pb_solo_to_review_fix",
-        reason="recompile as review-then-fix with a behaviour critic",
+        reason="recompile as review-then-fix with the reviewer and fixer the failure calls for",
         classes=_FUNCTIONAL,
         templates=frozenset({"solo"}),
         switch_template="review_then_fix",
@@ -603,15 +619,24 @@ CATALOG: tuple[Playbook, ...] = (
             ("reviewer", "behaviour_critic"),
             ("fixer", "gate_repairer"),
         ),
+        reviewer_from_diagnosis="reviewer",
+        role_from_diagnosis="fixer",
+        include_failure_list=True,
+        feedback_slots=("reviewer", "fixer"),
     ),
     Playbook(
         playbook_id="pb_solo_specialist",
-        reason="recompile as a chain whose second slot matches the failed stage",
+        reason="recompile as a chain whose second slot is the specialist the failure calls for",
         classes=_FUNCTIONAL,
         templates=frozenset({"solo"}),
         switch_template="chain",
         carry=(("author", "first"),),
-        stage_slot="second",
+        # Formerly keyed on furthest_stage alone, which sent every test-stage
+        # failure to the corner-case hardener. The stage still feeds the rule
+        # floor (imports -> dependency_resolver); the residue is diagnosed.
+        role_from_diagnosis="second",
+        include_failure_list=True,
+        feedback_slots=("second",),
     ),
     Playbook(
         playbook_id="pb_solo_budget",
@@ -625,11 +650,14 @@ CATALOG: tuple[Playbook, ...] = (
     # --- review_then_fix ---------------------------------------------------
     Playbook(
         playbook_id="pb_rtf_swap_angle",
-        reason="same shape, the next unused review angle",
+        reason="same shape, the review angle the failure calls for (else the next unused one)",
         classes=_FUNCTIONAL,
         templates=frozenset({"review_then_fix"}),
         switch_template="review_then_fix",
         swap_reviewer=True,
+        reviewer_from_diagnosis="reviewer",
+        include_failure_list=True,
+        feedback_slots=("reviewer", "fixer"),
     ),
     Playbook(
         playbook_id="pb_rtf_second_angle",
@@ -637,6 +665,9 @@ CATALOG: tuple[Playbook, ...] = (
         classes=_FUNCTIONAL,
         templates=frozenset({"review_then_fix"}),
         switch_template="parallel_audit",
+        role_from_diagnosis="fixer",
+        include_failure_list=True,
+        feedback_slots=("fixer",),
     ),
     Playbook(
         playbook_id="pb_rtf_drop_reviewer",
@@ -645,15 +676,19 @@ CATALOG: tuple[Playbook, ...] = (
         templates=frozenset({"review_then_fix"}),
         switch_template="chain",
         carry=(("author", "first"), ("fixer", "second")),
+        include_failure_list=True,
+        feedback_slots=("second",),
     ),
     # --- chain -------------------------------------------------------------
     Playbook(
         playbook_id="pb_chain_fill_third",
-        reason="fill the unused third slot with a stage-directed role",
+        reason="fill the unused third slot with the specialist the failure calls for",
         classes=_FUNCTIONAL,
         templates=frozenset({"chain"}),
         switch_template="chain",
-        stage_slot="third",
+        role_from_diagnosis="third",
+        include_failure_list=True,
+        feedback_slots=("third",),
     ),
     Playbook(
         playbook_id="pb_chain_to_review_fix",
@@ -663,6 +698,10 @@ CATALOG: tuple[Playbook, ...] = (
         switch_template="review_then_fix",
         carry=(("first", "author"), ("second", "fixer")),
         switch_slots=(("reviewer", "behaviour_critic"),),
+        reviewer_from_diagnosis="reviewer",
+        role_from_diagnosis="fixer",
+        include_failure_list=True,
+        feedback_slots=("reviewer", "fixer"),
     ),
     Playbook(
         playbook_id="pb_chain_budget",
@@ -758,16 +797,11 @@ QUALITY_CATALOG: tuple[Playbook, ...] = (
         extra_prompt=_QUALITY_GUARD,
         search_reasons=_QUALITY,
     ),
-    Playbook(
-        playbook_id="pb_tf_q_improver_budget",
-        reason="more steps and wall-clock on the improver",
-        classes=_NO_CLASS,
-        templates=frozenset({"test_first_improve", "test_first_quality_diagnosed"}),
-        target="improver",
-        steps_delta=2,
-        timeout_delta=30,
-        search_reasons=_QUALITY,
-    ),
+    # `pb_tf_q_improver_budget` and `pb_q_anchor_budget` were removed on
+    # 2026-09-01: a quality search starts from a gate that passed, the Codex
+    # backend reports step_count=1 for every run, and the only exit-signal
+    # detector reads failure text a passing run does not have. A budget row
+    # here could never be triggered by evidence, only by its position.
     Playbook(
         playbook_id="pb_tf_q_diagnose_from_improve",
         reason="split the improve pass: a critic reads the names, then the improver acts",
@@ -778,6 +812,7 @@ QUALITY_CATALOG: tuple[Playbook, ...] = (
         feedback_slots=("critic", "improver"),
         switch_template="test_first_quality_diagnosed",
         switch_slots=(("critic", "behaviour_critic"),),
+        reviewer_from_diagnosis="critic",
         search_reasons=_QUALITY,
     ),
     # Hidden by any template-specific row.
@@ -787,14 +822,6 @@ QUALITY_CATALOG: tuple[Playbook, ...] = (
         classes=_NO_CLASS,
         include_failure_list=True,
         extra_prompt=_QUALITY_GUARD,
-        search_reasons=_QUALITY,
-    ),
-    Playbook(
-        playbook_id="pb_q_anchor_budget",
-        reason="more steps and wall-clock on the anchored agent",
-        classes=_NO_CLASS,
-        steps_delta=2,
-        timeout_delta=30,
         search_reasons=_QUALITY,
     ),
 )

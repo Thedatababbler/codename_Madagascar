@@ -90,7 +90,6 @@ def test_quality_search_on_an_improve_shape_targets_the_improver() -> None:
         for p in playbooks_for("test_first_improve", search_reason=SearchReason.QUALITY)
     ] == [
         "pb_tf_q_failures_to_improver",
-        "pb_tf_q_improver_budget",
         "pb_tf_q_diagnose_from_improve",
     ]
     assert [
@@ -100,7 +99,6 @@ def test_quality_search_on_an_improve_shape_targets_the_improver() -> None:
         )
     ] == [
         "pb_tf_q_failures_to_improver",
-        "pb_tf_q_improver_budget",
     ]
 
 
@@ -126,7 +124,7 @@ def test_quality_search_on_an_unknown_template_uses_the_generic_row() -> None:
     assert [
         p.playbook_id
         for p in playbooks_for("no_such_shape", search_reason=SearchReason.QUALITY)
-    ] == ["pb_q_failures_to_agent", "pb_q_anchor_budget"]
+    ] == ["pb_q_failures_to_agent"]
 
 
 def test_a_named_class_wins_over_inference() -> None:

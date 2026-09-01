@@ -104,6 +104,15 @@ of the wrong kind, is dropped rather than trusted, and a role the target slot
 does not accept is ignored at binding rather than sent to a recompile that
 would reject the whole candidate.
 
+Every search settles the pair, not only the persistence arm: the failure
+path and the plain quality path run the same chain — rules, the model for the
+residue when `diagnosis.mode: llm`, then a default pair by search reason
+(`gate_repairer` + `behaviour_critic` for a failed gate, whose evidence is a
+gate report the pool has a role written for; `implementer` + `spec_auditor` for
+a quality search, whose residue is almost always a misread of the documented
+behaviour). Persistence defers the chain to phase two, where the evidence is
+the persistent set.
+
 Three things stand between the model and the candidate. **Rules first**: when
 every persistent failure falls in one category (imports stage; all public-surface
 names; all corner-case names) the role is chosen deterministically and the model
@@ -271,6 +280,30 @@ Measured across every frozen plan in `outputs/*/plans/*.json` on 2026-08-17:
 `test_first` and `solo` are 89% of the population and `parallel_audit` has never
 been chosen by the planner. Playbooks are designed in that order; anything
 written for `parallel_audit` first would be dead code.
+
+### Shape rows are pairs from the diagnosis, told the names
+
+Until 2026-09-01 the failure table's ten plan-layer rows named their roles as
+constants and carried no evidence: `pb_tf_diagnose_before_repair` always seated
+`behaviour_critic` and never told it a test name, `pb_solo_to_gate_repair` always
+seated `gate_repairer`, and the two rows that did look at evidence keyed a role
+on `furthest_stage` alone, which sent every test-stage failure to the corner-case
+hardener. A shape change was "add a person", never "seat the person the failure
+calls for".
+
+Every plan-layer row now takes its writer from `recommended_role` and its
+read-only slot from `recommended_reviewer` (the row's constants remain as the
+fallback when nothing chose), and carries `include_failure_list` with
+`feedback_slots` naming the new graph's slots, so the critic that was added to
+read evidence is handed it. A plan-layer row applies even when the gate named no
+test — a compile failure names none, and that is when a shape with a dependency
+resolver is the right move; the list binds when it exists. `stage_slot` is no
+longer used by any row: the stage feeds the rule floor instead.
+
+The quality table lost its two budget rows. A quality search starts from a gate
+that passed, the Codex backend reports `step_count=1` for every run, and the only
+exit-signal detector reads failure text a passing run does not have; nothing
+could ever trigger them but their position in the list.
 
 ### How a topology playbook is written
 

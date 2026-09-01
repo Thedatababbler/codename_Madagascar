@@ -163,7 +163,14 @@ def test_test_first_recompiles_into_the_diagnosed_shape() -> None:
     diagnosed = next(c for c in built if c.playbook_id == "pb_tf_diagnose_before_repair")
     assert diagnosed.plan_recompile is not None
     assert diagnosed.plan_recompile.template_id == "test_first_diagnosed"
-    assert diagnosed.edits == []
+    # The critic was added to read evidence, so it is handed the names -- and
+    # so is the repairer it reports to. A shape row used to carry no feedback.
+    told = {
+        e.node_id
+        for e in diagnosed.edits
+        if e.type == "prompt_feedback" and "test_a" in e.feedback
+    }
+    assert told == {_agent(diagnosed.graph, "_behaviour_critic"), _agent(diagnosed.graph, "_gate_repairer")}
     roles = [
         role.role_id
         for node in diagnosed.graph.nodes
@@ -385,7 +392,7 @@ def test_quality_search_on_improve_does_not_reswitch_the_same_shape() -> None:
     assert [c.playbook_id for c in built] == [
         "",
         "pb_tf_q_failures_to_improver",
-        "pb_tf_q_improver_budget",
+        "pb_tf_q_diagnose_from_improve",
     ]
     improver = _agent(graph, "_edge_case_hardener")
     named = next(c for c in built if c.playbook_id == "pb_tf_q_failures_to_improver")

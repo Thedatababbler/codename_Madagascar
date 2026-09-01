@@ -369,27 +369,22 @@ class FastLoopController:
             await self._save_checkpoint(state)
             return
 
-        pool = getattr(self.generator, "role_pool", None) or default_role_pool()
         diagnosis = fl_state.diagnosis.model_copy(
             update={
                 "behaviour_failures": list(summary.persistent),
                 "persistence_samples": summary.samples,
             }
         )
-        # Rules first, the model only for what the rules cannot name, a named
-        # default last -- and the source of the choice always written down.
-        diagnosis = apply_role_floor(diagnosis, pool)
-        if not diagnosis.recommended_role and self.diagnosis_config.mode == "llm":
-            diagnosis = self._refine_lookup(
-                lookup=diagnosis,
-                graph=base_graph,
-                subtask_state=sub,
-                state=state,
-                fl_state=fl_state,
-                context=context,
-                subtask_id=subtask_id,
-            )
-        diagnosis = default_role(diagnosis, pool)
+        diagnosis = self._settle_roles(
+            diagnosis,
+            graph=base_graph,
+            sub=sub,
+            state=state,
+            fl_state=fl_state,
+            context=context,
+            subtask_id=subtask_id,
+            search_reason="quality",
+        )
         fl_state.diagnosis = diagnosis
 
         remaining = max(1, self.budget.max_candidates - len(probes))
@@ -448,6 +443,40 @@ class FastLoopController:
             record.metadata["persistence_ledger"] = persistence_ledger(
                 record, list(record.metadata.get("persistent_failures") or [])
             )
+
+    def _settle_roles(
+        self,
+        diagnosis: FailureDiagnosis,
+        *,
+        graph: OrchestraGraph,
+        sub: SubtaskState,
+        state: TaskExecutionState,
+        fl_state: FastLoopState,
+        context: RunContext,
+        subtask_id: str,
+        search_reason: str,
+    ) -> FailureDiagnosis:
+        """Rules first, the model only for the residue, a named pair last.
+
+        Rules pre-empt the model entirely, so a role they can name is never
+        second-guessed by a prompt; the model is asked only when the evidence
+        is one no rule covers, and its class refinement rides along on that
+        call. Whatever is still empty afterwards gets the search's default
+        pair. ``role_source`` records which of the three chose.
+        """
+        pool = getattr(self.generator, "role_pool", None) or default_role_pool()
+        diagnosis = apply_role_floor(diagnosis, pool)
+        if not diagnosis.recommended_role and self.diagnosis_config.mode == "llm":
+            diagnosis = self._refine_lookup(
+                lookup=diagnosis,
+                graph=graph,
+                subtask_state=sub,
+                state=state,
+                fl_state=fl_state,
+                context=context,
+                subtask_id=subtask_id,
+            )
+        return default_role(diagnosis, pool, search_reason)
 
     def _refine_lookup(
         self,
@@ -559,15 +588,20 @@ class FastLoopController:
                 c.candidate_id == incumbent.candidate_id for c in fl_state.candidates
             ):
                 fl_state.candidates.append(incumbent)
-        elif self.diagnosis_config.mode == "llm":
-            diagnosis = self._refine_lookup(
-                lookup=diagnosis,
+        # Every search settles who the next candidate should be, not only the
+        # persistence arm: rules where they are unambiguous, the model for the
+        # residue, a named pair last. Persistence defers this to phase two,
+        # where the evidence is the persistent set instead of one sample.
+        if not (self.persistence_search and incumbent is not None):
+            diagnosis = self._settle_roles(
+                diagnosis,
                 graph=base_graph,
-                subtask_state=sub,
+                sub=sub,
                 state=state,
                 fl_state=fl_state,
                 context=context,
                 subtask_id=subtask_id,
+                search_reason="quality" if incumbent is not None else "failure",
             )
             fl_state.diagnosis = diagnosis
 

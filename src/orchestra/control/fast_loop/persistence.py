@@ -166,13 +166,36 @@ def apply_role_floor(diagnosis: FailureDiagnosis, pool: RolePool) -> FailureDiag
     )
 
 
-def default_role(diagnosis: FailureDiagnosis, pool: RolePool) -> FailureDiagnosis:
-    """The last resort: a named default, recorded as such, never silence."""
-    if diagnosis.recommended_role or pool.get(DEFAULT_EDITING_ROLE) is None:
-        return diagnosis
-    return diagnosis.model_copy(
-        update={"recommended_role": DEFAULT_EDITING_ROLE, "role_source": "default"}
-    )
+#: The default pair when nothing chose one, by what the search is for. A
+#: quality search starts from work that passed its gate and scored poorly:
+#: the residue no rule names is almost always a misread of the documented
+#: behaviour, so the writer that works from the design documents, checked by
+#: the reader that compares them to the code. A failure search has a failing
+#: gate report as its evidence, and the pool has a role written for exactly
+#: that report, checked by the reader of behavioural evidence.
+DEFAULT_PAIRS: dict[str, tuple[str, str]] = {
+    "quality": ("implementer", "spec_auditor"),
+    "failure": ("gate_repairer", "behaviour_critic"),
+}
+
+
+def default_role(
+    diagnosis: FailureDiagnosis, pool: RolePool, search_reason: str = "quality"
+) -> FailureDiagnosis:
+    """The last resort: a named pair, recorded as such, never silence.
+
+    Only what is still empty is filled: a rule or the model may have named the
+    writer and not the reviewer, and the pairing then completes it.
+    """
+    role, reviewer = DEFAULT_PAIRS.get(str(search_reason), DEFAULT_PAIRS["quality"])
+    update: dict[str, str] = {}
+    if not diagnosis.recommended_role and pool.get(role) is not None:
+        update["recommended_role"] = role
+        update["role_source"] = "default"
+    if not diagnosis.recommended_reviewer and pool.get(reviewer) is not None:
+        update["recommended_reviewer"] = reviewer
+        update.setdefault("role_source", diagnosis.role_source or "default")
+    return diagnosis.model_copy(update=update) if update else diagnosis
 
 
 def persistence_ledger(record: CandidateRecord, persistent: list[str]) -> dict[str, object]:
@@ -195,6 +218,7 @@ def persistence_ledger(record: CandidateRecord, persistent: list[str]) -> dict[s
 
 __all__ = [
     "DEFAULT_EDITING_ROLE",
+    "DEFAULT_PAIRS",
     "PersistenceSummary",
     "apply_role_floor",
     "default_role",

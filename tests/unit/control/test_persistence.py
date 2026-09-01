@@ -365,3 +365,141 @@ def test_the_four_search_modes_are_mutually_exclusive() -> None:
             runtime=None, artifact_store=None, task_checkpoint_store=None,
             anchor_search=True, persistence_search=True,
         )
+
+
+# --- the failure table takes its roles from the diagnosis too ---------------
+
+
+def _solo_graph():
+    import tempfile
+    from pathlib import Path
+
+    from orchestra.realbench.milestone_planner import parse_plan_payload
+    from orchestra.realbench.subgraph_builder import (
+        materialize_milestone_subgraph,
+        prepare_generated_root,
+    )
+
+    plan = parse_plan_payload(
+        {
+            "milestones": [
+                {
+                    "milestone_id": "m_solo",
+                    "title": "T",
+                    "objective": "build",
+                    "risk_rationale": "r",
+                    "gate_level": "implementation",
+                    "template_id": "solo",
+                    "acceptance": {"criteria": ["ok"]},
+                    "agents": [{"slot": "author", "role": "implementer", "mandate": "a"}],
+                }
+            ]
+        },
+        max_agents=4,
+    )
+    root = prepare_generated_root(Path(tempfile.mkdtemp()), base_contracts_dir="configs/contracts")
+    path, _ = materialize_milestone_subgraph(
+        generated_root=root,
+        milestone=plan.milestones[0],
+        agent_backend="codex_sdk",
+        harness_command=["python", "check.py", "--spec-tests", "/tmp/frozen"],
+    )
+    return load_graph(path)
+
+
+def _failure(graph, **overrides) -> FailureDiagnosis:
+    author = next(n.node_id for n in graph.nodes if n.node_kind is NodeKind.AGENT)
+    payload = dict(
+        reason=SubtaskFailureReason.HARNESS,
+        retryable=True,
+        concise_feedback="FAIL spec_tests: 2 failed",
+        furthest_stage="spec_tests",
+        behaviour_failures=["t.py::test_fetch_uses_uid_keys", "t.py::test_search_returns_ids"],
+        primary_failed_node_id=author,
+        failed_node_ids=[author],
+    )
+    payload.update(overrides)
+    return FailureDiagnosis(**payload)
+
+
+def test_failure_shape_rows_take_their_pair_from_the_diagnosis() -> None:
+    """A solo milestone recompiled for repair gets the writer *and* the reader the
+    failure calls for, and both are told the names -- not a constant repairer
+    reading only the new shape's own gate report."""
+    graph = _solo_graph()
+    # The public-surface pair from the rule floor; both target templates'
+    # writer slots accept `integrator`, so the same diagnosis seats it in each.
+    diagnosis = _failure(
+        graph,
+        recommended_role="integrator",
+        recommended_reviewer="contract_critic",
+        role_source="rule:names:public_surface",
+    )
+    built = PlaybookCandidateGenerator(role_pool=_pool()).generate(
+        graph=graph,
+        diagnosis=diagnosis,
+        budget=FastLoopBudget(max_candidates=4, max_total_backend_calls=99),
+        capabilities={},
+        search_reason=SearchReason.FAILURE,
+    )
+    by_id = {c.playbook_id: c for c in built}
+    gate = by_id["pb_solo_to_gate_repair"]
+    assert gate.plan_recompile.slots["repairer"] == "integrator"
+    assert any(
+        e.type == "prompt_feedback" and "test_fetch_uses_uid_keys" in e.feedback
+        for e in gate.edits
+    )
+    review = by_id["pb_solo_to_review_fix"]
+    assert review.plan_recompile.slots["reviewer"] == "contract_critic"
+    assert review.plan_recompile.slots["fixer"] == "integrator"
+    nodes_with_names = {
+        e.node_id for e in review.edits if e.type == "prompt_feedback" and "test_search" in e.feedback
+    }
+    assert len(nodes_with_names) == 2, "both the reviewer and the fixer are told the names"
+
+
+def test_a_shape_row_still_applies_when_the_gate_named_nothing() -> None:
+    """A compile failure names no test. The shape change is the point of the
+    row; the list is a bonus that binds when present, so the candidate must
+    still be drafted -- with the dependency resolver the rules chose."""
+    graph = _solo_graph()
+    diagnosis = _failure(
+        graph,
+        concise_feedback="compile failed",
+        furthest_stage="compile",
+        behaviour_failures=[],
+        recommended_role="dependency_resolver",
+        role_source="rule:stage:imports",
+        failure_class="functional",
+    )
+    built = PlaybookCandidateGenerator(role_pool=_pool()).generate(
+        graph=graph,
+        diagnosis=diagnosis,
+        budget=FastLoopBudget(max_candidates=4, max_total_backend_calls=99),
+        capabilities={},
+        search_reason=SearchReason.FAILURE,
+    )
+    ids = [c.playbook_id for c in built]
+    assert "pb_solo_to_gate_repair" in ids
+    gate = next(c for c in built if c.playbook_id == "pb_solo_to_gate_repair")
+    assert not gate.compatibility_rejected or "capabilities" in (gate.rejection_message or "")
+    assert gate.plan_recompile.slots["repairer"] == "dependency_resolver"
+    assert not any(e.type == "prompt_feedback" for e in gate.edits)
+
+
+def test_default_pairs_follow_the_search_reason_and_fill_only_gaps() -> None:
+    pool = _pool()
+    base = FailureDiagnosis(
+        reason=SubtaskFailureReason.HARNESS, retryable=True, concise_feedback="x",
+        furthest_stage="spec_tests", behaviour_failures=["t.py::test_a"],
+    )
+    q = default_role(base, pool, "quality")
+    assert (q.recommended_role, q.recommended_reviewer) == ("implementer", "spec_auditor")
+    f = default_role(base, pool, "failure")
+    assert (f.recommended_role, f.recommended_reviewer) == ("gate_repairer", "behaviour_critic")
+    # A writer already chosen keeps it; only the missing reviewer is paired in.
+    half = base.model_copy(update={"recommended_role": "integrator", "role_source": "llm"})
+    paired = default_role(half, pool, "quality")
+    assert paired.recommended_role == "integrator"
+    assert paired.recommended_reviewer == "spec_auditor"
+    assert paired.role_source == "llm"
