@@ -31,7 +31,13 @@ from orchestra.control.backend_usage import (
     derive_cost_usd,
     exception_usage_record,
 )
-from orchestra.control.fast_loop.playbooks import FailureClass, infer_failure_class
+from orchestra.control.fast_loop.playbooks import (
+    FailureClass,
+    SearchReason,
+    infer_failure_class,
+    shape_options,
+    template_id_of,
+)
 from orchestra.control.fast_loop.schemas import FailureDiagnosis
 from orchestra.control.task_state import SubtaskState
 from orchestra.ir.graph import OrchestraGraph
@@ -90,8 +96,18 @@ default to the hardener for failures that are not about corner cases.
 recommended_reviewer is optional: a READ-ONLY role whose report would help
 that specialist, or empty.
 
+Decide `design` from four things together: the current shape (subgraph
+section), what the milestone was asked to build (milestone section), what the
+last attempt produced (stages, failures), and the history -- a playbook that
+already ran here and did not move the failures is the design class's own
+definition. When you conclude design, also choose `recommended_shape` from the
+shape options section: those are prepared recompilations of the current shape,
+each keeping the milestone's objective, acceptance and harness. You never
+propose a topology of your own; an id not in that section is discarded. Leave
+it empty to keep the current shape and its table order.
+
 Output exactly this object and nothing else:
-{"failure_class":"budget|functional|design","confidence":0.0,"target_node_id":"","recommended_role":"","recommended_reviewer":"","rationale":"","evidence":[]}
+{"failure_class":"budget|functional|design","confidence":0.0,"target_node_id":"","recommended_role":"","recommended_reviewer":"","recommended_shape":"","rationale":"","evidence":[]}
 confidence is in [0, 1]. target_node_id must be one of the agent node ids in
 the subgraph summary, or empty to keep the lookup's anchor. A role id not in
 the pool, or of the wrong kind, is discarded.
@@ -196,6 +212,7 @@ def refine_diagnosis(
     subtask_id: str = "",
     attempt_id: int = 0,
     pool: RolePool | None = None,
+    search_reason: str = "failure",
 ) -> tuple[FailureDiagnosis, DiagnosisCall]:
     """Apply an LLM class on top of ``lookup``, or return ``lookup`` unchanged.
 
@@ -212,6 +229,11 @@ def refine_diagnosis(
         return lookup, call
 
     role_pool = pool or default_role_pool()
+    reason = (
+        SearchReason.QUALITY if search_reason == "quality" else SearchReason.FAILURE
+    )
+    shapes = shape_options(template_id_of(graph), search_reason=reason)
+    allowed_shapes = {row.switch_template for row in shapes}
     user_prompt = build_diagnosis_prompt(
         lookup=lookup,
         graph=graph,
@@ -219,6 +241,7 @@ def refine_diagnosis(
         remaining=remaining or {},
         playbook_history=playbook_history or [],
         pool=role_pool,
+        shapes=shapes,
     )
     messages = [
         {"role": "system", "content": _SYSTEM_PROMPT},
@@ -304,6 +327,9 @@ def refine_diagnosis(
     # executable by construction; whether it was *right* is the ledger's job.
     role = _validated_role(parsed.get("recommended_role"), role_pool, editing=True)
     reviewer = _validated_role(parsed.get("recommended_reviewer"), role_pool, editing=False)
+    shape = str(parsed.get("recommended_shape") or "").strip()
+    if shape and shape not in allowed_shapes:
+        shape = ""
     if role and not lookup.recommended_role:
         call.role_applied = True
 
@@ -316,6 +342,7 @@ def refine_diagnosis(
             "diagnosis_rationale": str(parsed.get("rationale") or "")[:2000],
             "recommended_role": lookup.recommended_role or role,
             "recommended_reviewer": lookup.recommended_reviewer or reviewer,
+            "recommended_shape": lookup.recommended_shape or shape,
             "role_source": lookup.role_source or ("llm" if role else ""),
         }
     )
@@ -332,6 +359,7 @@ def build_diagnosis_prompt(
     remaining: Mapping[str, Any],
     playbook_history: list[str],
     pool: RolePool,
+    shapes: list[Any] | None = None,
 ) -> str:
     """The user message. Built only from what the gate and the graph already know."""
     stages = _latest_harness_stages(subtask_state)
@@ -354,6 +382,12 @@ def build_diagnosis_prompt(
         "# Subgraph",
         _format_subgraph(graph, pool),
         "",
+        "# Milestone",
+        _format_milestone(subtask_state),
+        "",
+        "# Shape options (recommended_shape must be one of these, or empty)",
+        _format_shapes(shapes or []) or "(none reachable from this shape)",
+        "",
         "# Remaining milestone budget",
         _format_remaining(remaining),
         "",
@@ -362,6 +396,19 @@ def build_diagnosis_prompt(
     ]
     prompt = "\n".join(sections)
     return _strip_held_out(prompt)
+
+
+def _format_milestone(subtask_state: SubtaskState) -> str:
+    spec = getattr(subtask_state, "spec", None)
+    title = str(getattr(spec, "title", "") or "")
+    objective = " ".join(str(getattr(spec, "objective", "") or "").split())[:600]
+    return f"title: {title}\nobjective: {objective or '(none recorded)'}"
+
+
+def _format_shapes(shapes: list[Any]) -> str:
+    return "\n".join(
+        f"- {row.switch_template}: {row.reason} [{row.playbook_id}]" for row in shapes
+    )
 
 
 def _format_subgraph(graph: OrchestraGraph, pool: RolePool) -> str:
@@ -558,6 +605,7 @@ def _write_artifact(
         "fallback_reason": call.fallback_reason,
         "lookup_class": infer_failure_class(lookup).value,
         "final_class": final.failure_class or infer_failure_class(final).value,
+        "recommended_shape": final.recommended_shape,
         "recommended_role": final.recommended_role,
         "recommended_reviewer": final.recommended_reviewer,
         "role_source": final.role_source,

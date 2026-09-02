@@ -397,6 +397,7 @@ class FastLoopController:
             budget=self.budget.model_copy(update={"max_candidates": remaining + 1}),
             capabilities=caps,
             search_reason="quality",
+            history=self._playbook_history(fl_state),
         )
         picked = [c for c in generated if c.playbook_id][:remaining]
         if not picked:
@@ -444,6 +445,15 @@ class FastLoopController:
                 record, list(record.metadata.get("persistent_failures") or [])
             )
 
+    @staticmethod
+    def _playbook_history(fl_state: FastLoopState) -> list[str]:
+        """Rows already spent on this milestone, in order; the menu pushes them back."""
+        seen: list[str] = []
+        for record in fl_state.candidates:
+            if record.playbook_id and record.playbook_id not in seen:
+                seen.append(record.playbook_id)
+        return seen
+
     def _settle_roles(
         self,
         diagnosis: FailureDiagnosis,
@@ -475,6 +485,7 @@ class FastLoopController:
                 fl_state=fl_state,
                 context=context,
                 subtask_id=subtask_id,
+                search_reason=search_reason,
             )
         return default_role(diagnosis, pool, search_reason)
 
@@ -488,6 +499,7 @@ class FastLoopController:
         fl_state: FastLoopState,
         context: RunContext,
         subtask_id: str,
+        search_reason: str = "failure",
     ) -> FailureDiagnosis:
         """Replace the lookup class when the LLM is confident; otherwise keep it."""
         history = [
@@ -506,6 +518,7 @@ class FastLoopController:
             task_id=state.task_id,
             subtask_id=subtask_id,
             attempt_id=len(subtask_state.attempts),
+            search_reason=search_reason,
         )
         if call.usage is not None:
             state.backend_usage_records = append_usage_records(
@@ -666,6 +679,7 @@ class FastLoopController:
                     budget=self.budget,
                     capabilities=caps,
                     search_reason="quality" if incumbent is not None else "failure",
+                    history=self._playbook_history(fl_state),
                 )
             for cand in generated:
                 record = self._record_from_local(

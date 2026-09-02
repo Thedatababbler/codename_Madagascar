@@ -503,3 +503,61 @@ def test_default_pairs_follow_the_search_reason_and_fill_only_gaps() -> None:
     assert paired.recommended_role == "integrator"
     assert paired.recommended_reviewer == "spec_auditor"
     assert paired.role_source == "llm"
+
+
+def test_recommended_shape_is_chosen_from_the_menu_or_dropped() -> None:
+    """The model picks among prepared recompilations; an invented topology id
+    is discarded, and the prompt carries the milestone and the menu."""
+    graph = _test_first()
+    cfg = DiagnosisConfig(mode="llm", min_confidence=0.5)
+    client = _Client(_reply(recommended_shape="my_clever_new_graph"))
+    refined, call = refine_diagnosis(
+        lookup=_quality_lookup(), graph=graph, subtask_state=_sub(),
+        config=cfg, client=client, search_reason="quality",
+    )
+    assert call.applied and refined.recommended_shape == ""
+    user = client.messages[1]["content"]
+    assert "# Milestone" in user
+    assert "# Shape options" in user and "test_first_improve" in user
+
+    client = _Client(_reply(recommended_shape="test_first_quality_diagnosed"))
+    refined, _ = refine_diagnosis(
+        lookup=_quality_lookup(), graph=graph, subtask_state=_sub(),
+        config=cfg, client=client, search_reason="quality",
+    )
+    assert refined.recommended_shape == "test_first_quality_diagnosed"
+
+
+def test_the_generator_moves_a_spent_row_to_the_back() -> None:
+    graph = _test_first()
+    incumbent = build_incumbent_record(
+        attempt_id=1, graph_hash=graph.content_hash, harness_score=0.9,
+        behaviour_score=0.7, behaviour_failures=["t.py::test_a"], furthest_stage="spec_tests",
+    )
+    built = PlaybookCandidateGenerator(role_pool=_pool()).generate(
+        graph=graph,
+        diagnosis=quality_search_diagnosis(incumbent, graph),
+        budget=FastLoopBudget(max_candidates=2, max_total_backend_calls=99),
+        capabilities={},
+        search_reason=SearchReason.QUALITY,
+        history=["pb_tf_q_improve_after_gate"],
+    )
+    # k=2 leaves one playbook slot; the spent improve row yields it.
+    assert [c.playbook_id for c in built] == ["", "pb_tf_q_diagnose_then_improve"]
+
+
+def test_widened_slots_accept_the_diagnosed_writers() -> None:
+    """The slot must not veto the diagnosis: every repair/fix/improve position
+    accepts the general editing set the rules and the model draw from."""
+    from orchestra.roles.templates import default_templates
+
+    templates = default_templates()
+    for template_id, slot_id in (
+        ("review_then_fix", "fixer"),
+        ("gate_then_repair", "repairer"),
+        ("test_first_improve", "improver"),
+        ("chain", "third"),
+    ):
+        slot = templates[template_id].slot(slot_id)
+        for role in ("dependency_resolver", "edge_case_hardener", "gate_repairer", "implementer", "integrator"):
+            assert slot.accepts(role), (template_id, slot_id, role)

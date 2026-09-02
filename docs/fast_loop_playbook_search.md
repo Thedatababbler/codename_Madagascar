@@ -300,6 +300,31 @@ test — a compile failure names none, and that is when a shape with a dependenc
 resolver is the right move; the list binds when it exists. `stage_slot` is no
 longer used by any row: the stage feeds the rule floor instead.
 
+The *choice of shape* is evidence-driven too, within the same closed space.
+The diagnoser's output gained `recommended_shape`: an id it must pick from the
+plan-layer rows reachable from the current template — `shape_options` renders
+that menu into its prompt, next to the milestone's title and objective, the
+current subgraph, the stage results and the playbooks already spent here — or
+leave empty. It never proposes a topology; it chooses among prepared
+recompilations, each keeping the milestone's objective, acceptance and
+harness, and an id outside the menu is discarded. The generator then reorders
+the fixed menu, never adding to it: a row already tried on this milestone goes
+to the back, a row recompiling into the diagnosed shape goes to the front, and
+under a `design` class the shape rows as a group outrank the edit rows — which
+is the first time that class does anything, `_FUNCTIONAL` having merged it
+into functional for eligibility. Once a shape row is chosen, the role
+machinery seats its writer and reviewer as above, so a full recommendation is
+three picks from three menus: shape, writer, reviewer.
+
+Every row carrying a shape change or evidence now declares an `intent` — the
+metric it exists to move — checked against the ledger at aggregation time, so
+the table-evolution ring admits and removes rows on the same contract. And the
+repair/fix/improve slots of every template were widened to accept the general
+editing set (`dependency_resolver`, `edge_case_hardener`, `gate_repairer`,
+`implementer`, `integrator`): a slot's allow-list used to veto the diagnosis
+silently — `review_then_fix.fixer` refused the dependency resolver — and the
+diagnosis, not the slot, should decide who sits in a repair position.
+
 The quality table lost its two budget rows. A quality search starts from a gate
 that passed, the Codex backend reports `step_count=1` for every run, and the only
 exit-signal detector reads failure text a passing run does not have; nothing

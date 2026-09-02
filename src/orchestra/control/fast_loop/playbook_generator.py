@@ -93,6 +93,7 @@ class PlaybookCandidateGenerator:
         budget: FastLoopBudget,
         capabilities: Mapping[str, BackendCapabilities],
         search_reason: SearchReason | str = SearchReason.FAILURE,
+        history: tuple[str, ...] | list[str] = (),
     ) -> list[LocalCandidate]:
         if diagnosis.infrastructure_related or not diagnosis.retryable:
             return []
@@ -137,6 +138,8 @@ class PlaybookCandidateGenerator:
             ctx.failure_class,
             search_reason=reason,
             catalog=self.catalog,
+            recommended_shape=diagnosis.recommended_shape,
+            history=history,
         ):
             if len(built) >= k:
                 break

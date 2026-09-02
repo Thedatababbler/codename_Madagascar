@@ -87,6 +87,10 @@ class Playbook:
     playbook_id: str
     reason: str
     classes: frozenset[FailureClass]
+    #: The falsifiable expectation: which metric this row exists to move. The
+    #: ledger is checked against it at aggregation time; a row that never does
+    #: what it was written to do leaves the table on that evidence.
+    intent: str = ""
     #: Parent templates this applies to. Empty means "any template that has no
     #: more specific entry" — the fallback used when the current shape has no
     #: table of its own.
@@ -194,6 +198,8 @@ def playbooks_for(
     *,
     search_reason: SearchReason = SearchReason.FAILURE,
     catalog: tuple[Playbook, ...] | None = None,
+    recommended_shape: str = "",
+    history: tuple[str, ...] | list[str] = (),
 ) -> list[Playbook]:
     """The ordered playbooks for this search, shape, and (on failure) class.
 
@@ -202,6 +208,13 @@ def playbooks_for(
     generic fallbacks, so a ``test_first`` functional failure gets the
     repairer-targeted list rather than the same idea aimed at whichever agent
     happened to fail.
+
+    Evidence reorders the fixed menu; it never adds to it. Three stable
+    adjustments, strongest first in the key: a row already tried on this
+    milestone goes to the back (the same idea does not get the budget twice);
+    a row recompiling into the diagnosed shape goes to the front; and under a
+    ``design`` class the shape rows as a group outrank the edit rows, because
+    that class *means* the shape is the problem.
     """
     rows = [
         playbook
@@ -209,30 +222,43 @@ def playbooks_for(
         if search_reason in playbook.search_reasons
     ]
     if search_reason is SearchReason.QUALITY:
-        specific = [
+        selected = [
             playbook
             for playbook in rows
             if playbook.templates and template_id in playbook.templates
+        ] or [playbook for playbook in rows if not playbook.templates]
+    else:
+        if failure_class is None:
+            raise TypeError("failure_class is required when search_reason is failure")
+        selected = [
+            playbook
+            for playbook in rows
+            if playbook.templates
+            and template_id in playbook.templates
+            and failure_class in playbook.classes
+        ] or [
+            playbook
+            for playbook in rows
+            if not playbook.templates and failure_class in playbook.classes
         ]
-        if specific:
-            return specific
-        return [playbook for playbook in rows if not playbook.templates]
-    if failure_class is None:
-        raise TypeError("failure_class is required when search_reason is failure")
-    specific = [
-        playbook
-        for playbook in rows
-        if playbook.templates
-        and template_id in playbook.templates
-        and failure_class in playbook.classes
-    ]
-    if specific:
-        return specific
-    return [
-        playbook
-        for playbook in rows
-        if not playbook.templates and failure_class in playbook.classes
-    ]
+
+    tried = set(history or ())
+
+    def _key(pair: tuple[int, Playbook]) -> tuple[int, int, int, int]:
+        idx, row = pair
+        design_rank = (
+            (0 if row.layer == "plan" else 1)
+            if failure_class is FailureClass.DESIGN
+            else 0
+        )
+        return (
+            1 if row.playbook_id in tried else 0,
+            0 if recommended_shape and row.switch_template == recommended_shape else 1,
+            design_rank,
+            idx,
+        )
+
+    return [row for _, row in sorted(enumerate(selected), key=_key)]
 
 
 def context_for(
@@ -258,6 +284,34 @@ def context_for(
         nodes_by_slot=nodes,
         roles_by_slot=roles,
     )
+
+
+def shape_options(
+    template_id: str,
+    *,
+    search_reason: SearchReason = SearchReason.FAILURE,
+    catalog: tuple[Playbook, ...] | None = None,
+) -> list[Playbook]:
+    """The plan-layer rows reachable from this shape: the diagnoser's whole menu.
+
+    ``recommended_shape`` must name one of these rows' ``switch_template``
+    values or stay empty; the model is choosing among prepared recompilations
+    of the current shape, never proposing a topology of its own.
+    """
+    if search_reason is SearchReason.QUALITY:
+        classes: list[FailureClass | None] = [None]
+    else:
+        classes = [FailureClass.FUNCTIONAL, FailureClass.DESIGN, FailureClass.BUDGET]
+    seen: set[str] = set()
+    options: list[Playbook] = []
+    for cls in classes:
+        for row in playbooks_for(
+            template_id, cls, search_reason=search_reason, catalog=catalog
+        ):
+            if row.switch_template and row.switch_template not in seen:
+                seen.add(row.switch_template)
+                options.append(row)
+    return options
 
 
 def template_id_of(graph: OrchestraGraph) -> str:
@@ -538,6 +592,7 @@ CATALOG: tuple[Playbook, ...] = (
     # --- test_first --------------------------------------------------------
     Playbook(
         playbook_id="pb_tf_failures_to_repairer",
+        intent="named failures fixed without new regressions",
         reason="put the named failing tests into the repairer's prompt",
         classes=_FUNCTIONAL,
         templates=frozenset({"test_first", "test_first_diagnosed"}),
@@ -546,6 +601,7 @@ CATALOG: tuple[Playbook, ...] = (
     ),
     Playbook(
         playbook_id="pb_tf_diagnose_before_repair",
+        intent="a read report raises the repair's fix rate over a bare repairer",
         reason="split the repair pass: a critic reads the names, then the repairer acts",
         classes=_FUNCTIONAL,
         templates=frozenset({"test_first"}),
@@ -561,6 +617,7 @@ CATALOG: tuple[Playbook, ...] = (
     ),
     Playbook(
         playbook_id="pb_tf_second_repairer",
+        intent="failures the first repair left are fixed by the second",
         reason="two repair rounds behind the same failing gate",
         classes=_FUNCTIONAL,
         templates=frozenset({"test_first"}),
@@ -572,6 +629,7 @@ CATALOG: tuple[Playbook, ...] = (
     ),
     Playbook(
         playbook_id="pb_tf_builder_budget",
+        intent="the run reaches a later stage than the truncated attempt",
         reason="more steps and wall-clock on the builder",
         classes=_BUDGET,
         templates=frozenset({"test_first", "test_first_diagnosed"}),
@@ -582,6 +640,7 @@ CATALOG: tuple[Playbook, ...] = (
     # --- gate_then_repair (the repair half of test_first) ------------------
     Playbook(
         playbook_id="pb_gtr_failures_to_repairer",
+        intent="named failures fixed without new regressions",
         reason="put the named failing tests into the repairer's prompt",
         classes=_FUNCTIONAL,
         templates=frozenset({"gate_then_repair"}),
@@ -590,6 +649,7 @@ CATALOG: tuple[Playbook, ...] = (
     ),
     Playbook(
         playbook_id="pb_gtr_author_budget",
+        intent="the run reaches a later stage than the truncated attempt",
         reason="more steps and wall-clock on the author",
         classes=_BUDGET,
         templates=frozenset({"gate_then_repair"}),
@@ -600,6 +660,7 @@ CATALOG: tuple[Playbook, ...] = (
     # --- solo --------------------------------------------------------------
     Playbook(
         playbook_id="pb_solo_to_gate_repair",
+        intent="gate failures repaired, at no cost when the gate passes",
         reason="recompile as implement-gate-repair so a repairer costs nothing on a pass",
         classes=_FUNCTIONAL,
         templates=frozenset({"solo"}),
@@ -611,6 +672,7 @@ CATALOG: tuple[Playbook, ...] = (
     ),
     Playbook(
         playbook_id="pb_solo_to_review_fix",
+        intent="the reviewer's report converts into fixed named failures",
         reason="recompile as review-then-fix with the reviewer and fixer the failure calls for",
         classes=_FUNCTIONAL,
         templates=frozenset({"solo"}),
@@ -626,6 +688,7 @@ CATALOG: tuple[Playbook, ...] = (
     ),
     Playbook(
         playbook_id="pb_solo_specialist",
+        intent="the diagnosed specialist fixes what the generalist could not",
         reason="recompile as a chain whose second slot is the specialist the failure calls for",
         classes=_FUNCTIONAL,
         templates=frozenset({"solo"}),
@@ -640,6 +703,7 @@ CATALOG: tuple[Playbook, ...] = (
     ),
     Playbook(
         playbook_id="pb_solo_budget",
+        intent="the run reaches a later stage than the truncated attempt",
         reason="more steps and wall-clock on the author",
         classes=_BUDGET,
         templates=frozenset({"solo"}),
@@ -650,6 +714,7 @@ CATALOG: tuple[Playbook, ...] = (
     # --- review_then_fix ---------------------------------------------------
     Playbook(
         playbook_id="pb_rtf_swap_angle",
+        intent="a different review angle surfaces defects the last one missed",
         reason="same shape, the review angle the failure calls for (else the next unused one)",
         classes=_FUNCTIONAL,
         templates=frozenset({"review_then_fix"}),
@@ -661,6 +726,7 @@ CATALOG: tuple[Playbook, ...] = (
     ),
     Playbook(
         playbook_id="pb_rtf_second_angle",
+        intent="two angles surface more actionable findings than one",
         reason="recompile as parallel_audit so two reviewers run at once",
         classes=_FUNCTIONAL,
         templates=frozenset({"review_then_fix"}),
@@ -671,6 +737,7 @@ CATALOG: tuple[Playbook, ...] = (
     ),
     Playbook(
         playbook_id="pb_rtf_drop_reviewer",
+        intent="the same score at lower cost",
         reason="drop the reviewer and spend the budget on the fixer",
         classes=_BUDGET,
         templates=frozenset({"review_then_fix"}),
@@ -682,6 +749,7 @@ CATALOG: tuple[Playbook, ...] = (
     # --- chain -------------------------------------------------------------
     Playbook(
         playbook_id="pb_chain_fill_third",
+        intent="the specialist third pass fixes the diagnosed failures",
         reason="fill the unused third slot with the specialist the failure calls for",
         classes=_FUNCTIONAL,
         templates=frozenset({"chain"}),
@@ -692,6 +760,7 @@ CATALOG: tuple[Playbook, ...] = (
     ),
     Playbook(
         playbook_id="pb_chain_to_review_fix",
+        intent="a reader between the writers converts findings into fixes",
         reason="put a reader between the two writers",
         classes=_FUNCTIONAL,
         templates=frozenset({"chain"}),
@@ -705,6 +774,7 @@ CATALOG: tuple[Playbook, ...] = (
     ),
     Playbook(
         playbook_id="pb_chain_budget",
+        intent="the run reaches a later stage than the truncated attempt",
         reason="more steps and wall-clock on the last writer",
         classes=_BUDGET,
         templates=frozenset({"chain"}),
@@ -715,12 +785,14 @@ CATALOG: tuple[Playbook, ...] = (
     # --- generic fallback, hidden by any template-specific row -------------
     Playbook(
         playbook_id="pb_failures_to_agent",
+        intent="named failures fixed",
         reason="put the named failing tests into the anchored agent's prompt",
         classes=_FUNCTIONAL,
         include_failure_list=True,
     ),
     Playbook(
         playbook_id="pb_budget_steps_time_small",
+        intent="the run reaches a later stage than the truncated attempt",
         reason="small max_steps and timeout increase on the anchored agent",
         classes=_BUDGET,
         steps_delta=2,
@@ -728,6 +800,7 @@ CATALOG: tuple[Playbook, ...] = (
     ),
     Playbook(
         playbook_id="pb_budget_steps_time_large",
+        intent="a minimum passing implementation is reached before polish",
         reason="larger budget plus an instruction to reach a minimum pass first",
         classes=_BUDGET,
         steps_delta=8,
@@ -755,6 +828,7 @@ QUALITY_CATALOG: tuple[Playbook, ...] = (
     # toward a handful of names out of a much larger graded set.
     Playbook(
         playbook_id="pb_tf_q_improve_after_gate",
+        intent="persistent failures fixed without regressing the passing set",
         reason="recompile so an improver runs after the passing builder, told the named leaks",
         classes=_NO_CLASS,
         templates=frozenset({"test_first"}),
@@ -771,6 +845,7 @@ QUALITY_CATALOG: tuple[Playbook, ...] = (
     ),
     Playbook(
         playbook_id="pb_tf_q_diagnose_then_improve",
+        intent="the critic's reading raises the improver's persistent-fix rate",
         reason="a critic reads the named leaks, then an improver acts",
         classes=_NO_CLASS,
         templates=frozenset({"test_first"}),
@@ -789,6 +864,7 @@ QUALITY_CATALOG: tuple[Playbook, ...] = (
     # Already on an improve shape: do not switch to the same shape again.
     Playbook(
         playbook_id="pb_tf_q_failures_to_improver",
+        intent="persistent failures fixed without regressing the passing set",
         reason="put the named weak behaviours into the improver's prompt",
         classes=_NO_CLASS,
         templates=frozenset({"test_first_improve", "test_first_quality_diagnosed"}),
@@ -804,6 +880,7 @@ QUALITY_CATALOG: tuple[Playbook, ...] = (
     # here could never be triggered by evidence, only by its position.
     Playbook(
         playbook_id="pb_tf_q_diagnose_from_improve",
+        intent="the critic's reading raises the improver's persistent-fix rate",
         reason="split the improve pass: a critic reads the names, then the improver acts",
         classes=_NO_CLASS,
         templates=frozenset({"test_first_improve"}),
@@ -818,6 +895,7 @@ QUALITY_CATALOG: tuple[Playbook, ...] = (
     # Hidden by any template-specific row.
     Playbook(
         playbook_id="pb_q_failures_to_agent",
+        intent="named weak behaviours improved without regressions",
         reason="put the named weak behaviours into the anchored agent's prompt",
         classes=_NO_CLASS,
         include_failure_list=True,
@@ -829,6 +907,7 @@ QUALITY_CATALOG: tuple[Playbook, ...] = (
 
 __all__ = [
     "CATALOG",
+    "shape_options",
     "QUALITY_CATALOG",
     "FailureClass",
     "Playbook",

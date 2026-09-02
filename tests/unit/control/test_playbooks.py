@@ -135,3 +135,54 @@ def test_a_named_class_wins_over_inference() -> None:
         failure_class="functional",
     )
     assert infer_failure_class(diagnosis) is FailureClass.FUNCTIONAL
+
+
+def test_evidence_reorders_the_menu_without_adding_to_it() -> None:
+    """Design puts shapes first, a diagnosed shape jumps the queue, and a row
+    already spent on this milestone goes to the back."""
+    base = [p.playbook_id for p in playbooks_for("test_first", FailureClass.FUNCTIONAL)]
+    assert base[0] == "pb_tf_failures_to_repairer"
+
+    design = [p.playbook_id for p in playbooks_for("test_first", FailureClass.DESIGN)]
+    assert design[:2] == ["pb_tf_diagnose_before_repair", "pb_tf_second_repairer"]
+    assert set(design) == set(base), "reordered, never added or removed"
+
+    shaped = [
+        p.playbook_id
+        for p in playbooks_for(
+            "test_first",
+            FailureClass.FUNCTIONAL,
+            recommended_shape="test_first_double_repair",
+        )
+    ]
+    assert shaped[0] == "pb_tf_second_repairer"
+
+    spent = [
+        p.playbook_id
+        for p in playbooks_for(
+            "test_first",
+            FailureClass.FUNCTIONAL,
+            history=["pb_tf_failures_to_repairer"],
+        )
+    ]
+    assert spent[-1] == "pb_tf_failures_to_repairer"
+
+
+def test_shape_options_is_the_whole_menu_and_nothing_else() -> None:
+    from orchestra.control.fast_loop.playbooks import shape_options
+
+    failure = {row.switch_template for row in shape_options("test_first")}
+    assert failure == {"test_first_diagnosed", "test_first_double_repair"}
+    quality = {
+        row.switch_template
+        for row in shape_options("test_first", search_reason=SearchReason.QUALITY)
+    }
+    assert quality == {"test_first_improve", "test_first_quality_diagnosed"}
+
+
+def test_rows_declare_the_metric_they_exist_to_move() -> None:
+    """Intent is the contract the ledger checks a row against; a shape row
+    without one cannot be audited into or out of the table."""
+    for row in (*CATALOG, *QUALITY_CATALOG):
+        if row.switch_template or row.include_failure_list:
+            assert row.intent, row.playbook_id

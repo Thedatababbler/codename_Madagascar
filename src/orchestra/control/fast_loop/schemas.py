@@ -181,6 +181,12 @@ class FailureDiagnosis(BaseModel):
     #: reachable space stays enumerable. Empty means the playbook's own default.
     recommended_role: str = ""
     recommended_reviewer: str = ""
+    #: A ``switch_template`` id drawn from the plan-layer rows reachable from
+    #: the current shape -- the closed menu ``shape_options`` renders. The
+    #: generator moves matching rows to the front of the draft order; the
+    #: model never proposes a topology, it chooses among prepared
+    #: recompilations. Empty keeps the table's own order.
+    recommended_shape: str = ""
     #: ``rule:<why>`` / ``llm`` / ``default``. A run must never be ambiguous
     #: about who chose the specialist.
     role_source: str = ""

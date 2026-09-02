@@ -1,3 +1,7 @@
+# Widened on 2026-09-01 so a diagnosed role can land: repair/fix/improve
+# positions accept the general editing set; the diagnosis, not the slot,
+# decides who sits here, and a role it names but the slot refuses is silently
+# swallowed at binding.
 template_id: test_first_double_repair
 title: Author the tests, implement, then repair twice behind the same gate
 # Reachable by a playbook recompiling a failed `test_first` milestone, not by the
@@ -30,6 +34,7 @@ slots:
       - implementer
       - integrator
       - dependency_resolver
+      - edge_case_hardener
   # Declared last so the compiler freezes this agent's change, not the first
   # repairer's. Both edit, so either would be a legal terminal; the second
   # one is the one that saw the first pass.
@@ -41,6 +46,7 @@ slots:
       - implementer
       - integrator
       - dependency_resolver
+      - edge_case_hardener
 edges:
   - from: test_author
     to: builder

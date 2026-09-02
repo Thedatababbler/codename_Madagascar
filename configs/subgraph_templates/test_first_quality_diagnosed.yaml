@@ -1,3 +1,7 @@
+# Widened on 2026-09-01 so a diagnosed role can land: repair/fix/improve
+# positions accept the general editing set; the diagnosis, not the slot,
+# decides who sits here, and a role it names but the slot refuses is silently
+# swallowed at binding.
 template_id: test_first_quality_diagnosed
 title: Author the tests, implement, then diagnose the leaks and harden them
 # Reachable by a quality-search playbook recompiling a passing `test_first`
@@ -40,6 +44,7 @@ slots:
       - gate_repairer
       - implementer
       - integrator
+      - dependency_resolver
   # See test_first_improve: probe after the improver, repair on its failure,
   # freeze the improver's change on a pass. Optional, so a parent plan without
   # a repairer degrades to the single final gate instead of refusing.
@@ -52,6 +57,7 @@ slots:
       - implementer
       - integrator
       - dependency_resolver
+      - edge_case_hardener
 edges:
   - from: test_author
     to: builder
