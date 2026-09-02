@@ -1837,3 +1837,34 @@ an optional `test_author` slot (custody keys on the role, so the suite — the o
 non-saturated behaviour axis — is reachable from any shape), and `solo` is
 withdrawn from the planner catalogue. One run, one ledger entry; 2/4 is an
 observation, not a rate.
+
+## EXP-20260902-01 — Persistence arm with evidence-chosen shape and roles: a clean tie, and the rule floor's first misfire
+
+One run of the persistence arm (`cpe-20260902T073231Z`, 76 min, prolite quota
+7→10pp) with the full 09-01/09-02 machinery: shape menu, reordering, widened
+slots, intents. M1 again had nothing persistent (0/6) and phase two declined —
+the second time the mechanism correctly refused to diagnose luck, and the
+second time its slot then went unspent, a known gap. M2 split 2 persistent / 5
+flaky, and the deterministic floor fired for the first time:
+`rule:names:public_surface` seated `integrator` + `contract_critic` with no
+model call. The phase-two candidate fixed 1 of 2 persistent failures, the
+oauth2 token cache, introduced **zero** regressions — the first playbook
+appearance that didn't pay the re-rolled-builder tax — and tied the best
+anchor exactly at 25/29, losing the commit on the cost axis.
+
+The rule had no business firing. The suite file was named
+`test_client_behaviour_and_public_surface.py`, and `failure_key` carries the
+file name, so both persistent tests — config and oauth *semantics*, the same
+population the model had classified functional and seated an `implementer`
+for the run before — matched the surface tokens through their file name.
+Fixed the same day: the rules read the test function name alone. A side
+effect worth keeping in mind either way: when the floor fires, the model is
+never consulted, so `recommended_shape` stays empty and the table keeps its
+own order — rule pre-emption trades shape advice for determinism.
+
+Ledger after six appearances of `pb_tf_q_improve_after_gate`: 3/6 persistent
+failures fixed, mean d_best −0.016 (well inside the one-test noise floor),
+two ties with the best anchor, and the only two clean failures were the two
+since-fixed defects. The row is not losing to resampling any more; it is not
+yet beating it. What it still pays for is the builder re-roll, which is the
+continuation-candidate argument restated by a third run.

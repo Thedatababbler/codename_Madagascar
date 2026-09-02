@@ -561,3 +561,16 @@ def test_widened_slots_accept_the_diagnosed_writers() -> None:
         slot = templates[template_id].slot(slot_id)
         for role in ("dependency_resolver", "edge_case_hardener", "gate_repairer", "implementer", "integrator"):
             assert slot.accepts(role), (template_id, slot_id, role)
+
+
+def test_the_rules_read_the_test_name_not_the_file_it_lives_in() -> None:
+    """EXP-20260902-01: a suite file named ..._public_surface.py made two
+    config/oauth semantics tests match the surface rule and seated an
+    integrator for work an implementer was diagnosed for the run before."""
+    names = [
+        "harness/m.spec_tests/test_client_behaviour_and_public_surface.py::ConfigHelperTests::test_create_client_from_config_constructs_and_logs_in_client",
+        "harness/m.spec_tests/test_client_behaviour_and_public_surface.py::ConfigHelperTests::test_get_oauth2_token_caches_tokens_for_repeated_requests",
+    ]
+    assert rule_based_roles(names, "spec_tests") is None, "semantic residue belongs to the model"
+    surface = ["t.py::SurfaceTests::test_public_surface_reexports_client"]
+    assert rule_based_roles(surface, "spec_tests")[0] == "integrator"

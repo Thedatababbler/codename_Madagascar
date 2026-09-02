@@ -139,7 +139,12 @@ def rule_based_roles(
         return ("dependency_resolver", "", "stage:imports")
     if not persistent:
         return None
-    keys = [failure_key(n).lower() for n in persistent]
+    # Match on the test *function* name alone. The file and class ride along in
+    # failure_key, and a suite file named test_..._public_surface.py made every
+    # test it holds -- two config/oauth semantics tests included -- match the
+    # surface rule at once (EXP-20260902-01). A token in the file name says
+    # what the file is about, not what any one test needs.
+    keys = [failure_key(n).lower().rsplit("::", 1)[-1] for n in persistent]
     if all(any(tok in k for tok in _SURFACE_TOKENS) for k in keys):
         return ("integrator", "contract_critic", "names:public_surface")
     if all(any(tok in k for tok in _EDGE_TOKENS) for k in keys):
