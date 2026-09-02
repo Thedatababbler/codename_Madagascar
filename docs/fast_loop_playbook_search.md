@@ -492,6 +492,54 @@ compiler defect and not something a caller can recover from, and
 `apply_local_edits` rejects with `LocalEditError`, which the generators already
 turn into `INVALID_GRAPH_EDIT`.
 
+## Three timescales, and who may change what
+
+| ring | scale | mutates | state |
+|---|---|---|---|
+| fast loop | one milestone, minutes | candidate instances: which rows are eligible, who fills their slots, what evidence binds, resample vs diagnose | running |
+| M5 slow loop | one task, between checkpoints | future, unleased milestones' plans (never the committed past) | built, `enabled: false` in these arms |
+| table evolution | across runs, offline | the tables, templates, roles and rules themselves | manual today |
+
+The fast loop adapts the *instance* and never the *policy*: the tables, the
+role pool and the rule floor are read-only to it, and everything it learns
+leaves as records — candidate results, the persistence ledger, notes. Three
+measured reasons it must stay that way: single-run evidence is noise (the
+same-design floor is one test); a table that mutates mid-experiment breaks the
+rule that a run is never ambiguous about which table produced its candidates,
+so ledgers stop aggregating; and the table plus the pool are the whole
+enumerable design space, which is what keeps every candidate auditable.
+
+Table evolution is the ring the human has been playing by hand — removing
+`pb_tf_q_failures_to_builder` after three controlled losses, rewiring the
+roles, gating the improve shapes — and the plan is to mechanise exactly that
+gesture, not to free-associate over history. Its evidence unit is the paired,
+within-run, persistent-fix ledger record — not "which candidate won", which at
+n=1 per design is mostly the resampling lottery (a summariser reading raw
+winners would conclude the anchor is the best playbook, which is true and
+vacuous). Staged:
+
+* **P0 — the eyes.** An aggregation script over every run's
+  `task_execution.json`: per (playbook_id, role, failure_class), the paired
+  delta against the same run's anchor, persistent failures fixed, regressions
+  introduced, cost. No new spend; 27 records exist today.
+* **P1 — entry and exit rules.** A row earns a k-slot with N paired
+  persistent-fix wins over the anchor and loses it the same way, turning the
+  manual deletion into policy.
+* **P2 — the summariser.** An LLM reads failure cases, ledgers, winning diffs
+  and external motifs, and proposes new rows or templates as *hypotheses*: each
+  declares an `intent` (which metric should move), enters
+  `planner_selectable: false`, and must pass P1's gate to keep its slot.
+  EvoMAS's evolved pool entries (`/root/projects/EvoMAS/mas_pools/*/`) enter
+  here as design motifs — parallel read-only review, judge positions, vote
+  aggregation over reports — filtered by the one-workspace constraint that
+  forbids parallel writers; their scores on other benchmarks are priors, not
+  evidence.
+
+Intent is verified twice: structurally at bind time (the role seated, the
+names delivered — unit-tested), and in outcome by checking the declared metric
+against the ledger, so a row that never does what it was written to do is
+removed by the same evidence that admitted it.
+
 ## Persistence diagnosis
 
 One attempt's failure list mixes tests the code gets wrong with tests this sample

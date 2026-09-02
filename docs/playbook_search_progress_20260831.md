@@ -22,6 +22,8 @@
 
 **2026-09-01 下午，菜谱表按批评修正**：失败表 10 行计划层此前角色全是常量、0 行带名单（审计脚本可复现）。现在：每一行的动手槽取 `recommended_role`、只读槽取 `recommended_reviewer`（常量退为兜底），并把名单打到新图对应槽；`pb_solo_specialist` / `pb_chain_fill_third` 不再按 `furthest_stage` 查表（那张表把 tests 阶段一律送给 hardener），改读诊断，阶段信号只进规则底座；计划层行在门没点名任何测试时（compile 失败）仍出场。诊断链（规则 → LLM → 默认配对）对失败路径和普通质量路径都生效，不再只在 persistence 阶段二；默认按搜索原因成对：失败 `gate_repairer + behaviour_critic`，质量 `implementer + spec_auditor`。质量表两条预算行删除——没有任何可触发它们的证据（门已过、backend `step_count` 恒为 1、退出信号只从失败文本里读）。
 
+**2026-09-01 晚，三环分工定案**：快环只做实例级适应（选行、填角色、绑证据、重抽/诊断分支），表/模板/角色/规则对它只读；M5 慢环是任务内的中间层（现关）；**表演化环**（跨 run、离线）负责改表本身，证据单位是配对的 run 内持久修复账本，分 P0 聚合脚本 → P1 进出规则 → P2 总结器（LLM 提假设行、声明 intent、走证据门槛；EvoMAS evolved 池作为设计母题进入，受单工作区约束过滤）。详见设计稿 "Three timescales" 一节。
+
 **下一步（取代 §11）**：续作候选——improver 直接在 incumbent 成品工作区上干、不重跑 builder。数据指向它：诊断能动持久题，收益被 builder 方差随机抵消。其后是把 epsilon 调到噪声量级、按 (class, role) 汇总账本。
 
 ---
