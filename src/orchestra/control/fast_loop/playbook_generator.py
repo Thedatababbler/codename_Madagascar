@@ -236,6 +236,8 @@ class PlaybookCandidateGenerator:
                 graph=cand.graph,
                 contracts_dir=self.contracts_dir,
             )
+        if playbook.continue_from_incumbent:
+            cand.continue_from_incumbent = True
         return self._annotate_recompile(cand, playbook, ctx)
 
     def _annotate_recompile(
@@ -280,6 +282,7 @@ class PlaybookCandidateGenerator:
         )
         if not annotated.compatibility_rejected:
             annotated.plan_recompile = cand.plan_recompile
+            annotated.continue_from_incumbent = cand.continue_from_incumbent
         return annotated
 
     def _apply_edits(

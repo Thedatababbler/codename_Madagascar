@@ -1,0 +1,27 @@
+template_id: continuation
+title: One specialist continues on the incumbent's own work
+# Reachable only by a quality-search playbook. The candidate workspace is
+# forked from the milestone base and the incumbent's change set is replayed
+# into it before this graph runs, so the single agent starts from the state
+# that already passed the gate -- the floor cannot be re-rolled away. Three
+# runs showed the diagnosed specialist's own work was positive every time
+# while the re-rolled builder decided the outcome (EXP-20260831-01,
+# EXP-20260902-01); this shape removes the roll. No test_author: the suite
+# frozen for the milestone stays the yardstick, and re-authoring it would
+# change what is being measured.
+planner_selectable: false
+when_to_use: >
+  A quality search whose incumbent passed the gate but keeps failing the same
+  behaviours in every sample. The specialist the diagnosis chose works
+  directly on the incumbent's result, told only the persistent failures, and
+  the final gate grades the combined state under the same suite.
+slots:
+  - id: improver
+    default_role: implementer
+    allowed_roles:
+      - dependency_resolver
+      - edge_case_hardener
+      - gate_repairer
+      - implementer
+      - integrator
+edges: []

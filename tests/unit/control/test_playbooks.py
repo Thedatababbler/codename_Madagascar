@@ -79,6 +79,7 @@ def test_quality_search_has_its_own_test_first_table() -> None:
         p.playbook_id
         for p in playbooks_for("test_first", search_reason=SearchReason.QUALITY)
     ] == [
+        "pb_q_continue_improve",
         "pb_tf_q_improve_after_gate",
         "pb_tf_q_diagnose_then_improve",
     ]
@@ -89,6 +90,7 @@ def test_quality_search_on_an_improve_shape_targets_the_improver() -> None:
         p.playbook_id
         for p in playbooks_for("test_first_improve", search_reason=SearchReason.QUALITY)
     ] == [
+        "pb_q_continue_improve",
         "pb_tf_q_failures_to_improver",
         "pb_tf_q_diagnose_from_improve",
     ]
@@ -98,6 +100,7 @@ def test_quality_search_on_an_improve_shape_targets_the_improver() -> None:
             "test_first_quality_diagnosed", search_reason=SearchReason.QUALITY
         )
     ] == [
+        "pb_q_continue_improve",
         "pb_tf_q_failures_to_improver",
     ]
 
@@ -177,7 +180,7 @@ def test_shape_options_is_the_whole_menu_and_nothing_else() -> None:
         row.switch_template
         for row in shape_options("test_first", search_reason=SearchReason.QUALITY)
     }
-    assert quality == {"test_first_improve", "test_first_quality_diagnosed"}
+    assert quality == {"continuation", "test_first_improve", "test_first_quality_diagnosed"}
 
 
 def test_rows_declare_the_metric_they_exist_to_move() -> None:

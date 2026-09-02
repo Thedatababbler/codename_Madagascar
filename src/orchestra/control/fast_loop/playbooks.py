@@ -120,6 +120,10 @@ class Playbook:
     #: than sent to the recompile, which would reject the whole candidate.
     role_from_diagnosis: str = ""
     reviewer_from_diagnosis: str = ""
+    #: The candidate starts from the incumbent's replayed change set instead of
+    #: a clean fork of the milestone base: the floor that already passed the
+    #: gate cannot be re-rolled away, and the graph carries no builder to roll.
+    continue_from_incumbent: bool = False
     #: Which search this row belongs to. Default is failure: existing rows were
     #: written for a gate that did not pass. Quality rows must opt in.
     search_reasons: frozenset[SearchReason] = field(
@@ -816,6 +820,22 @@ QUALITY_CATALOG: tuple[Playbook, ...] = (
     # Cheap first: the gate already passed, so the next dollar has to change
     # what a writer sees or who writes. A repairer behind a failing gate is
     # the wrong person; an improver who never hears the names is a no-op.
+    Playbook(
+        playbook_id="pb_q_continue_improve",
+        intent="persistent failures fixed on the incumbent's own state, floor kept",
+        reason="one diagnosed specialist continues on the incumbent's work, told the persistent failures",
+        classes=_NO_CLASS,
+        templates=frozenset(
+            {"test_first", "test_first_improve", "test_first_quality_diagnosed"}
+        ),
+        target="improver",
+        include_failure_list=True,
+        extra_prompt=_QUALITY_GUARD,
+        switch_template="continuation",
+        role_from_diagnosis="improver",
+        continue_from_incumbent=True,
+        search_reasons=_QUALITY,
+    ),
     #
     # `pb_tf_q_failures_to_builder` used to sit here and was removed after
     # losing to the anchor three times out of three (-9.4pp, -31pp, and once

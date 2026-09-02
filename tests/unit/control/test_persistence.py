@@ -321,10 +321,13 @@ def test_the_improve_row_takes_its_specialist_from_the_diagnosis() -> None:
     built = PlaybookCandidateGenerator(role_pool=_pool()).generate(
         graph=graph,
         diagnosis=diagnosis,
-        budget=FastLoopBudget(max_candidates=3, max_total_backend_calls=99),
+        budget=FastLoopBudget(max_candidates=4, max_total_backend_calls=99),
         capabilities={},
         search_reason=SearchReason.QUALITY,
     )
+    continued = next(c for c in built if c.playbook_id == "pb_q_continue_improve")
+    assert continued.continue_from_incumbent
+    assert continued.plan_recompile.slots["improver"] == "implementer"
     improved = next(c for c in built if c.playbook_id == "pb_tf_q_improve_after_gate")
     assert improved.plan_recompile.slots["improver"] == "implementer"
     assert "edge_case_hardener" not in _roles(improved.graph)
@@ -349,7 +352,7 @@ def test_a_recommended_role_the_slot_cannot_hold_is_ignored_not_fatal() -> None:
     )
     built = PlaybookCandidateGenerator(role_pool=_pool()).generate(
         graph=graph, diagnosis=diagnosis,
-        budget=FastLoopBudget(max_candidates=2, max_total_backend_calls=99),
+        budget=FastLoopBudget(max_candidates=3, max_total_backend_calls=99),
         # Real capabilities, so the only thing that could reject it is the recompile.
         capabilities={"codex_sdk": CodexSDKBackend().capabilities},
         search_reason=SearchReason.QUALITY,
@@ -540,10 +543,10 @@ def test_the_generator_moves_a_spent_row_to_the_back() -> None:
         budget=FastLoopBudget(max_candidates=2, max_total_backend_calls=99),
         capabilities={},
         search_reason=SearchReason.QUALITY,
-        history=["pb_tf_q_improve_after_gate"],
+        history=["pb_q_continue_improve"],
     )
-    # k=2 leaves one playbook slot; the spent improve row yields it.
-    assert [c.playbook_id for c in built] == ["", "pb_tf_q_diagnose_then_improve"]
+    # k=2 leaves one playbook slot; the spent continuation row yields it.
+    assert [c.playbook_id for c in built] == ["", "pb_tf_q_improve_after_gate"]
 
 
 def test_widened_slots_accept_the_diagnosed_writers() -> None:
@@ -574,3 +577,55 @@ def test_the_rules_read_the_test_name_not_the_file_it_lives_in() -> None:
     assert rule_based_roles(names, "spec_tests") is None, "semantic residue belongs to the model"
     surface = ["t.py::SurfaceTests::test_public_surface_reexports_client"]
     assert rule_based_roles(surface, "spec_tests")[0] == "integrator"
+
+
+def test_apply_patch_replays_the_incumbent_onto_a_fresh_fork(tmp_path) -> None:
+    """The continuation base: fork clean from the milestone base, replay the
+    incumbent's patch, and the collected changeset then carries incumbent work
+    plus whatever the specialist adds -- so the commit path needs no change."""
+    import asyncio
+    import subprocess
+
+    from orchestra.control.fast_loop.workspace import (
+        CandidateWorkspaceError,
+        GitCandidateWorkspaceManager,
+    )
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "mod.py").write_text("VALUE = 1\n")
+    for cmd in (
+        ["git", "init"],
+        ["git", "add", "-A"],
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "base"],
+    ):
+        subprocess.run(cmd, cwd=src, check=True, capture_output=True)
+
+    mgr = GitCandidateWorkspaceManager()
+
+    async def flow():
+        base = await mgr.prepare_base_snapshot(
+            source_repo=str(src), run_dir=str(tmp_path), task_id="t", subtask_id="m"
+        )
+        ws = await mgr.fork_candidate_workspace(
+            base=base, run_dir=str(tmp_path), task_id="t", subtask_id="m",
+            candidate_id="cand_continue",
+        )
+        (src / "mod2.py").write_text("ADDED = 2\n")
+        patch = subprocess.run(
+            ["git", "diff", "--no-index", "--", "/dev/null", "mod2.py"],
+            cwd=src, capture_output=True, text=True,
+        ).stdout
+        await mgr.apply_patch(ws, patch)
+        repo = tmp_path / "tasks/t/subtasks/m/candidates/cand_continue/repo"
+        assert (repo / "mod2.py").read_text() == "ADDED = 2\n"
+        cs = await mgr.collect_changeset(ws)
+        assert "mod2.py" in cs.added_untracked_files
+        # Garbage must reject, never run on the wrong base.
+        try:
+            await mgr.apply_patch(ws, "not a patch at all")
+        except CandidateWorkspaceError:
+            return
+        raise AssertionError("garbage patch was accepted")
+
+    asyncio.run(flow())

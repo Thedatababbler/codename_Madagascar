@@ -286,8 +286,8 @@ def test_quality_search_drafts_from_the_quality_table_not_the_failure_one() -> N
     ids = [c.playbook_id for c in built]
     assert ids == [
         "",
+        "pb_q_continue_improve",
         "pb_tf_q_improve_after_gate",
-        "pb_tf_q_diagnose_then_improve",
     ]
     assert all(
         c.playbook_id not in {
@@ -352,7 +352,7 @@ def test_quality_prompt_says_when_the_gate_named_only_a_subset() -> None:
         capabilities={},
         search_reason=SearchReason.QUALITY,
     )
-    listed = next(c for c in built if c.playbook_id == "pb_tf_q_improve_after_gate")
+    listed = next(c for c in built if c.playbook_id == "pb_q_continue_improve")
     feedback = next(
         e.feedback
         for e in listed.edits
@@ -391,8 +391,8 @@ def test_quality_search_on_improve_does_not_reswitch_the_same_shape() -> None:
     )
     assert [c.playbook_id for c in built] == [
         "",
+        "pb_q_continue_improve",
         "pb_tf_q_failures_to_improver",
-        "pb_tf_q_diagnose_from_improve",
     ]
     improver = _agent(graph, "_edge_case_hardener")
     named = next(c for c in built if c.playbook_id == "pb_tf_q_failures_to_improver")
@@ -422,6 +422,7 @@ def test_quality_diagnose_then_improve_tells_both_new_slots() -> None:
     )
     assert [c.playbook_id for c in built] == [
         "",
+        "pb_q_continue_improve",
         "pb_tf_q_improve_after_gate",
         "pb_tf_q_diagnose_then_improve",
     ]

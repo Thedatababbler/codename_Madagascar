@@ -300,6 +300,10 @@ class LocalCandidate(BaseModel):
     #: reasons, and it is the reason whose win rate is worth aggregating.
     playbook_id: str = ""
     plan_recompile: PlanRecompile | None = None
+    #: Fork the candidate workspace from the milestone base and replay the
+    #: incumbent's change set into it before executing; the graph then starts
+    #: from the state that already passed the gate.
+    continue_from_incumbent: bool = False
     compatibility_rejected: bool = False
     rejection_reason: CandidateRejectionReason | None = None
     rejection_message: str | None = None

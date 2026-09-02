@@ -39,6 +39,8 @@ class CandidateWorkspaceManager(Protocol):
 
     async def collect_changeset(self, workspace: WorkspaceRef) -> WorkspaceChangeSet: ...
 
+    async def apply_patch(self, workspace: WorkspaceRef, patch: str) -> None: ...
+
     async def collect_patch(self, workspace: WorkspaceRef) -> tuple[str, list[str], str]: ...
 
     async def apply_changeset(
@@ -374,6 +376,32 @@ class GitCandidateWorkspaceManager:
     async def collect_changeset(self, workspace: WorkspaceRef) -> WorkspaceChangeSet:
         repo = Path(workspace.path)
         return await asyncio.to_thread(self._build_changeset, repo)
+
+    async def apply_patch(self, workspace: WorkspaceRef, patch: str) -> None:
+        """Replay a recorded change set into a fresh candidate worktree.
+
+        Used by continuation candidates: the worktree is forked clean from the
+        milestone base, the incumbent's patch is replayed here, and the graph
+        then runs on the state that already passed the gate. Failure raises --
+        a specialist must never run on a base other than the one it was
+        promised, so the caller rejects the candidate rather than executing.
+        """
+        repo = Path(workspace.path)
+
+        def _apply() -> None:
+            proc = subprocess.run(
+                ["git", "apply", "--binary", "--whitespace=nowarn", "-"],
+                cwd=repo,
+                input=patch,
+                capture_output=True,
+                text=True,
+            )
+            if proc.returncode != 0:
+                raise CandidateWorkspaceError(
+                    f"incumbent patch did not apply: {proc.stderr[-500:]}"
+                )
+
+        await asyncio.to_thread(_apply)
 
     async def collect_patch(
         self, workspace: WorkspaceRef

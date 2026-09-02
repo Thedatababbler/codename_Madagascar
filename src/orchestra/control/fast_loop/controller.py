@@ -252,6 +252,11 @@ class FastLoopController:
             metadata={
                 "generation_reason": cand.generation_reason,
                 "graph": cand.graph.model_dump(mode="json"),
+                **(
+                    {"continue_from_incumbent": True}
+                    if cand.continue_from_incumbent
+                    else {}
+                ),
             },
         )
 
@@ -342,6 +347,7 @@ class FastLoopController:
         context: RunContext,
         initial_artifacts: Any,
         base_ws: Any,
+        incumbent_artifact: str | None = None,
     ) -> None:
         """Intersect the probe samples, diagnose the persistent set, spend the rest.
 
@@ -419,6 +425,7 @@ class FastLoopController:
                 }
             )
             fl_state.candidates.append(record)
+        self._arm_continuations(fl_state, incumbent_artifact)
         state.state_version += 1
         await self._save_checkpoint(state)
 
@@ -444,6 +451,76 @@ class FastLoopController:
             record.metadata["persistence_ledger"] = persistence_ledger(
                 record, list(record.metadata.get("persistent_failures") or [])
             )
+
+    async def _replay_incumbent(self, record: CandidateRecord, cand_ws: Any) -> bool:
+        artifact_id = record.metadata.get("incumbent_change_artifact")
+        patch = None
+        if artifact_id:
+            try:
+                artifact = await self.artifact_store.get(str(artifact_id))
+                patch = (getattr(artifact, "payload", None) or {}).get("patch")
+            except Exception as exc:  # noqa: BLE001 -- reject, never run on the wrong base
+                record.rejection_message = f"incumbent artifact unavailable: {exc}"
+        if not patch:
+            record.status = CandidateStatus.REJECTED
+            record.rejection_reason = CandidateRejectionReason.OTHER
+            record.rejection_message = (
+                record.rejection_message
+                or "incumbent change artifact carries no patch"
+            )
+            return False
+        try:
+            await self.workspace_manager.apply_patch(cand_ws, str(patch))
+        except Exception as exc:  # noqa: BLE001
+            record.status = CandidateStatus.REJECTED
+            record.rejection_reason = CandidateRejectionReason.OTHER
+            record.rejection_message = f"incumbent patch replay failed: {exc}"
+            return False
+        record.metadata["continued_on"] = str(artifact_id)
+        return True
+
+    @staticmethod
+    def _final_change_artifact(graph_result: Any) -> str | None:
+        """The incumbent's frozen repository change, if the first pass has one."""
+        state = getattr(graph_result, "state", None)
+        outputs = getattr(state, "node_outputs", None) or {}
+        freeze = outputs.get("freeze_change") or {}
+        artifact_id = freeze.get("final_change")
+        if artifact_id:
+            return str(artifact_id)
+        # No freeze output (gate path differences): fall back to the last
+        # agent-produced repository change in the run.
+        last = None
+        for node_outputs in outputs.values():
+            if node_outputs.get("repository_change"):
+                last = node_outputs["repository_change"]
+        return str(last) if last else None
+
+    @staticmethod
+    def _arm_continuations(
+        fl_state: FastLoopState, incumbent_artifact: str | None
+    ) -> None:
+        """Point continuation records at the incumbent's change, or reject them.
+
+        A continuation without the incumbent's patch would silently run on the
+        bare milestone base -- a worse anchor wearing the continuation's name --
+        so a missing artifact rejects the record instead of executing it.
+        """
+        for record in fl_state.candidates:
+            if not record.metadata.get("continue_from_incumbent"):
+                continue
+            if record.status is not CandidateStatus.PENDING:
+                continue
+            if "incumbent_change_artifact" in record.metadata:
+                continue
+            if incumbent_artifact:
+                record.metadata["incumbent_change_artifact"] = incumbent_artifact
+            else:
+                record.status = CandidateStatus.REJECTED
+                record.rejection_reason = CandidateRejectionReason.OTHER
+                record.rejection_message = (
+                    "continuation candidate has no incumbent change artifact"
+                )
 
     @staticmethod
     def _playbook_history(fl_state: FastLoopState) -> list[str]:
@@ -688,6 +765,7 @@ class FastLoopController:
                 if probing:
                     record.metadata["persistence_phase"] = 1
                 fl_state.candidates.append(record)
+            self._arm_continuations(fl_state, self._final_change_artifact(graph_result))
             state.state_version += 1
             await self._save_checkpoint(state)
 
@@ -732,6 +810,7 @@ class FastLoopController:
                 context=context,
                 initial_artifacts=initial_artifacts,
                 base_ws=base_ws,
+                incumbent_artifact=self._final_change_artifact(graph_result),
             )
 
         winner = self.selector.select(fl_state.candidates, self.budget)
@@ -983,6 +1062,13 @@ class FastLoopController:
                 candidate_id=record.candidate_id,
             )
             record.workspace_ref = cand_ws
+            if record.metadata.get("continue_from_incumbent"):
+                # Replay the incumbent's change set so the specialist starts
+                # from the state that passed the gate. Any failure to do so
+                # rejects the candidate: run on the wrong base and its scores
+                # would be an anchor's, filed under the continuation's name.
+                if not await self._replay_incumbent(record, cand_ws):
+                    return
 
         run_context = RunContext(
             run_id=f"{context.run_id}:{record.candidate_id}",
