@@ -233,7 +233,12 @@ def refine_diagnosis(
         SearchReason.QUALITY if search_reason == "quality" else SearchReason.FAILURE
     )
     shapes = shape_options(template_id_of(graph), search_reason=reason)
-    allowed_shapes = {row.switch_template for row in shapes}
+    # Accept either name for a menu row: the template id or the bracketed
+    # playbook id, normalised to the template. On imapclient the model chose a
+    # row by its playbook id and a strict check threw the whole (legal) intent
+    # away (EXP-20260902-02).
+    allowed_shapes = {row.switch_template: row.switch_template for row in shapes}
+    allowed_shapes.update({row.playbook_id: row.switch_template for row in shapes})
     user_prompt = build_diagnosis_prompt(
         lookup=lookup,
         graph=graph,
@@ -327,9 +332,7 @@ def refine_diagnosis(
     # executable by construction; whether it was *right* is the ledger's job.
     role = _validated_role(parsed.get("recommended_role"), role_pool, editing=True)
     reviewer = _validated_role(parsed.get("recommended_reviewer"), role_pool, editing=False)
-    shape = str(parsed.get("recommended_shape") or "").strip()
-    if shape and shape not in allowed_shapes:
-        shape = ""
+    shape = allowed_shapes.get(str(parsed.get("recommended_shape") or "").strip(), "")
     if role and not lookup.recommended_role:
         call.role_applied = True
 

@@ -248,15 +248,27 @@ def playbooks_for(
 
     tried = set(history or ())
 
-    def _key(pair: tuple[int, Playbook]) -> tuple[int, int, int, int]:
+    def _key(pair: tuple[int, Playbook]) -> tuple[int, int, int, int, int]:
         idx, row = pair
         design_rank = (
             (0 if row.layer == "plan" else 1)
             if failure_class is FailureClass.DESIGN
             else 0
         )
+        # A quality search starts from a gate that passed: the base is
+        # certified, and a row that keeps it outranks any recommendation to
+        # re-roll it. Of six re-rolls across the 2026-09-02 continuation runs,
+        # five fell below their own incumbent; the one candidate above its
+        # incumbent was the continuation. The model's shape pick still orders
+        # everything behind the continuation rows -- and may *be* one of them.
+        keeps_floor = (
+            0
+            if search_reason is SearchReason.QUALITY and row.continue_from_incumbent
+            else 1
+        )
         return (
             1 if row.playbook_id in tried else 0,
+            keeps_floor,
             0 if recommended_shape and row.switch_template == recommended_shape else 1,
             design_rank,
             idx,

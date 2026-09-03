@@ -629,3 +629,34 @@ def test_apply_patch_replays_the_incumbent_onto_a_fresh_fork(tmp_path) -> None:
         raise AssertionError("garbage patch was accepted")
 
     asyncio.run(flow())
+
+
+def test_a_shape_pick_cannot_displace_the_continuation_in_a_quality_search() -> None:
+    """The quality base is certified by its gate; a recommendation to re-roll
+    it orders everything behind the rows that keep it (5 of 6 re-rolls fell
+    below their own incumbent on 2026-09-02; the continuation did not)."""
+    from orchestra.control.fast_loop.playbooks import playbooks_for
+
+    picked = [
+        p.playbook_id
+        for p in playbooks_for(
+            "test_first",
+            search_reason=SearchReason.QUALITY,
+            recommended_shape="test_first_quality_diagnosed",
+        )
+    ]
+    assert picked[0] == "pb_q_continue_improve"
+    assert picked[1] == "pb_tf_q_diagnose_then_improve", "the pick still orders the rest"
+
+
+def test_a_playbook_id_names_its_menu_row_just_as_well() -> None:
+    """EXP-20260902-02: the model chose a legal row by its bracketed playbook
+    id and a strict template-id check discarded the whole intent."""
+    graph = _test_first()
+    cfg = DiagnosisConfig(mode="llm", min_confidence=0.5)
+    client = _Client(_reply(recommended_shape="pb_tf_q_diagnose_then_improve"))
+    refined, _ = refine_diagnosis(
+        lookup=_quality_lookup(), graph=graph, subtask_state=_sub(),
+        config=cfg, client=client, search_reason="quality",
+    )
+    assert refined.recommended_shape == "test_first_quality_diagnosed"
