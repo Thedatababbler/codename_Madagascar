@@ -1868,3 +1868,46 @@ two ties with the best anchor, and the only two clean failures were the two
 since-fixed defects. The row is not losing to resampling any more; it is not
 yet beating it. What it still pays for is the builder re-roll, which is the
 continuation-candidate argument restated by a third run.
+
+## EXP-20260903-01 — With the slot protected, the continuation boards every search and wins most of them
+
+Three tasks (imapclient, pyjwt, bplustree; frozen test_first plans from
+outputs/cpe_54_search), persistence arm, after two changes: a shape pick can
+no longer displace a continuation row in a quality search, and a menu row may
+be named by its playbook id. 158 minutes, prolite quota 15→22pp.
+
+**Boarding: 4 of 4 triggered searches drafted and ran the continuation; every
+incumbent patch replayed cleanly.** The protection did what it was built for.
+
+| search | incumbent | anchors | continuation | outcome |
+|---|---|---|---|---|
+| imapclient M1 | 0.475 | **0.557**, 0.475 | 0.492 (0/5 persistent, $0.32) | anchor won — 8 flaky vs 5 persistent, resampling's home turf |
+| imapclient M2 | 0.696 | 0.652, 0.609 | **0.739** (1/6, $0.39) | committed |
+| pyjwt crypto | 0.000 | 0.000, 0.000 | 0.000 (0/4, $0.45) | declined; every candidate zero |
+| bplustree M1 | 0.875 | 0.750, 0.813 | **0.938** (2/3, $0.24) | committed |
+
+Across five appearances now (EXP-20260902-02's first win included): **the
+continuation has never scored below its incumbent — five of five — while the
+anchors fell below theirs in six of ten samples this run.** The ledger after
+today:
+
+| playbook | n | beat best anchor | mean d_best | persistent fixed | mean regressions | mean $ |
+|---|---|---|---|---|---|---|
+| pb_q_continue_improve | 5 | 3/5 | **+0.041** | 4/26 | **0.0** | 0.41 |
+| pb_tf_q_improve_after_gate | 7 | 1/6 | −0.013 | 3/8 | 1.17 | 1.48 |
+| pb_tf_q_diagnose_then_improve | 1 | 0/1 | −0.031 | 0/3 | 0.0 | 2.08 |
+| pb_tf_q_failures_to_builder (removed) | 4 | 0/3 | −0.154 | — | 6.33 | 1.11 |
+
+The only row with a positive paired mean, the only row that has committed
+wins (three), no regression ever, at a third of everyone else's price. The
+floor mechanism, not luck: it cannot lose what the incumbent already passed.
+
+Two boundary cases worth keeping. imapclient M1 was flaky-dominated (8 of 13
+failures flipped) and best-of-2 resampling rightly beat a continuation that
+had little persistent material to work with — the allocator lesson is to
+spend on resamples when the flaky share is high. pyjwt's crypto milestone
+passed its gate with an authored-suite behaviour of exactly zero and nothing
+— resample or continuation — moved any of its four persistent failures; when
+the base is that far from the yardstick, neither polishing nor re-rolling
+inside the same plan helps, and that is the honest case for a design-class
+escape hatch left unbuilt so far.
