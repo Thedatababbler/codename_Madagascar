@@ -216,7 +216,11 @@ def test_a_milestone_that_authored_nothing_scores_exactly_as_before(
     assert code_with == code_without == 0
     assert with_flag["score"] == without_flag["score"] == 1.0
     assert Harness.stage(with_flag, "spec_tests") is None
-    assert [s["weight"] for s in with_flag["stages"]] == [0.3, 0.4, 0.3]
+    # compile / imports / cross_imports / contracts. The cross-import stage
+    # joined the implementation level in 2026-09; what this test guards is that
+    # the spec flag is inert without an authored suite, not the exact split.
+    assert [s["weight"] for s in with_flag["stages"]] == [0.25, 0.3, 0.15, 0.3]
+    assert sum(s["weight"] for s in with_flag["stages"]) == 1.0
 
 
 def test_a_milestone_that_lost_its_suite_says_so(tmp_path: Path) -> None:

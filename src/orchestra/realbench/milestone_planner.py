@@ -679,6 +679,14 @@ first.
      Use `required_levels` from ["discovery","implementation","integration"].
      Prefer checks that pin the risky contract itself (exact symbols that later
      milestones import), not restatements of the file tree.
+     **Constants are contract, not detail.** `callable_or_class` only accepts
+     classes and functions, so module-level constants -- byte widths, endianness,
+     magic numbers, size limits, format versions -- must be pinned with `export`.
+     Any value that two modules must agree on to read each other's bytes belongs
+     in this list by name: a milestone that freezes `TreeConf` but not the
+     constants beside it leaves every consumer free to invent its own layout,
+     which compiles, imports and passes a suite written from the same wrong
+     assumption (EXP-20260903-02).
      Pin a symbol at the module the public design says exports it (a package
      root when the UML lists it there), not only at its definition site: a
      symbol that is importable from its private module but missing from the

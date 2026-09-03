@@ -118,3 +118,42 @@ def test_a_syntax_error_stops_the_score_at_compilation(
     assert code == 1
     assert payload["score"] == 0.0
     assert [s["stage"] for s in payload["stages"]] == ["compile"]
+
+
+def test_a_name_the_package_never_defines_is_caught_before_any_test_runs(
+    harness: Path, tmp_path: Path
+) -> None:
+    """EXP-20260903-02: bplustree shipped a package whose modules imported each
+    other correctly but whose held-out consumers wanted an ENDIAN the package
+    never defined. Import-level breakage takes whole test modules out at
+    collection, so 337 of 356 cases died for one missing name -- a gradient the
+    gate has to show rather than report a structurally sound repository."""
+    # Guarded so the module still imports: that is the shape the imports stage
+    # cannot see, and the shape a held-out consumer walks straight into.
+    repo = tmp_path / "dangling"
+    (repo / "pkg").mkdir(parents=True)
+    (repo / "pkg" / "__init__.py").write_text("")
+    (repo / "pkg" / "a.py").write_text("VALUE = 'a'\n")
+    (repo / "pkg" / "b.py").write_text(
+        "try:\n    from pkg.a import MISSING\nexcept ImportError:\n    MISSING = None\n"
+    )
+    (repo / "pkg" / "c.py").write_text("VALUE = 'c'\n")
+
+    code, payload = _run(harness, _manifest(tmp_path), repo)
+    stage = {s["stage"]: (s["passed_units"], s["total_units"]) for s in payload["stages"]}
+
+    assert code == 1
+    assert stage["cross_imports"][0] < stage["cross_imports"][1]
+    assert payload["score"] < 1.0
+
+
+def test_a_package_with_no_internal_imports_is_not_penalised(
+    harness: Path, tmp_path: Path
+) -> None:
+    """Zero of zero is a pass. Scoring it as a miss would cap every
+    single-module milestone below 1.0 for a defect it cannot have."""
+    _, payload = _run(harness, _manifest(tmp_path), _repo(tmp_path, ["a", "b", "c"]))
+    stage = {s["stage"]: (s["passed_units"], s["total_units"]) for s in payload["stages"]}
+
+    assert stage["cross_imports"] == (1, 1)
+    assert payload["score"] == 1.0

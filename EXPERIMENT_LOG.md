@@ -1911,3 +1911,52 @@ passed its gate with an authored-suite behaviour of exactly zero and nothing
 the base is that far from the yardstick, neither polishing nor re-rolling
 inside the same plan helps, and that is the honest case for a design-class
 escape hatch left unbuilt so far.
+
+## EXP-20260903-02 — bplustree's 0.05: one undefined constant, and a contract that asked for it in prose
+
+The continuation arm scored bplustree at 0.053 held-out (19/356) while its
+authored suite gave milestone 1 a behaviour score of 0.9375. Direct-LLM
+baselines on the same task: writer_reviewer 0.626, self_refine 0.483, and
+solo/best_of_3/debate at 0.05-0.07. The gap is not a search failure.
+
+**One name.** `unit_tests/test_node.py` opens with
+`from bplustree.const import TreeConf, ENDIAN`. The delivered package defines
+`TreeConf` and twenty other constants but no `ENDIAN`, so that module dies at
+collection, `test_memory.py` with it, and the binary layout the agent invented
+(`PAGE_REFERENCE_BYTES = 8` against the reference's 4) fails the rest with
+`ValueError: data file is not a...`. 337 of 356 cases descend from that.
+
+**The contract asked for it and did not pin it.** The frozen milestone
+contract's first acceptance criterion reads "The package defines TreeConf and
+core constants needed by node, entry, serializer, and memory modules". Of the
+16 symbols it pinned as checks, all 16 are classes: `callable_or_class` is the
+only symbol check the planner reached for, and its name says what it accepts.
+`export` exists, does not require callability, and would have pinned a
+constant -- no planner has ever emitted one. The documents never name `ENDIAN`
+either, so the authored suite could not have tested it: the suite was written
+from the same documents, agreed with the implementation's invented layout, and
+scored it 0.94 in good faith.
+
+Three changes, none of which can invent the missing name but all of which make
+its absence visible:
+
+* `cross_imports`, a new gate stage. Every internal `from <own package> import
+  name`, resolved by AST and checked against the imported module. Weighted 0.15
+  / 0.10; zero of zero scores as a pass so a single-module milestone is not
+  capped. It would not have caught this specific case -- nothing in the package
+  imported `ENDIAN` -- and it catches the general shape: a name imported but
+  never defined, which is exactly what takes a whole test module out at
+  collection time.
+* `CONSTANT SURFACE` in the gate log: the module-level ALL_CAPS surface per
+  module, reported not scored. A substrate milestone that froze a class and
+  published no constants is now visible in the log rather than only in a
+  held-out score three hours later.
+* The planner prompt now says constants are contract, names `export` as the
+  check type for them, and cites this run.
+
+**What none of this fixes.** CPE's held-out suite tests private layout details
+the design documents do not specify. That is a ceiling for every method here --
+the best baseline on bplustree reached 0.63, not 0.9 -- and it hurts a
+decomposed method more, because a milestone boundary is another place for two
+modules to disagree about a number nobody wrote down. A single-shot generator
+gets that agreement for free.

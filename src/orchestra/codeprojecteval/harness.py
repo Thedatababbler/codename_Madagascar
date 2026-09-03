@@ -133,8 +133,19 @@ def _load_json(path):
 # would score exactly what an empty repository scores.
 STAGE_WEIGHTS = {
     "discovery": {"compile": 1.0},
-    "implementation": {"compile": 0.3, "imports": 0.4, "contracts": 0.3},
-    "integration": {"compile": 0.15, "imports": 0.25, "contracts": 0.2, "tests": 0.4},
+    "implementation": {
+        "compile": 0.25,
+        "imports": 0.3,
+        "cross_imports": 0.15,
+        "contracts": 0.3,
+    },
+    "integration": {
+        "compile": 0.1,
+        "imports": 0.2,
+        "cross_imports": 0.15,
+        "contracts": 0.15,
+        "tests": 0.4,
+    },
 }
 
 # Used instead of the above when a frozen specification suite is available to
@@ -145,16 +156,18 @@ STAGE_WEIGHTS = {
 SPEC_STAGE_WEIGHTS = {
     "implementation": {
         "compile": 0.15,
-        "imports": 0.25,
-        "contracts": 0.2,
+        "imports": 0.2,
+        "cross_imports": 0.1,
+        "contracts": 0.15,
         "spec_tests": 0.4,
     },
     "integration": {
         "compile": 0.1,
         "imports": 0.15,
+        "cross_imports": 0.1,
         "contracts": 0.15,
-        "tests": 0.3,
-        "spec_tests": 0.3,
+        "tests": 0.25,
+        "spec_tests": 0.25,
     },
 }
 
@@ -257,6 +270,98 @@ def _pytest_counts(output):
         if passed or failed or errors:
             return passed, passed + failed + errors, passed + failed
     return 0, 0, 0
+
+
+def _module_constants(root, packages):
+    """Module-level ALL_CAPS assignments per module, by AST.
+
+    Reported, not scored: the gate cannot know which constants a held-out
+    consumer will want, but a milestone that froze a substrate and published
+    no constants at all is a shape worth seeing in the log -- on bplustree the
+    contract asked for "TreeConf and core constants", pinned only the class,
+    and the missing ENDIAN cost 337 of 356 held-out cases (EXP-20260903-02).
+    """
+    import ast as _ast
+
+    surface = {}
+    for path in sorted(root.rglob("*.py")):
+        rel = path.relative_to(root)
+        if any(part in {"check_tests", "unit_tests", "docs", "__pycache__", ".git"}
+               for part in rel.parts) or rel.parts[0] not in packages:
+            continue
+        try:
+            tree = _ast.parse(path.read_text(errors="replace"))
+        except SyntaxError:
+            continue
+        names = [
+            t.id
+            for node in tree.body
+            if isinstance(node, _ast.Assign)
+            for t in node.targets
+            if isinstance(t, _ast.Name) and t.id.isupper()
+        ]
+        if names:
+            surface[".".join(rel.with_suffix("").parts)] = sorted(names)
+    return surface
+
+
+def _internal_from_imports(root, packages):
+    """Every ``from <own package> import name`` in the repository, by AST.
+
+    Static on purpose: a module that imports a name its own package never
+    defines is a defect whether or not any test happens to exercise the line,
+    and one such name can take a whole test module out at collection time --
+    on bplustree a missing ``ENDIAN`` turned 356 held-out cases into 19
+    (EXP-20260903-02). Reads the source rather than importing, so a package
+    whose import already failed still reports its dangling names.
+    """
+    import ast as _ast
+
+    found = []
+    for path in sorted(root.rglob("*.py")):
+        rel = path.relative_to(root)
+        if any(part in {"check_tests", "unit_tests", "docs", "__pycache__", ".git"}
+               for part in rel.parts):
+            continue
+        try:
+            tree = _ast.parse(path.read_text(errors="replace"))
+        except SyntaxError:
+            continue  # compile stage owns this failure
+        here = ".".join(rel.with_suffix("").parts)
+        for node in _ast.walk(tree):
+            if not isinstance(node, _ast.ImportFrom):
+                continue
+            module = node.module or ""
+            if node.level:  # relative import -> resolve against this module
+                base = here.rsplit(".", node.level)[0] if node.level <= here.count(".") + 1 else ""
+                module = f"{base}.{module}".strip(".") if base or module else ""
+            if not module or module.split(".")[0] not in packages:
+                continue
+            for alias in node.names:
+                if alias.name != "*":
+                    found.append((str(rel), module, alias.name))
+    return found
+
+
+def _check_cross_imports(root, packages):
+    """(checked, dangling) for internal ``from X import Y`` pairs."""
+    import importlib as _il
+
+    pairs = _internal_from_imports(root, packages)
+    dangling = []
+    cache = {}
+    for rel, module, name in pairs:
+        if module not in cache:
+            try:
+                cache[module] = _il.import_module(module)
+            except Exception as exc:  # noqa: BLE001
+                cache[module] = exc
+        target = cache[module]
+        if isinstance(target, Exception):
+            continue  # the imports stage already scored this module
+        if not hasattr(target, name):
+            dangling.append(rel + ": from " + module + " import " + name)
+    return len(pairs), dangling
 
 
 def _missing_third_party(exc, root, packages):
@@ -661,6 +766,29 @@ def main() -> int:
             print("  - " + item, file=sys.stderr)
         return finish(1)
     print("OK imports count=" + str(len(modules)))
+
+    # A name a module imports from its own package but the package never
+    # defines: importable in isolation, fatal at collection time for anything
+    # downstream. Scored as its own stage so the gradient shows it rather than
+    # letting a structurally complete repository read as sound.
+    cross_total, dangling = _check_cross_imports(root, packages)
+    # A repository whose modules never import from each other has nothing to
+    # dangle and must not be penalised for it: zero of zero is a pass, not a
+    # miss, and scoring it as a miss would silently cap every single-module
+    # milestone below 1.0.
+    progress.record(
+        "cross_imports",
+        max(0, cross_total - len(dangling)) if cross_total else 1,
+        cross_total or 1,
+    )
+    if dangling:
+        print("FAIL cross_imports:", file=sys.stderr)
+        for item in dangling[:40]:
+            print("  - " + item, file=sys.stderr)
+        return finish(1)
+    print("OK cross_imports count=" + str(cross_total))
+    constants = _module_constants(root, packages)
+    print("CONSTANT SURFACE " + json.dumps(constants, sort_keys=True)[:2000])
 
     contracts = _load_json(args.contracts) if args.contracts else {}
     failed_contracts = []
