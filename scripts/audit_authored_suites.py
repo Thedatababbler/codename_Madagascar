@@ -111,7 +111,12 @@ def depth(suite: Path) -> dict:
     for key, pat in DEPTH_PATTERNS.items():
         hits = re.findall(pat, text, re.I)
         if key == "bulk_loop_max":
-            out[key] = max((int(h) for h in hits), default=0)
+            # `range(total)` with `total = 1000` or `TOTAL = 1000` elsewhere in
+            # the suite counts; the name is resolved against module constants.
+            consts = {m.group(1): int(m.group(2))
+                      for m in re.finditer(r"^\s*([A-Za-z_]\w*)\s*=\s*(\d+)\s*$", text, re.M)}
+            named = [consts[n] for n in re.findall(r"range\(([A-Za-z_]\w*)\)", text) if n in consts]
+            out[key] = max([int(h) for h in hits] + named, default=0)
         elif key == "distinct_orders":
             out[key] = sorted({int(h) for h in hits})
         else:
