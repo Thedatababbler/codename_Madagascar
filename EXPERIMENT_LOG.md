@@ -2130,3 +2130,17 @@ layout that is wrong by design. That is a different lever from the one this
 entry iterates, and it is where the held-out number now depends.
 
 Held-out for v4-v6 to follow.
+
+**Held-out, v4: 0.126 (45/356)** — the best of the series (v0 0.053, v1
+0.096, v2 0.084, v3 0.053), and all of the gain is the one persistent failure
+the continuation fixed (reopen metadata). Probing the delivered code with
+single held-out cases shows three defects still standing, each a different
+one: at order 3 with 4-byte keys, `get()` returns None for a key that was
+inserted (split-path data loss); with UUID keys, `UUID payload must be
+exactly 16 bytes`; at order 50, the case does not finish inside 60 s.
+`test_overflow` passes. The suite that fired the search named none of these
+three -- its persistent set was reopen, delete and bulk-iterate at the
+documented defaults -- which is the difference between "the suite reaches
+the regime" and "the suite names the defect". The three defects also live in
+milestone 1's node and entry layout, and a continuation on milestone 2 can
+only edit what milestone 2 owns.
