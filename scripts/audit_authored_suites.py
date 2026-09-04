@@ -116,7 +116,28 @@ def depth(suite: Path) -> dict:
             # the suite counts; the name is resolved against module constants.
             consts = {m.group(1): int(m.group(2))
                       for m in re.finditer(r"^\s*([A-Za-z_]\w*)\s*=\s*(\d+)\s*$", text, re.M)}
-            named = [consts[n] for n in re.findall(r"range\(([A-Za-z_]\w*)\)", text) if n in consts]
+            # `count = order * 30` (arithmetic on literals, or on names already
+            # resolved) and `range(count)` behind a helper parameter -- resolved
+            # to the largest literal passed at that helper's call sites -- are
+            # how rounds 6 and 7 hid a 220-record scenario behind a reading of 0.
+            for m in re.finditer(r"^\s*([A-Za-z_]\w*)\s*=\s*([\w\s*+\-()]+?)\s*$", text, re.M):
+                if m.group(1) in consts or not re.search(r"\d", m.group(2)):
+                    continue
+                expr = re.sub(r"[A-Za-z_]\w*", lambda n: str(consts.get(n.group(0), "")), m.group(2))
+                if re.fullmatch(r"[\d\s*+\-()]+", expr):
+                    try:
+                        consts[m.group(1)] = int(eval(expr, {"__builtins__": {}}))
+                    except Exception:
+                        pass
+            named = []
+            for n in re.findall(r"range\(([A-Za-z_]\w*)\)", text):
+                if n in consts:
+                    named.append(consts[n]); continue
+                for f in re.findall(r"def\s+(\w+)\([^)]*\b%s\b[^)]*\)" % re.escape(n), text):
+                    named += [int(a) for a in re.findall(r"\b%s\((\d+)\)" % re.escape(f), text)]
+            # `range(20, 200)` is 180 records, not none.
+            for a, b in re.findall(r"range\((\d+)\s*,\s*(\d+)\)", text):
+                named.append(int(b) - int(a))
             out[key] = max([int(h) for h in hits] + named, default=0)
         elif key == "distinct_orders":
             out[key] = sorted({int(h) for h in hits})
