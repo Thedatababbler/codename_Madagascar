@@ -138,6 +138,25 @@ prompt: |
   available. Every test independent, named for the documented behaviour it
   checks, fast -- no network, no sleeps, no filesystem outside `tmp_path`.
 
+  ## Before you stop
+
+  Read your own suite once as a checklist and fix what is missing; a mandate
+  that is followed in spirit and skipped in one line has produced, run after
+  run, a suite that never leaves order 4 or 8:
+    - one scenario runs at the documented default configuration, by the
+      documented default values, with more operations than the default order
+      squared;
+    - one scenario runs at the smallest documented configuration;
+    - every serializer the documents list appears in a bulk scenario with keys
+      of its own documented type and width;
+    - the same keys are inserted ascending, descending and shuffled, and after
+      each every key is read back individually;
+    - every test quotes its sentence; no test asserts on a private name, an
+      unstated constant, an undocumented error, or a file the documents do
+      not name; no project symbol is imported at module top.
+  If a line is missing, add the test. If a line cannot be satisfied from the
+  documents, say why in a comment at the top of the suite.
+
   Write tests that fail today and pass only once the milestone is correctly
   built. A test that passes against an empty repository is discarded as
   vacuous, so `assert True`, imports wrapped in try/except, and assertions on
