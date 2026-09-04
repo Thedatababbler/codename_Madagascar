@@ -1996,3 +1996,29 @@ the same reason.
 
 Two false zeros, opposite causes, both found by comparing an authored score to
 a held-out one. Neither would have been visible from inside a run.
+
+## EXP-20260904-01 — pyjwt rerun with the suite import repaired: the signal is back, the outcome did not need it
+
+One run, pyjwt only, continuation arm, 44 minutes, prolite 27→28pp.
+
+| milestone | before (EXP-20260903-01) | after |
+|---|---|---|
+| crypto_and_jwk_contracts first pass | spec_tests **0/31**, four *file* names in `failed_tests` | spec_tests **32/36** = 0.889, proper `file::test` ids |
+| token_and_jwks_behaviour first pass | 32/32 | 25/26 = 0.96, no search |
+| held-out | 0.769 (226/294) | 0.762 (224/294) |
+
+The gate now grades the suite it froze. `cross_imports` ran on both
+milestones (98/98, 109/109) — no dangling internal names on this task, as the
+held-out already implied.
+
+The search on M1 fired at 0.889 with 1 persistent failure against 5 flaky
+ones — resampling's home turf, as on imapclient M1 — and the anchor that
+resampled well (0.972) was committed; the continuation held its floor at the
+incumbent's 0.889 and could not move the one persistent case. Correct
+behaviour under the corrected signal.
+
+Held-out did not move, and that is the honest reading: M1 was already good
+before the fix, the buggy zero only made the search *believe* otherwise, and
+M2 — which carries most of the held-out weight — never searched in either run.
+What the fix bought is not a score today but the end of a false alarm that
+was steering budget on every task whose suite had a conftest helper.
