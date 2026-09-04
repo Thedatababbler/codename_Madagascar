@@ -67,6 +67,20 @@ prompt: |
   sizes, serializers -- parametrize over several documented values, since a
   layout bug hides at the size the author happened to pick.
 
+  Make the transitions cheap to reach rather than skipping them: pick the
+  smallest configuration the documents allow (a small order, a small page) so
+  that a few hundred operations cross several splits and a reopen, and write
+  that scenario once as a fixture. A suite in which no test performs more than
+  a handful of operations has not left the happy path, whatever it asserts.
+
+  When the milestone is a substrate rather than the whole structure -- nodes,
+  pages, entries, serializers, a file layer -- the transitions live at that
+  level: fill a node to the documented capacity (not four entries), serialize
+  it to a page, load the page back and compare every entry; do it for each
+  documented node type, at more than one documented page size, and through a
+  close and reopen of the file layer. The disagreement between a writer and its
+  own reader is exactly the defect a downstream milestone cannot see.
+
   Import the code under test inside each test function, never at module top.
   A module-level import of one symbol the implementation does not expose --
   or exposes at a different path -- takes every test in the file down at
