@@ -2022,3 +2022,55 @@ before the fix, the buggy zero only made the search *believe* otherwise, and
 M2 — which carries most of the held-out weight — never searched in either run.
 What the fix bought is not a score today but the end of a false alarm that
 was steering budget on every task whose suite had a conftest helper.
+
+## EXP-20260904-02 — Correction to EXP-20260903-02: ENDIAN explains 32 cases, not 337
+
+EXP-20260903-02 attributed bplustree's 19/356 to the missing `ENDIAN`. That
+was wrong by a factor of ten. The held-out suite is 309 `test_tree` cases plus
+47 others; `ENDIAN` is imported only by `test_node` (19) and `test_memory`
+(13), so it can account for 32. Every implementation in the comparison lacks
+`ENDIAN` — all five direct-LLM baselines and AdaMAS — and all of them have
+`test_node` blocked. It is not what separates 0.05 from 0.63.
+
+**The 300 are a round-trip bug in AdaMAS's own node layer.**
+
+    unit_tests/test_tree.py::test_insert_split_in_tree_uuid
+      tree.insert -> _rebuild_parent_layers -> _get_leaf_nodes
+      -> memory.get_node -> Node.from_page_data -> Entry.load
+      ValueError: UUID payload must be exactly 16 bytes
+
+The page that `Node` writes is not the page `Entry.load` reads back: the
+implementation disagrees with itself, and the disagreement only surfaces once
+enough inserts force a split and the tree re-reads its own leaves. Nothing
+about the documents is missing here.
+
+**Why no suite caught it.** The held-out matrix inserts up to 1000 keys per
+case across page sizes, orders and serializers. AdaMAS's two authored suites
+contain no bulk insert at all — no `range(n)` loop of any size — and mention
+`split` once and twice; the visible `check_tests` (8/8 for AdaMAS) do not
+reach a split either. Both authored suites scored the implementation in good
+faith (28/32, 16/16) on the regime they exercised, and the regime the
+held-out grades was never entered. This is a *depth* failure of the authored
+suite, not a yardstick bug: the test author wrote to the documented behaviour
+and stopped short of the structural transitions the design itself describes.
+
+**How the two good baselines escaped — not by design.** `solo` has an
+equivalent internal bug (`Node.from_page_data() takes 3 positional arguments
+but 4 were given`) and scored 24/356. `self_refine` is that same first pass
+plus one revision: its bug happened to show in the visible checks (6/8), the
+failure text went back to the model, and the rewrite that fixed the visible
+cases also fixed the deep path — 172/356. `writer_reviewer`'s first pass was
+internally consistent from the start (8/8 visible) and the review round did
+no harm — 223/356. `best_of_3` and `debate` collapsed like `solo`. No baseline
+has a mechanism aimed at split-path invariants; two of five were lucky in
+where their bugs surfaced.
+
+**What this changes.** The cross_imports stage, the constant-surface log and
+the planner-prompt change from -02 stand on their own merits and would not
+have moved this number. The lever that would is the test author's mandate:
+an authored suite must drive the structure into every transition the design
+names — enough inserts to split, enough deletes to merge, overflow, reopen —
+because those are exactly the regimes where an implementation can disagree
+with itself, and the held-out grades them. The `range(1000)` the held-out
+uses is not private knowledge; "a B+ tree splits when a node fills" is on the
+first page of the PRD.

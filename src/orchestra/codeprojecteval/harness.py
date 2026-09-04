@@ -280,7 +280,8 @@ def _module_constants(root, packages):
     consumer will want, but a milestone that froze a substrate and published
     no constants at all is a shape worth seeing in the log -- on bplustree the
     contract asked for "TreeConf and core constants", pinned only the class,
-    and the missing ENDIAN cost 337 of 356 held-out cases (EXP-20260903-02).
+    and the missing ENDIAN cost the 32 held-out cases that import it
+    (EXP-20260903-02; the other 300 had a different cause, EXP-20260904-02).
     """
     import ast as _ast
 
@@ -312,9 +313,10 @@ def _internal_from_imports(root, packages):
     Static on purpose: a module that imports a name its own package never
     defines is a defect whether or not any test happens to exercise the line,
     and one such name can take a whole test module out at collection time --
-    on bplustree a missing ``ENDIAN`` turned 356 held-out cases into 19
-    (EXP-20260903-02). Reads the source rather than importing, so a package
-    whose import already failed still reports its dangling names.
+    on bplustree a missing ``ENDIAN`` cost the 32 held-out cases of two modules
+    (EXP-20260903-02, corrected in EXP-20260904-02). Reads the source rather
+    than importing, so a package whose import already failed still reports its
+    dangling names.
     """
     import ast as _ast
 
