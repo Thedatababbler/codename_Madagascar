@@ -2153,3 +2153,35 @@ order) and both fired the search on persistent failures; the difference
 between them and v0-v3 is the reopen fix the v4 continuation landed. The
 number is now bounded by what one specialist pass on milestone 2 can repair,
 not by what the suite can see.
+
+**Rounds 6 and 7 (v6, v7), authored suites.** Two more rounds of the
+mandate, held-out to follow. Both first read `bulk_loop_max = 0` from the
+audit; that was the metric's fault, not the suites' -- both hid a
+220-250-record scenario behind `record_factory(count)` -- and the resolver
+now follows a range name through its helper's call sites (`0e8cc627`).
+Corrected: v6 ran 250 records at order 16, v7 220 at order 8, neither at
+the documented default of 100 that v4 and v5 had used.
+
+- v6: milestone 1 fired (2 persistent / 6 flaky) and the continuation
+  committed at 0.81, fixing 1 of the 2 persistent failures. Milestone 2
+  did **not** fire: the suite passed the delivered tree. Depth without the
+  default order is depth that misses the split path.
+- v7: milestone 1 fired (2 / 7), continuation discarded at 0.78 against an
+  anchor resample at 0.87. Milestone 2 fired at 11/18 with **7 persistent,
+  0 flaky**, and for the first time the persistent set is the defect the
+  held-out probes had found in v4: the six bulk-insert-reopen
+  parametrizations (str and uuid keys, ascending / descending / shuffled)
+  plus delete. Every candidate, continuation included, scored exactly
+  0.611 -- 0 of 7 repaired. Validity 10/18 on the reference, no incidental
+  cause, zero inventions, 9 insertion-order scenarios, 3 per-key read-backs.
+
+So the suite has now done both halves of its job in one run -- reached the
+regime and named the defect -- and the number did not move, because the
+defect is milestone 1's node layout and the milestone 2 continuation edits
+only what milestone 2 owns. Depth stability across rounds (order 4 / 16 /
+8 in rounds 3 / 6 / 7 against 100 in 4 / 5) is the one thing seven
+mandates did not hold; v8 (`7baa8196`) ends the mandate with a checklist
+the author reads its own suite against before stopping -- default
+configuration past order squared, smallest configuration, every serializer
+at its width, three insertion orders with per-key reads -- and round 8 is
+the test of whether a checklist holds what prose did not.
