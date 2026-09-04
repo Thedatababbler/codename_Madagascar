@@ -2074,3 +2074,59 @@ because those are exactly the regimes where an implementation can disagree
 with itself, and the held-out grades them. The `range(1000)` the held-out
 uses is not private knowledge; "a B+ tree splits when a node fills" is on the
 first page of the PRD.
+
+## EXP-20260904-04 — Iterating the test author on bplustree: invention to zero in one round, depth in four, and then the bug bites
+
+Six autonomous rounds, one task, one frozen plan, the continuation arm.
+Each round changes the `test_author` mandate, re-runs bplustree, and is
+audited offline by `scripts/audit_authored_suites.py`: the frozen suites run
+against the dataset's reference implementation (a failure there is either an
+invented assertion or the reference deviating from its own documents -- the
+audit separates the two by checking the test's quoted sentence against the
+docs) and against their own milestone's workspace, with depth heuristics.
+
+| round | mandate change | M2 suite on reference | inventions (M1+M2) | M2 largest scenario | M2 on its own code | held-out |
+|---|---|---|---|---|---|---|
+| v0 | (baseline) | 13/16 | 10 | none | 16/16 | 0.053 |
+| v1 | cite the sentence; forbid private layout, catch-all raises, open defaults; reach every named transition | unmeasurable (one top-level import) | 0 | 220 inserts, reopen | 10/12 | 0.096 |
+| v2 | import inside each test; root imports need a citation | 8/11 | 0 | 40 inserts | 11/11 | 0.084 |
+| v3 | a concrete depth floor; substrate suites fill a node before reading it back | 7/12 | 1 | 120 inserts, order 4 only | 12/12 | 0.053 |
+| v4 | the documented configuration matrix; per-test timeouts; gate passes pytest-timeout | 8/10 | 0 | 1205 inserts at order 100, reopen, delete | **7/10** | pending |
+| v5 | vary insertion order, read every key back, small entries, delete to merge | 7/14 | 1 | 1500 inserts, 7 orders of insertion, per-key reads | **9/14** | pending |
+| v6 | root exports by name only; serializer-typed keys; no unnamed files | pending | | | | |
+
+**Invention was a one-round fix.** Requiring each test to quote the sentence
+it derives from, and naming the three recurring inventions, took
+document-unsupported assertions from ten to zero. The two "failures" that
+remained on the reference in v1 quote the PRD and the architecture verbatim
+(`MIN_CACHE_NUM = 5`; strings null-padded to key size): the reference
+deviates from its own specification there, and the audit stopped counting
+those against the author.
+
+**Depth took four rounds, and the metric had to grow with it.** v1-v3
+asked for the transitions the design names and got suites that split a
+four-entry node and inserted 40-220 keys at order 4 -- passing their own
+implementation every time, so no search ever fired on the tree milestone.
+The held-out fails at the documented defaults (order 100, a thousand
+inserts) and with 16-byte UUID keys. v4 named that matrix from the documents
+and the suite went to 1205 inserts at order 100; v5 added insertion order
+and per-key reads and the suite went to 1500 keys in seven orders. Both
+failed their own implementation, both fired the search with persistent
+failures and no flaky ones, and both persistent sets were the split path:
+`ValueError: node does not fit in page`, the same defect class the held-out
+had been reporting since EXP-20260904-02. The bulk metric had to learn to
+resolve `range(total)` through a module constant before it could see any of
+this.
+
+**The reference itself handles the matrix** (1500 keys at order 100 / page
+4096 verified directly), so the failures are the implementation's.
+
+**Then the repair side did not close it.** v4: three resamples at 0.70, the
+continuation at 0.80, one of three persistent failures fixed (reopen
+metadata), committed. v5: resample 0.71 committed, the continuation held its
+floor at 0.64 and fixed none of four. The suite now finds the bug the
+held-out finds; one specialist pass on the incumbent does not fix a page
+layout that is wrong by design. That is a different lever from the one this
+entry iterates, and it is where the held-out number now depends.
+
+Held-out for v4-v6 to follow.
