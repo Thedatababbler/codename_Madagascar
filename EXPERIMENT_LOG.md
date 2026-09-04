@@ -2185,3 +2185,19 @@ the author reads its own suite against before stopping -- default
 configuration past order squared, smallest configuration, every serializer
 at its width, three insertion orders with per-key reads -- and round 8 is
 the test of whether a checklist holds what prose did not.
+
+**Held-out, v6: 0.261 (93/356)** -- double the plateau (v4 0.126, v5
+0.121), and the largest single move in the series. The eval keeps no
+per-test list, only the tail, so attribution is partial: `test_node` is
+still blocked on the missing constant (19 tests unreachable in every
+round), the eleven tail failures are all `test_tree` split-path cases as
+before, and the one named test that flips is `test_batch_insert`, which in
+v4 failed with `assert 1 == 256` -- the split-path data loss. What is
+different about v6 is not its milestone 2 suite (that one never fired) but
+its milestone 1: the only round in the series where the milestone 1
+continuation committed and fixed a persistent failure in the node layer.
+The 48-test gain sits where the defect sits. Read with round 7 -- a
+milestone 2 suite that named the same defect and could not move it -- the
+two rounds are the same finding from both sides: the lever on bplustree is
+a repair that lands in milestone 1, and the fast loop reaches milestone 1
+only through milestone 1's own search.
