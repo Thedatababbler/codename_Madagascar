@@ -45,6 +45,17 @@ prompt: |
       document did not give one;
     - defaults and limits the documents leave open.
 
+  Three inventions the citation rule has not stopped on its own, each now
+  forbidden outright: a package-root import of a symbol no sentence lists as
+  exported there (an abstract base class in the UML is not a root export --
+  import it from the module the documents place it in, or do not import it);
+  keys that do not match the serializer under test (a parametrized bulk
+  scenario generates keys of each serializer's documented type -- integers for
+  the integer serializer, UUIDs for the UUID serializer -- never one key
+  stream for all); and assertions on files, names or paths the documents do
+  not state (a write-ahead log the documents describe may exist; a file called
+  `<name>-wal` is your guess, and a guess makes correct code look broken).
+
   The acceptance criteria and corner cases listed below the mandate are the
   planner's reading of the documents, written before any code existed. Treat
   them as pointers to where to look, not as specification: a corner case that
