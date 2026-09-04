@@ -83,6 +83,9 @@ def classify(suite: Path, failing: list[str], task: str) -> tuple[list[str], lis
                 if re.match(rf"\s*def {re.escape(base)}\(", line):
                     comments = []
                     j = i - 1
+                    # Decorators sit between the citation and the def.
+                    while j >= 0 and lines[j].strip().startswith("@"):
+                        j -= 1
                     while j >= 0 and lines[j].strip().startswith("#"):
                         comments.append(lines[j].strip("# ").strip())
                         j -= 1
