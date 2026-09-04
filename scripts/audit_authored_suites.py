@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+from collections import Counter
 import shutil
 import subprocess
 import sys
@@ -151,10 +152,21 @@ def main() -> None:
         # sentence is not in the documents. Where it is, the reference deviates
         # from its own specification and the author was right to assert it.
         backed, unsupported = classify(suite, failing, task)
+        # One error signature behind most of the failures is an incidental
+        # cause -- a Path where a str was documented -- not that many
+        # independent inventions; it is reported as such, not counted per test.
+        signatures = Counter(
+            re.sub(r"0x[0-9a-f]+|/tmp/\S+", "…", line.strip())[:100]
+            for line in v_out.splitlines()
+            if line.startswith("E   ") and not line.startswith("E    +")
+        )
+        dominant = signatures.most_common(1)[0] if signatures else ("", 0)
+        incidental = dominant[0] if failing and dominant[1] >= max(3, 0.6 * len(failing)) else ""
         rows.append({
             "milestone": milestone,
             "validity": f"{v_pass}/{v_total}",
             "collection_errors": collection_errors,
+            "incidental_cause": incidental,
             "doc_backed_but_reference_disagrees": backed[:8],
             "unsupported_by_docs": unsupported[:8],
             "on_delivered": f"{d_pass}/{d_total}",
