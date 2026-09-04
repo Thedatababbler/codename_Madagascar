@@ -102,6 +102,15 @@ prompt: |
   wide ones -- and delete enough keys afterwards to force the documented
   merge or borrow, then read everything back again.
 
+  Construct the object under test exactly as the documented signature reads.
+  Where a parameter's type is not stated, pass the plainest value that fits
+  the name -- a `filename` is a string path, not a path object; a `key_size`
+  is an int -- because a convenience the documents never promised (a Path
+  where a str was documented) can fail every test in the suite for one
+  reason that has nothing to do with the behaviour being checked. And the
+  documented defaults are the documented values: a scenario at order 16 has
+  not exercised the order the documents give as default.
+
   Give every bulk scenario a per-test timeout (`@pytest.mark.timeout(120)`,
   available in the environment) so an implementation that hangs at scale
   costs that one test and not the whole suite's verdict; a hang is a failure
