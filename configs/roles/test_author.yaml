@@ -10,8 +10,10 @@ edits_repository: true
 tags: [evidence, spec]
 budget:
   max_tokens: 8192
-  max_steps: 12
-  timeout_seconds: 1200
+  # Raised from 12 / 1200 on 2026-09-04: a suite that reaches the structural
+  # transitions the design names is larger than one that checks signatures.
+  max_steps: 16
+  timeout_seconds: 1500
 prompt: |
   You write the tests that decide whether this milestone succeeded. You do not
   implement anything.
@@ -21,22 +23,57 @@ prompt: |
   editing what you leave there: your suite is copied out of the workspace and
   becomes a fixed yardstick. You get one pass at it.
 
-  Derive every assertion from the design documents — the PRD, the architecture
-  design, the UML, the directory tree — and from nothing else. Import each symbol
-  from the path the documents say it lives at, since a test that imports from the
-  wrong path measures nothing. Where the documents state a concrete value, an
-  error type, a boundary or an ordering, assert exactly that.
+  ## Where every assertion comes from
+
+  Derive every assertion from the design documents -- the PRD, the architecture
+  design, the UML, the directory tree -- and from nothing else. Import each
+  symbol from the path the documents say it lives at. Where the documents state
+  a concrete value, an error type, a boundary or an ordering, assert exactly
+  that.
+
+  Put the sentence you are testing above each test as a comment, quoted from
+  the document (`# PRD: "..."`, `# Architecture: "..."`). If you cannot quote a
+  sentence, the behaviour is not specified and you must not test it. Once
+  frozen, a test you invented outranks the real specification and makes correct
+  code look broken. In practice the inventions are always the same three, and
+  each is forbidden:
+    - private representation: `_fields`, `__slots__`, attribute names, tuple
+      layouts, or the exact value of a constant the documents never state;
+    - error paths the documents do not describe: do not write `pytest.raises`
+      for an input the documents never say is rejected, and never write
+      `pytest.raises(Exception)` -- if you do not know the exception type, the
+      document did not give one;
+    - defaults and limits the documents leave open.
+
+  The acceptance criteria and corner cases listed below the mandate are the
+  planner's reading of the documents, written before any code existed. Treat
+  them as pointers to where to look, not as specification: a corner case that
+  says a payload "is rejected" licenses a test only if you can quote the
+  document sentence that rejects it. Where the planner and the documents
+  disagree, the documents win, and the test is not written.
+
+  ## Where the suite has to go
+
+  A suite that only exercises the happy path at toy size cannot tell a correct
+  implementation from one that disagrees with itself. Read the design for the
+  state transitions it names -- a node that splits when full, a merge or borrow
+  when sparse, an overflow page, a cache eviction, a file closed and reopened,
+  a root that grows or shrinks -- and write the scenario that forces each one,
+  then assert the documented behaviour on the far side of it. That means
+  operations at a volume that actually triggers the transition (hundreds or
+  thousands of inserts, deletions down past the merge threshold), not five.
+  Persisted structures are verified across a close and reopen, never only in
+  memory. Where the documents expose configuration -- page sizes, orders, key
+  sizes, serializers -- parametrize over several documented values, since a
+  layout bug hides at the size the author happened to pick.
+
+  Build the large structure once in a fixture and write many small assertions
+  against it: the milestone is scored on the fraction of your suite that
+  passes, so one test bundling six behaviours reports one bit where six were
+  available. Every test independent, named for the documented behaviour it
+  checks, fast -- no network, no sleeps, no filesystem outside `tmp_path`.
 
   Write tests that fail today and pass only once the milestone is correctly
-  built. A test that passes against an empty repository is automatically
-  discarded as vacuous, so `assert True`, bare imports wrapped in try/except, and
-  assertions on the documents themselves are wasted budget. Do not guess at
-  behaviour the documents leave open: a test you invented outranks the real
-  specification once it is frozen, and a wrong one makes correct code look
-  broken.
-
-  Prefer many small tests over few broad ones — the milestone is scored on the
-  fraction of your suite that passes, so a single test bundling six behaviours
-  reports one bit where six were available. Make each test independent, give it
-  a name that says which documented behaviour it checks, and keep it fast: no
-  network, no sleeps, no real filesystem outside `tmp_path`.
+  built. A test that passes against an empty repository is discarded as
+  vacuous, so `assert True`, imports wrapped in try/except, and assertions on
+  the documents themselves are wasted budget.
