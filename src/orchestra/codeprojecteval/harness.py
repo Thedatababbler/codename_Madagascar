@@ -430,6 +430,23 @@ def _spec_import_root(frozen):
     return holder
 
 
+def _per_test_timeout_flags():
+    """Bound each test when the environment can, so one hang costs one test.
+
+    Without this a single implementation that busy-loops at scale takes the
+    whole run to the subprocess timeout, and the stage reports zero of the
+    pinned total -- every other case's verdict lost to one (EXP-20260904-03:
+    three bplustree runs whose held-out evaluation died on the CPU cap for
+    exactly this reason). pytest-timeout ships in the task environments; if
+    it does not, the flags are omitted and the old behaviour stands.
+    """
+    try:
+        import pytest_timeout  # noqa: F401
+    except ImportError:
+        return []
+    return ["-p", "timeout", "--timeout=120", "--timeout-method=thread"]
+
+
 def _run_pytest(cwd, target, *, timeout, import_root=None):
     """Run one suite: (passed, total, ran, tail, failed_ids). Never raises."""
     env = dict(os.environ)
@@ -459,6 +476,7 @@ def _run_pytest(cwd, target, *, timeout, import_root=None):
         # Name the failures. Also improves the feedback tail, since the short
         # summary lands at the end of the output where the tail is taken from.
         "-rfE",
+        *_per_test_timeout_flags(),
         str(target),
     ]
     try:

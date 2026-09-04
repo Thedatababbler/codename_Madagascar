@@ -67,11 +67,24 @@ prompt: |
   sizes, serializers -- parametrize over several documented values, since a
   layout bug hides at the size the author happened to pick.
 
-  Make the transitions cheap to reach rather than skipping them: pick the
-  smallest configuration the documents allow (a small order, a small page) so
-  that a few hundred operations cross several splits and a reopen, and write
-  that scenario once as a fixture. A suite in which no test performs more than
-  a handful of operations has not left the happy path, whatever it asserts.
+  Cover the configurations the documents name, not one you find convenient.
+  The split scenario runs at least under: the documented defaults (an
+  implementation that only works at a toy order has not met the default the
+  documents give, so insert past the default order squared -- for an order of
+  100 that is more than a thousand keys, enough to split more than once); the
+  smallest configuration the documents allow; and every serializer the
+  documents list, each with the key size its documented encoding implies (a
+  16-byte binary UUID needs a 16-byte key; a fixed-width integer or datetime
+  needs its width; a padded string needs the width it is padded to). Write the
+  scenario once as a parametrized fixture and assert against it many times.
+  A suite in which no test performs more than a handful of operations, or
+  every test uses the same small order, has not left the happy path, whatever
+  it asserts.
+
+  Give every bulk scenario a per-test timeout (`@pytest.mark.timeout(120)`,
+  available in the environment) so an implementation that hangs at scale
+  costs that one test and not the whole suite's verdict; a hang is a failure
+  the suite must be able to report.
 
   When the milestone is a substrate rather than the whole structure -- nodes,
   pages, entries, serializers, a file layer -- the transitions live at that
