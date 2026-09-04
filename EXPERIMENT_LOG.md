@@ -2144,3 +2144,12 @@ documented defaults -- which is the difference between "the suite reaches
 the regime" and "the suite names the defect". The three defects also live in
 milestone 1's node and entry layout, and a continuation on milestone 2 can
 only edit what milestone 2 owns.
+
+**Held-out, v5: 0.121 (43/356).** Two independent runs at the plateau -- v4
+0.126 and v5 0.121 -- with the same failure profile: `test_node` blocked on
+the missing constant, `test_tree` failing on the split path. The two suites
+were the deepest of the series (1205 and 1500 inserts at the documented
+order) and both fired the search on persistent failures; the difference
+between them and v0-v3 is the reopen fix the v4 continuation landed. The
+number is now bounded by what one specialist pass on milestone 2 can repair,
+not by what the suite can see.
