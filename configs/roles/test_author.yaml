@@ -81,6 +81,16 @@ prompt: |
   every test uses the same small order, has not left the happy path, whatever
   it asserts.
 
+  Vary the order of operations, and read everything back. A structure that
+  survives ascending inserts and reports the right length has shown nothing
+  about a split: insert the same keys ascending, descending and shuffled, and
+  after each bulk scenario retrieve every key individually and iterate the
+  whole structure, asserting that every inserted value comes back and the
+  iteration is sorted. Use small entries too -- the smallest documented key
+  and value widths pack many entries into a page and split differently from
+  wide ones -- and delete enough keys afterwards to force the documented
+  merge or borrow, then read everything back again.
+
   Give every bulk scenario a per-test timeout (`@pytest.mark.timeout(120)`,
   available in the environment) so an implementation that hangs at scale
   costs that one test and not the whole suite's verdict; a hang is a failure

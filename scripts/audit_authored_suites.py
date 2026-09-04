@@ -34,6 +34,11 @@ DEPTH_PATTERNS = {
     "reopen_or_persist": r"reopen|close\(\)|persist|round.?trip|reload|flush",
     "error_paths": r"pytest\.raises",
     "boundary": r"\bempty\b|boundary|\bmax|\bmin\b|zero|limit",
+    # The held-out inserts in several orders and reads every key back; a suite
+    # that inserts ascending and checks a length has not seen a split bug.
+    "insertion_orders": r"shuffle|reversed\(|random\.|descending|sorted\(.*reverse",
+    "verify_each_key": r"for .* in .*:\n\s+assert .*\.get\(|for .* in .*:\n\s+assert .* in ",
+    "distinct_orders": r"order=(\d+)",
 }
 
 
@@ -105,7 +110,12 @@ def depth(suite: Path) -> dict:
     out = {"cases": cases}
     for key, pat in DEPTH_PATTERNS.items():
         hits = re.findall(pat, text, re.I)
-        out[key] = max((int(h) for h in hits), default=0) if key == "bulk_loop_max" else len(hits)
+        if key == "bulk_loop_max":
+            out[key] = max((int(h) for h in hits), default=0)
+        elif key == "distinct_orders":
+            out[key] = sorted({int(h) for h in hits})
+        else:
+            out[key] = len(hits)
     return out
 
 
