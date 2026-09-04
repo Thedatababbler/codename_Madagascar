@@ -63,6 +63,39 @@ def _reference_repo(task: str) -> Path:
     return dest
 
 
+def _doc_text(task: str) -> str:
+    docs = DATASET / task / "docs"
+    return " ".join(
+        " ".join(p.read_text(errors="replace").split()) for p in docs.glob("*") if p.is_file()
+    )
+
+
+def classify(suite: Path, failing: list[str], task: str) -> tuple[list[str], list[str]]:
+    """Split reference failures by whether the test quotes a real sentence."""
+    docs = _doc_text(task)
+    backed, unsupported = [], []
+    for name in failing:
+        base = name.split("[")[0]
+        quoted = None
+        for path in suite.glob("*.py"):
+            lines = path.read_text(errors="replace").splitlines()
+            for i, line in enumerate(lines):
+                if re.match(rf"\s*def {re.escape(base)}\(", line):
+                    comments = []
+                    j = i - 1
+                    while j >= 0 and lines[j].strip().startswith("#"):
+                        comments.append(lines[j].strip("# ").strip())
+                        j -= 1
+                    quoted = comments
+                    break
+            if quoted is not None:
+                break
+        quotes = [re.sub(r"^(PRD|Architecture|UML)[^\"]*\"|\"\s*$", "", c).strip('"').strip() for c in (quoted or [])]
+        hit = any(len(q) > 20 and " ".join(q.split()) in docs for q in quotes)
+        (backed if hit else unsupported).append(name)
+    return backed, unsupported
+
+
 def depth(suite: Path) -> dict:
     text = "\n".join(p.read_text(errors="replace") for p in suite.glob("*.py"))
     cases = len(re.findall(r"^\s*def test_", text, re.M))
@@ -94,11 +127,18 @@ def main() -> None:
         v_pass, v_total, v_out = _run_suite(ref, suite, py)
         own = by_milestone.get(milestone)
         d_pass, d_total, _ = _run_suite(own, suite, py) if own else (0, 0, "")
-        invalid = re.findall(r"(?:FAILED|ERROR) [^ ]*::(\S+)", v_out)
+        failing = re.findall(r"(?:FAILED|ERROR) [^ ]*::(\S+)", v_out)
+        collection_errors = len(re.findall(r"^ERROR [^:\n]+\.py\s*$", v_out, re.M))
+        # A failure on the reference is invention only when the test's quoted
+        # sentence is not in the documents. Where it is, the reference deviates
+        # from its own specification and the author was right to assert it.
+        backed, unsupported = classify(suite, failing, task)
         rows.append({
             "milestone": milestone,
             "validity": f"{v_pass}/{v_total}",
-            "invalid_tests": invalid[:12],
+            "collection_errors": collection_errors,
+            "doc_backed_but_reference_disagrees": backed[:8],
+            "unsupported_by_docs": unsupported[:8],
             "on_delivered": f"{d_pass}/{d_total}",
             **depth(suite),
         })

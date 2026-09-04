@@ -67,6 +67,14 @@ prompt: |
   sizes, serializers -- parametrize over several documented values, since a
   layout bug hides at the size the author happened to pick.
 
+  Import the code under test inside each test function, never at module top.
+  A module-level import of one symbol the implementation does not expose --
+  or exposes at a different path -- takes every test in the file down at
+  collection, and the milestone is then graded on a suite that never ran. Put
+  that import inside the test and only that test fails. The same rule covers
+  package-root imports: `from bplustree import X` is itself an assertion that
+  the root exports X, and it needs a quoted sentence like any other.
+
   Build the large structure once in a fixture and write many small assertions
   against it: the milestone is scored on the fraction of your suite that
   passes, so one test bundling six behaviours reports one bit where six were
