@@ -118,6 +118,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -406,10 +407,34 @@ def _failed_test_ids(output):
     return ids
 
 
+def _spec_import_root(frozen):
+    """A directory on the path under which the frozen suite is `spec_tests`.
+
+    The suite is authored inside the repository as `spec_tests/`, so its files
+    import each other as `from spec_tests.conftest import ...`. Freezing it out
+    of the workspace renames the directory to `<milestone>.spec_tests`, which
+    is not even a legal module name, so every such import fails and the whole
+    suite dies at collection -- 31 of 31 cases on pyjwt, recorded as a
+    behaviour score of 0.000 against an implementation that passes 27 of them
+    (EXP-20260903-03). Rebuilding the name in a scratch directory keeps the
+    frozen copy exactly where it is, so the tamper protection is untouched.
+    """
+    holder = Path(tempfile.mkdtemp(prefix="adamas_specroot_"))
+    link = holder / "spec_tests"
+    try:
+        os.symlink(str(Path(frozen).resolve()), str(link), target_is_directory=True)
+    except OSError:
+        shutil.copytree(str(frozen), str(link))
+    return holder
+
+
 def _run_pytest(cwd, target, *, timeout, import_root=None):
     """Run one suite: (passed, total, ran, tail, failed_ids). Never raises."""
     env = dict(os.environ)
     roots = [str(import_root or cwd)]
+    if import_root is not None and str(import_root) != str(cwd):
+        # Keep the repository importable too: the suite tests it.
+        roots.append(str(cwd))
     existing = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = os.pathsep.join([p for p in roots + [existing] if p])
     command = [
@@ -521,7 +546,9 @@ def _vacuous_count(frozen_dir, pristine_repo, timeout):
         )
     except OSError:
         return 0
-    passed, total, _ran, _tail, _failed = _run_pytest(scratch, frozen, timeout=timeout)
+    passed, total, _ran, _tail, _failed = _run_pytest(
+        scratch, frozen, timeout=timeout, import_root=_spec_import_root(frozen)
+    )
     shutil.rmtree(scratch, ignore_errors=True)
     try:
         cache.write_text(
@@ -684,7 +711,10 @@ def main() -> int:
                 spec_frozen, manifest.get("pristine_repo") or "", args.timeout
             )
             passed, collected, ran, tail, failed = _run_pytest(
-                root, spec_frozen, timeout=args.timeout
+                root,
+                spec_frozen,
+                timeout=args.timeout,
+                import_root=_spec_import_root(spec_frozen),
             )
             total = _pinned_case_total(spec_frozen, collected)
             gradable = total - vacuous

@@ -1960,3 +1960,39 @@ the best baseline on bplustree reached 0.63, not 0.9 -- and it hurts a
 decomposed method more, because a milestone boundary is another place for two
 modules to disagree about a number nobody wrote down. A single-shot generator
 gets that agreement for free.
+
+## EXP-20260903-03 — pyjwt's 0.000 was the gate breaking its own suite
+
+The mirror image of EXP-20260903-02: pyjwt's `crypto_and_jwk_contracts`
+recorded a behavioural score of 0.000 (0 of 31) while the task scored 0.769
+held-out. Nothing was wrong with the implementation. Run the same frozen suite
+against the same frozen workspace with the import path repaired and it reports
+**25 passed of 29 collected**.
+
+The suite is authored inside the repository as `spec_tests/`, so its files
+share helpers the only way that works there:
+
+    from spec_tests.conftest import load_module
+
+Custody then moves the suite out of the workspace -- correctly, so no candidate
+can mark its own exam -- and renames it `<milestone>.spec_tests`. That is not a
+legal module name, `spec_tests` is no longer importable, and all four files
+die at collection. `--continue-on-collection-errors` keeps the run alive, the
+pinned total stays 31, zero cases run, and the milestone is recorded as having
+failed every behaviour it was asked about. The `failed_tests` list gave it away
+in the end: it held four *file* names, not test ids.
+
+This is not specific to pyjwt. Any authored suite whose files import each other
+-- the normal shape once a suite has a conftest helper -- scored zero for its
+milestone, and the quality search then spent its budget trying to repair an
+implementation that was already mostly right.
+
+Fixed by rebuilding the name rather than moving the suite: the frozen copy
+stays exactly where it is, and a scratch directory containing a symlink named
+`spec_tests` is put on the import path for the run. Tamper protection is
+untouched; the repository stays importable alongside. The same root is given
+to the vacuous-baseline run, which had been silently collecting zero cases for
+the same reason.
+
+Two false zeros, opposite causes, both found by comparing an authored score to
+a held-out one. Neither would have been visible from inside a run.

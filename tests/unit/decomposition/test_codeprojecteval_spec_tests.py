@@ -649,3 +649,43 @@ def test_the_pristine_baseline_withholds_the_reference_implementation(
     assert not (pristine / "demo_pkg").exists()
     assert not (pristine / "unit_tests").exists()
     assert (pristine / "docs" / "PRD.md").is_file()
+
+
+def test_a_suite_that_imports_itself_survives_being_frozen(tmp_path: Path) -> None:
+    """EXP-20260903-03: pyjwt's authored suite scored 0.000 against an
+    implementation that passes 25 of its 29 cases.
+
+    The suite is authored inside the repository as `spec_tests/`, so its files
+    import shared helpers as `from spec_tests.conftest import ...`. Freezing it
+    out of the workspace renamed the directory to `<milestone>.spec_tests` --
+    not even a legal module name -- so every file died at collection and the
+    behaviour axis read zero for a milestone that was mostly correct.
+    """
+    from orchestra.codeprojecteval.harness import _check_script_source
+
+    script = tmp_path / "check.py"
+    script.write_text(_check_script_source(), encoding="utf-8")
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("cpe_check_probe", script)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    frozen = tmp_path / "m1.spec_tests"
+    frozen.mkdir()
+    (frozen / "__init__.py").write_text("", encoding="utf-8")
+    (frozen / "conftest.py").write_text("HELPER = 'shared'\n", encoding="utf-8")
+    (frozen / "test_uses_helper.py").write_text(
+        "from spec_tests.conftest import HELPER\n\n"
+        "def test_helper_is_importable():\n    assert HELPER == 'shared'\n",
+        encoding="utf-8",
+    )
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    root = mod._spec_import_root(str(frozen))
+    passed, collected, ran, _tail, _failed = mod._run_pytest(
+        str(repo), str(frozen), timeout=120, import_root=root
+    )
+
+    assert (passed, collected, ran) == (1, 1, True)
