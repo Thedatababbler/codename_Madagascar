@@ -2201,3 +2201,16 @@ milestone 2 suite that named the same defect and could not move it -- the
 two rounds are the same finding from both sides: the lever on bplustree is
 a repair that lands in milestone 1, and the fast loop reaches milestone 1
 only through milestone 1's own search.
+
+**Round 8 (v8, checklist), first attempt: batch `cpe-20260904T150432Z`,
+killed at milestone 2** -- the session hosting it exited at 15:49 and took
+the run and the v7 held-out eval with it (both relaunched 2026-09-05). What
+survived is the part the round was for. Milestone 1 fired (2 persistent /
+8 flaky). The milestone 2 suite was authored and frozen before the kill,
+and the checklist held where prose had not: 12 cases, validity 15/19 on
+the reference, no incidental cause, **order 100 (the documented default)
+and order 4 (the smallest) both present, 10,001 records in the bulk
+scenario** -- order squared plus one, read straight off the checklist line
+-- 7 insertion-order scenarios, 3 per-key read-backs. Rounds 3, 6 and 7
+had run at order 4, 16 and 8; a list the author must tick is what finally
+made the documented default appear.
