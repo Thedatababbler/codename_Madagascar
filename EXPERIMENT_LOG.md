@@ -2214,3 +2214,16 @@ scenario** -- order squared plus one, read straight off the checklist line
 -- 7 insertion-order scenarios, 3 per-key read-backs. Rounds 3, 6 and 7
 had run at order 4, 16 and 8; a list the author must tick is what finally
 made the documented default appear.
+
+**Round 8 relaunch (`cpe-20260905T071808Z`) failed in two minutes: gpt-5.4
+withdrawn upstream.** Every Codex call returned `The 'gpt-5.4' model is
+not supported when using Codex with a ChatGPT account`; the proxy's model
+catalog logged a Codex-provider change at 20:32 on 2026-09-04, between the
+first round 8 attempt (15:04, gpt-5.4, worked) and this one. The proxy
+then hid the upstream error behind its failure counter ("no auth
+available", twelve consecutive failures) until a restart. The account and
+quota are fine; the model is gone. Supported now: gpt-5.4-mini, gpt-5.5,
+gpt-5.6-{luna,sol,terra}, gpt-6-astra. Every round v0-v7 ran on gpt-5.4,
+so round 8 cannot be a ninth point on that curve; a re-run on a successor
+model is a new series and needs its own v0 control. Decision left to the
+user; not relaunched.
