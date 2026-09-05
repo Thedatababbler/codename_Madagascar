@@ -2384,3 +2384,14 @@ what it was written for, and the v4/v8 depth rules putting the documented
 default order into the suite where v0 never leaves order 4. What the
 mandate could not do on either model is make the search fire on a
 persistent failure: both gpt-5.5 runs found every failure flaky.
+
+**Held-out, v0 control on gpt-5.5: 0.890 (317/356), the whole suite in
+124 s.** `test_node` still blocked on `ENDIAN` (19 cases); 20 failures,
+all in `test_tree`. Against every number in this log for bplustree -- the
+gpt-5.4 series topping out at 0.261, the direct-LLM baselines at 0.626 --
+this is a different regime: gpt-5.5 with the *original* shallow
+`test_author` delivers an implementation that passes nearly all of the
+held-out. The v8 held-out from the same model started an hour earlier and
+is still running, which on this suite means per-test timeouts, i.e. the
+v8 run's delivered code is slow where v0's is fast. Leak check on the
+delivered package against the reference recorded below.
