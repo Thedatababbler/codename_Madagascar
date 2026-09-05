@@ -2400,3 +2400,14 @@ reference (8 files, 1450 lines vs the reference's 1509; 2269 differing
 lines in a recursive diff) and neither does v8's (1537 lines, 2366
 differing); the two delivered packages differ from each other by 1575
 lines. Three independently written implementations; 0.890 is the agent's.
+Speed probe on the two gpt-5.5 packages, six held-out `test_tree` cases
+(batch insert, create-and-load, iteration, uuid split, length hint) under
+the eval's 30 s per-test cap: both pass the same four and fail the same
+two (`test_length_hint_tree`, `test_batch_insert_no_in_order`); **v0 in
+1.1 s, v8 in 33.5 s**. So the v8 package is not hung and not wrong on
+this subset -- it is about thirty times slower, and on a suite of 308
+split cases many of which run thousands of inserts, the 30 s cap turns
+"slow" into "failed". That is the mechanism behind the still-running v8
+held-out: the same per-test timeout wall that took 105 of the 215 residual
+split cases on gpt-5.4 (above), reached here from the other side by a
+correct-but-slow implementation.
