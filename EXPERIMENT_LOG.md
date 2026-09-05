@@ -2281,3 +2281,22 @@ milestone 1 code moved at v6. Whatever changed lives in `test_tree`, the
 ~300 cases that carry the score, and needs a per-test diff between one
 round at each level (v4 vs v6, `test_tree` alone, JUnit output) to name
 the behaviour; launched offline.
+
+## EXP-20260905-01 -- new series on gpt-5.5 (gpt-5.4 withdrawn): v8 and a v0 control
+
+Same pipeline, same frozen plan, same continuation arm; `CODEX_MODEL`
+gpt-5.5 (the nearest tier the ChatGPT-account Codex channel still
+offers). Not comparable with EXP-20260904-04's numbers; the control is the
+v0 `test_author` loaded from a frozen copy of the role pool via
+`ORCHESTRA_ROLE_POOL_DIR=outputs/roles_v0` (`021f0556`), so the two runs
+differ in exactly one file.
+
+**v8 on gpt-5.5, batch `cpe-20260905T073405Z`** (07:34-08:54, ~3 points
+of the 5-hour window against ~10 per round on gpt-5.4). Both milestones
+fired and both persistent sets were **empty** -- milestone 1: 0 persistent
+/ 8 flaky, samples 0.857 / 0.943 / 0.914; milestone 2: 0 persistent / 5
+flaky, samples 0.000 / 0.688 / 0.688. With nothing persistent no
+continuation was armed, so this run is anchor resampling only. The
+milestone 2 suite kept the checklist on the second model: order 100 (the
+documented default) present alongside 16 and 8. Held-out, suite audit and
+the v0 control launched.
