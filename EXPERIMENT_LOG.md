@@ -2270,3 +2270,14 @@ blocked only by the undocumented `ENDIAN`; run it against each round's
 delivered code with that one constant shimmed (analysis only, nothing
 enters a workspace or a prompt) and the node-layer quality per round is
 measured directly.
+
+**Node-layer probe on the delivered (canonical) repo, v1-v7:** held-out
+`test_node` + `test_entry` + `test_serializer` (33 cases) with `ENDIAN`
+shimmed, analysis only: 16, 16, 16, 17, 20, 17, 18 passed, the same
+failure set every round (`repr`, `__slots__`, `smallest_biggest`,
+`get_node_from_page_data`, datetime serializer). Flat. So the v6/v7 level
+is not a node-layer change either -- neither the milestone 1 suite nor the
+milestone 1 code moved at v6. Whatever changed lives in `test_tree`, the
+~300 cases that carry the score, and needs a per-test diff between one
+round at each level (v4 vs v6, `test_tree` alone, JUnit output) to name
+the behaviour; launched offline.
