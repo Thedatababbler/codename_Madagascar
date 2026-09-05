@@ -2331,3 +2331,28 @@ reference, cannot reward. That is a ceiling on this task that no amount of
 test authoring moves: the held-out contains no `delete`, no default-order
 bulk case, and the reference's overflow bug is the held-out's expected
 behaviour.
+
+**Per-test `test_tree` diff, v4 vs v6 (canonical repos, JUnit, analysis
+only).** 308 cases: v4 31 passed, v6 87. 59 flip up, 3 down; **55 of the
+59 are parametrizations of `test_insert_split_in_tree`** that in v4 died
+with `get()` returning `None` after a split (and `key already exists`),
+spread across every order (3/4/50), page size, key size and both
+serializers -- a partial fix of the split path in `tree.py`, which is
+milestone 2's own file. The node layer did not move (probe above), so the
+earlier framing "the defect lives in milestone 1's node layout and
+milestone 2 cannot reach it" was wrong for this gain: it lived in
+milestone 2 and milestone 2's resample delivered it. What still fails in
+both (215 split cases) is three different defects:
+
+| residue | cases | layer |
+|---|---|---|
+| per-test timeout (>30 s) | 105 | performance -- page scans on insert, either layer |
+| `cannot fit 'int' into an offset-sized integer` | 48 | key width in the serializer / entry layout -- milestone 1 |
+| `get()` returns `None` after split | 64 | the split path -- milestone 2, the same defect half-fixed |
+
+So the honest map: the v4->v6 step is a milestone 2 fix; of the residue,
+about a fifth is milestone 1's, a fifth is milestone 2's, and half is a
+performance wall that no test in the authored suites reaches (the
+authored bulk scenarios run inside 120 s on the delivered code). The
+cross-milestone routing argument (option A) still applies to the 48, not
+to the whole residue; the performance wall is a different lever entirely.
