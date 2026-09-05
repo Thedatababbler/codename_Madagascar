@@ -2411,3 +2411,51 @@ split cases many of which run thousands of inserts, the 30 s cap turns
 held-out: the same per-test timeout wall that took 105 of the 215 residual
 split cases on gpt-5.4 (above), reached here from the other side by a
 correct-but-slow implementation.
+
+**Held-out, v8 on gpt-5.5: 0.464 (165/356), 1:23:49 of wall clock.** The
+tail is all `test_insert_split_in_tree`; at 30 s per case the run time
+says roughly 170 cases hit the cap. The first comparable pair on this
+model:
+
+| gpt-5.5, same plan, same arm | v0 (original test_author) | v8 (checklist) |
+|---|---|---|
+| held-out | **0.890** (317/356), 124 s | 0.464 (165/356), 5030 s |
+| milestone 2 suite on delivered | 16/19 | 15/16 |
+| milestone 2 suite on reference | 0/1 (import error) | 10/16 (5 of 6 the reference's) |
+| milestone 2 samples | 0.842 / 0.789 / 1.000 | 0.000 / 0.688 / 0.688 |
+| persistent failures | 0 | 0 |
+| delivered code, 6-case probe | 4/6 in 1.1 s | 4/6 in 33.5 s |
+
+Reading, in order of confidence:
+
+1. **The model, not the suite, set the level.** gpt-5.5 with the shallow
+   v0 suite delivers 0.890 on a task where gpt-5.4 never passed 0.261 and
+   the direct-LLM baselines topped at 0.626. Every EXP-20260904-04
+   conclusion about "what test_author can and cannot do" was measured
+   inside a regime the model change has left.
+2. **On the stronger model the deeper suite cost 0.43, n = 1 each.** The
+   mechanism is not wrong code -- the v8 package passes the same probe
+   cases as v0's -- but a package thirty times slower, which the
+   held-out's per-test cap scores as failure. What the v8 suite asks for
+   and v0's does not: order 100 with hundreds of records, three insertion
+   orders, delete with merging, overflow across reopen, all under a 120 s
+   test timeout the suite itself sets. The candidate that satisfied that
+   suite (0.688) is a heavier implementation than the one that satisfied
+   v0's (1.000). One pair cannot separate "the mandate steers toward
+   slow" from "the resample drew a slow one"; it can say the direction of
+   the effect on this model is not the direction it had on gpt-5.4.
+3. **The reference-versus-document gap is now a live cost, not a
+   ceiling.** Five of the v8 suite's six reference disagreements are
+   behaviours the documents promise and the reference lacks; on gpt-5.4
+   the code never got far enough for that to matter, on gpt-5.5 the suite
+   spends the milestone's budget on `delete`, overflow-across-reopen and
+   default-order fit, none of which the held-out can score.
+
+What this does to the plan: the test_author loop's product on gpt-5.4 --
+no inventions, in-test imports, depth by checklist -- is intact as
+suite-quality work (the v0 suite still cannot be collected on the
+reference). But "stronger suite, higher held-out" is not a monotone
+relation on this task, and before any further mandate change the next
+measurement is the cheap one: v0 and v8 once more each on gpt-5.5, to
+find out whether 0.890 / 0.464 is a level or a draw. Cost: ~3 points of
+the window per run.
