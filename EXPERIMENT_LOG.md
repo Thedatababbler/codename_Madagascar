@@ -2227,3 +2227,32 @@ gpt-5.6-{luna,sol,terra}, gpt-6-astra. Every round v0-v7 ran on gpt-5.4,
 so round 8 cannot be a ninth point on that curve; a re-run on a successor
 model is a new series and needs its own v0 control. Decision left to the
 user; not relaunched.
+
+**Held-out, v7: 0.233 (83/356)** -- and a correction to the v6 reading
+above. v7's milestone 2 changed nothing (every candidate 0.611, 0/7
+repaired) and its milestone 1 continuation was discarded, yet held-out sits
+at v6's level, not v4/v5's. And the table of every round's milestone 1
+outcome kills the story that "the gain lands where the milestone 1
+continuation committed":
+
+| round | held-out | M1 search | M1 continuation | M2 search |
+|---|---|---|---|---|
+| v1 | 0.096 | fired, 8 persistent | committed 0.76 | fired, 0 persistent |
+| v2 | 0.084 | fired, 4 persistent | committed 0.81 | -- |
+| v3 | 0.053 | fired, 6 persistent | committed 0.86 | -- |
+| v4 | 0.126 | fired, 0 persistent | -- | fired, 3; continuation committed 0.80 |
+| v5 | 0.121 | fired, 0 persistent | -- | fired, 4; continuation discarded |
+| v6 | 0.261 | fired, 2 persistent | committed 0.81 | did not fire |
+| v7 | 0.233 | fired, 2 persistent | discarded 0.78 (anchor resample committed) | fired, 7; nothing moved |
+
+v1-v3 had milestone 1 continuation commits too and stayed at or under
+0.10. What v6 and v7 share and nothing before them has is a milestone 1
+whose persistent set is two, down from four to eight -- i.e. a milestone 1
+suite that let fewer node-layer defects through -- and v6 is the first
+round whose mandate names the three inventions. Whether v6's mandate
+changed the milestone 1 suite (validity, depth) is checkable offline; the
+audit is running. Until it lands the honest statement is: three levels,
+v1-v3 <= 0.10, v4-v5 ~ 0.12, v6-v7 ~ 0.25, n = 2 or 3 each, the step
+coinciding with the v6 mandate and with a cleaner milestone 1, and the
+mechanism not yet attributed. The earlier sentence "the 48-test gain sits
+where the defect sits" over-read one round.
