@@ -16,12 +16,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from functools import lru_cache
+import os
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-DEFAULT_POOL_DIR = Path("configs/roles")
+# ORCHESTRA_ROLE_POOL_DIR lets a control run load a frozen copy of the pool
+# (e.g. an older test_author) without touching the live directory.
+DEFAULT_POOL_DIR = Path(os.environ.get("ORCHESTRA_ROLE_POOL_DIR") or "configs/roles")
 
 MAX_TOKENS_RANGE = (1024, 16384)
 MAX_STEPS_RANGE = (1, 24)
