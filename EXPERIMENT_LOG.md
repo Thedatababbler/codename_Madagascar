@@ -2256,3 +2256,17 @@ v1-v3 <= 0.10, v4-v5 ~ 0.12, v6-v7 ~ 0.25, n = 2 or 3 each, the step
 coinciding with the v6 mandate and with a cleaner milestone 1, and the
 mechanism not yet attributed. The earlier sentence "the 48-test gain sits
 where the defect sits" over-read one round.
+
+**M1 suite audit, v1-v7 (offline):** validity 32/34, 22/27, 26/28, 34/37,
+13/17, 18/21, 22/23; cases 34, 21, 28, 25, 17, 21, 21; bulk 0, 0, 0, 60,
+64, 10, 0; split-or-merge 13-16 throughout; zero unsupported tests in every
+round. No metric steps at v6. The milestone 1 suite is not what changed, so
+the v6/v7 level is not the mandate's doing on milestone 1 either. What is
+left is the delivered milestone 1 code itself -- the node layer that the
+held-out `test_tree` split cases exercise -- varying from run to run, which
+the "2 persistent" reading in v6/v7 would reflect as a property of the
+code, not of the suite. Checkable offline: the held-out `test_node.py` is
+blocked only by the undocumented `ENDIAN`; run it against each round's
+delivered code with that one constant shimmed (analysis only, nothing
+enters a workspace or a prompt) and the node-layer quality per round is
+measured directly.
