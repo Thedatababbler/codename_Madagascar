@@ -2395,3 +2395,8 @@ held-out. The v8 held-out from the same model started an hour earlier and
 is still running, which on this suite means per-test timeouts, i.e. the
 v8 run's delivered code is slow where v0's is fast. Leak check on the
 delivered package against the reference recorded below.
+Leak check: the v0 delivered package shares no identical file with the
+reference (8 files, 1450 lines vs the reference's 1509; 2269 differing
+lines in a recursive diff) and neither does v8's (1537 lines, 2366
+differing); the two delivered packages differ from each other by 1575
+lines. Three independently written implementations; 0.890 is the agent's.
