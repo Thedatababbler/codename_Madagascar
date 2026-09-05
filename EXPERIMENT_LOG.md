@@ -2368,3 +2368,19 @@ it outright -- the v0 signature from EXP-20260904-04 reproduced on the
 second model: a suite the code can fully satisfy without touching the
 split path. Held-out and audit launched; the pair (v0, v8) on gpt-5.5 is
 the first comparable two-point series on this model.
+
+**v0 vs v8 suite audits on gpt-5.5, milestone 2.** v0: 17 cases, 16/19
+on the delivered code, **0/1 on the reference** -- one collection error:
+the suite does `from bplustree import Serializer` at module top, the
+reference exports no `Serializer` at the root, and the whole file fails
+to import; 256-record bulk at order 4 only, no insertion-order scenarios,
+no per-key read-backs. v8: 11 cases, 15/16 delivered, 10/16 reference
+(five of six reference disagreements being the reference's, above), 360
+records at order 100, six insertion orders. Both suites make the same
+documented claim about the root export; v8 makes it inside one test and
+loses one case, v0 makes it at import time and loses the suite. That is
+the v2 rule ("import inside each test") doing on the second model exactly
+what it was written for, and the v4/v8 depth rules putting the documented
+default order into the suite where v0 never leaves order 4. What the
+mandate could not do on either model is make the search fire on a
+persistent failure: both gpt-5.5 runs found every failure flaky.
