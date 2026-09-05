@@ -2300,3 +2300,34 @@ continuation was armed, so this run is anchor resampling only. The
 milestone 2 suite kept the checklist on the second model: order 100 (the
 documented default) present alongside 16 and 8. Held-out, suite audit and
 the v0 control launched.
+
+**v8 on gpt-5.5, suite audit.** Milestone 2: 11 cases (16 with
+parametrization), 15/16 pass on the delivered code, **10/16 on the
+reference**, zero unsupported by the documents, no incidental cause; depth
+360 records at order 100 (the checklist's "more than order squared" was
+not met on this model -- the first gpt-5.4 attempt wrote 10,001), six
+insertion-order scenarios, no per-key read-backs. Milestone 1: 27 cases,
+31/35 on the reference. The six milestone 2 cases the reference fails were
+run on the reference one by one, and five of them are the reference
+disagreeing with the documents, not the author erring:
+
+- `delete` -- PRD line 18 and UML line 14 promise it; the reference
+  `BPlusTree` has no `delete` at all.
+- default configuration past order squared -- the reference's own
+  `Node.dump()` asserts a full leaf fits the page, and at its documented
+  defaults (order 100, 8-byte keys, 32-byte values, 4096-byte pages) it does
+  not; the reference cannot run its own documented default.
+- overflow value across reopen -- the reference returns `None` for it.
+- `bplustree.Serializer` at the package root -- the reference does not
+  export it; the documents list it.
+- the two `batch_insert` parametrizations -- the same `dump()` assertion.
+
+So "validity on reference" is not a suite-quality number on this task; the
+split the audit already makes (`doc_backed_but_reference_disagrees` vs
+`unsupported_by_docs`) is the one to read, and here the second list is
+empty. The delivered code passing 15/16 means it follows the documents
+where the reference does not -- behaviour the held-out, which tests the
+reference, cannot reward. That is a ceiling on this task that no amount of
+test authoring moves: the held-out contains no `delete`, no default-order
+bulk case, and the reference's overflow bug is the held-out's expected
+behaviour.
