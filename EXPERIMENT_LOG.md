@@ -2356,3 +2356,15 @@ performance wall that no test in the authored suites reaches (the
 authored bulk scenarios run inside 120 s on the delivered code). The
 cross-milestone routing argument (option A) still applies to the 48, not
 to the whole residue; the performance wall is a different lever entirely.
+
+**v0 control on gpt-5.5, batch `cpe-20260905T085707Z`** (08:57-09:59,
+~2 points of the window; `ORCHESTRA_ROLE_POOL_DIR=outputs/roles_v0`, the
+original `test_author`, every other file identical to the v8 run). Both
+milestones fired, both persistent sets empty -- milestone 1: 0 / 8 flaky,
+samples 0.676 / 0.721 / 0.956; milestone 2: 0 / 4 flaky, samples 0.842 /
+0.789 / **1.000**. The milestone 2 suite runs at order 4 only (16
+constructions, none at the documented default), and one candidate passes
+it outright -- the v0 signature from EXP-20260904-04 reproduced on the
+second model: a suite the code can fully satisfy without touching the
+split path. Held-out and audit launched; the pair (v0, v8) on gpt-5.5 is
+the first comparable two-point series on this model.
