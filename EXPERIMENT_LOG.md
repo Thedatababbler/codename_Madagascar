@@ -2497,3 +2497,49 @@ buys no held-out and, through the document-versus-reference gap,
 occasionally costs some. Next lever, if bplustree stays in the set, is
 not the suite: it is a scale-and-time requirement so a slow-but-correct
 package is caught before the held-out's cap catches it.
+
+## EXP-20260906-01 -- gpt-5.5 on imapclient and pyjwt: v9 (scale is a time budget) vs v0 control
+
+`test_author` v9 (`54c23772`) turns bulk scenarios into speed tests (20 s,
+sized to the documents' ordinary use, never raised; everything else 60 s).
+Four runs back to back, ~12 points of the window; each held-out started
+as its run ended. Same frozen plans as the gpt-5.4 series.
+
+| gpt-5.5 | v0 (original) | v9 (checklist + time budget) | search |
+|---|---|---|---|
+| imapclient | 0.371 (99/267) | 0.356 (95/267) | fired both; v9 9 persistent, continuation 0/9 discarded; v0 5 persistent |
+| pyjwt | 0.755 (222/294; one held-out module errors) | **0.827** (243/294) | v9 did not fire; v0 fired at M1, 0 persistent |
+
+Both held-outs run in seconds on both packages -- no timeout wall here;
+the v9 budget line had nothing to catch on these tasks.
+
+**imapclient is half ceiling.** Per-test on the canonical packages
+(staged like the eval): v9 160 failures, v0 156. Of those, **86 / 79 are
+white-box** -- the held-out patches `MockIMAP4._get_response`, calls
+`_proc_folder_list`, expects a module-level `select`, asserts "mock
+called once": tests of the reference's private dispatch that an
+independently written client cannot satisfy whatever it does. The other
+74 / 77 are behaviour: `ProtocolError` not raised by
+`parse_fetch_response`, return shapes (`('OK', [b'Success'])` where
+`b'Success'` is expected), `list_folders` error handling -- many small
+gaps, no single defect. So on this task ~0.33 of the score is
+unreachable by construction, ~0.29 is behaviour, ~0.37 passes. The v9
+suite's nine persistent failures (fetch parsing into documented types,
+modified-UTF-7 folder names, idle flow, search criteria normalisation,
+silent-flag returns) are the behaviour half, named correctly; the
+continuation fixed none and was discarded. Same shape as bplustree v7:
+the suite points, the one-pass repair does not land.
+
+**pyjwt: v9 ahead by 0.07, n = 1.** Failures are diverse and small on
+both packages (deprecation warnings not emitted, JWK dict key order and
+`key_ops`, "Expected a string value" type checks, `PyJWKClient` cache
+counts); no dominant signature. v0's package also breaks one held-out
+module's collection (`test_utils`), which v9's does not -- the in-test
+import discipline again, on the third task.
+
+Three tasks on gpt-5.5 now: bplustree ~0.90 either suite, imapclient
+~0.36 either suite with half of it a white-box ceiling, pyjwt 0.76 -> 0.83
+with the deeper suite. The suite is not the level-setter on any of them;
+where it moves the number it does so through validity (collection) and
+through what the search can name, and the repair side lands none of the
+named persistent failures on any task or model so far.
