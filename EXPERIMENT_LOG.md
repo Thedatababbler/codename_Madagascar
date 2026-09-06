@@ -2459,3 +2459,41 @@ relation on this task, and before any further mandate change the next
 measurement is the cheap one: v0 and v8 once more each on gpt-5.5, to
 find out whether 0.890 / 0.464 is a level or a draw. Cost: ~3 points of
 the window per run.
+
+**Repeats on gpt-5.5 (2026-09-06): v8 `cpe-20260906T070812Z`, v0
+`cpe-20260906T080421Z`, run back to back, ~8 points of the window for all
+four gpt-5.5 runs together.**
+
+| gpt-5.5 | run 1 | run 2 |
+|---|---|---|
+| v0 (original test_author) | 0.890 (317/356), 124 s | 0.899 (320/356), 132 s |
+| v8 (checklist) | 0.464 (165/356), 5030 s | **0.902** (321/356), 121 s |
+
+0.464 was the draw, not the level. On gpt-5.5 the level is ~0.90 for
+both suites (three of four runs within 0.012 of each other), and the one
+low run is a slow package the per-test cap failed. The suite does not
+set the level on this model; it sets a tail risk -- one of two v8 draws
+was thirty times slower -- and n = 2 cannot say whether that risk is the
+suite's or the dice's.
+
+What the v8 repeat's search did is the more useful record. It is the
+first gpt-5.5 run with a persistent failure, and the failure was
+`test_default_configuration_splits_more_than_order_squared_and_reopens`
+-- the checklist's own line, and the behaviour the reference itself cannot
+run (its `dump()` asserts a full leaf fits the page at order 100). The
+continuation armed on it scored 0.294 with ten regressions and was
+discarded; the anchor resample at 0.941 committed and scored 0.902
+held-out. So the mandate manufactured a persistent failure the held-out
+does not reward, the repair machinery correctly refused a fix that broke
+ten other things, and the round ended on resampling -- the machinery
+working as designed on a target that was wrong. The v0 repeat, by
+contrast, never fired at all (suite passed the delivered code outright at
+order 4) and scored the same.
+
+Closing the gpt-5.5 series at four runs: the model set the level; the
+test_author work holds as suite quality (the v0 suite still cannot be
+collected on the reference); on this task and this model the extra depth
+buys no held-out and, through the document-versus-reference gap,
+occasionally costs some. Next lever, if bplustree stays in the set, is
+not the suite: it is a scale-and-time requirement so a slow-but-correct
+package is caught before the held-out's cap catches it.
