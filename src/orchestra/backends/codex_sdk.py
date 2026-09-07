@@ -43,6 +43,12 @@ def _build_codex_config(*, workspace_path: str | None = None) -> Any:
     if workspace_path:
         # Mark AdaMAS workspace trusted for this process (fixture/smoke only).
         overrides.append(f'projects."{workspace_path}".trust_level="trusted"')
+    # CODEX_BIN: run a newer Codex binary than the SDK bundles. Upstream gates
+    # models on the client version ("requires a newer version of Codex"), and
+    # the bundled 0.137 could not open gpt-5.6-terra while 0.149 could.
+    codex_bin = (os.getenv("CODEX_BIN") or "").strip() or None
+    if codex_bin:
+        return CodexConfig(config_overrides=tuple(overrides), codex_bin=codex_bin)
     return CodexConfig(config_overrides=tuple(overrides))
 
 
