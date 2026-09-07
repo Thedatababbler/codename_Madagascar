@@ -2566,3 +2566,11 @@ against an anchor resample that happened to draw better (0.789, 0.956).
 A repair that starts from the best sample instead would have committed
 in both rows. Held-out: imapclient 0.390 (anchor's package; the
 continuation's was never delivered), bplustree 0.449.
+
+**Validation rerun (`cpe-20260907T041858Z`) died at its first Codex call:
+gpt-5.5 now answers `model_not_found` for this account** (the proxy's
+catalog still lists it; gpt-5.6-terra, gpt-5.6-sol and gpt-6-astra answer;
+gpt-5.4-mini has left the provider entirely). Second forced model change in
+three days. The best-sample arming (`bab153c3`) is therefore unvalidated
+on a live run; its unit tests pass. Not relaunched on another model
+without a decision.
