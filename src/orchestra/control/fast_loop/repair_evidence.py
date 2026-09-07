@@ -44,6 +44,28 @@ def _frozen_root(path: Path) -> Path | None:
     return None
 
 
+def _locate(repo: Path, file_part: str) -> Path | None:
+    """The frozen file a gate-relative node id names, seen from any repo depth.
+
+    The gate printed the path relative to the base workspace's repository; a
+    continuation runs in a candidate repository several levels deeper, so the
+    leading ``..`` segments are dropped and the remainder tried against each
+    ancestor -- the first hit under a ``*.spec_tests`` directory wins.
+    """
+    if os.path.isabs(file_part):
+        path = Path(file_part)
+        return path if path.is_file() else None
+    direct = (repo / file_part).resolve()
+    if direct.is_file() and _frozen_root(direct):
+        return direct
+    parts = [p for p in Path(file_part).parts if p not in ("..", ".")]
+    for ancestor in (repo.resolve(), *repo.resolve().parents):
+        trial = ancestor.joinpath(*parts)
+        if trial.is_file() and _frozen_root(trial):
+            return trial
+    return None
+
+
 def resolve_failure(repo: Path, failure: str) -> tuple[Path, str, str] | None:
     """(frozen_root, file relative to it, test id) for one failure record.
 
@@ -54,8 +76,8 @@ def resolve_failure(repo: Path, failure: str) -> tuple[Path, str, str] | None:
     if "::" not in text:
         return None
     file_part, test_id = text.split("::", 1)
-    candidate = (repo / file_part).resolve() if not os.path.isabs(file_part) else Path(file_part)
-    if not candidate.is_file():
+    candidate = _locate(Path(repo), file_part)
+    if candidate is None:
         return None
     root = _frozen_root(candidate)
     if root is None:
