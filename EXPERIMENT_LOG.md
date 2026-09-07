@@ -2574,3 +2574,20 @@ gpt-5.4-mini has left the provider entirely). Second forced model change in
 three days. The best-sample arming (`bab153c3`) is therefore unvalidated
 on a live run; its unit tests pass. Not relaunched on another model
 without a decision.
+
+**Terra draws for the best-sample arming (`bab153c3`), 2026-09-07.** Model
+channel moved again (gpt-5.5 withdrawn for the account; gpt-5.6-terra
+needs a 0.149 Codex binary, `CODEX_BIN`, `9a64b79d`-era commits). Three
+draws on gpt-5.6-terra, none produced a continuation to validate:
+
+| run | search | persistent | held-out |
+|---|---|---|---|
+| imapclient `0907T054811Z` | did not fire (both milestones >= 0.9 first try) | -- | 0.378 |
+| imapclient `0907T060635Z` | did not fire | -- | 0.374 |
+| bplustree `0907T062706Z` | M2 fired: samples 0.412 / **0.000** / 0.412 | **0 of 10** | 0.657 |
+
+The bplustree row is the finding: ten failures, none persistent, because
+one probe collapsed to 0.000 at a gate stage with no failure list, and an
+empty list in the intersection empties the persistent set. The gpt-5.5 v8
+run had the same shape (0.000 / 0.688 / 0.688, "0 persistent"). A sample
+that ran no tests is not evidence that a test passed.
