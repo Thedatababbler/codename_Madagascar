@@ -79,6 +79,16 @@ _QUALITY_GUARD = (
     "Do not reconstruct hidden tests. Improve the named behaviours only."
 )
 
+# Continuations get the persistent tests staged beside the repository (see
+# repair_evidence.py): a repairer that can run what it is asked to fix.
+_REPAIR_EVIDENCE_NOTE = (
+    "The tests for the named failures, their output on the code you received, "
+    "and the exact command to run them are beside this repository in "
+    "../repair_evidence/ (start with README.md). Run them before and after "
+    "each change. They are copies of a sealed suite: editing them changes "
+    "nothing; making them pass without regressing anything else is the job."
+)
+
 
 @dataclass(frozen=True)
 class Playbook:
@@ -842,7 +852,7 @@ QUALITY_CATALOG: tuple[Playbook, ...] = (
         ),
         target="improver",
         include_failure_list=True,
-        extra_prompt=_QUALITY_GUARD,
+        extra_prompt=_QUALITY_GUARD + " " + _REPAIR_EVIDENCE_NOTE,
         switch_template="continuation",
         role_from_diagnosis="improver",
         continue_from_incumbent=True,

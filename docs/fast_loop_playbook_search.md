@@ -634,3 +634,27 @@ Validate on one task before spending on a sweep, checking three things that are
 all invisible in a pass rate: that a playbook was generated and executed, that
 the diagnosis artefact on disk is legible and its class is defensible, and — on
 `test_first` — that the repairer still ran.
+
+## Repair evidence: the yardstick in the repairer's hand (2026-09-06)
+
+Custody deletes the authored suite from every workspace, and the reason is
+measured: an implementer that can run its exam satisfies it completely
+(38/38, 29/29, 51/51) and the behaviour axis collapses. That rule is right
+for the first attempt and wrong for the repair. A continuation was told
+"these seven tests fail in every attempt; fix them" and given nothing else
+-- no assertion, no traceback, no way to run them -- and across three tasks
+and two models it fixed none (bplustree 0/7, imapclient 0/9, once
+regressing ten tests while scoring 0.294).
+
+`repair_evidence.py` stages, beside a continuation's repository (never
+inside it, so nothing is shipped or graded), a `repair_evidence/` directory:
+the frozen test files cut down by line range to the persistent tests plus
+the helpers and fixtures they share (`strip_to_tests`), the output those
+tests produce on the incumbent's replayed code (the gate's own pytest
+command on exactly those node ids, `failures.md`), and a `README.md` with
+the node ids and the command. Files are read-only; grading still reads the
+frozen copy; the rest of the exam stays sealed. The controller stages it
+right after `_replay_incumbent` succeeds and never rejects a candidate for
+failing to (the old blindness is the fallback). The continuation row's brief
+gains one sentence pointing at the directory. The ledger's `pfix/ptot`
+column is the measurement: it has read 0/N on every continuation so far.

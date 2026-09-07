@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import logging
 import time
 from collections.abc import Mapping
@@ -33,6 +35,7 @@ from orchestra.control.fast_loop.plan_candidates import register_new_contracts
 from orchestra.control.fast_loop.playbook_generator import PlaybookCandidateGenerator
 from orchestra.control.fast_loop.quality_trigger import quality_search_diagnosis
 from orchestra.roles.pool import default_role_pool
+from orchestra.control.fast_loop.repair_evidence import build_repair_evidence
 from orchestra.control.fast_loop.persistence import (
     apply_role_floor,
     default_role,
@@ -478,6 +481,21 @@ class FastLoopController:
             return False
         record.metadata["continued_on"] = str(artifact_id)
         return True
+
+    async def _stage_repair_evidence(self, record: CandidateRecord, cand_ws: Any) -> None:
+        """The persistent tests, their output, and how to run them -- beside the repo.
+
+        Only for continuations, and only the persistent set: the rest of the
+        exam stays sealed and grading reads the frozen copy. Failing to stage
+        is the old behaviour, so it never rejects the candidate.
+        """
+        failures = list(record.metadata.get("persistent_failures") or [])
+        if not failures or not cand_ws:
+            return
+        path = await asyncio.to_thread(
+            build_repair_evidence, Path(cand_ws.path), failures
+        )
+        record.metadata["repair_evidence"] = str(path) if path else ""
 
     @staticmethod
     def _final_change_artifact(graph_result: Any) -> str | None:
@@ -1069,6 +1087,7 @@ class FastLoopController:
                 # would be an anchor's, filed under the continuation's name.
                 if not await self._replay_incumbent(record, cand_ws):
                     return
+                await self._stage_repair_evidence(record, cand_ws)
 
         run_context = RunContext(
             run_id=f"{context.run_id}:{record.candidate_id}",
