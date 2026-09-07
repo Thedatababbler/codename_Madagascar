@@ -660,3 +660,21 @@ def test_a_playbook_id_names_its_menu_row_just_as_well() -> None:
         config=cfg, client=client, search_reason="quality",
     )
     assert refined.recommended_shape == "test_first_quality_diagnosed"
+
+
+def test_collapsed_probe_does_not_vote():
+    """A 0.000 sample with no failure list never ran the suite; it is not evidence."""
+    from orchestra.control.fast_loop.persistence import persistent_failures
+    from orchestra.control.fast_loop.schemas import CandidateRecord, CandidateStatus
+
+    def rec(cid, score, failures):
+        r = CandidateRecord(candidate_id=cid, attempt_id=1, parent_graph_hash="h", graph_hash="g", edits=[])
+        r.status = CandidateStatus.VALID
+        r.behaviour_score = score
+        r.behaviour_failures = failures
+        return r
+
+    fails = [f"spec_tests/t.py::test_{i}" for i in range(10)]
+    summary = persistent_failures([rec("inc", 0.41, fails), rec("dead", 0.0, []), rec("r2", 0.41, fails)])
+    assert summary.samples == 2
+    assert len(summary.persistent) == 10 and summary.flaky == []

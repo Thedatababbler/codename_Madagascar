@@ -74,7 +74,13 @@ def persistent_failures(records: Iterable[CandidateRecord]) -> PersistenceSummar
     scored = [
         r
         for r in records
-        if r.status in _SCORED and r.behaviour_score is not None
+        if r.status in _SCORED
+        and r.behaviour_score is not None
+        # A zero with no failure list is a suite that never ran (the gate
+        # stopped at an earlier stage), not a suite that passed everything:
+        # letting it vote emptied ten persistent failures to none twice
+        # (gpt-5.5 v8, terra bplustree) and silenced the persistence search.
+        and not (r.behaviour_score == 0 and not r.behaviour_failures)
     ]
     if not scored:
         return PersistenceSummary(samples=0)
