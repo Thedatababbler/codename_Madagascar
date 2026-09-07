@@ -428,6 +428,19 @@ class FastLoopController:
                 }
             )
             fl_state.candidates.append(record)
+        base = self._best_base(incumbent, probes)
+        if base is not incumbent and base.patch:
+            for record in fl_state.candidates:
+                if record.metadata.get("persistence_phase") == 2 and record.metadata.get(
+                    "continue_from_incumbent"
+                ):
+                    record.metadata["continue_from_candidate"] = base.candidate_id
+                    record.metadata["base_behaviour_score"] = base.behaviour_score
+            fl_state.notes.append(
+                f"persistence: continuation armed on {base.candidate_id} "
+                f"({base.behaviour_score:.3f}) rather than the first pass "
+                f"({(incumbent.behaviour_score or 0.0):.3f})"
+            )
         self._arm_continuations(fl_state, incumbent_artifact)
         state.state_version += 1
         await self._save_checkpoint(state)
@@ -455,10 +468,18 @@ class FastLoopController:
                 record, list(record.metadata.get("persistent_failures") or [])
             )
 
-    async def _replay_incumbent(self, record: CandidateRecord, cand_ws: Any) -> bool:
+    async def _replay_incumbent(
+        self, record: CandidateRecord, cand_ws: Any, fl_state: FastLoopState | None = None
+    ) -> bool:
         artifact_id = record.metadata.get("incumbent_change_artifact")
         patch = None
-        if artifact_id:
+        base_id = record.metadata.get("continue_from_candidate")
+        if base_id and fl_state is not None:
+            base = next((c for c in fl_state.candidates if c.candidate_id == base_id), None)
+            if base is not None and base.patch:
+                patch = base.patch
+                artifact_id = f"candidate:{base_id}"
+        if patch is None and artifact_id:
             try:
                 artifact = await self.artifact_store.get(str(artifact_id))
                 patch = (getattr(artifact, "payload", None) or {}).get("patch")
@@ -496,6 +517,29 @@ class FastLoopController:
             build_repair_evidence, Path(cand_ws.path), failures
         )
         record.metadata["repair_evidence"] = str(path) if path else ""
+
+    @staticmethod
+    def _best_base(
+        incumbent: CandidateRecord, probes: list[CandidateRecord]
+    ) -> CandidateRecord:
+        """The sample a continuation should start from: the best one that passed.
+
+        The persistent set is the intersection over every sample, so the best
+        sample has those failures too and nothing else the repair could lose.
+        Starting from the first pass instead put a continuation that fixed
+        3/3 and 1/1 persistent failures with no regressions below an anchor
+        resample on the whole-suite score, and it was discarded both times
+        (EXP-20260907-01). Ties go to the incumbent.
+        """
+        best = incumbent
+        for probe in probes:
+            if probe.status not in (CandidateStatus.VALID, CandidateStatus.COMMITTED):
+                continue
+            if probe.behaviour_score is None or not probe.patch:
+                continue
+            if (best.behaviour_score or 0.0) < probe.behaviour_score:
+                best = probe
+        return best
 
     @staticmethod
     def _final_change_artifact(graph_result: Any) -> str | None:
@@ -1085,7 +1129,7 @@ class FastLoopController:
                 # from the state that passed the gate. Any failure to do so
                 # rejects the candidate: run on the wrong base and its scores
                 # would be an anchor's, filed under the continuation's name.
-                if not await self._replay_incumbent(record, cand_ws):
+                if not await self._replay_incumbent(record, cand_ws, fl_state):
                     return
                 await self._stage_repair_evidence(record, cand_ws)
 
