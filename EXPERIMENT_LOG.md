@@ -2591,3 +2591,28 @@ one probe collapsed to 0.000 at a gate stage with no failure list, and an
 empty list in the intersection empties the persistent set. The gpt-5.5 v8
 run had the same shape (0.000 / 0.688 / 0.688, "0 persistent"). A sample
 that ran no tests is not evidence that a test passed.
+
+**bplustree on terra with the collapsed-probe fix, `cpe-20260907T072100Z`
+(07:21-09:30 incl. held-out) -- the repair line closes.**
+
+| | |
+|---|---|
+| milestone 2 search | fired; three samples all 0.467; **8 persistent / 0 flaky** (the collapsed-probe fix, `059c7254`, is what made the set exist) |
+| persistent set | batch_insert per serializer (3 parametrizations), default-order persistence past order squared, delete with order after reopen, insertion orders searchable after reopen |
+| continuation | evidence staged; **6/8 fixed, 0 regressions**; 0.867 vs best anchor 0.467, d_best **+0.40**; **committed** |
+| held-out | **0.699** (249/356) against 0.657 for the previous terra draw with no continuation |
+
+Every piece is now observed working in one run: the search names the
+persistent set, the continuation gets the tests and their output beside
+its repository, repairs six of the eight without breaking anything,
+beats the anchor on the whole suite, commits, and the delivered package
+scores higher on the held-out. The best-sample arming (`bab153c3`) was
+not exercised -- all three samples tied, so the incumbent was the base by
+design -- and was not needed for the commit.
+
+Paired, within-model record of the repair side, before and after
+`repair_evidence.py`: 0/17 fixed across three continuations (bplustree
+0/7, 0/1; imapclient 0/9), then 3/3, 1/1 (both discarded on the
+first-pass base) and 6/8 committed. That column is the deliverable of
+this line; it does not depend on which model the channel happens to
+serve.
