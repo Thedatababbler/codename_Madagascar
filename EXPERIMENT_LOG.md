@@ -2543,3 +2543,26 @@ with the deeper suite. The suite is not the level-setter on any of them;
 where it moves the number it does so through validity (collection) and
 through what the search can name, and the repair side lands none of the
 named persistent failures on any task or model so far.
+
+## EXP-20260907-01 -- repair evidence: the continuation can run what it is asked to fix
+
+`repair_evidence.py` (`51666867`, `9a64b79d`): a continuation gets, beside
+its repository, the persistent tests cut out of the frozen suite, their
+output on the replayed incumbent, and the command. Validation on gpt-5.5,
+same plans and arm as before:
+
+| task | persistent | continuation `pfix/ptot` | before this change | continuation score vs best anchor | outcome |
+|---|---|---|---|---|---|
+| imapclient | 3 (fetch dict keyed by id, idle flow, quota dataclasses) | **3/3**, 0 regressions | 0/9 (2026-09-06) | 0.737 vs 0.789 | discarded |
+| bplustree M1 | 1 (`iter_slice` empty and final partial slice) | **1/1**, 0 regressions | 0/1, 0/7 (v8b, v7) | 0.756 vs 0.956 | discarded |
+
+The mechanism does what it was built for: every named failure fixed,
+nothing regressed, on the first try, on both tasks -- against zero of
+seventeen across the previous three attempts. Both were still discarded,
+and the reason is the base, not the repair: the continuation is armed on
+the **first-pass** incumbent's change (0.579 and 0.733), fixes exactly its
+persistent set (+3 and +1 tests), and is then compared on the whole suite
+against an anchor resample that happened to draw better (0.789, 0.956).
+A repair that starts from the best sample instead would have committed
+in both rows. Held-out: imapclient 0.390 (anchor's package; the
+continuation's was never delivered), bplustree 0.449.
