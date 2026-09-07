@@ -45,7 +45,12 @@ from orchestra.ir.nodes import AgentNodeSpec, NodeKind
 from orchestra.roles.pool import RolePool, default_role_pool
 
 ACCOUNTING_SOURCE = "fast_loop_diagnosis"
-DEFAULT_MODEL = "gpt-5.4"
+# The diagnosis model follows the run's model unless pinned: a literal here
+# ("gpt-5.4") outlived the model by three days, during which every diagnosis
+# silently fell back to the rule floor and the default pair.
+DEFAULT_MODEL = (
+    os.environ.get("DIAGNOSIS_MODEL") or os.environ.get("CODEX_MODEL") or "gpt-5.4"
+)
 
 #: Paths and names that must never enter the diagnoser prompt. A leak here
 #: voids finished arms, not just the current one.
