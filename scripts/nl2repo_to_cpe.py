@@ -202,7 +202,9 @@ def main() -> int:
         if r.returncode:
             print("pin install failed; retrying without version pins", file=sys.stderr)
             run(["uv", "pip", "install", "-q", "--python", str(epy), *[x.split("==")[0] for x in reqs]])
-    run(["uv", "pip", "install", "-q", "--python", str(epy), "pytest"])
+    # pytest-timeout: the gate and the held-out eval pass --timeout flags, as
+    # the CodeProjectEval environments carry it.
+    run(["uv", "pip", "install", "-q", "--python", str(epy), "pytest", "pytest-timeout"])
     # upstream
     up = UPSTREAM / task
     if not up.exists():
