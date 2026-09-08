@@ -454,6 +454,10 @@ def _run_pytest(cwd, target, *, timeout, import_root=None):
     if import_root is not None and str(import_root) != str(cwd):
         # Keep the repository importable too: the suite tests it.
         roots.append(str(cwd))
+    # src-layout repositories (NL2Repo tasks): the suite imports the package
+    # by name, and the package lives under src/, not at the repository root.
+    if (Path(cwd) / "src").is_dir():
+        roots.append(str(Path(cwd) / "src"))
     existing = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = os.pathsep.join([p for p in roots + [existing] if p])
     command = [
@@ -936,7 +940,9 @@ def main() -> int:
         progress.record("tests", 0, 1)
         return finish(1)
     env = dict(os.environ)
-    env["PYTHONPATH"] = str(root) + os.pathsep + env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = os.pathsep.join(
+        p for p in [str(root), str(root / "src") if (root / "src").is_dir() else "", env.get("PYTHONPATH", "")] if p
+    )
     command = [
         sys.executable,
         "-m",

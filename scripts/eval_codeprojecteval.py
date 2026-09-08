@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import resource
 import shutil
@@ -202,7 +203,9 @@ def score_task(
                 ],
                 cwd=repo,
                 env={
-                    "PYTHONPATH": str(repo),
+                    "PYTHONPATH": os.pathsep.join(
+                        p for p in [str(repo), str(repo / "src") if (repo / "src").is_dir() else ""] if p
+                    ),
                     "PATH": f"{python.parent}:/usr/bin:/bin:/usr/local/bin",
                     "HOME": str(repo),
                 },
