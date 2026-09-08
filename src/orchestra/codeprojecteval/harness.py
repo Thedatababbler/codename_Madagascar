@@ -89,7 +89,10 @@ def expected_modules(task: CpeTask) -> list[str]:
             package + mod[len(stale) :] if mod.startswith(stale) else mod
             for mod in modules
         ]
-    return modules
+    # Trees that also list docs/tests/examples .py files (tenacity: doc/source/conf.py)
+    # must not make those importable requirements; only the package counts.
+    own = [mod for mod in modules if mod == package or mod.startswith(package + ".")]
+    return own or modules
 
 
 def _top_level_packages(modules: list[str]) -> list[str]:
