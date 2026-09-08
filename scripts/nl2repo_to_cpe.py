@@ -55,11 +55,21 @@ def pins(md: str) -> list[str]:
     m = re.search(r"### [^\n]*[Dd]epend[^\n]*\n\s*```[^\n]*\n(.*?)```", md, re.S)
     reqs = []
     for line in (m.group(1) if m else "").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        spec = re.match(r"^([A-Za-z0-9_.\-]+(?:\[[^\]]*\])?)\s*([<>=!~]=?\s*[^\s,]+(?:\s*,\s*[<>=!~]=?\s*[^\s,]+)*)?", line)
         parts = line.split()
-        if len(parts) >= 2 and re.match(r"^[A-Za-z0-9_.\-\[\]]+$", parts[0]) and re.match(r"^\d", parts[1]):
-            if parts[0].lower() in ("pip", "setuptools", "wheel"):
-                continue
-            reqs.append(f"{parts[0]}=={parts[1]}")
+        if spec and spec.group(2):
+            name, ver = spec.group(1), spec.group(2).replace(" ", "")
+            req = f"{name}{ver}"
+        elif len(parts) >= 2 and re.match(r"^[A-Za-z0-9_.\-\[\]]+$", parts[0]) and re.match(r"^\d", parts[1]):
+            name, req = parts[0], f"{parts[0]}=={parts[1]}"
+        else:
+            continue
+        if name.split("[")[0].lower() in ("pip", "setuptools", "wheel"):
+            continue
+        reqs.append(req)
     return reqs
 
 
@@ -79,7 +89,9 @@ def tree_paths(tree: str) -> list[str]:
         if not m or not m.group(2) or "── " not in raw and m.group(1) == "" and not raw.strip():
             continue
         depth = len(m.group(1)) // 4
-        name = m.group(2).rstrip("/")
+        name = re.split(r"\s+#|\s{2,}", m.group(2))[0].strip().rstrip("/")
+        if not name:
+            continue
         if "── " not in raw:
             # a bare root line such as "aiofiles/" or "." -- ignore as a path component
             if depth == 0:
@@ -106,8 +118,10 @@ def test_extras(up: Path) -> list[str]:
         import tomllib
         data = tomllib.loads((up / "pyproject.toml").read_text())
     except Exception:
-        return []
-    groups = (data.get("project") or {}).get("optional-dependencies") or {}
+        data = {}
+    groups = dict((data.get("project") or {}).get("optional-dependencies") or {})
+    for req in list(up.glob("*requirements*test*.txt")) + list(up.glob("*requirements*dev*.txt")) + list(up.glob("test-requirements.txt")):
+        groups[req.name] = [l.strip() for l in req.read_text(errors="replace").splitlines() if l.strip() and not l.startswith(("#", "-"))]
     names: list[str] = []
     for key, deps in groups.items():
         if any(k in key.lower() for k in ("test", "dev")):
@@ -132,6 +146,14 @@ def ordered_tags(tags: list[str]) -> list[str]:
             continue
         parsed.append((v, t))
     return [t for _, t in sorted(parsed, reverse=True)]
+
+
+def find_tests_dir(up: Path) -> str | None:
+    """A tests directory anywhere in the checkout (voluptuous keeps it in the package)."""
+    hits = [p for p in up.rglob("*") if p.is_dir() and p.name in ("tests", "test") and ".git" not in p.parts and "venv" not in p.parts]
+    hits = [p for p in hits if any(p.rglob("test*.py"))]
+    hits.sort(key=lambda p: len(p.parts))
+    return str(hits[0].relative_to(up)) if hits else None
 
 
 def run(cmd, **kw):
@@ -192,12 +214,16 @@ def main() -> int:
     for tag in cands:
         run(["git", "checkout", "-q", "-f", tag], cwd=up)
         if not (up / tests_rel).exists():
-            continue
+            found = find_tests_dir(up)
+            if not found:
+                continue
+            tests_rel = found
         run(["uv", "pip", "install", "-q", "--python", str(epy), "-e", str(up)])
         n = collect_count(epy, up, tests_rel)
         print(f"  tag {tag}: {n} collected")
-        if n > 0 and (best is None or abs(n - want) < abs(best[1] - want)):
-            best = (tag, n)
+        tol = max(3, want // 20)
+        if n > 0 and (best is None or abs(n - want) + tol <= abs(best[1] - want)):
+            best = (tag, n)  # nearer by more than the tolerance; ties keep the newer tag
         if n == want:
             break
     if best is None:
