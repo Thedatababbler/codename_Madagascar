@@ -75,11 +75,18 @@ def expected_modules(task: CpeTask) -> list[str]:
     modules = parse_expected_modules(task.directory_tree)
     if not modules or not task.source_dir:
         return modules
+    # A src-layout source dir ("src/aiofiles") imports as its last component;
+    # the parent is the import root, not part of the module name.
+    package = task.source_dir.rstrip("/").split("/")[-1]
+    parent = task.source_dir.rstrip("/").rsplit("/", 1)[0] if "/" in task.source_dir.rstrip("/") else ""
+    if parent:
+        dotted_parent = parent.replace("/", ".") + "."
+        modules = [mod[len(dotted_parent):] if mod.startswith(dotted_parent) else mod for mod in modules]
     roots = {mod.split(".", 1)[0] for mod in modules}
-    if roots != {task.source_dir} and len(roots) == 1:
+    if roots != {package} and len(roots) == 1:
         stale = roots.pop()
         modules = [
-            task.source_dir + mod[len(stale) :] if mod.startswith(stale) else mod
+            package + mod[len(stale) :] if mod.startswith(stale) else mod
             for mod in modules
         ]
     return modules
