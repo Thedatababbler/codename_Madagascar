@@ -2648,3 +2648,24 @@ and frozen plans: `configs/datasets/nl2repo_medium.json`,
 `configs/datasets/nl2repo_medium_plans/`. Pilot run on `nl2_aiofiles`
 in progress; bugs found so far: task-id validation against the wrong
 root, yaml-pinned dataset root, tree/dependency/tag parsing (fixed).
+
+**Pilot, nl2_aiofiles on gpt-5.5, third attempt `cpe-20260908T111133Z`
+(11:11-13:27): held-out 0.919 (194/211, 7 failed, 2 errors, 8 skipped).**
+Both milestones committed; the LLM diagnosis ran (two 200s). The
+pipeline runs end to end on an NL2Repo task. Bugs the three attempts
+found, all fixed and committed:
+
+| # | bug | fix |
+|---|---|---|
+| 1 | runner validated task ids against the CPE root; yaml pins `dataset_root` | pass `--dataset-root`; `CPE_DATASET_ROOT`/`CPE_ENV_ROOT` overrides (`5d1017f3`) |
+| 2 | expected modules derived as `src/aiofiles.aiofiles.base`; imports stage failed every candidate, a 100%-spec package scored `harness_failed` | src-layout derivation + package-namespace filter (`0e86a9d9`, `8020bdec`) |
+| 3 | imports/contracts stages import in-process without `src/` on `sys.path` | (`beafe70b`); tests stage, eval and ceiling collection likewise (`5e82a061`, `48d241ea`) |
+| 4 | diagnosis model pinned to gpt-5.4 in all four arm yamls -- every LLM diagnosis since 09-04 was 400 `model_not_found`, silently the rule floor | unpinned (`4c39b0ca`); found via `~/.cli-proxy-api/logs/error-*.log` |
+| 5 | held-out eval passes `--timeout` flags the nl2 envs lacked -> unscored | pytest-timeout in every task env; converter installs it (`abd1ac45`) |
+| 6 | eval scores only tasks in the pinned suite-size table | ten nl2 tasks pinned (`2c9ab02d`, `48d241ea`) |
+| 7 | a recompiled-plan candidate with **no gate result** was VALID and got committed over a graded 1.0 | no gate result => HARNESS_FAILED (`60858ee4`); their templates run no gate node -- open |
+| 8 | (CPE chain, cookiecutter) failure search with every candidate failed raised at commit and killed the task | milestone fails on the record (`bebf8f26`) |
+
+Held-out numbers on NL2Repo are "upstream suite at the count-matched
+tag", not the paper's image; aiofiles' 9 non-passes include the root
+`os.access` artifact and two aiohttp-server tests.
