@@ -13,6 +13,8 @@ fraction is computed up front and reported alongside the raw number.
 
 from __future__ import annotations
 
+import os
+
 import ast
 import re
 import subprocess
@@ -174,7 +176,9 @@ def collected_counts(
             ],
             cwd=task.repo_root,
             env={
-                "PYTHONPATH": str(task.repo_root),
+                "PYTHONPATH": os.pathsep.join(
+                    p for p in [str(task.repo_root), str(task.repo_root / "src") if (task.repo_root / "src").is_dir() else ""] if p
+                ),
                 "PATH": f"{Path(python).parent}:/usr/bin:/bin:/usr/local/bin",
                 "HOME": str(task.repo_root),
             },

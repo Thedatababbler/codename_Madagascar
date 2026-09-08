@@ -277,13 +277,13 @@
       "unit_tests/test_examples_in_json.py": 322
     },
     "nl2_python-dotenv": {
-      "unit_tests/test_cli.py": 0,
+      "unit_tests/test_cli.py": 37,
       "unit_tests/test_ipython.py": 3,
-      "unit_tests/test_is_interactive.py": 0,
-      "unit_tests/test_main.py": 0,
-      "unit_tests/test_parser.py": 0,
-      "unit_tests/test_utils.py": 0,
-      "unit_tests/test_variables.py": 0,
+      "unit_tests/test_is_interactive.py": 10,
+      "unit_tests/test_main.py": 107,
+      "unit_tests/test_parser.py": 43,
+      "unit_tests/test_utils.py": 1,
+      "unit_tests/test_variables.py": 6,
       "unit_tests/test_zip_imports.py": 2
     },
     "nl2_python-jose": {
@@ -322,6 +322,21 @@
     },
     "nl2_voluptuous": {
       "unit_tests/test_tests.py": 148
+    },
+    "nl2_aiofiles": {
+      "unit_tests/test_os.py": 35,
+      "unit_tests/test_simple.py": 2,
+      "unit_tests/test_stdio.py": 2,
+      "unit_tests/test_tempfile.py": 25,
+      "unit_tests/threadpool/test_binary.py": 99,
+      "unit_tests/threadpool/test_concurrency.py": 1,
+      "unit_tests/threadpool/test_open.py": 3,
+      "unit_tests/threadpool/test_text.py": 44
+    },
+    "nl2_tablib": {
+      "unit_tests/test_tablib.py": 153,
+      "unit_tests/test_tablib_dbfpy_packages_fields.py": 6,
+      "unit_tests/test_tablib_dbfpy_packages_utils.py": 14
     }
   }
 }
