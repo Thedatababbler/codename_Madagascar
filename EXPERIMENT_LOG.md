@@ -2669,3 +2669,36 @@ found, all fixed and committed:
 Held-out numbers on NL2Repo are "upstream suite at the count-matched
 tag", not the paper's image; aiofiles' 9 non-passes include the root
 `os.access` artifact and two aiohttp-server tests.
+
+## EXP-20260908-01 -- full CodeProjectEval pass on gpt-5.5 (in progress; chain findings so far)
+
+18 tasks, continuation arm, v9 test_author, all repair-side fixes; frozen
+plans for four tasks, planner drafts (saved) for the rest. Runner bugs
+and dataset ceilings the chain exposed, all fixed or recorded:
+
+- **cookiecutter**: failure search with every candidate failed raised at
+  commit and killed the task (`bebf8f26`). Rerun pending.
+- **python-hl7 M2**: change set recorded the deletion of a `__pycache__`
+  .pyc; the post-apply check found it regenerated and refused the whole
+  milestone (`canonical_merge_conflict`). Caches now filtered from change
+  sets and excluded from every workspace index (`9ee4ad76`). Rerun pending.
+- **rsa**: infra failure (upstream outage at 17:25) marked done by the
+  chain because the runner exited 0; unmarked, rerun pending.
+- **flask**: the CPE flask env's pytest 9.1.1 cannot collect the reference
+  suite (`_pytest.monkeypatch.notset`); pinned pytest<8, re-pinned suite
+  size 432->490 (`494520df`). Scored 0.639.
+- **Undocumented-name ceilings** (held-out imports a name no document
+  mentions): parsel `LXML_SUPPORTS_HUGE_TREE` (162/250 cases unreachable,
+  reachable 68/88), portalocker `LockerType` in conftest (63/63
+  unreachable), bplustree `ENDIAN` (19).
+- Chain stopped before tinydb at 17:41: upstream ChatGPT backend down
+  (Cloudflare 522), surfaced by the proxy as "credentials cooling down".
+  Resumes automatically when the probe answers.
+
+Held-out so far: bplustree 0.89, imapclient 0.356, pyjwt 0.813, simpy
+0.765, csvs-to-sqlite 0.72, deprecated 0.585, simplejwt 0.565, flask
+0.639, parsel 0.272 (ceiling), portalocker unscoreable (ceiling),
+python-hl7 0.53 (M1 only; M2 refused), rsa -- (infra). Continuations:
+5 armed, 3 fixed-and-committed (bplustree M1 1/1, imapclient M2 6/6,
+pyjwt M2 5/5), pyjwt M1 0/14 (suite-wide collapse), csvs-to-sqlite 0/2
+(LLM-chosen gate_repairer).
