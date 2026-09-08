@@ -808,6 +808,9 @@ def main() -> int:
         return finish(0)
 
     sys.path.insert(0, str(root))
+    if (root / "src").is_dir():
+        # src-layout repositories import their package from src/, not the root.
+        sys.path.insert(0, str(root / "src"))
     skipped_deps = set()
     failed_imports = []
     for mod in modules:
