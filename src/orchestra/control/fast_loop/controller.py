@@ -1270,7 +1270,16 @@ class FastLoopController:
         record.behaviour_score = behaviour_score(stages)
         record.behaviour_failures = behaviour_failures(stages)
         record.behaviour_total = behaviour_total(stages)
-        if status is SubtaskStatus.COMMITTED:
+        if status is SubtaskStatus.COMMITTED and record.harness_score is None:
+            # The graph finished but no gate ran for this candidate (seen on
+            # recompiled-plan candidates whose harness node sits under a
+            # candidate namespace): a candidate nobody graded cannot be VALID,
+            # or the selector commits it over a graded 1.0 (nl2_aiofiles pilot).
+            record.status = CandidateStatus.HARNESS_FAILED
+            record.quality_score = 0.0
+            record.failure_reason = SubtaskFailureReason.HARNESS
+            record.failure_message = "no gate result recorded for this candidate"
+        elif status is SubtaskStatus.COMMITTED:
             record.status = CandidateStatus.VALID
             record.quality_score = 1.0
             record.failure_reason = None
