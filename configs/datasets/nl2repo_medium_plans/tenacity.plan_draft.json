@@ -1,0 +1,859 @@
+{
+  "generator": "llm",
+  "rationale": "Split into two milestones because the repository is a broad but tightly interconnected retry library: stop, wait, retry predicates, decorators, sync retrying, async retrying, callbacks, statistics, and context-manager behavior all share the same state objects, base strategy protocols, composition operators, public exports, and exception/result contracts. That shared substrate is a genuine risk gate: if RetryCallState, Future, RetryError, BaseRetrying, strategy base classes, action objects, or root-level exports are shaped incorrectly, every downstream strategy and wrapper can be built consistently against the wrong contract and still appear internally coherent. After that substrate is frozen, the remaining implementation belongs together because the subsystems import and exercise each other rather than forming independent capabilities.",
+  "split": true,
+  "milestones": [
+    {
+      "milestone_id": "core_contracts_public_surface",
+      "title": "Core retry contracts and documented public surface",
+      "objective": "Create the installable Tenacity package substrate: packaging metadata, root API exports, core state/result/error classes, retry action/context-manager primitives, base retry controller shape, strategy base classes with logical/composition operators, time utilities, and no-op defaults that later retry behavior imports.",
+      "risk_rationale": "The later implementation depends on shared contracts: RetryCallState attribute names and timing semantics, Future failed/result/exception behavior, RetryError and reraise behavior, TryAgain signaling, BaseRetrying configuration fields, action objects returned by retry iteration, strategy base call signatures, and composition operators. If these are wrong, stop/wait/retry strategies plus sync and async decorators can all be implemented against the wrong state shape or public import path, silently invalidating the rest of the repository.",
+      "gate_level": "implementation",
+      "split_reason": "risk_gate",
+      "template_id": "review_then_fix",
+      "depends_on": [],
+      "focus_paths": [
+        "pyproject.toml",
+        "tenacity/__init__.py",
+        "tenacity/_utils.py",
+        "tenacity/retry.py",
+        "tenacity/stop.py",
+        "tenacity/wait.py",
+        "tenacity/nap.py",
+        "tenacity/before.py",
+        "tenacity/after.py",
+        "tenacity/before_sleep.py",
+        "tenacity/asyncio/__init__.py",
+        "tenacity/asyncio/retry.py"
+      ],
+      "acceptance": {
+        "criteria": [
+          "The project is importable as an installed or in-place Python package named tenacity on Python 3.10.",
+          "tenacity.__version__ exists and the package exposes the documented root API entry points from tenacity import ... rather than only from private implementation modules.",
+          "RetryCallState initializes the documented fields start_time, retry_object, fn, args, kwargs, attempt_number, outcome, outcome_timestamp, idle_for, next_action, and upcoming_sleep, and exposes seconds_since_start consistently from monotonic time once an outcome timestamp exists.",
+          "Future.construct creates a completed result or exception holder, preserves attempt_number, and exposes failed according to whether an exception is held.",
+          "RetryError stores last_attempt, stringifies with the class name and attempt object, and reraise raises the stored exception when the last attempt failed.",
+          "TryAgain is an exception type that can be used by the downstream retry loop as an unconditional retry signal.",
+          "Base strategy classes for stop, wait, and retry are callable contracts and provide the documented combination operators: stop strategies support OR/AND, retry strategies support OR/AND/NOT-style composition, and wait strategies support additive combination.",
+          "No-op/default exported strategies and callbacks exist with stable names so later behavior can depend on them: stop_never, wait_none, retry_if_exception_type default, before_nothing, after_nothing, and before_sleep helpers.",
+          "The root package re-exports the public contract symbols at the documented import paths, including symbols whose definitions live in submodules.",
+          "The package includes py.typed and a pyproject.toml declaring an installable Python package."
+        ],
+        "corner_cases": [
+          "RetryCallState can be created for a code-block retry with fn=None without crashing callbacks that inspect it.",
+          "Future.construct handles both ordinary return values and BaseException instances.",
+          "RetryError.reraise raises RetryError itself when the last attempt did not fail.",
+          "Strategy composition with zero or multiple operands remains callable and accepts a RetryCallState argument.",
+          "Time unit conversion accepts int, float, and datetime.timedelta where stop/wait contracts require time units.",
+          "Root-level imports work before importing individual submodules directly."
+        ],
+        "checks": [
+          {
+            "type": "export",
+            "module": "tenacity",
+            "symbol": "__version__",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "Retrying",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "AsyncRetrying",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "BaseRetrying",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "RetryCallState",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "Future",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "RetryError",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "TryAgain",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "DoAttempt",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "DoSleep",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "RetryAction",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "AttemptManager",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "retry",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity.stop",
+            "symbol": "stop_base",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "tenacity.stop",
+            "symbol": "stop_never",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity.wait",
+            "symbol": "wait_base",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity.wait",
+            "symbol": "wait_none",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity.retry",
+            "symbol": "retry_base",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "tenacity.retry",
+            "symbol": "retry_never",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "tenacity.retry",
+            "symbol": "retry_always",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "tenacity._utils",
+            "symbol": "MAX_WAIT",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity._utils",
+            "symbol": "to_seconds",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity._utils",
+            "symbol": "is_coroutine_callable",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write an executable test suite, outside the source workspace, that validates the package imports, root re-exports, core state/result/error semantics, strategy base composition contracts, no-op defaults, time conversion, and pyproject/py.typed packaging requirements from the design documents.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [
+            "pyproject.toml",
+            "tenacity"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "author_contract_author",
+          "title": "Contract author",
+          "mandate": "Implement the shared Tenacity substrate and public API contracts exactly as the later retry machinery will import them: core classes, action objects, base retry controller shape, strategy base classes, default no-op callbacks/strategies, utilities, packaging, and root re-exports. Avoid implementing broad behavior beyond what is needed to make these contracts real and stable.",
+          "role": "contract_author",
+          "slot_id": "author",
+          "focus_paths": [
+            "pyproject.toml",
+            "tenacity"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "reviewer_spec_auditor",
+          "title": "Specification auditor",
+          "mandate": "Read the implemented substrate against the design document and report every mismatch in public symbol location, class/function name, required attribute, composition operator, default export, or package-installability contract. Do not edit source.",
+          "role": "spec_auditor",
+          "slot_id": "reviewer",
+          "focus_paths": [
+            "pyproject.toml",
+            "tenacity"
+          ],
+          "max_tokens": 6144,
+          "max_steps": 8,
+          "timeout_seconds": 900.0
+        },
+        {
+          "role_id": "fixer_integrator",
+          "title": "Integrator",
+          "mandate": "Fix the auditor report by wiring the exact documented imports and exports, correcting contract shapes, and ensuring the milestone acceptance tests can import all frozen symbols from their public modules.",
+          "role": "integrator",
+          "slot_id": "fixer",
+          "focus_paths": [
+            "pyproject.toml",
+            "tenacity"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        }
+      ]
+    },
+    {
+      "milestone_id": "complete_retry_behaviour",
+      "title": "Complete synchronous, asynchronous, strategy, callback, statistics, and context-manager behavior",
+      "objective": "Build the full Tenacity retry library on top of the frozen substrate: retry decorator, Retrying and AsyncRetrying execution loops, all stop/wait/retry strategies, callback/logging helpers, statistics, retry_with, context-manager code-block retries, asyncio/trio/tornado-compatible async behavior, reraise/TryAgain/RetryError handling, and documented root/submodule wiring.",
+      "risk_rationale": "This milestone deliberately depends on the frozen core contracts from core_contracts_public_surface. It should not redefine RetryCallState, Future, RetryError, BaseRetrying, strategy bases, action objects, constants, or public export paths; doing so would break consumers and the strategies that already depend on those contracts. The remaining work is not split further because stop, wait, retry predicates, callbacks, sync retrying, async retrying, statistics, and retry_with all import the same state and controller contracts and are exercised together by the decorator and context-manager APIs.",
+      "gate_level": "integration",
+      "split_reason": "risk_gate",
+      "template_id": "parallel_audit",
+      "depends_on": [
+        "core_contracts_public_surface"
+      ],
+      "focus_paths": [
+        "tenacity/__init__.py",
+        "tenacity/_utils.py",
+        "tenacity/retry.py",
+        "tenacity/stop.py",
+        "tenacity/wait.py",
+        "tenacity/nap.py",
+        "tenacity/before.py",
+        "tenacity/after.py",
+        "tenacity/before_sleep.py",
+        "tenacity/asyncio/__init__.py",
+        "tenacity/asyncio/retry.py",
+        "tenacity/tornadoweb.py"
+      ],
+      "acceptance": {
+        "criteria": [
+          "@retry works both bare and configured, preserves wrapped function metadata, exposes statistics, and automatically selects synchronous or asynchronous retrying based on the wrapped callable.",
+          "Retrying.__call__ retries synchronous callables until success or until the stop strategy ends retrying, records attempts and elapsed/idle time, honors sleep/wait/retry callbacks, supports reraise=True, retry_error_cls, retry_error_callback, and TryAgain.",
+          "AsyncRetrying supports awaitable functions and async retry predicates/callbacks/sleep without blocking the event loop, and is importable from both tenacity and tenacity.asyncio.",
+          "Retrying and AsyncRetrying support code-block retry through for/with and async for/with attempt patterns, including manually setting a result on attempt.retry_state for retry_if_result.",
+          "Stop strategies stop_after_attempt, stop_after_delay, stop_before_delay, stop_when_event_set, stop_any, stop_all, and stop_never behave according to documented attempt, elapsed-time, upcoming-sleep, event, OR, and AND semantics.",
+          "Wait strategies wait_fixed, wait_none, wait_random, wait_incrementing, wait_exponential, wait_random_exponential, wait_exponential_jitter, wait_combine, wait_chain, and wait_full_jitter compute documented delays, accept numeric and datetime.timedelta time units where specified, clamp min/max bounds,",
+          "Retry strategies retry_if_exception, retry_if_exception_type, retry_unless_exception_type, retry_if_not_exception_type, retry_if_exception_message, retry_if_not_exception_message, retry_if_exception_cause_type, retry_if_result, retry_if_not_result, retry_any, retry_all, retry_never, and retry_always",
+          "Callbacks before_nothing, after_nothing, before_log, after_log, before_sleep_log, and before_sleep_nothing are callable at the documented times with RetryCallState and produce logger messages containing function name, elapsed seconds, attempt ordinal, and sleep details where applicable.",
+          "retry_with returns a new wrapper with overridden retry parameters while preserving unspecified original parameters such as retry_error_cls and retry_error_callback.",
+          "RetryError remains serializable enough for pickle round trips when its last_attempt is serializable, and reraise behavior matches the documented final-attempt semantics.",
+          "_utils.is_coroutine_callable correctly classifies coroutine functions, synchronous functions, callable instances, classes, functools.partial wrappers, lambdas, and wrapped callables as described.",
+          "All documented public symbols are importable from tenacity or the documented submodules, including tenacity.wait.wait_fixed and the asyncio/tornadoweb modules."
+        ],
+        "corner_cases": [
+          "A decorated function that succeeds on the first attempt does not sleep and still has valid statistics.",
+          "A stop_after_attempt(1) configuration makes exactly one attempt and then raises RetryError or the reraise exception as configured.",
+          "stop_after_delay and stop_before_delay accept both numbers and datetime.timedelta and handle seconds_since_start exactly at, just below, and just above the limit.",
+          "stop_before_delay accounts for retry_state.upcoming_sleep and behaves like stop_after_delay when upcoming_sleep is zero.",
+          "wait_random returns values within the configured half-open min/max range and produces more than one value over repeated calls.",
+          "wait_chain uses the final strategy forever after the chain is exhausted.",
+          "wait_exponential handles early attempt numbers, min/max clamping, and very large attempt numbers without overflow leaking beyond MAX_WAIT.",
+          "retry_if_exception_message rejects calls that provide both message and match and rejects calls that provide neither.",
+          "retry_if_exception_cause_type walks nested __cause__ chains recursively.",
+          "retry_unless_exception_type retries successful results but stops for matching exception types.",
+          "Callbacks may be synchronous or awaitable in async retrying.",
+          "before_sleep is not called after the final failed attempt when no sleep will happen."
+        ],
+        "checks": [
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "retry",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "Retrying",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "AsyncRetrying",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity.asyncio",
+            "symbol": "AsyncRetrying",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity.tornadoweb",
+            "symbol": "TornadoRetrying",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "stop_after_attempt",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "stop_after_delay",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "stop_before_delay",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity.stop",
+            "symbol": "stop_when_event_set",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity.stop",
+            "symbol": "stop_any",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity.stop",
+            "symbol": "stop_all",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "tenacity",
+            "symbol": "stop_never",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "wait_fixed",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "wait_random",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "wait_exponential",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "wait_random_exponential",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "wait_exponential_jitter",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "wait_incrementing",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "wait_chain",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "wait_combine",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "wait_none",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "tenacity",
+            "symbol": "wait_full_jitter",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "retry_if_exception",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "retry_if_exception_type",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "retry_unless_exception_type",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "retry_if_not_exception_type",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "retry_if_exception_message",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "retry_if_not_exception_message",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "retry_if_exception_cause_type",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "retry_if_result",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "retry_if_not_result",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity.retry",
+            "symbol": "retry_any",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity.retry",
+            "symbol": "retry_all",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "tenacity",
+            "symbol": "retry_never",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "tenacity",
+            "symbol": "retry_always",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "before_log",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "after_log",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity",
+            "symbol": "before_sleep_log",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity.before",
+            "symbol": "before_nothing",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity.after",
+            "symbol": "after_nothing",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity.before_sleep",
+            "symbol": "before_sleep_nothing",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity.nap",
+            "symbol": "sleep",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity.nap",
+            "symbol": "sleep_using_event",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "tenacity._utils",
+            "symbol": "MAX_WAIT",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity._utils",
+            "symbol": "get_callback_name",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tenacity._utils",
+            "symbol": "to_ordinal",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write an executable behavioral test suite, outside the source workspace, covering the full public design: sync and async retry loops, all stop/wait/retry strategies, callbacks/logging, statistics, context-manager retries, retry_with, TryAgain, RetryError/reraise, coroutine detection, and public imports. The implementer must not see this suite.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [
+            "tenacity"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "author_implementer",
+          "title": "Implementer",
+          "mandate": "Implement the complete Tenacity behavior from the design documents while preserving the contracts frozen by core_contracts_public_surface. Build strategy semantics, sync and async execution loops, decorator auto-detection, context-manager support, callbacks/logging, statistics, retry_with, error handling, and documented module/root exports.",
+          "role": "implementer",
+          "slot_id": "author",
+          "focus_paths": [
+            "tenacity"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "spec_review_spec_auditor",
+          "title": "Specification auditor",
+          "mandate": "Audit the completed implementation against the public design and examples. Report every behavioral or public-API deviation in retry loops, strategy semantics, async behavior, callbacks, statistics, context-manager retry, retry_with, error handling, and packaging. Do not edit source.",
+          "role": "spec_auditor",
+          "slot_id": "spec_review",
+          "focus_paths": [
+            "tenacity"
+          ],
+          "max_tokens": 6144,
+          "max_steps": 8,
+          "timeout_seconds": 900.0
+        },
+        {
+          "role_id": "contract_review_contract_critic",
+          "title": "Contract critic",
+          "mandate": "Audit the completed implementation against the contracts frozen by core_contracts_public_surface. Report any changed symbol location, renamed export, broken class/function call signature, altered RetryCallState/Future/RetryError semantics, changed constants, or strategy base/operator incompatibility. Do not edit source.",
+          "role": "contract_critic",
+          "slot_id": "contract_review",
+          "focus_paths": [
+            "tenacity"
+          ],
+          "max_tokens": 6144,
+          "max_steps": 8,
+          "timeout_seconds": 900.0
+        },
+        {
+          "role_id": "fixer_gate_repairer",
+          "title": "Gate repairer",
+          "mandate": "Apply only the fixes required by the behavioral gate and both audit reports, preserving the frozen substrate and public import paths. Re-run targeted checks to ensure sync, async, strategy, callback, statistics, context-manager, retry_with, and error-handling behavior all pass.",
+          "role": "gate_repairer",
+          "slot_id": "fixer",
+          "focus_paths": [
+            "tenacity"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 14,
+          "timeout_seconds": 1500.0
+        }
+      ]
+    }
+  ]
+}

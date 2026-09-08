@@ -1,0 +1,840 @@
+{
+  "generator": "llm",
+  "rationale": "Two milestones are used because the repository has a high-blast-radius shared JOSE contract: algorithm identifiers, compression identifiers, exception hierarchy, key interfaces, backend exports, utility encodings, and package-level public imports must be identical across JWT, JWS, JWE, JWK, and backend code. If those names or constants are wrong, later modules can all compile and even pass self-consistent tests while producing incompatible tokens, signatures, encrypted messages, or import paths. After that risk gate is frozen, the remaining JWT/JWS/JWK/JWE implementation is built as one integrated milestone because those modules are not independent: JWT depends on JWS/JWK/backends/constants, JWS depends on JWK/backends/constants, JWE depends on JWK/backends/constants, and all share the same public package surface.",
+  "split": true,
+  "milestones": [
+    {
+      "milestone_id": "shared_jose_contracts",
+      "title": "Freeze shared JOSE contracts, constants, exceptions, utilities, and public imports",
+      "objective": "Create the installable package skeleton and implement the shared substrate that every later JOSE module imports: pyproject metadata, jose package modules, algorithm and compression constants, JWE size limit, exception hierarchy, base key interface, backend selection exports, native HMAC/random helpers, base64/time/key-format utilities, and root-level API re-exports.",
+      "risk_rationale": "JWT, JWS, JWE, JWK, and backend implementations all depend on the same algorithm string constants, compression constants, exception classes, key base methods, backend export names, and package import paths. If this contract is wrong, downstream code may sign, verify, encrypt, decrypt, or serialize using incompatible identifiers while still importing successfully and passing tests written against the same wrong assumptions.",
+      "gate_level": "implementation",
+      "split_reason": "risk_gate",
+      "template_id": "review_then_fix",
+      "depends_on": [],
+      "focus_paths": [
+        "pyproject.toml",
+        "jose/__init__.py",
+        "jose/constants.py",
+        "jose/exceptions.py",
+        "jose/utils.py",
+        "jose/backends/__init__.py",
+        "jose/backends/base.py",
+        "jose/backends/native.py",
+        "jose/jwt.py",
+        "jose/jws.py",
+        "jose/jwe.py",
+        "jose/jwk.py"
+      ],
+      "acceptance": {
+        "criteria": [
+          "The project is installable as a single jose package using pyproject.toml and creates no additional top-level Python package.",
+          "from jose import jwt, jws, jwe, jwk, utils, ALGORITHMS, ZIPS succeeds.",
+          "Algorithm constants exactly expose the documented JOSE identifiers and grouped sets, including HMAC, RSA_DS, RSA_KW, RSA, EC_DS, EC_KW, EC, AES_JWE_ENC, AES_KW, AES, HMAC_AUTH_TAG, GCM, SUPPORTED, ALL, HASHES, and KEYS.",
+          "Compression constants expose DEF, NONE, and SUPPORTED, and JWE_SIZE_LIMIT is available as 250 * 1024 bytes.",
+          "The documented exception hierarchy exists and all specialized JOSE exceptions inherit from JOSEError through their documented family base where applicable.",
+          "The base Key and DIRKey classes define the common methods later backends rely on: sign, verify, public_key, to_pem, to_dict, encrypt, decrypt, wrap_key, and unwrap_key.",
+          "Backend package exports follow the documented priority wiring for RSAKey, ECKey, AESKey, HMACKey, DIRKey, and get_random_bytes, with native HMACKey available as a fallback.",
+          "Utility functions perform padding-free base64url encode/decode and basic binary/time/key-format conversions needed by later modules."
+        ],
+        "corner_cases": [
+          "base64url_decode accepts both bytes and str inputs and restores missing padding.",
+          "ensure_binary preserves bytes and encodes str without double-encoding.",
+          "is_pem_format and is_ssh_key return false for ordinary symmetric secrets.",
+          "Importing jose must not fail merely because optional RSA, EC, or AES backend dependencies are unavailable.",
+          "Module-level constants are exported from their documented public modules, not only from private implementation locations."
+        ],
+        "checks": [
+          {
+            "type": "import",
+            "module": "jose",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "import",
+            "module": "jose",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "import",
+            "module": "jose",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "import",
+            "module": "jose",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "import",
+            "module": "jose",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "jose",
+            "symbol": "ALGORITHMS",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "jose",
+            "symbol": "ZIPS",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.constants",
+            "symbol": "Algorithms",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.constants",
+            "symbol": "Zips",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "jose.constants",
+            "symbol": "ALGORITHMS",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "jose.constants",
+            "symbol": "ZIPS",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "jose.constants",
+            "symbol": "JWE_SIZE_LIMIT",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.exceptions",
+            "symbol": "JOSEError",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.exceptions",
+            "symbol": "JWSError",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.exceptions",
+            "symbol": "JWSSignatureError",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.exceptions",
+            "symbol": "JWSAlgorithmError",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.exceptions",
+            "symbol": "JWTError",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.exceptions",
+            "symbol": "JWTClaimsError",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.exceptions",
+            "symbol": "ExpiredSignatureError",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.exceptions",
+            "symbol": "JWKError",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.exceptions",
+            "symbol": "JWEError",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.exceptions",
+            "symbol": "JWEParseError",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.exceptions",
+            "symbol": "JWEInvalidAuth",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.exceptions",
+            "symbol": "JWEAlgorithmUnsupportedError",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.backends.base",
+            "symbol": "Key",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.backends.base",
+            "symbol": "DIRKey",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "jose.backends",
+            "symbol": "RSAKey",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "jose.backends",
+            "symbol": "ECKey",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "jose.backends",
+            "symbol": "AESKey",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "jose.backends",
+            "symbol": "HMACKey",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "jose.backends",
+            "symbol": "DIRKey",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.backends.native",
+            "symbol": "HMACKey",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.backends.native",
+            "symbol": "get_random_bytes",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.utils",
+            "symbol": "base64url_encode",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.utils",
+            "symbol": "base64url_decode",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.utils",
+            "symbol": "calculate_at_hash",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.utils",
+            "symbol": "ensure_binary",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write executable tests from the design documents that verify installability, the public jose import surface, exact constants and grouped algorithm sets, exception inheritance, base Key/DIRKey method availability, backend export fallback behavior, and utility base64/binary helpers. Do not edit source files.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [
+            "pyproject.toml",
+            "jose"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "author_contract_author",
+          "title": "Contract author",
+          "mandate": "Implement the shared JOSE contract exactly as documented: pyproject.toml, jose package skeleton, constants including every Algorithms and Zips member plus JWE_SIZE_LIMIT, exception hierarchy, base Key and DIRKey interfaces, native HMAC/random helper, backend __init__ priority exports, utility helpers, and root __init__ re-exports without introducing extra top-level packages.",
+          "role": "contract_author",
+          "slot_id": "author",
+          "focus_paths": [
+            "pyproject.toml",
+            "jose"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "reviewer_spec_auditor",
+          "title": "Specification auditor",
+          "mandate": "Read the implementation against the design text and report every mismatch in exported names, constant values, grouped sets, exception inheritance, backend fallback wiring, public import paths, or package layout. Do not edit files.",
+          "role": "spec_auditor",
+          "slot_id": "reviewer",
+          "focus_paths": [
+            "pyproject.toml",
+            "jose"
+          ],
+          "max_tokens": 6144,
+          "max_steps": 8,
+          "timeout_seconds": 900.0
+        },
+        {
+          "role_id": "fixer_integrator",
+          "title": "Integrator",
+          "mandate": "Apply the reviewer report by fixing only the shared contract and public wiring so documented imports and constants are stable for later milestones. Preserve the frozen public names and avoid adding implementation behavior beyond the shared substrate.",
+          "role": "integrator",
+          "slot_id": "fixer",
+          "focus_paths": [
+            "pyproject.toml",
+            "jose"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        }
+      ]
+    },
+    {
+      "milestone_id": "integrated_jose_implementation",
+      "title": "Implement integrated JWT, JWS, JWK, JWE, and backend behavior",
+      "objective": "Build the complete JOSE library behavior on top of the frozen shared contracts: JWK construction and key serialization, HMAC/RSA/EC signing and verification backends, JWT encode/decode with standard claim validation and at_hash support, JWS sign/verify, JWE encrypt/decrypt with direct/RSA/AES key management where supported, AES-GCM/CBC-HMAC handling, DEFLATE compression, size-limit enforcement, key rotation and kid matching, and final public API integration.",
+      "risk_rationale": "This milestone exists after the shared contract risk gate so all behavioral modules consume already-frozen constants, exception names, key interfaces, and import paths. It deliberately remains one integrated milestone because JWT, JWS, JWE, JWK, and backends import across the same substrate and signing/token behavior depends on JWS/JWK/backend interoperability; splitting them further would separate coupled code rather than independent subsystems.",
+      "gate_level": "integration",
+      "split_reason": "risk_gate",
+      "template_id": "parallel_audit",
+      "depends_on": [
+        "shared_jose_contracts"
+      ],
+      "focus_paths": [
+        "jose/jwt.py",
+        "jose/jws.py",
+        "jose/jwe.py",
+        "jose/jwk.py",
+        "jose/utils.py",
+        "jose/backends",
+        "jose/__init__.py",
+        "jose/constants.py",
+        "jose/exceptions.py",
+        "pyproject.toml"
+      ],
+      "acceptance": {
+        "criteria": [
+          "jwt.encode returns a compact JWT string and jwt.decode verifies it with an allowed algorithm list and returns the original claims.",
+          "jwt.encode converts datetime exp, iat, and nbf claims to numeric timestamps before signing.",
+          "jwt.decode verifies exp, nbf, iat, aud, iss, sub, jti, and at_hash according to documented options, required-claim flags, leeway, and supplied audience/issuer/subject/access_token.",
+          "jwt.decode rejects disallowed algorithms, malformed tokens, invalid signatures, expired tokens, premature nbf tokens, invalid iat values, audience/issuer/subject mismatches, missing required claims, and prohibited none algorithm use.",
+          "jws.sign creates compact JWS tokens for bytes, strings, and JSON-serializable payload dictionaries; jws.verify returns the verified payload bytes and rejects invalid signatures or non-whitelisted algorithms.",
+          "jwk.construct creates usable key objects from symmetric secrets, oct JWK dictionaries, RSA PEM keys, EC PEM keys where dependencies support them, and JWK sets or key lists for verification paths.",
+          "Backend key classes implement sign, verify, public_key, to_pem, to_dict, encrypt/decrypt or wrap/unwrap behavior appropriate to their algorithm families without breaking the frozen Key interface.",
+          "jwe.encrypt returns compact JWE bytes and jwe.decrypt returns the original plaintext bytes for direct symmetric AES-GCM flows shown in the design guide.",
+          "jwe.encrypt and jwe.decrypt support zip='DEF' compression and decompression, reject unsupported compression values, reject malformed compact JWE structures, reject authentication failures, and enforce JWE_SIZE_LIMIT before decryption.",
+          "RSA signing verification works with cryptography-generated PEM private/public key pairs for RS256 when cryptography is installed.",
+          "Public imports from jose, jose.exceptions, jose.constants, jose.backends, jose.backends.native, and jose.backends.base remain exactly as frozen in the first milestone."
+        ],
+        "corner_cases": [
+          "algorithms may be supplied as a string or list and is treated as a whitelist.",
+          "Payloads and keys may be str or bytes where documented; returned JWS payload and JWE plaintext are bytes.",
+          "JWT audience may be a string or list, and token aud may be a string or list.",
+          "Leeway may be supplied as seconds or timedelta and applies to exp and nbf boundary comparisons.",
+          "JWT decode with verify_signature=False can parse claims without requiring key verification but still honors enabled claim checks.",
+          "A token signed with one secret must fail verification with a different secret.",
+          "Malformed base64url segments and wrong compact part counts raise the documented JOSE-family exceptions.",
+          "JWK sets and key lists try matching kid first when present and can verify against the correct rotated key.",
+          "JWE plaintext at empty bytes round-trips correctly.",
+          "JWE inputs larger than 250KB are rejected before decompression or cryptographic processing.",
+          "Optional backend imports degrade gracefully: if RSA or AES optional support is unavailable, public backend symbols remain importable as documented and unsupported operations raise JOSE-family errors rather than raw import errors."
+        ],
+        "checks": [
+          {
+            "type": "callable_or_class",
+            "module": "jose.jwt",
+            "symbol": "encode",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jwt",
+            "symbol": "decode",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jwt",
+            "symbol": "_validate_exp",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jwt",
+            "symbol": "_validate_iat",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jwt",
+            "symbol": "_validate_nbf",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jwt",
+            "symbol": "_validate_aud",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jwt",
+            "symbol": "_validate_iss",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jwt",
+            "symbol": "_validate_sub",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jwt",
+            "symbol": "_validate_jti",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jwt",
+            "symbol": "_validate_at_hash",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jws",
+            "symbol": "sign",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jws",
+            "symbol": "verify",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jws",
+            "symbol": "_encode_header",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jws",
+            "symbol": "_encode_payload",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jwk",
+            "symbol": "construct",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jwk",
+            "symbol": "get_key",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jwk",
+            "symbol": "Key",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jwe",
+            "symbol": "encrypt",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jwe",
+            "symbol": "decrypt",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jwe",
+            "symbol": "_compress",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jwe",
+            "symbol": "_decompress",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jwe",
+            "symbol": "_encrypt_and_auth",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jwe",
+            "symbol": "_decrypt_and_auth",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.backends.cryptography_backend",
+            "symbol": "CryptographyRSAKey",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.backends.cryptography_backend",
+            "symbol": "CryptographyECKey",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.backends.cryptography_backend",
+            "symbol": "CryptographyAESKey",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.backends.cryptography_backend",
+            "symbol": "CryptographyHMACKey",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.backends.rsa_backend",
+            "symbol": "RSAKey",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.backends.ecdsa_backend",
+            "symbol": "ECDSAECKey",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "jose",
+            "symbol": "version",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose",
+            "symbol": "verify",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write an executable behavioral test suite from the public design only, covering JWT encode/decode claims, JWS sign/verify, JWK construction, JWE direct AES-GCM round-trips with compression and size-limit failures, RSA PEM signing where cryptography is available, exception types, and public imports. Do not edit source.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [
+            "jose",
+            "pyproject.toml"
+          ],
+          "max_tokens": 16384,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "author_implementer",
+          "title": "Implementer",
+          "mandate": "Implement the integrated JOSE behavior directly from the design while preserving all contracts frozen in shared_jose_contracts. Build JWT, JWS, JWK, JWE, cryptography/native/rsa/ecdsa backends, and utility behavior sufficiently for the documented examples, options, algorithm whitelist protections, key rotation, compression, and size-limit enforcement.",
+          "role": "implementer",
+          "slot_id": "author",
+          "focus_paths": [
+            "jose",
+            "pyproject.toml"
+          ],
+          "max_tokens": 16384,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "spec_review_spec_auditor",
+          "title": "Specification auditor",
+          "mandate": "Read the completed code against the public design and report every behavioral or API deviation in JWT claims, JWS serialization, JWK construction, JWE compact format, backend capabilities, documented return types, examples, and error handling. Do not edit files.",
+          "role": "spec_auditor",
+          "slot_id": "spec_review",
+          "focus_paths": [
+            "jose"
+          ],
+          "max_tokens": 16384,
+          "max_steps": 8,
+          "timeout_seconds": 900.0
+        },
+        {
+          "role_id": "contract_review_contract_critic",
+          "title": "Contract critic",
+          "mandate": "Review the completed code against the frozen shared_jose_contracts milestone log and report any changed, removed, relocated, or semantically incompatible constants, exceptions, key interfaces, backend exports, utility contracts, or package-level imports. Do not edit files.",
+          "role": "contract_critic",
+          "slot_id": "contract_review",
+          "focus_paths": [
+            "jose"
+          ],
+          "max_tokens": 16000,
+          "max_steps": 8,
+          "timeout_seconds": 900.0
+        },
+        {
+          "role_id": "fixer_edge_case_hardener",
+          "title": "Edge-case hardener",
+          "mandate": "Fix the issues reported by both auditors, emphasizing boundary and security cases: malformed compact tokens, invalid signatures, required-claim failures, leeway boundaries, audience list handling, wrong key/kid rotation, unsupported algorithms, unsupported zip values, empty plaintext, oversized JWE rejection, and optional backend fallback behavior. Preserve all frozen contracts.",
+          "role": "edge_case_hardener",
+          "slot_id": "fixer",
+          "focus_paths": [
+            "jose"
+          ],
+          "max_tokens": 16384,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        }
+      ]
+    }
+  ]
+}

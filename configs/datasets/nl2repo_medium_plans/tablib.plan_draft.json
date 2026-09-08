@@ -1,0 +1,700 @@
+{
+  "generator": "llm",
+  "rationale": "Split into two milestones because the core Tablib object model and format registry are a genuine risk gate: every format module, import/export helper, and public package entry point depends on the Dataset/Databook/Row/exception/registry contracts being correct. If those return shapes or import paths are wrong, later format implementations can all be built consistently against the wrong API and silently invalidate the repository. After that contract is frozen, the remaining work is one integrated subsystem because the format implementations share the same registry and core import/export paths, and DBF support is imported by the DBF format rather than being independent.",
+  "split": true,
+  "milestones": [
+    {
+      "milestone_id": "core_contracts_and_registry",
+      "title": "Core Tablib contracts, public API, exceptions, and format registry",
+      "objective": "Build the installable package skeleton and the shared API substrate: Dataset, Databook, Row, exception classes, detect_format, import_set/import_book, public tablib exports, and the extensible formats.Registry contract that all concrete formats will use later.",
+      "risk_rationale": "Dataset, Databook, Row, detect_format, import_set/import_book, UnsupportedFormat, and formats.registry define the shared return shapes, exceptions, and import paths consumed by every later format module. If this contract is wrong, CSV/JSON/Excel/DBF/Pandas/etc. can all be implemented against the same wrong assumptions and pass local tests while breaking the documented public API.",
+      "gate_level": "implementation",
+      "split_reason": "risk_gate",
+      "template_id": "review_then_fix",
+      "depends_on": [],
+      "focus_paths": [
+        "pyproject.toml",
+        "setup.py",
+        "src/tablib/__init__.py",
+        "src/tablib/core.py",
+        "src/tablib/exceptions.py",
+        "src/tablib/formats/__init__.py",
+        "src/tablib/utils.py"
+      ],
+      "acceptance": {
+        "criteria": [
+          "The project is importable as tablib from a clean checkout using the src layout.",
+          "tablib exposes Dataset, Databook, Row, detect_format, import_set, import_book, registry, and the documented exception classes at the public package root.",
+          "Dataset supports construction with headers/title/data, appending rows, appending callable and sequence columns, separators, header validation, width/height, len(), get(), get_col(), row/column indexing, slicing, deletion, subset, sort, transpose, stack, stack_cols, remove_duplicates, wipe, dict, pac",
+          "Databook supports construction from datasets, add_sheet with type validation, sheets(), wipe(), load(), and export() delegation through the registry.",
+          "Row supports index, slice, and header-name access when associated with a dataset, tuple/list views, append, insert, rpush, lpush, copy, containment, repr, pickling, tags, has_tag, and has_tags.",
+          "Unsupported formats consistently raise UnsupportedFormat from Dataset.export/load, Databook.export/load, import_set, and import_book.",
+          "Registry supports register, register_builtins, formats, get_format, keys, item lookup, and stores registered format classes in _formats."
+        ],
+        "corner_cases": [
+          "Setting headers whose length does not match existing row width raises InvalidDimensions.",
+          "Adding rows or columns with mismatched dimensions raises InvalidDimensions rather than corrupting stored data.",
+          "Databook.add_sheet rejects non-Dataset instances with InvalidDatasetType.",
+          "Empty datasets can be transposed, stringified, sliced, wiped, pickled, and exported through unsupported-format paths without unrelated crashes.",
+          "Row.has_tag([]) returns False, while has_tags requires all requested tags.",
+          "Registry lookup of an unknown format raises UnsupportedFormat or an equivalent documented unsupported-format path, not KeyError leakage."
+        ],
+        "checks": [
+          {
+            "type": "callable_or_class",
+            "module": "tablib",
+            "symbol": "Dataset",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib",
+            "symbol": "Databook",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib",
+            "symbol": "Row",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib",
+            "symbol": "detect_format",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib",
+            "symbol": "import_set",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib",
+            "symbol": "import_book",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib.core",
+            "symbol": "Dataset",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib.core",
+            "symbol": "Databook",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib.core",
+            "symbol": "Row",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib.core",
+            "symbol": "detect_format",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib.exceptions",
+            "symbol": "TablibException",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib.exceptions",
+            "symbol": "InvalidDatasetType",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib.exceptions",
+            "symbol": "InvalidDatasetIndex",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib.exceptions",
+            "symbol": "InvalidDimensions",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib.exceptions",
+            "symbol": "UnsupportedFormat",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib.exceptions",
+            "symbol": "HeadersNeeded",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib.formats",
+            "symbol": "Registry",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "tablib.formats",
+            "symbol": "registry",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "tablib",
+            "symbol": "__version__",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write an executable test suite from the design text for the core Dataset, Databook, Row, exception, public import, detect_format, import_set/import_book, and Registry contracts only. Include custom dummy registered formats so the suite can verify registry delegation without requiring concrete CSV/JSON/Excel modules yet.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [
+            "src/tablib/__init__.py",
+            "src/tablib/core.py",
+            "src/tablib/exceptions.py",
+            "src/tablib/formats/__init__.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "author_contract_author",
+          "title": "Contract author",
+          "mandate": "Implement the shared Tablib core contract and package metadata exactly at the documented import paths. Prioritize stable method signatures, exception types, row/header semantics, registry lookup/delegation, and root re-exports that later format modules will import.",
+          "role": "contract_author",
+          "slot_id": "author",
+          "focus_paths": [
+            "pyproject.toml",
+            "setup.py",
+            "src/tablib/__init__.py",
+            "src/tablib/core.py",
+            "src/tablib/exceptions.py",
+            "src/tablib/formats/__init__.py",
+            "src/tablib/utils.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "reviewer_spec_auditor",
+          "title": "Specification auditor",
+          "mandate": "Review the implemented core against the design guide and report quiet contract deviations: missing root exports, wrong exception inheritance, narrowed method signatures, incorrect return types, registry behavior that later formats cannot use, or Dataset/Row semantics that conflict with examples.",
+          "role": "spec_auditor",
+          "slot_id": "reviewer",
+          "focus_paths": [
+            "src/tablib/__init__.py",
+            "src/tablib/core.py",
+            "src/tablib/exceptions.py",
+            "src/tablib/formats/__init__.py"
+          ],
+          "max_tokens": 6144,
+          "max_steps": 8,
+          "timeout_seconds": 900.0
+        },
+        {
+          "role_id": "fixer_gate_repairer",
+          "title": "Gate repairer",
+          "mandate": "Fix only the deviations and failing acceptance items reported by the reviewer or gate for the core contract milestone, preserving the frozen public symbols and signatures.",
+          "role": "gate_repairer",
+          "slot_id": "fixer",
+          "focus_paths": [
+            "pyproject.toml",
+            "setup.py",
+            "src/tablib/__init__.py",
+            "src/tablib/core.py",
+            "src/tablib/exceptions.py",
+            "src/tablib/formats/__init__.py",
+            "src/tablib/utils.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 14,
+          "timeout_seconds": 1500.0
+        }
+      ]
+    },
+    {
+      "milestone_id": "formats_vendor_and_integration",
+      "title": "Concrete formats, DBF vendor support, Pandas integration, and CLI/export wiring",
+      "objective": "Implement all documented concrete format modules and their registration with the frozen core: CSV, TSV, JSON, YAML, HTML, LaTeX, RST, CLI, Jira, SQL, XLS, XLSX, ODS, DBF, and Pandas DataFrame, plus the _vendor.dbfpy fields/utils APIs and final package integration.",
+      "risk_rationale": "This milestone depends on the frozen core_contracts_and_registry API. The remaining format modules are not independent because they all import Dataset/Databook semantics and register through the same registry; DBF support is also consumed by tablib.formats._dbf. The risk being gated has already been frozen, so this milestone can safely build the dependent implementations together.",
+      "gate_level": "integration",
+      "split_reason": "risk_gate",
+      "template_id": "parallel_audit",
+      "depends_on": [
+        "core_contracts_and_registry"
+      ],
+      "focus_paths": [
+        "pyproject.toml",
+        "setup.py",
+        "src/tablib/__init__.py",
+        "src/tablib/core.py",
+        "src/tablib/exceptions.py",
+        "src/tablib/formats",
+        "src/tablib/_vendor",
+        "src/tablib/utils.py"
+      ],
+      "acceptance": {
+        "criteria": [
+          "formats.registry.register_builtins() registers every documented built-in format key and Dataset.export/load plus Databook.export/load delegate to those format classes.",
+          "CSV and TSV support import, export, delimiter options, line terminators, file-like export targets, skip_lines, quoted embedded delimiters/newlines, Unicode text, ragged rows, detection, selected columns, deletion, sorting, and formatter kwargs.",
+          "JSON and YAML support Dataset and Databook import/export round trips, detection, list-of-dicts and list-of-lists inputs, UUID/string values, nested list preservation, and invalid input failure through the documented exception path.",
+          "HTML supports Dataset and Databook export, import with and without headers, None handling, and table_id selection.",
+          "RST, CLI, Jira, LaTeX, and SQL exports match the documented table/literal behavior including captions, escaping, empty datasets, no-header datasets, None/empty values, date/time/timestamp SQL literals, quoting, custom table/columns, and commit output.",
+          "XLS, XLSX, and ODS support Dataset and Databook import/export round trips from BytesIO, format detection, dates/datetimes, skip_lines, ragged rows, formula escaping for XLSX, sheet-name sanitization, and XLSX column_width options.",
+          "Pandas DataFrame format supports loading from a DataFrame and exporting back to a pandas.DataFrame with headers and row values preserved.",
+          "DBF export produces non-empty bytes beginning with the DBF file identifier, DBF detection returns dbf, DBF import loads records into a Dataset, and DBF field definitions/utilities expose the documented behavior.",
+          "The package root and tablib._vendor.dbfpy root re-export the documented main fields, utils, classes, functions, registry, and version information."
+        ],
+        "corner_cases": [
+          "Empty files and empty datasets do not crash unrelated formats and either produce a valid empty export or raise the documented Tablib exception.",
+          "Unsupported format names consistently raise UnsupportedFormat after all built-ins are registered.",
+          "CSV/TSV streams preserve stream position where detection reads from a file-like object when practical, or otherwise still allow explicit load from fresh streams.",
+          "Ragged rows from CSV, XLSX, and ODS are padded or represented consistently without losing earlier cells.",
+          "Formatters can be dictionaries keyed by header names or sequences applying to all columns; newlines and None values are handled safely.",
+          "XLSX formula escaping applies to data cells and headers when escape=True and does not escape when escape=False.",
+          "XLSX column_width accepts adaptive, integer, and None and raises ValueError for invalid strings.",
+          "DBF field names longer than 10 characters and invalid field lengths raise ValueError.",
+          "DBF utils.INVALID_VALUE compares equal to empty values, converts to zero/empty string, has false boolean value, and repr is <INVALID>.",
+          "utils.getDate handles None, date, datetime, timestamp, YYYYMMDD, YYMMDD, and sequences; utils.getDateTime handles None, datetime, date, timestamp, and sequences while string datetime conversion may raise NotImplementedError as documented."
+        ],
+        "checks": [
+          {
+            "type": "callable_or_class",
+            "module": "tablib.formats._csv",
+            "symbol": "CSVFormat",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib.formats._tsv",
+            "symbol": "TSVFormat",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib.formats._json",
+            "symbol": "JSONFormat",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib.formats._yaml",
+            "symbol": "YAMLFormat",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib.formats._html",
+            "symbol": "HTMLFormat",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib.formats._latex",
+            "symbol": "LATEXFormat",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib.formats._rst",
+            "symbol": "RSTFormat",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib.formats._cli",
+            "symbol": "CLIFormat",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib.formats._jira",
+            "symbol": "JIRAFormat",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib.formats._sql",
+            "symbol": "SQLFormat",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib.formats._xls",
+            "symbol": "XLSFormat",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib.formats._xlsx",
+            "symbol": "XLSXFormat",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib.formats._ods",
+            "symbol": "ODSFormat",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib.formats._dbf",
+            "symbol": "DBFFormat",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib.formats._df",
+            "symbol": "DataFrameFormat",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib._vendor.dbfpy.fields",
+            "symbol": "DbfFieldDef",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib._vendor.dbfpy.fields",
+            "symbol": "DbfCharacterFieldDef",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib._vendor.dbfpy.fields",
+            "symbol": "DbfNumericFieldDef",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib._vendor.dbfpy.fields",
+            "symbol": "DbfDateFieldDef",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib._vendor.dbfpy.fields",
+            "symbol": "DbfLogicalFieldDef",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib._vendor.dbfpy.fields",
+            "symbol": "DbfFloatFieldDef",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib._vendor.dbfpy.fields",
+            "symbol": "DbfIntegerFieldDef",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib._vendor.dbfpy.fields",
+            "symbol": "registerField",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib._vendor.dbfpy.fields",
+            "symbol": "lookupFor",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib._vendor.dbfpy.utils",
+            "symbol": "unzfill",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib._vendor.dbfpy.utils",
+            "symbol": "getDate",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib._vendor.dbfpy.utils",
+            "symbol": "getDateTime",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "tablib._vendor.dbfpy.utils",
+            "symbol": "_InvalidValue",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "tablib._vendor.dbfpy.utils",
+            "symbol": "INVALID_VALUE",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "tablib._vendor.dbfpy",
+            "symbol": "fields",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "tablib._vendor.dbfpy",
+            "symbol": "utils",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write an executable integration test suite from the design text for every documented format, registry built-in registration, DBF fields/utils, Pandas DataFrame conversion, public imports, and package installation behavior. Use only public APIs and the exact examples/edge cases in the prompt.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [
+            "src/tablib/formats",
+            "src/tablib/_vendor/dbfpy",
+            "src/tablib/__init__.py",
+            "pyproject.toml"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "author_implementer",
+          "title": "Implementer",
+          "mandate": "Implement all concrete format modules against the frozen Dataset/Databook/Registry contracts, including import/export/detect methods where documented, formatter kwargs, stream handling, and built-in registration. Implement practical behavior for CSV, TSV, JSON, YAML, HTML, LaTeX, RST, CLI, Jira, SQL, XLS, XLSX, ODS, DBF, and DataFrame formats using the declared dependencies.",
+          "role": "implementer",
+          "slot_id": "author",
+          "focus_paths": [
+            "src/tablib/formats",
+            "src/tablib/core.py",
+            "src/tablib/__init__.py",
+            "pyproject.toml",
+            "setup.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "spec_review_spec_auditor",
+          "title": "Specification auditor",
+          "mandate": "Audit the completed format and vendor implementation against the design guide. Report missing formats, incorrect exact string outputs, unsupported documented options, wrong exception behavior, weak detection, incomplete round trips, and DBF utility or field behavior mismatches.",
+          "role": "spec_auditor",
+          "slot_id": "spec_review",
+          "focus_paths": [
+            "src/tablib/formats",
+            "src/tablib/_vendor/dbfpy",
+            "src/tablib/__init__.py"
+          ],
+          "max_tokens": 6144,
+          "max_steps": 8,
+          "timeout_seconds": 900.0
+        },
+        {
+          "role_id": "contract_review_contract_critic",
+          "title": "Contract critic",
+          "mandate": "Audit the new format/vendor code against the frozen core_contracts_and_registry symbols and semantics. Report any changed public signatures, moved exports, registry incompatibilities, exception leaks, or format code that bypasses the shared Dataset/Databook contract.",
+          "role": "contract_critic",
+          "slot_id": "contract_review",
+          "focus_paths": [
+            "src/tablib/__init__.py",
+            "src/tablib/core.py",
+            "src/tablib/exceptions.py",
+            "src/tablib/formats",
+            "src/tablib/_vendor/dbfpy"
+          ],
+          "max_tokens": 6144,
+          "max_steps": 8,
+          "timeout_seconds": 900.0
+        },
+        {
+          "role_id": "fixer_gate_repairer",
+          "title": "Gate repairer",
+          "mandate": "Fix the acceptance failures and both audit reports while preserving the frozen core contract. Prioritize public API compatibility, exact documented format outputs, built-in registry registration, dependency correctness, and removal of integration debris.",
+          "role": "gate_repairer",
+          "slot_id": "fixer",
+          "focus_paths": [
+            "pyproject.toml",
+            "setup.py",
+            "src/tablib"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 14,
+          "timeout_seconds": 1500.0
+        }
+      ]
+    }
+  ]
+}

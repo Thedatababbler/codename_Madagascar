@@ -1,0 +1,697 @@
+{
+  "generator": "llm",
+  "rationale": "Split into two milestones because the repository has a genuine cross-module contract risk: base async context-manager semantics, executor-delegation decorators, wrapper class names, and public wrap/open import surfaces are shared by threadpool, tempfile, standard streams, and OS/path helpers. If that substrate is shaped incorrectly, later modules can all compile and even pass tests written against the wrong async wrapper contract while being incompatible with the documented API. After that contract is frozen, the remaining work is one integrated implementation because tempfile, stdio, and public package exports depend on the same threadpool/base contracts, and os/ospath share the same executor-wrapping pattern; splitting further by directory would not be justified.",
+  "split": true,
+  "milestones": [
+    {
+      "milestone_id": "core_async_wrapper_contracts",
+      "title": "Freeze shared async wrapper and executor-delegation contracts",
+      "objective": "Create the installable package skeleton and implement the shared substrate that all later aiofiles modules import: async base classes, context manager semantics, executor wrapper helper, threadpool utility decorators, threadpool file wrapper classes, threadpool open/wrap public surface, and package-level re-exports for the documented main API names.",
+      "risk_rationale": "The base/context-manager/decorator/wrap contracts determine how every later file object, temporary file, standard stream, and delegated OS helper schedules blocking work, enters async contexts, closes resources, proxies sync attributes, and exposes documented import paths. If these class names, function names, async return shapes, or export locations are wrong, downstream modules will be built against an incompatible substrate and the error may only appear when users import documented symbols or mix wrappers across modules.",
+      "gate_level": "implementation",
+      "split_reason": "risk_gate",
+      "template_id": "review_then_fix",
+      "depends_on": [],
+      "focus_paths": [
+        "pyproject.toml",
+        "src/aiofiles/__init__.py",
+        "src/aiofiles/base.py",
+        "src/aiofiles/threadpool/__init__.py",
+        "src/aiofiles/threadpool/binary.py",
+        "src/aiofiles/threadpool/text.py",
+        "src/aiofiles/threadpool/utils.py"
+      ],
+      "acceptance": {
+        "criteria": [
+          "The project is importable as an installable src-layout package on Python 3.11.",
+          "aiofiles.open and aiofiles.threadpool.open return awaitable async context managers whose awaited value is an async file wrapper.",
+          "Async file wrappers delegate blocking read/write/seek/tell/flush/close-style operations through the event loop executor and expose documented direct proxy methods/properties synchronously.",
+          "Wrapped text, buffered binary, raw binary, and in-memory IO objects are classified into the documented async wrapper classes by aiofiles.threadpool.wrap.",
+          "AsyncBase implements async iteration by repeatedly awaiting readline and raising StopAsyncIteration at EOF.",
+          "AiofilesContextManager supports both await and async with usage and closes the wrapped object on async exit."
+        ],
+        "corner_cases": [
+          "loop=None uses the currently running event loop rather than capturing an absent loop at import time.",
+          "executor=None delegates to the event loop default executor.",
+          "EOF from readline returns StopAsyncIteration without yielding an empty string or bytes.",
+          "Context-manager exit closes the wrapped file even when the body raises an exception.",
+          "Unsupported objects passed to threadpool.wrap raise TypeError.",
+          "Direct proxy methods such as fileno/readable and properties such as closed/name/mode are not accidentally made coroutine functions."
+        ],
+        "checks": [
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.base",
+            "symbol": "AsyncBase",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.base",
+            "symbol": "AsyncIndirectBase",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.base",
+            "symbol": "AiofilesContextManager",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.base",
+            "symbol": "wrap",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.threadpool.utils",
+            "symbol": "delegate_to_executor",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.threadpool.utils",
+            "symbol": "proxy_method_directly",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.threadpool.utils",
+            "symbol": "proxy_property_directly",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.threadpool.utils",
+            "symbol": "cond_delegate_to_executor",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.threadpool",
+            "symbol": "open",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.threadpool",
+            "symbol": "wrap",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.threadpool.binary",
+            "symbol": "AsyncBufferedIOBase",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.threadpool.binary",
+            "symbol": "AsyncBufferedReader",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.threadpool.binary",
+            "symbol": "AsyncFileIO",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.threadpool.text",
+            "symbol": "AsyncTextIOWrapper",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "aiofiles",
+            "symbol": "open",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "aiofiles",
+            "symbol": "stdin",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "aiofiles",
+            "symbol": "stdout",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "aiofiles",
+            "symbol": "stderr",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "aiofiles",
+            "symbol": "stdin_bytes",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "aiofiles",
+            "symbol": "stdout_bytes",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "aiofiles",
+            "symbol": "stderr_bytes",
+            "required_levels": [
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write a frozen executable test suite from the public design for base/context-manager semantics, threadpool wrapper classification, executor delegation, async iteration EOF behaviour, direct proxy attributes, package importability, and documented root/threadpool exports. Do not inspect implementation beyond public imports.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "author_contract_author",
+          "title": "Contract author",
+          "mandate": "Implement the shared aiofiles substrate and threadpool wrapper contract exactly at the documented import paths, including pyproject package metadata, AsyncBase/AsyncIndirectBase/AiofilesContextManager, base.wrap, threadpool utility decorators, binary/text wrapper classes, threadpool.open, threadpool.wrap singledispatch registrations, standard-stream placeholders/wrappers, and root re-exports.",
+          "role": "contract_author",
+          "slot_id": "author",
+          "focus_paths": [],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "reviewer_spec_auditor",
+          "title": "Specification auditor",
+          "mandate": "Read the changed substrate against the design and report quiet deviations in symbol locations, class/function names, async versus sync method shape, context-manager return shape, singledispatch wrapping coverage, and __all__/public export surfaces. Do not edit.",
+          "role": "spec_auditor",
+          "slot_id": "reviewer",
+          "focus_paths": [],
+          "max_tokens": 6144,
+          "max_steps": 8,
+          "timeout_seconds": 900.0
+        },
+        {
+          "role_id": "fixer_gate_repairer",
+          "title": "Gate repairer",
+          "mandate": "Fix only the deviations and gate failures reported for the frozen core wrapper contract, preserving the documented public symbols and avoiding unrelated feature expansion beyond the milestone scope.",
+          "role": "gate_repairer",
+          "slot_id": "fixer",
+          "focus_paths": [],
+          "max_tokens": 8192,
+          "max_steps": 14,
+          "timeout_seconds": 1500.0
+        }
+      ]
+    },
+    {
+      "milestone_id": "complete_aiofiles_capabilities",
+      "title": "Implement integrated aiofiles features on the frozen contracts",
+      "objective": "Build the full asynchronous file operation library on top of the frozen substrate: complete text/binary/raw file behaviours, async temporary files and directories, asynchronous OS and os.path operations, standard stream wrappers, public module wiring, examples/tests where appropriate, and packaging cleanup.",
+      "risk_rationale": "This milestone intentionally depends on the previously frozen wrapper/context/executor contract. Its work is not split further because threadpool file wrappers, tempfile wrappers, standard streams, and public root exports import and rely on the same substrate, while os and ospath use the same executor-wrapping convention and are exposed as part of one aiofiles API. Splitting by directory would create artificial gates rather than independent subsystems.",
+      "gate_level": "integration",
+      "split_reason": "risk_gate",
+      "template_id": "chain",
+      "depends_on": [
+        "core_async_wrapper_contracts"
+      ],
+      "focus_paths": [
+        "src/aiofiles/__init__.py",
+        "src/aiofiles/base.py",
+        "src/aiofiles/os.py",
+        "src/aiofiles/ospath.py",
+        "src/aiofiles/tempfile/__init__.py",
+        "src/aiofiles/tempfile/temptypes.py",
+        "src/aiofiles/threadpool/__init__.py",
+        "src/aiofiles/threadpool/binary.py",
+        "src/aiofiles/threadpool/text.py",
+        "src/aiofiles/threadpool/utils.py",
+        "README.md",
+        "pyproject.toml"
+      ],
+      "acceptance": {
+        "criteria": [
+          "aiofiles.open supports documented text, buffered binary, and raw binary modes with async read, write, readline, readlines, writelines, flush, seek, tell, truncate, close, readable, writable, seekable, isatty, and async iteration as appropriate for the underlying file type.",
+          "aiofiles.threadpool.wrap wraps standard text, buffered binary, raw binary, StringIO, and BytesIO-like objects into async interfaces and rejects unsupported objects with TypeError.",
+          "aiofiles.tempfile exposes TemporaryFile, NamedTemporaryFile, SpooledTemporaryFile, and TemporaryDirectory with async with support and async file operations matching the documented examples.",
+          "SpooledTemporaryFile delegates operations correctly before and after rollover and exposes fileno/rollover asynchronously as documented.",
+          "aiofiles.os exposes asynchronous executor-backed filesystem operations including stat, rename, renames, replace, remove, unlink, mkdir, makedirs, rmdir, removedirs, symlink, readlink, link where available, listdir, scandir, access, getcwd, and wrap.",
+          "aiofiles.os.path exposes asynchronous executor-backed path query helpers and is reachable through aiofiles.os.path.",
+          "aiofiles stdin/stdout/stderr and byte stream variants are importable from aiofiles and aiofiles.threadpool and support documented async read/write operations appropriate to the underlying stream.",
+          "Public __all__ surfaces match the documented API closely enough for from aiofiles import *, from aiofiles.threadpool import *, from aiofiles.tempfile import *, and from aiofiles.os import * to expose the expected names.",
+          "Concurrent file operations can be awaited with asyncio.gather without blocking the event loop on ordinary local file reads/writes."
+        ],
+        "corner_cases": [
+          "Opening a nonexistent file for reading raises FileNotFoundError through await/async with without leaking a wrapper.",
+          "Binary writes require bytes-like data and text writes require str, preserving normal Python file errors.",
+          "Empty files read as empty str or bytes and async iteration immediately stops.",
+          "readinto mutates the supplied writable buffer and returns the number of bytes read.",
+          "read1, readall, and peek exist only on the wrapper classes where the documented underlying IO supports them.",
+          "TemporaryDirectory async with yields the directory name string, not the wrapper object, and cleans it up on exit.",
+          "NamedTemporaryFile(delete=False) leaves the named file available after context exit.",
+          "OS functions propagate normal OSError/FileNotFoundError/FileExistsError exceptions from the underlying os/os.path/tempfile calls.",
+          "scandir returns entries whose resources are not prematurely invalidated before the caller consumes them.",
+          "Custom loop and executor parameters are accepted on public async wrappers and used for delegated work."
+        ],
+        "checks": [
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles",
+            "symbol": "open",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.threadpool",
+            "symbol": "open",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.threadpool",
+            "symbol": "wrap",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.tempfile",
+            "symbol": "wrap",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.tempfile",
+            "symbol": "TemporaryFile",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.tempfile",
+            "symbol": "NamedTemporaryFile",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.tempfile",
+            "symbol": "SpooledTemporaryFile",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.tempfile",
+            "symbol": "TemporaryDirectory",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.tempfile.temptypes",
+            "symbol": "AsyncSpooledTemporaryFile",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.tempfile.temptypes",
+            "symbol": "AsyncTemporaryDirectory",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.tempfile.temptypes",
+            "symbol": "AiofilesContextManagerTempDir",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.os",
+            "symbol": "stat",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.os",
+            "symbol": "rename",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.os",
+            "symbol": "replace",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.os",
+            "symbol": "remove",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.os",
+            "symbol": "unlink",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.os",
+            "symbol": "mkdir",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.os",
+            "symbol": "makedirs",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.os",
+            "symbol": "rmdir",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.os",
+            "symbol": "removedirs",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.os",
+            "symbol": "listdir",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.os",
+            "symbol": "scandir",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.os",
+            "symbol": "access",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.os",
+            "symbol": "getcwd",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "aiofiles.os",
+            "symbol": "path",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.ospath",
+            "symbol": "exists",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.ospath",
+            "symbol": "isfile",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.ospath",
+            "symbol": "isdir",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.ospath",
+            "symbol": "getsize",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "aiofiles.ospath",
+            "symbol": "abspath",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "aiofiles",
+            "symbol": "tempfile",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "aiofiles",
+            "symbol": "stdin",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "aiofiles",
+            "symbol": "stdout",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "aiofiles",
+            "symbol": "stderr",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "aiofiles",
+            "symbol": "stdin_bytes",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "aiofiles",
+            "symbol": "stdout_bytes",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "aiofiles",
+            "symbol": "stderr_bytes",
+            "required_levels": [
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write a frozen executable integration test suite from the public design covering aiofiles.open text/binary/raw operations, async iteration, concurrent reads/writes, tempfile functions and cleanup semantics, os/ospath async functions, stdio exports, and public star-import surfaces. Treat the milestone-1 symbols as frozen contracts.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "first_implementer",
+          "title": "Implementer",
+          "mandate": "Complete threadpool file behaviour on the frozen base contract: robust open/wrap registrations for text, buffered binary, raw binary, StringIO/BytesIO-compatible objects, all documented delegated/proxied methods, async iteration, context cleanup, stdio wrappers, and concurrent executor-safe operation.",
+          "role": "implementer",
+          "slot_id": "first",
+          "focus_paths": [],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "second_implementer",
+          "title": "Implementer",
+          "mandate": "Implement aiofiles.tempfile, aiofiles.tempfile.temptypes, aiofiles.os, and aiofiles.ospath using the frozen executor/context contracts. Provide async TemporaryFile, NamedTemporaryFile, SpooledTemporaryFile, TemporaryDirectory, OS filesystem operations, and path query helpers with documented async with and error propagation behaviour.",
+          "role": "implementer",
+          "slot_id": "second",
+          "focus_paths": [],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "third_integrator",
+          "title": "Integrator",
+          "mandate": "Wire the complete public API at documented import paths, verify __all__ exports, ensure aiofiles.os.path points to aiofiles.ospath, clean packaging metadata for installability, add concise examples/tests only where useful, and remove integration debris while preserving the frozen milestone-1 contract.",
+          "role": "integrator",
+          "slot_id": "third",
+          "focus_paths": [],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        }
+      ]
+    }
+  ]
+}

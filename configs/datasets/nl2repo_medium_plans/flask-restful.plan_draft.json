@@ -1,0 +1,1126 @@
+{
+  "generator": "llm",
+  "rationale": "Split into two milestones because the repository has a high-blast-radius public API and serialization/parsing utility contract that every behavioural feature depends on. Freezing the documented import paths, callable/class names, and shared constants first prevents later agents from silently implementing against the wrong public surface. The remaining work is not split by directory or feature because Api, Resource, fields, reqparse, inputs, representations, error handling, CORS, and utilities are tightly integrated through Flask request/response behaviour and shared exports.",
+  "split": true,
+  "milestones": [
+    {
+      "milestone_id": "public_contract_surface",
+      "title": "Freeze Flask-RESTful public API contracts and shared constants",
+      "objective": "Create the package substrate, documented import paths, public classes/functions, module-level constants, version metadata, and packaging entry points so later implementation can depend on a stable contract.",
+      "risk_rationale": "If the public exports, class/function names, signatures, or shared constants are wrong, every downstream module and example can be implemented against an incompatible API that still imports internally but breaks documented user imports such as from flask_restful import Api, Resource, fields, reqparse, inputs, marshal, marshal_with, abort, utils, OrderedDict. Constants such as crypto padding values, block size, interval sentinels, and default representations must be frozen before consumers encode/decode data or negotiate responses.",
+      "gate_level": "discovery",
+      "split_reason": "risk_gate",
+      "template_id": "gate_then_repair",
+      "depends_on": [],
+      "focus_paths": [
+        "flask_restful",
+        "setup.py",
+        "setup.cfg",
+        "MANIFEST.in",
+        "README.md",
+        "docs",
+        "examples",
+        "scripts"
+      ],
+      "acceptance": {
+        "criteria": [
+          "The project is importable as flask_restful in a clean Python 3.7 environment with Flask installed.",
+          "The package root re-exports all documented core APIs and OrderedDict at the public import path.",
+          "The reqparse, fields, inputs, representations.json, utils, utils.cors, and utils.crypto modules expose the documented classes, functions, and constants.",
+          "setup.py exists and declares an installable Flask-RESTful package with runtime dependencies.",
+          "__version__ is provided from flask_restful.__version__ and is reachable from the package metadata path."
+        ],
+        "corner_cases": [
+          "Public symbols must be importable from the documented module, not only from private implementation modules.",
+          "Module-level constants shared across modules must be exported by name.",
+          "from flask_restful.utils import cors and from flask_restful.reqparse import Argument, RequestParser, Namespace must work without importing the entire application stack.",
+          "The package must not require an active Flask app or request context merely to import public symbols."
+        ],
+        "checks": [
+          {
+            "type": "export",
+            "module": "flask_restful",
+            "symbol": "__version__",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful",
+            "symbol": "Api",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful",
+            "symbol": "Resource",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "flask_restful",
+            "symbol": "fields",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "flask_restful",
+            "symbol": "reqparse",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "flask_restful",
+            "symbol": "inputs",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful",
+            "symbol": "marshal",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful",
+            "symbol": "marshal_with",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful",
+            "symbol": "marshal_with_field",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful",
+            "symbol": "abort",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "flask_restful",
+            "symbol": "utils",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "flask_restful",
+            "symbol": "OrderedDict",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.fields",
+            "symbol": "Raw",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.fields",
+            "symbol": "String",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.fields",
+            "symbol": "Integer",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.fields",
+            "symbol": "Float",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.fields",
+            "symbol": "Boolean",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.fields",
+            "symbol": "DateTime",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.fields",
+            "symbol": "Url",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.fields",
+            "symbol": "Nested",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.fields",
+            "symbol": "List",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.fields",
+            "symbol": "Fixed",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.fields",
+            "symbol": "Arbitrary",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.fields",
+            "symbol": "FormattedString",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.fields",
+            "symbol": "MarshallingException",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "flask_restful.fields",
+            "symbol": "Price",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "flask_restful.fields",
+            "symbol": "ZERO",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.reqparse",
+            "symbol": "Argument",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.reqparse",
+            "symbol": "RequestParser",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.reqparse",
+            "symbol": "Namespace",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.inputs",
+            "symbol": "url",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.inputs",
+            "symbol": "regex",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.inputs",
+            "symbol": "iso8601interval",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.inputs",
+            "symbol": "date",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.inputs",
+            "symbol": "int_range",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.inputs",
+            "symbol": "boolean",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "flask_restful.inputs",
+            "symbol": "START_OF_DAY",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "flask_restful.inputs",
+            "symbol": "END_OF_DAY",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "flask_restful",
+            "symbol": "DEFAULT_REPRESENTATIONS",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.representations.json",
+            "symbol": "output_json",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "flask_restful",
+            "symbol": "_PROPAGATE_EXCEPTIONS",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.utils",
+            "symbol": "http_status_message",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.utils",
+            "symbol": "unpack",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "flask_restful.utils",
+            "symbol": "OrderedDict",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "flask_restful.utils",
+            "symbol": "PY3",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "flask_restful.utils",
+            "symbol": "cors",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "flask_restful.utils",
+            "symbol": "crypto",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.utils.cors",
+            "symbol": "crossdomain",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "flask_restful.utils.crypto",
+            "symbol": "BLOCK_SIZE",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "flask_restful.utils.crypto",
+            "symbol": "INTERRUPT",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "flask_restful.utils.crypto",
+            "symbol": "PADDING",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.utils.crypto",
+            "symbol": "encrypt",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.utils.crypto",
+            "symbol": "decrypt",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write contract tests from the design only that import every documented public symbol, inspect key constructor/callable signatures, verify required constants are exported by name, and confirm importing flask_restful requires no active Flask request context.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [
+            "flask_restful",
+            "setup.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "author_contract_author",
+          "title": "Contract author",
+          "mandate": "Create the project package substrate and public API contract: modules, classes/functions with documented signatures, shared constants, re-exports, version metadata, and setup.py. Prefer minimal correct implementations where needed, but prioritize stable documented contracts for later behaviour.",
+          "role": "contract_author",
+          "slot_id": "author",
+          "focus_paths": [
+            "flask_restful",
+            "setup.py",
+            "setup.cfg",
+            "MANIFEST.in"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "repairer_gate_repairer",
+          "title": "Gate repairer",
+          "mandate": "If the contract gate fails, fix only the missing or mis-exported symbols, signatures, constants, package metadata, or import-time failures named in the report.",
+          "role": "gate_repairer",
+          "slot_id": "repairer",
+          "focus_paths": [
+            "flask_restful",
+            "setup.py",
+            "setup.cfg",
+            "MANIFEST.in"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 14,
+          "timeout_seconds": 1500.0
+        }
+      ]
+    },
+    {
+      "milestone_id": "framework_behaviour_integration",
+      "title": "Implement integrated Flask-RESTful behaviour",
+      "objective": "Implement resource routing, request parsing, field marshalling, content negotiation, JSON/XML representation hooks, error handling, CORS, AES utilities, examples, and documentation support on top of the frozen public contract.",
+      "risk_rationale": "This milestone intentionally depends on the public_contract_surface risk gate. Its implementation must preserve the frozen imports, signatures, constants, and return-shape contracts while adding behaviour; otherwise users and examples built against the documented API would break even if individual modules appear functional.",
+      "gate_level": "integration",
+      "split_reason": "risk_gate",
+      "template_id": "parallel_audit",
+      "depends_on": [
+        "public_contract_surface"
+      ],
+      "focus_paths": [
+        "flask_restful",
+        "flask_restful/representations",
+        "flask_restful/utils",
+        "examples",
+        "docs",
+        "scripts",
+        "setup.py"
+      ],
+      "acceptance": {
+        "criteria": [
+          "Resource subclasses can be registered with Api.add_resource on Flask apps and Blueprints, including route parameters, endpoint names, URL prefixes, and url_for generation.",
+          "Resource dispatch supports HTTP methods, HEAD/OPTIONS/405 behaviour, resource method decorators, global decorators, and return shapes of data, (data, status), and (data, status, headers).",
+          "RequestParser and Argument parse parameters from json, args, form, values, headers, cookies, files, and view_args with conversion, defaults, required validation, choices, append action, operators, trimming, nullability, bundling, strict mode, parser copy/replace/remove, Namespace access, and store_m",
+          "fields and marshal serialize strings, integers, floats, booleans, decimals, datetimes, URLs, nested objects, lists, raw values, formatted strings, attributes, callables, defaults, envelopes, and marshalling errors as documented.",
+          "inputs validators convert and validate booleans, dates, positive/natural integers, integer ranges, regexes, URLs, RFC822/ISO8601 datetimes, and ISO8601 intervals including internal normalization helpers.",
+          "Api content negotiation chooses representations using Accept headers, default_mediatype, q values, custom representation decorators, and produces JSON via RESTFUL_JSON configuration and debug pretty printing.",
+          "abort and Api error handling produce documented error payloads, custom errors, 401 challenges, signal emission, Flask PROPAGATE_EXCEPTIONS-compatible propagation, API/non-API error routing, and catch_all_404s behaviour.",
+          "utils.cors.crossdomain applies CORS and preflight headers according to origin, methods, headers, expose_headers, max_age, credentials, attach_to_all, and automatic_options.",
+          "utils.crypto encrypt/decrypt round-trips Python data with AES-CBC using the frozen padding constants and validates key/seed sizes.",
+          "Examples in examples/todo.py, examples/todo_simple.py, and examples/xml_representation.py are directly runnable modules using the public API.",
+          "Sphinx documentation files and the docs FlaskyStyle theme support import/render configuration, and scripts/release.py exposes point_release."
+        ],
+        "corner_cases": [
+          "Malformed numeric/date/URL/regex inputs raise clear ValueError or MarshallingException rather than silently returning incorrect data.",
+          "None, missing values, empty lists, sets, indexable non-strings, dict attributes, object attributes, nested dot paths, callable attributes, and partial functions are handled in marshalling.",
+          "Accept headers with q=0, wildcards, no matching mediatype, no default mediatype, and no representations return the documented response or not-acceptable behaviour.",
+          "Request parsing must preserve case-sensitive and case-insensitive choice semantics, append multiple values from JSON and query strings, ignore conversion errors when requested, and bundle multiple failures when configured.",
+          "Blueprint registration before and after Api initialization must preserve endpoint names and route prefixes.",
+          "Import paths and constants frozen in the first milestone must not be removed, renamed, or moved.",
+          "Crypto padding must round-trip byte data whose length is exactly a block size, one byte short of a block, empty, or contains null bytes.",
+          "CORS must not attach headers when attach_to_all is false and the request is not an automatic OPTIONS response."
+        ],
+        "checks": [
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful",
+            "symbol": "Api",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful",
+            "symbol": "Resource",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful",
+            "symbol": "marshal",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful",
+            "symbol": "marshal_with",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful",
+            "symbol": "marshal_with_field",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful",
+            "symbol": "abort",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "flask_restful",
+            "symbol": "OrderedDict",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.fields",
+            "symbol": "marshal",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.fields",
+            "symbol": "get_value",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.fields",
+            "symbol": "to_marshallable_type",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.fields",
+            "symbol": "Raw",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.fields",
+            "symbol": "Nested",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.fields",
+            "symbol": "List",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "flask_restful.fields",
+            "symbol": "ZERO",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.reqparse",
+            "symbol": "Argument",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.reqparse",
+            "symbol": "RequestParser",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.reqparse",
+            "symbol": "Namespace",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.inputs",
+            "symbol": "boolean",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.inputs",
+            "symbol": "date",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.inputs",
+            "symbol": "natural",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.inputs",
+            "symbol": "positive",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.inputs",
+            "symbol": "int_range",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.inputs",
+            "symbol": "regex",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.inputs",
+            "symbol": "url",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.inputs",
+            "symbol": "iso8601interval",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "flask_restful.inputs",
+            "symbol": "START_OF_DAY",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "flask_restful.inputs",
+            "symbol": "END_OF_DAY",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.representations.json",
+            "symbol": "output_json",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "flask_restful",
+            "symbol": "DEFAULT_REPRESENTATIONS",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.utils",
+            "symbol": "http_status_message",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.utils",
+            "symbol": "unpack",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.utils.cors",
+            "symbol": "crossdomain",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "flask_restful.utils.crypto",
+            "symbol": "BLOCK_SIZE",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "flask_restful.utils.crypto",
+            "symbol": "INTERRUPT",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "flask_restful.utils.crypto",
+            "symbol": "PADDING",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.utils.crypto",
+            "symbol": "pad",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.utils.crypto",
+            "symbol": "strip",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.utils.crypto",
+            "symbol": "create_cipher",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.utils.crypto",
+            "symbol": "encrypt",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "flask_restful.utils.crypto",
+            "symbol": "decrypt",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "docs._themes.flask_theme_support",
+            "symbol": "FlaskyStyle",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "scripts.release",
+            "symbol": "point_release",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write an executable behavioural test suite from the public design covering field marshalling, reqparse, inputs, Api routing and negotiation, error handling, CORS, crypto, examples, docs theme import, and release helper behaviour. Do not edit source.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [
+            "flask_restful",
+            "examples",
+            "docs",
+            "scripts"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "author_implementer",
+          "title": "Implementer",
+          "mandate": "Implement the complete Flask-RESTful framework behaviour described in the design while preserving every frozen public symbol, signature, constant, and import path from the first milestone.",
+          "role": "implementer",
+          "slot_id": "author",
+          "focus_paths": [
+            "flask_restful",
+            "examples",
+            "docs",
+            "scripts",
+            "setup.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "spec_review_spec_auditor",
+          "title": "Specification auditor",
+          "mandate": "Read the implemented code against the design and report every behavioural mismatch in resource registration, parsing, marshalling, negotiation, errors, CORS, crypto, examples, docs, and release helper. Do not edit.",
+          "role": "spec_auditor",
+          "slot_id": "spec_review",
+          "focus_paths": [
+            "flask_restful",
+            "examples",
+            "docs",
+            "scripts"
+          ],
+          "max_tokens": 6144,
+          "max_steps": 8,
+          "timeout_seconds": 900.0
+        },
+        {
+          "role_id": "contract_review_contract_critic",
+          "title": "Contract critic",
+          "mandate": "Audit the implementation against the frozen public_contract_surface symbols and constants. Report any renamed, removed, relocated, narrowed, or incompatible public API, including package-root re-exports and utility constants. Do not edit.",
+          "role": "contract_critic",
+          "slot_id": "contract_review",
+          "focus_paths": [
+            "flask_restful",
+            "setup.py"
+          ],
+          "max_tokens": 6144,
+          "max_steps": 8,
+          "timeout_seconds": 900.0
+        },
+        {
+          "role_id": "fixer_gate_repairer",
+          "title": "Gate repairer",
+          "mandate": "Fix the behavioural, specification, and frozen-contract violations reported by the auditors or acceptance gate without expanding scope beyond the documented Flask-RESTful project.",
+          "role": "gate_repairer",
+          "slot_id": "fixer",
+          "focus_paths": [
+            "flask_restful",
+            "examples",
+            "docs",
+            "scripts",
+            "setup.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 14,
+          "timeout_seconds": 1500.0
+        }
+      ]
+    }
+  ]
+}

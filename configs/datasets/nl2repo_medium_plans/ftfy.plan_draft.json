@@ -1,0 +1,862 @@
+{
+  "generator": "llm",
+  "rationale": "Split into two milestones because the repository has a genuine cross-module contract risk: the package-root API, configuration tuple fields/defaults, explanation return shapes, codec names, and shared heuristic constants are consumed by nearly every later implementation module. If those contracts are guessed differently, downstream modules can all compile and agree with the wrong shape while breaking documented user imports and explanation replay. After that risk gate is frozen, the remaining work is one integrated Unicode-repair subsystem: encoding repair, text fixers, heuristics, codecs, formatting, file handling, and CLI all import shared contracts and each other, so they should not be split by directory.",
+  "split": true,
+  "milestones": [
+    {
+      "milestone_id": "freeze_public_contracts",
+      "title": "Freeze ftfy public API, configuration, explanation, codec, and shared data contracts",
+      "objective": "Create the installable ftfy package scaffold and implement the stable cross-module contracts that all repair behavior will consume: pyproject metadata/dependencies, public package exports, TextFixerConfig with documented defaults, ExplainedText and ExplanationStep return shapes, codec registry lookup names, and shared constants/regex/export names for chardata and badness.",
+      "risk_rationale": "If TextFixerConfig fields/defaults, ExplainedText/ExplanationStep tuple shapes, public re-export locations, codec canonical names/aliases, or shared constants such as CHARMAP_ENCODINGS, UTF8_CLUES, ALTERED_UTF8_RE, LOSSY_UTF8_RE, MOJIBAKE_CATEGORIES, and BADNESS_RE are wrong, every later module can be implemented against that wrong contract and still import internally while failing documented user imports, explanation replay, codec registration, or byte-layout/heuristic agreement.",
+      "gate_level": "implementation",
+      "split_reason": "risk_gate",
+      "template_id": "gate_then_repair",
+      "depends_on": [],
+      "focus_paths": [
+        "pyproject.toml",
+        "ftfy/__init__.py",
+        "ftfy/chardata.py",
+        "ftfy/badness.py",
+        "ftfy/bad_codecs/__init__.py",
+        "ftfy/bad_codecs/utf8_variants.py",
+        "ftfy/bad_codecs/sloppy.py",
+        "ftfy/py.typed"
+      ],
+      "acceptance": {
+        "criteria": [
+          "The project is an installable Python package named ftfy with wcwidth declared as a runtime dependency and pytest/Sphinx/furo/ruff available in project dependency groups or optional dependencies.",
+          "All documented package-root imports succeed from `ftfy`, including repair functions, file/byte helpers, configuration types, explanation types, bad_codecs, and `__version__`.",
+          "TextFixerConfig is immutable tuple-like data with exactly the documented fields and defaults, supports `_replace`, and can be constructed with overrides.",
+          "ExplainedText and ExplanationStep are tuple-like return-shape contracts that support unpacking as shown in the usage guide.",
+          "Shared chardata and badness constants/regex names exist at their documented modules so later implementation code imports the same heuristic and encoding contract.",
+          "The bad codec search function exposes the documented canonical utf-8-variants codec name and aliases, and returns cached CodecInfo objects for repeated alias lookups."
+        ],
+        "corner_cases": [
+          "Importing from the package root works before importing any private submodule explicitly.",
+          "Deprecated or later behavioral functions may be minimal at this stage but must preserve their documented signatures and return-shape contracts.",
+          "Module-level constants are exported by name at the documented modules, not only hidden in private helper modules.",
+          "Codec aliases such as `cesu8`, `cesu-8`, `utf-8-var`, and `java-utf8` normalize consistently."
+        ],
+        "checks": [
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "TextFixerConfig",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "ExplainedText",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "ExplanationStep",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "ftfy",
+            "symbol": "__version__",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "ftfy",
+            "symbol": "FIXERS",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "ftfy",
+            "symbol": "BYTES_ERROR_TEXT",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "fix_text",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "fix_text_segment",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "fix_encoding",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "fix_encoding_and_explain",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "fix_and_explain",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "apply_plan",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "guess_bytes",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "fix_file",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "explain_unicode",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "ftfy.chardata",
+            "symbol": "CHARMAP_ENCODINGS",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "ftfy.chardata",
+            "symbol": "HTML_ENTITIES",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "ftfy.chardata",
+            "symbol": "HTML_ENTITY_RE",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "ftfy.chardata",
+            "symbol": "CONTROL_CHARS",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "ftfy.chardata",
+            "symbol": "LIGATURES",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "ftfy.chardata",
+            "symbol": "WIDTH_MAP",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "ftfy.chardata",
+            "symbol": "ALTERED_UTF8_RE",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "ftfy.chardata",
+            "symbol": "LOSSY_UTF8_RE",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "ftfy.chardata",
+            "symbol": "UTF8_CLUES",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "ftfy.chardata",
+            "symbol": "UTF8_DETECTOR_RE",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.chardata",
+            "symbol": "possible_encoding",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "ftfy.badness",
+            "symbol": "MOJIBAKE_CATEGORIES",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "ftfy.badness",
+            "symbol": "BADNESS_RE",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.badness",
+            "symbol": "badness",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.badness",
+            "symbol": "is_bad",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "ftfy.bad_codecs",
+            "symbol": "UTF8_VAR_NAMES",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "ftfy.bad_codecs",
+            "symbol": "_CACHE",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.bad_codecs",
+            "symbol": "search_function",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "ftfy.bad_codecs.utf8_variants",
+            "symbol": "NAME",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "ftfy.bad_codecs.utf8_variants",
+            "symbol": "CODEC_INFO",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.bad_codecs.utf8_variants",
+            "symbol": "IncrementalDecoder",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write contract-focused tests from the public design only: package-root imports, TextFixerConfig fields/defaults and _replace behavior, tuple unpacking of ExplainedText/ExplanationStep, existence of all shared constants at documented modules, pyproject dependency metadata, and codec alias caching. Do not edit source.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [
+            "pyproject.toml",
+            "ftfy"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "author_contract_author",
+          "title": "Contract author",
+          "mandate": "Implement the ftfy package scaffold and freeze the shared API/data contracts without attempting full repair behavior beyond safe placeholders. Ensure every documented public symbol imports from its documented module, TextFixerConfig has exactly the specified immutable fields/defaults, explanation objects unpack as documented, codec names and aliases are stable, and shared heuristic constants are exported by name.",
+          "role": "contract_author",
+          "slot_id": "author",
+          "focus_paths": [
+            "pyproject.toml",
+            "ftfy/__init__.py",
+            "ftfy/chardata.py",
+            "ftfy/badness.py",
+            "ftfy/bad_codecs"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "repairer_gate_repairer",
+          "title": "Gate repairer",
+          "mandate": "If the contract gate fails, fix exactly the reported missing imports, wrong defaults, return-shape mismatches, pyproject metadata issues, or codec alias/cache contract failures while preserving already passing contract names.",
+          "role": "gate_repairer",
+          "slot_id": "repairer",
+          "focus_paths": [
+            "pyproject.toml",
+            "ftfy"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 14,
+          "timeout_seconds": 1500.0
+        }
+      ]
+    },
+    {
+      "milestone_id": "implement_unicode_repair_library",
+      "title": "Implement integrated Unicode repair behavior, codecs, formatting, file handling, and CLI",
+      "objective": "Build the complete ftfy Unicode text repair library on top of the frozen contracts: mojibake detection and multi-pass repair, HTML/entity/control/width/ligature/quote/normalization fixers, explanation plan replay, byte guessing, sloppy and UTF-8-variant codecs, file streaming, terminal-width formatting, Unicode inspection, and the command-line interface.",
+      "risk_rationale": "This milestone exists after the contract risk gate because all behavior imports and must preserve the frozen package-root API, configuration fields, explanation tuples, codec names, and heuristic constants. The remaining modules are not independent subsystems: fix_text calls fixers and encoding repair, encoding repair imports chardata/badness/codecs, guess_bytes uses codecs and repair heuristics, fix_file and CLI call the public repair pipeline, and formatting/fixes share control-character handling.",
+      "gate_level": "integration",
+      "split_reason": "risk_gate",
+      "template_id": "review_then_fix",
+      "depends_on": [
+        "freeze_public_contracts"
+      ],
+      "focus_paths": [
+        "ftfy/__init__.py",
+        "ftfy/fixes.py",
+        "ftfy/chardata.py",
+        "ftfy/badness.py",
+        "ftfy/formatting.py",
+        "ftfy/cli.py",
+        "ftfy/bad_codecs/__init__.py",
+        "ftfy/bad_codecs/sloppy.py",
+        "ftfy/bad_codecs/utf8_variants.py",
+        "scripts/char_data_table.py",
+        "pyproject.toml"
+      ],
+      "acceptance": {
+        "criteria": [
+          "`fix_text`, `fix_text_segment`, and `fix_encoding` repair the documented mojibake examples including `s\u00c3\u00b3`, `l'humanit\u00c3\u00a9`, `voil\u00c3 le travail`, checkmark mojibake, and the multi-layer Mona Lisa example while leaving clean text unchanged when heuristics do not indicate corruption.",
+          "`fix_and_explain` and `fix_encoding_and_explain` return ExplainedText values whose text and explanation steps match the documented operation names, and `apply_plan` replays encode/decode/transcode/apply plans on new text.",
+          "HTML entity repair handles normal, numeric, hexadecimal, uppercase, and repeated escaped entities while honoring `unescape_html=False` and preserving entities in text that appears to be real HTML markup.",
+          "Control-character fixers remove BOMs, terminal escapes, illegal controls, and stray surrogates while preserving meaningful line breaks and emoji tag sequences.",
+          "`possible_encoding`, `badness`, `is_bad`, and `sequence_weirdness` implement the documented heuristic behavior and are conservative enough to avoid repairing normal text without badness evidence.",
+          "Custom sloppy codecs and `utf-8-variants` register through Python's codec registry, decode CESU-8/Java modified UTF-8/null variants, and support incremental decoding across chunk boundaries.",
+          "`guess_bytes` distinguishes UTF-8, MacRoman carriage-return text, UTF-16 BOM input, sloppy single-byte fallback, and UTF-8 variants, raising UnicodeError for non-bytes input.",
+          "`fix_file` repairs text and binary streams line-by-line without loading the entire stream and honors explicit encoding, guessed encoding, configuration, and keyword overrides.",
+          "`ftfy.cli.main` supports stdin, positional input files, `-o`, `-e`, `-g`, `-n`, and `--preserve-entities`, writes UTF-8 output, and emits `ftfy error:` diagnostics for decode failures or same input/output path.",
+          "`display_ljust`, `display_rjust`, `display_center`, and `monospaced_width` account for Unicode column width using wcwidth and ignore ANSI escape sequences in visible width calculations."
+        ],
+        "corner_cases": [
+          "ASCII-only input returns unchanged quickly.",
+          "Multi-pass mojibake stops when no further improvement occurs and does not loop forever.",
+          "Segments longer than `max_decode_length` are capped, while newline boundaries are preserved.",
+          "Uppercase ambiguous HTML entity names that are not in the safe table remain unchanged.",
+          "Numeric HTML references in the Windows-1252 C1 range, such as `&#x80;`, decode to the intended printable character.",
+          "Valid surrogate pairs at the edge of Unicode range decode to U+10000 and U+10FFFF; unpaired surrogates are safely replaced or removed.",
+          "Line breaks `\\r\\n` remain meaningful while unwanted controls such as `\\x01`, DEL, object replacement, and directional isolates are removed as documented.",
+          "Incremental UTF-8-variant decoding handles a CESU-8 surrogate pair split between two decode calls.",
+          "CLI refuses to overwrite the same input path with `-o` and reports errors without a Python traceback.",
+          "Formatting functions leave strings containing remaining unprintable controls unchanged or return width `-1` as documented."
+        ],
+        "checks": [
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "fix_text",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "fix_text_segment",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "fix_and_explain",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "fix_encoding",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "fix_encoding_and_explain",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "apply_plan",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "guess_bytes",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "fix_file",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "explain_unicode",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.fixes",
+            "symbol": "unescape_html",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.fixes",
+            "symbol": "fix_surrogates",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.fixes",
+            "symbol": "remove_bom",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.fixes",
+            "symbol": "remove_control_chars",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.fixes",
+            "symbol": "remove_terminal_escapes",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.fixes",
+            "symbol": "decode_escapes",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "ftfy.fixes",
+            "symbol": "ANSI_RE",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "ftfy.fixes",
+            "symbol": "SURROGATE_RE",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "ftfy.fixes",
+            "symbol": "SURROGATE_PAIR_RE",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.chardata",
+            "symbol": "possible_encoding",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.badness",
+            "symbol": "badness",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.badness",
+            "symbol": "is_bad",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.badness",
+            "symbol": "sequence_weirdness",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.formatting",
+            "symbol": "monospaced_width",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.formatting",
+            "symbol": "display_ljust",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.formatting",
+            "symbol": "display_rjust",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.formatting",
+            "symbol": "display_center",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.bad_codecs",
+            "symbol": "search_function",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.bad_codecs.utf8_variants",
+            "symbol": "IncrementalDecoder",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.bad_codecs.sloppy",
+            "symbol": "make_sloppy_codec",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "ftfy.bad_codecs.sloppy",
+            "symbol": "CODECS",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "ftfy.bad_codecs.sloppy",
+            "symbol": "INCOMPLETE_ENCODINGS",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "ftfy.bad_codecs.utf8_variants",
+            "symbol": "CODEC_INFO",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.cli",
+            "symbol": "main",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "ftfy.cli",
+            "symbol": "DECODE_ERROR_TEXT",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "ftfy.cli",
+            "symbol": "SAME_FILE_ERROR_TEXT",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "scripts.char_data_table",
+            "symbol": "CharData",
+            "required_levels": [
+              "implementation"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "scripts.char_data_table",
+            "symbol": "show_char_table",
+            "required_levels": [
+              "implementation"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write executable behavior tests from the public usage guide and internal-helper examples only. Cover mojibake repair, multi-layer repair, HTML entities, control/surrogate handling, codecs and incremental decoding, byte guessing, file streaming, CLI subprocess behavior, formatting width, configuration switches, explanations, and apply_plan. Do not edit source.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [
+            "ftfy",
+            "scripts/char_data_table.py",
+            "pyproject.toml"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "author_implementer",
+          "title": "Implementer",
+          "mandate": "Implement the full integrated ftfy behavior while preserving all contracts frozen in the previous milestone. Prioritize correctness on the documented examples, conservative mojibake heuristics, reproducible explanation plans, codec registry integration, streaming/file behavior, and CLI usability.",
+          "role": "implementer",
+          "slot_id": "author",
+          "focus_paths": [
+            "ftfy",
+            "scripts/char_data_table.py",
+            "pyproject.toml"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "reviewer_spec_auditor",
+          "title": "Specification auditor",
+          "mandate": "Read the implementation against the public design and the frozen contract log. Report quiet deviations: wrong public import location, narrowed signatures, missing configuration handling, explanation steps that cannot be replayed, over-eager repairs, missing CLI options, incomplete codec aliases, or constants moved away from documented modules. Do not edit source.",
+          "role": "spec_auditor",
+          "slot_id": "reviewer",
+          "focus_paths": [
+            "ftfy",
+            "scripts/char_data_table.py",
+            "pyproject.toml"
+          ],
+          "max_tokens": 6144,
+          "max_steps": 8,
+          "timeout_seconds": 900.0
+        },
+        {
+          "role_id": "fixer_gate_repairer",
+          "title": "Gate repairer",
+          "mandate": "Apply the reviewer report and any gate failures exactly, preserving the frozen API/config/explanation/codec contracts while fixing behavior, edge cases, packaging, or CLI problems named in the reports.",
+          "role": "gate_repairer",
+          "slot_id": "fixer",
+          "focus_paths": [
+            "ftfy",
+            "scripts/char_data_table.py",
+            "pyproject.toml"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 14,
+          "timeout_seconds": 1500.0
+        }
+      ]
+    }
+  ]
+}

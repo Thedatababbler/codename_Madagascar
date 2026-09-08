@@ -1,0 +1,891 @@
+{
+  "generator": "llm",
+  "rationale": "Use two milestones because the repository has a genuine shared-contract risk gate: emoji.unicode_codes data shape/constants, tokenizer match/token classes, and package-root exports are imported and interpreted by core conversion, analysis, test utilities, and generation utilities. If those names, constants, or data keys are wrong, later code can be built consistently against the wrong contract and silently produce incorrect parsing/conversion behavior. After that substrate is frozen, the remaining work is a cohesive Emoji processing library plus its dependent utilities; it is not split further because tokenizer, core APIs, unicode data, package exports, and utils all import or depend on the same shared emoji data and contracts, so they are not independent subsystems.",
+  "split": true,
+  "milestones": [
+    {
+      "milestone_id": "freeze_emoji_contracts",
+      "title": "Freeze installable package, emoji data contract, tokenizer value objects, and public exports",
+      "objective": "Create the installable Emoji-Process package skeleton with pyproject metadata/dependencies, packaged emoji data resources, lazy unicode data loading, shared constants, tokenizer token/match classes, and documented import/export surface that downstream conversion and analysis functions will consume.",
+      "risk_rationale": "Downstream parsing, demojizing, emojizing, analysis, language loading, aliases, and utilities all depend on the same EMOJI_DATA shape, status/version keys, language constants, ZWJ constant, Token/EmojiMatch object attributes, and package-root re-exports. If this milestone chooses the wrong keys, constants, class attributes, or documented import paths, later modules can import successfully and pass self-consistent tests while silently reading and writing incompatible emoji metadata.",
+      "gate_level": "implementation",
+      "split_reason": "risk_gate",
+      "template_id": "review_then_fix",
+      "depends_on": [],
+      "focus_paths": [
+        "pyproject.toml",
+        "emoji/__init__.py",
+        "emoji/core.py",
+        "emoji/tokenizer.py",
+        "emoji/unicode_codes/__init__.py",
+        "emoji/unicode_codes/data_dict.py",
+        "emoji/unicode_codes/*.json",
+        "emoji/py.typed"
+      ],
+      "acceptance": {
+        "criteria": [
+          "The project is installable as a Python 3.11 package named Emoji-Process with package import name emoji.",
+          "pyproject.toml declares build metadata and includes the documented dependency set, including requests>=2.32.3, beautifulsoup4>=4.12.3, cloudscraper>=1.2.71, pytest>=7.4.4, sphinx>=7.2.6, and django>=4.1.1.",
+          "import emoji, emoji.core, emoji.tokenizer, and emoji.unicode_codes succeed in a clean interpreter without network access.",
+          "emoji.unicode_codes.EMOJI_DATA is populated from packaged JSON resources at import time and uses the documented metadata keys en, alias, E, status, variant, and language codes where available.",
+          "Language constants and status constants match the documented values and are importable from their documented modules and package root where documented.",
+          "EmojiDataDict lazily loads supported language JSON data on missing language-key access and raises KeyError for unsupported keys.",
+          "EmojiMatch, EmojiMatchZWJ, EmojiMatchZWJNonRGI, and Token expose the documented attributes, repr behavior, data_copy behavior, ZWJ splitting/joining behavior, and positional metadata contract.",
+          "get_search_tree builds a reusable trie from EMOJI_DATA using the data sentinel key without changing EMOJI_DATA.",
+          "Package-root emoji exports expose version information and the main public constants/classes/functions at the documented simple import emoji surface, even where behavior is completed in the dependent milestone."
+        ],
+        "corner_cases": [
+          "Missing language key for a supported language triggers lazy loading exactly once and does not erase already-loaded keys.",
+          "Unsupported language key access raises KeyError rather than returning None or mutating EMOJI_DATA.",
+          "EmojiMatch.data_copy handles data=None by returning only positional metadata plus emoji identity without mutating the original data.",
+          "ZWJ sequences preserve Python string indexes for constituent emoji spans, including skin-tone modifiers and variation selectors.",
+          "Search tree construction handles emoji that are prefixes of longer emoji sequences, such as base emoji and ZWJ/variant sequences.",
+          "Repeated imports do not rebuild data into incompatible object types or lose loaded language state."
+        ],
+        "checks": [
+          {
+            "type": "import",
+            "module": "emoji",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "import",
+            "module": "emoji.core",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "import",
+            "module": "emoji.tokenizer",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "import",
+            "module": "emoji.unicode_codes",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "emoji.unicode_codes.data_dict",
+            "symbol": "STATUS",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "emoji.unicode_codes.data_dict",
+            "symbol": "LANGUAGES",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "emoji.unicode_codes",
+            "symbol": "_DEFAULT_KEYS",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "emoji.unicode_codes",
+            "symbol": "EMOJI_DATA",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.unicode_codes",
+            "symbol": "EmojiDataDict",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.unicode_codes",
+            "symbol": "get_emoji_by_name",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.unicode_codes",
+            "symbol": "load_from_json",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.unicode_codes",
+            "symbol": "_open_file",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.unicode_codes",
+            "symbol": "_load_default_from_json",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "emoji.tokenizer",
+            "symbol": "_ZWJ",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "emoji.tokenizer",
+            "symbol": "_SEARCH_TREE",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "emoji.tokenizer",
+            "symbol": "EMOJI_DATA",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.tokenizer",
+            "symbol": "EmojiMatch",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.tokenizer",
+            "symbol": "EmojiMatchZWJ",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.tokenizer",
+            "symbol": "EmojiMatchZWJNonRGI",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.tokenizer",
+            "symbol": "Token",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.tokenizer",
+            "symbol": "get_search_tree",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "emoji.core",
+            "symbol": "_DEFAULT_DELIMITER",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "emoji.core",
+            "symbol": "_EMOJI_NAME_PATTERN",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.core",
+            "symbol": "_EmojiListReturn",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.core",
+            "symbol": "config",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "emoji",
+            "symbol": "LANGUAGES",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "emoji",
+            "symbol": "STATUS",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "emoji",
+            "symbol": "EMOJI_DATA",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write an executable contract test suite from start.md that verifies package installation metadata, imports, public exports, constants, unicode data shape, language lazy-loading, EmojiMatch/ZWJ object behavior, and search-tree construction without depending on later high-level conversion behavior.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [
+            "pyproject.toml",
+            "emoji",
+            "emoji/unicode_codes"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "author_contract_author",
+          "title": "Contract author",
+          "mandate": "Implement the shared emoji package substrate: pyproject packaging, dependency declarations, packaged JSON data resources, unicode_codes constants/loaders/cache lookup, tokenizer constants and value-object classes, core configuration/type contracts, py.typed, and package-root re-exports exactly at the documented import paths.",
+          "role": "contract_author",
+          "slot_id": "author",
+          "focus_paths": [
+            "pyproject.toml",
+            "emoji/__init__.py",
+            "emoji/core.py",
+            "emoji/tokenizer.py",
+            "emoji/unicode_codes",
+            "emoji/py.typed"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "reviewer_spec_auditor",
+          "title": "Specification auditor",
+          "mandate": "Read the implemented substrate against start.md and report any mismatch in public import paths, constants, class attributes, metadata keys, pyproject dependencies, lazy-loading behavior, or package-root exports; do not edit files.",
+          "role": "spec_auditor",
+          "slot_id": "reviewer",
+          "focus_paths": [
+            "pyproject.toml",
+            "emoji"
+          ],
+          "max_tokens": 6144,
+          "max_steps": 8,
+          "timeout_seconds": 900.0
+        },
+        {
+          "role_id": "fixer_integrator",
+          "title": "Integrator",
+          "mandate": "Apply the reviewer report by fixing only contract, packaging, resource, import, and export issues so the frozen substrate is reachable exactly as documented by import emoji and by module-level imports.",
+          "role": "integrator",
+          "slot_id": "fixer",
+          "focus_paths": [
+            "pyproject.toml",
+            "emoji"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        }
+      ]
+    },
+    {
+      "milestone_id": "implement_emoji_processing",
+      "title": "Implement parsing, conversion, analysis, CLI-facing APIs, and dependent utilities",
+      "objective": "Build the full Emoji processing behavior on top of the frozen data/token contracts: emojize, demojize, analyze, tokenize/filtering, list/count/distinct detection, version filtering, replacement, multilingual aliases, ZWJ/non-RGI joining, variants, flags, skin-tone sequences, package-root API wiring, and documented utility modules.",
+      "risk_rationale": "This milestone is the downstream implementation side of the frozen-contract split. It must preserve and consume the data keys, constants, class shapes, and public import paths established by freeze_emoji_contracts; if it changes those contracts, callers and utilities built against the first milestone break even if local behavior appears to work.",
+      "gate_level": "integration",
+      "split_reason": "risk_gate",
+      "template_id": "test_first",
+      "depends_on": [
+        "freeze_emoji_contracts"
+      ],
+      "focus_paths": [
+        "emoji/__init__.py",
+        "emoji/core.py",
+        "emoji/tokenizer.py",
+        "emoji/unicode_codes/__init__.py",
+        "utils/testutils.py",
+        "utils/generateutils.py",
+        "utils/generate_emoji.py",
+        "utils/generate_emoji_translations.py",
+        "README.rst",
+        "docs"
+      ],
+      "acceptance": {
+        "criteria": [
+          "emoji.emojize converts documented English names and aliases to Unicode emoji, supports custom delimiters, language selection, variant='text_type' and variant='emoji_type', version filtering, and string or callable handle_version behavior.",
+          "emoji.demojize converts Unicode emoji to localized shortcodes with custom delimiters, language selection, version filtering, handle_version, and configuration-controlled ZWJ preservation.",
+          "emoji.tokenizer.tokenize detects single emoji, flags, variation-selector emoji, skin-tone modifier sequences, and RGI ZWJ sequences while yielding Token instances with exact original substrings and Python string start/end indexes.",
+          "emoji.tokenizer.filter_tokens supports emoji_only and join_emoji, including creation of EmojiMatchZWJNonRGI for adjacent emoji separated only by ZWJ when requested.",
+          "emoji.analyze returns the documented token stream and preserves non-emoji spans when non_emoji=True while returning only emoji matches by default.",
+          "emoji.emoji_list returns dictionaries with emoji, match_start, and match_end for each occurrence, including duplicate occurrences at distinct positions.",
+          "emoji.distinct_emoji_list and emoji.emoji_count implement distinct and total counting semantics.",
+          "emoji.is_emoji returns True only for a single RGI emoji in EMOJI_DATA, and emoji.purely_emoji returns True for strings containing only emoji tokens, including the empty string.",
+          "emoji.replace_emoji replaces all matched emoji with a string or callable result and honors version filtering.",
+          "emoji.version returns the Emoji version number for Unicode emoji, shortcodes, and the first emoji inside longer text, and raises ValueError when no recognizable emoji exists.",
+          "emoji.__init__ exposes all documented main functions, constants, classes, unicode_codes module, and __version__ for simple import emoji use.",
+          "utils.testutils implements the documented pytest fixture, normalization helpers, ASCII escape helper, language-pack caches, alias-pack caches, and pack generators using the public emoji API."
+        ],
+        "corner_cases": [
+          "Duplicate emoji in a string such as 'Hello \ud83d\ude00\ud83d\ude00' are counted twice and reported with two separate position entries.",
+          "A family ZWJ sequence such as '\ud83d\udc68\u200d\ud83d\udc69\u200d\ud83d\udc67\u200d\ud83d\udc66' is treated as one emoji token when join behavior requires it and can be split into constituent EmojiMatch objects.",
+          "Skin-tone and gender-modified ZWJ sequences preserve modifiers in output and positions.",
+          "Flag expressions made from regional indicators are matched as a single flag emoji when present in EMOJI_DATA.",
+          "Variation-selector pairs such as '\u2764\ufe0f' and base forms such as '\u2764' are handled according to the metadata variant flag and requested presentation variant.",
+          "Unknown shortcode names remain unchanged by emojize unless a version handler explicitly replaces them.",
+          "Unknown Unicode characters, plain text, and malformed ZWJ sequences do not crash tokenization or analysis.",
+          "Custom delimiters containing regex-significant characters are treated literally.",
+          "Callable replacements and handle_version functions receive the emoji character and metadata dictionary and their return value is inserted exactly.",
+          "Language loading for alias and all listed languages is cached and works when called repeatedly.",
+          "Network helper functions are import-safe and only perform requests when the helper is called.",
+          "Arabic emoji names preserve the documented allowed diacritic character in _EMOJI_NAME_PATTERN."
+        ],
+        "checks": [
+          {
+            "type": "callable_or_class",
+            "module": "emoji.core",
+            "symbol": "emojize",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.core",
+            "symbol": "demojize",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.core",
+            "symbol": "analyze",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.core",
+            "symbol": "emoji_list",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.core",
+            "symbol": "emoji_count",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.core",
+            "symbol": "is_emoji",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.core",
+            "symbol": "purely_emoji",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.core",
+            "symbol": "replace_emoji",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.core",
+            "symbol": "version",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.core",
+            "symbol": "distinct_emoji_list",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.tokenizer",
+            "symbol": "tokenize",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.tokenizer",
+            "symbol": "filter_tokens",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "emoji",
+            "symbol": "__version__",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji",
+            "symbol": "emojize",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji",
+            "symbol": "demojize",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji",
+            "symbol": "analyze",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji",
+            "symbol": "emoji_list",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji",
+            "symbol": "emoji_count",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji",
+            "symbol": "is_emoji",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji",
+            "symbol": "purely_emoji",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji",
+            "symbol": "replace_emoji",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji",
+            "symbol": "version",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji",
+            "symbol": "distinct_emoji_list",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "utils.testutils",
+            "symbol": "load_all_languages",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "utils.testutils",
+            "symbol": "ascii",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "utils.testutils",
+            "symbol": "normalize",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "utils.testutils",
+            "symbol": "is_normalized",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "utils.testutils",
+            "symbol": "get_emoji_unicode_dict",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "utils.testutils",
+            "symbol": "get_aliases_unicode_dict",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "utils.testutils",
+            "symbol": "all_language_packs",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "utils.testutils",
+            "symbol": "all_language_and_alias_packs",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "utils.testutils",
+            "symbol": "get_language_packs",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "utils.generateutils",
+            "symbol": "to_ascii",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "utils.generateutils",
+            "symbol": "get_text_from_url",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "utils.generateutils",
+            "symbol": "get_text_from_cloudflare_url",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "utils.generateutils",
+            "symbol": "adapt_emoji_name",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "utils.generate_emoji",
+            "symbol": "GITHUB_REMOVED_CHARS",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "utils.generate_emoji",
+            "symbol": "get_emoji_from_url",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "utils.generate_emoji",
+            "symbol": "get_emoji_variation_sequence_from_url",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "utils.generate_emoji",
+            "symbol": "get_cheat_sheet",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "utils.generate_emoji",
+            "symbol": "get_emoji_from_youtube",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "utils.generate_emoji",
+            "symbol": "extract_emojis",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "utils.generate_emoji",
+            "symbol": "get_emoji_from_github_api",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "utils.generate_emoji",
+            "symbol": "find_github_aliases",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "utils.generate_emoji_translations",
+            "symbol": "get_emojiterra_from_url",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "utils.generate_emoji_translations",
+            "symbol": "get_UNICODE_EMOJI",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "utils.generate_emoji_translations",
+            "symbol": "add_unicode_annotations",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "utils.generate_emoji_translations",
+            "symbol": "extract_names",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write an executable behavioral test suite from start.md for conversion, tokenization, analysis, replacement, version filtering, multilingual aliases, ZWJ/skin-tone/gender/flag handling, public package-root imports, and documented utils behavior. The suite must not depend on implementation internals beyond the frozen public contracts.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [
+            "emoji",
+            "utils",
+            "pyproject.toml"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "builder_implementer",
+          "title": "Implementer",
+          "mandate": "Implement all remaining documented Emoji processing behavior using the frozen contracts from freeze_emoji_contracts: core APIs, tokenizer scanning/filtering, version and variant handling, package-root API wiring, test utilities, data-generation helper functions, and import-safe utility modules.",
+          "role": "implementer",
+          "slot_id": "builder",
+          "focus_paths": [
+            "emoji/__init__.py",
+            "emoji/core.py",
+            "emoji/tokenizer.py",
+            "emoji/unicode_codes/__init__.py",
+            "utils/testutils.py",
+            "utils/generateutils.py",
+            "utils/generate_emoji.py",
+            "utils/generate_emoji_translations.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "repairer_gate_repairer",
+          "title": "Gate repairer",
+          "mandate": "Read the failing acceptance-gate report and fix exactly the named behavioral, import, packaging, or public-export failures while preserving all contracts frozen by freeze_emoji_contracts.",
+          "role": "gate_repairer",
+          "slot_id": "repairer",
+          "focus_paths": [
+            "emoji",
+            "utils",
+            "pyproject.toml"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 14,
+          "timeout_seconds": 1500.0
+        }
+      ]
+    }
+  ]
+}

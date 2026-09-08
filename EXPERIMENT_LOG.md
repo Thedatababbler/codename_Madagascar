@@ -2616,3 +2616,35 @@ Paired, within-model record of the repair side, before and after
 first-pass base) and 6/8 committed. That column is the deliverable of
 this line; it does not depend on which model the channel happens to
 serve.
+
+## EXP-20260908-02 -- NL2Repo-Bench, Medium bucket: integration and task selection
+
+NL2Repo-Bench (arXiv 2512.12730; 104 tasks, one `start.md` per task,
+upstream pytest suite as the exam) ships its suites only inside per-task
+Docker images the repository does not distribute, and this host has no
+Docker. `scripts/nl2repo_to_cpe.py` reconstructs each task in
+CodeProjectEval's on-disk shape: the document split into PRD and
+architecture docs, the environment pinned from the document (Python
+version and dependency block, in its several formats), the upstream
+project cloned and the release tag chosen whose collected count matches
+the document's (`test_case_count.txt`), that tag's source as the
+reference and its tests as `unit_tests`, a smoke `check_tests`, and a
+per-task environment. AdaMAS changes: `CPE_DATASET_ROOT` /
+`CPE_ENV_ROOT` overrides and `src/` on `PYTHONPATH` (harness and eval).
+
+**Planner scan, all 46 Medium tasks (gpt-5.5, max 4 milestones):** 19
+two-milestone, 27 one-milestone, none deeper. **Feasibility gate on the
+19** (minus plac and autojump, flat layouts): nine reconstruct cleanly --
+count matches the document to within a few cases and the reference
+passes its own suite -- aiofiles (211/211), emoji (102/102),
+python-dotenv (209/209), python-pathspec (119/119), tablib (173/172),
+tenacity (124/124), ftfy (346/336, 330 pass), python-jose (3.5.0,
+470/458, 454 pass), voluptuous (149/152, 148 pass). flask-restful is
+kept as approximate (0.3.10, 322/362, 267 pass). Dropped: databases
+(external DB servers), pytorch-grad-cam (torch), binaryalert (Python 3.7
+AWS project), flasky (an app), pylama (tests need installed entry
+points), stamina and gitingest (no tag reproduces the count). Manifest
+and frozen plans: `configs/datasets/nl2repo_medium.json`,
+`configs/datasets/nl2repo_medium_plans/`. Pilot run on `nl2_aiofiles`
+in progress; bugs found so far: task-id validation against the wrong
+root, yaml-pinned dataset root, tree/dependency/tag parsing (fixed).

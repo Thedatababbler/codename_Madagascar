@@ -1,0 +1,711 @@
+{
+  "generator": "llm",
+  "rationale": "Split into two milestones because the public validation contract has high blast radius: error classes, error path semantics, Schema call shape, marker objects, extra-policy constants, and documented root exports are imported and relied on by every validator and consumer-facing feature. Freezing that substrate first prevents later work from silently building against incompatible names or exception/return conventions. The remaining validators, schema traversal, decorators, inference, and humanized errors are tightly coupled through Schema and the frozen error/marker contracts, so they belong in one downstream implementation milestone rather than being split by file or feature count.",
+  "split": true,
+  "milestones": [
+    {
+      "milestone_id": "core_contracts_and_public_api",
+      "title": "Core validation contracts and public API surface",
+      "objective": "Create the installable voluptuous package substrate: pyproject metadata, root exports, error hierarchy, core Schema callable contract for scalar validation, marker/default-value objects, extra-policy constants, and documented module layout so later validators can build against stable imports and exception semantics.",
+      "risk_rationale": "If the error hierarchy, MultipleInvalid aggregation shape, Invalid.path handling, Schema call/exception contract, marker identities, or ALLOW_EXTRA/PREVENT_EXTRA/REMOVE_EXTRA constants are wrong, every downstream validator and schema feature can compile and pass against the wrong assumptions while producing incompatible public behavior. Freezing these names and semantics first prevents later modules from inventing conflicting contracts.",
+      "gate_level": "implementation",
+      "split_reason": "risk_gate",
+      "template_id": "review_then_fix",
+      "depends_on": [],
+      "focus_paths": [
+        "pyproject.toml",
+        "voluptuous/__init__.py",
+        "voluptuous/error.py",
+        "voluptuous/schema_builder.py",
+        "voluptuous/validators.py",
+        "voluptuous/util.py",
+        "voluptuous/humanize.py",
+        "voluptuous/py.typed"
+      ],
+      "acceptance": {
+        "criteria": [
+          "The project is installable/importable as package voluptuous under Python 3.10.",
+          "from voluptuous import * exposes the documented core names, version metadata, error classes, marker classes, extra-policy constants, Schema, and validate.",
+          "Invalid stores msg, path, error_message, error_type; prepend() prefixes paths; string rendering includes useful message and path information.",
+          "MultipleInvalid aggregates Invalid instances, exposes the first error through msg/path/error_message, supports add() and prepend(), and string/repr are stable enough for debugging.",
+          "Schema can be constructed and called for scalar type/value/callable validation and raises MultipleInvalid wrapping Invalid subclasses on failure.",
+          "Required, Optional, Exclusive, Inclusive, Remove, Extra, Marker, Undefined, default_factory, and UNDEFINED preserve key/default/description/group metadata needed by mapping validation.",
+          "Optional defaults support both literal and callable defaults without sharing mutable default instances.",
+          "The root package and documented modules expose constants and aliases that later code must share rather than redefining locally."
+        ],
+        "corner_cases": [
+          "bool validation must not accept 1 as a bool when the schema is bool.",
+          "Missing or empty path on Invalid must remain an empty list and be mutable only through prepend().",
+          "MultipleInvalid constructed with no errors must not crash until an error-dependent property is accessed by validation failure handling.",
+          "Callable defaults such as list must create a fresh object each time.",
+          "Marker descriptions and group labels must survive equality/hash use as mapping keys.",
+          "Importing voluptuous must not import unavailable third-party dependencies."
+        ],
+        "checks": [
+          {
+            "type": "import",
+            "module": "voluptuous",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "import",
+            "module": "voluptuous.error",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "import",
+            "module": "voluptuous.schema_builder",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "import",
+            "module": "voluptuous.validators",
+            "required_levels": [
+              "discovery",
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "Schema",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "Required",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "Optional",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "Exclusive",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "Inclusive",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "Remove",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "Marker",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "Invalid",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "MultipleInvalid",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "SchemaError",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous.error",
+            "symbol": "RequiredFieldInvalid",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous.error",
+            "symbol": "TypeInvalid",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous.error",
+            "symbol": "DictInvalid",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous.error",
+            "symbol": "SequenceTypeInvalid",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "voluptuous",
+            "symbol": "ALLOW_EXTRA",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "voluptuous",
+            "symbol": "PREVENT_EXTRA",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "voluptuous",
+            "symbol": "REMOVE_EXTRA",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "voluptuous.schema_builder",
+            "symbol": "UNDEFINED",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "voluptuous",
+            "symbol": "__version__",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "validate",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write executable tests for the frozen public contract only: importability, pyproject metadata presence, root exports, Invalid/MultipleInvalid behavior, scalar Schema calls, marker/default semantics, and extra-policy constants. Do not edit source.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [
+            "pyproject.toml",
+            "voluptuous"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "author_contract_author",
+          "title": "Contract author",
+          "mandate": "Implement the core substrate exactly as the public design describes: package metadata, error classes, Schema scalar compilation/call contract, marker classes/default handling, constants, aliases, and root re-exports. Keep behavior minimal but real where the acceptance criteria require it.",
+          "role": "contract_author",
+          "slot_id": "author",
+          "focus_paths": [
+            "pyproject.toml",
+            "voluptuous/__init__.py",
+            "voluptuous/error.py",
+            "voluptuous/schema_builder.py",
+            "voluptuous/validators.py",
+            "voluptuous/util.py",
+            "voluptuous/humanize.py",
+            "voluptuous/py.typed"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "reviewer_spec_auditor",
+          "title": "Specification auditor",
+          "mandate": "Read the implemented substrate against the design documents and report quiet contract deviations: missing root exports, wrong exception inheritance, wrong constructor signatures, wrong marker metadata/default behavior, or constants defined only in private modules.",
+          "role": "spec_auditor",
+          "slot_id": "reviewer",
+          "focus_paths": [
+            "voluptuous"
+          ],
+          "max_tokens": 6144,
+          "max_steps": 8,
+          "timeout_seconds": 900.0
+        },
+        {
+          "role_id": "fixer_implementer",
+          "title": "Implementer",
+          "mandate": "Fix only the deviations reported by the reviewer while preserving the frozen core contract and keeping the package importable.",
+          "role": "implementer",
+          "slot_id": "fixer",
+          "focus_paths": [
+            "pyproject.toml",
+            "voluptuous"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        }
+      ]
+    },
+    {
+      "milestone_id": "complete_validation_toolkit",
+      "title": "Complete voluptuous validation behavior",
+      "objective": "Build the full data validation toolkit on top of the frozen core contracts: mapping/list/tuple/set/object validation, markers, combined validators, special validators, schema inference and extension, decorators, humanized errors, path handling, filesystem validators, string utilities, recursive Self, examples, and regression tests.",
+      "risk_rationale": "This milestone exists downstream of the core risk gate: every feature must use the previously frozen Schema, marker, error, constant, and root-export contracts instead of changing them. The remaining capabilities are mutually coupled through Schema compilation and shared validators/errors, so they are implemented together after the substrate is accepted.",
+      "gate_level": "integration",
+      "split_reason": "risk_gate",
+      "template_id": "test_first",
+      "depends_on": [
+        "core_contracts_and_public_api"
+      ],
+      "focus_paths": [
+        "README.md",
+        "pyproject.toml",
+        "voluptuous/__init__.py",
+        "voluptuous/error.py",
+        "voluptuous/humanize.py",
+        "voluptuous/schema_builder.py",
+        "voluptuous/util.py",
+        "voluptuous/validators.py"
+      ],
+      "acceptance": {
+        "criteria": [
+          "Schema validates basic scalar types int, str, float, bool with bool rejecting integer 1.",
+          "Schema validates nested dictionaries, lists, tuples, sets, frozensets, mixed structures, objects, literals, exact sequences, unordered sequences, and recursive Self schemas while preserving validated data shape.",
+          "Required, Optional with defaults, Exclusive, Inclusive, Remove, Extra, and extra-policy modes behave as documented for mappings.",
+          "All, Any, Union, SomeOf, Maybe, Coerce, Clamp, Range, Length, Match, In, NotIn, Contains, Unique, Equal, Boolean, Number, Date, Datetime, Email, Url, FqdnUrl, IsFile, IsDir, PathExists, Lower, Upper, Title, Capitalize, Strip, DefaultTo, SetTo, Msg, truth, and message work through Schema.",
+          "Validation failures raise Invalid or MultipleInvalid with accurate messages and nested paths, and multiple mapping/list errors are collected when possible.",
+          "humanize_error and validate_with_humanized_errors include the invalid value context and remain usable with MultipleInvalid.",
+          "Schema.infer produces schemas that validate data shaped like the examples, including nested and mixed list/dict structures; Schema.extend merges mapping schemas without mutating the original.",
+          "validate() works both as a decorator for positional/keyword arguments and return values and as the documented helper pattern validate(Schema(...), data) if implemented as a callable utility.",
+          "The documented public root imports remain available after all implementation work.",
+          "Examples in README or example-style tests demonstrate Schema() and validate() usage reproducibly.",
+          "Repeated validation of small, large, and deeply nested structures completes without pathological slowdowns for the public benchmark scales described in the task."
+        ],
+        "corner_cases": [
+          "None values with Maybe and DefaultTo.",
+          "Empty string, empty list, empty tuple, empty dict, empty set, and absent optional keys.",
+          "Large integer boundary values and numeric range endpoints inclusive/exclusive behavior.",
+          "List element errors include the failing index; nested dict errors include the full key path.",
+          "Optional default factories returning mutable objects must not share state.",
+          "Exclusive groups with zero, one, and multiple present keys.",
+          "Inclusive groups with zero, all, and partial present keys.",
+          "Remove must omit matching keys from output and not validate them into the returned mapping.",
+          "Unknown extra keys must follow PREVENT_EXTRA, ALLOW_EXTRA, or REMOVE_EXTRA exactly.",
+          "Any/Union must preserve the value returned by the successful validator and report useful errors when all alternatives fail.",
+          "All must feed each validator the previous validator's output.",
+          "Email and Url reject non-strings and malformed strings without crashing."
+        ],
+        "checks": [
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "All",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "Any",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "Union",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "SomeOf",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "Coerce",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "Maybe",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "Range",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "Length",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "Clamp",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "Email",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "Url",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "Date",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "Datetime",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "In",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "NotIn",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "Contains",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "Unique",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "Equal",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "ExactSequence",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "Unordered",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "Object",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "Literal",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous",
+            "symbol": "Msg",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous.validators",
+            "symbol": "validate",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous.humanize",
+            "symbol": "humanize_error",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "voluptuous.humanize",
+            "symbol": "validate_with_humanized_errors",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "voluptuous.validators",
+            "symbol": "USER_REGEX",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "voluptuous.validators",
+            "symbol": "DOMAIN_REGEX",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "voluptuous.validators",
+            "symbol": "Or",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "voluptuous.validators",
+            "symbol": "Switch",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "voluptuous",
+            "symbol": "Self",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write an executable behavioral suite from the design documents for full validation behavior: structures, markers, built-in validators, error paths, inference, decorators, humanized errors, examples, and performance sanity. Do not edit source and do not expose the suite to the builder.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [
+            "README.md",
+            "voluptuous"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "builder_implementer",
+          "title": "Implementer",
+          "mandate": "Implement the complete library behavior from the public design while preserving all contracts frozen by core_contracts_and_public_api. Add or update README examples as needed, but do not rename or remove frozen exports.",
+          "role": "implementer",
+          "slot_id": "builder",
+          "focus_paths": [
+            "README.md",
+            "pyproject.toml",
+            "voluptuous/__init__.py",
+            "voluptuous/error.py",
+            "voluptuous/humanize.py",
+            "voluptuous/schema_builder.py",
+            "voluptuous/util.py",
+            "voluptuous/validators.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "repairer_gate_repairer",
+          "title": "Gate repairer",
+          "mandate": "If the acceptance gate fails, read the failure report and fix exactly the named behavioral, import, or contract regressions without broad rewrites or changing the frozen core API.",
+          "role": "gate_repairer",
+          "slot_id": "repairer",
+          "focus_paths": [
+            "README.md",
+            "pyproject.toml",
+            "voluptuous"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 14,
+          "timeout_seconds": 1500.0
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,447 @@
+{
+  "generator": "llm",
+  "rationale": "Split into two milestones because the parser and variable-interpolation objects form a shared cross-module contract: main loading, dotenv_values, file rewriting, and CLI behavior all depend on Binding/Original and Atom/Literal/Variable/parse_variables semantics. If that contract is wrong, later modules can be implemented consistently against the wrong shape and still import, silently invalidating the project. After that risk gate is frozen, the remaining work is one integrated subsystem because CLI, main loading, file operations, IPython support, package exports, and setup wiring all import or expose the same dotenv implementation rather than being independent.",
+  "split": true,
+  "milestones": [
+    {
+      "milestone_id": "parser_variables_contract",
+      "title": "Freeze .env parsing and interpolation contracts",
+      "objective": "Implement the dotenv.parser and dotenv.variables public contracts: Binding and Original tuple shapes, parse_stream behavior for .env syntax, and Atom/Literal/Variable/parse_variables interpolation atoms including defaults.",
+      "risk_rationale": "All downstream loading, dotenv_values, file rewrite operations, and CLI commands consume parse_stream Binding objects and parse_variables Atom objects. If key/value/error/original shapes, multiline parsing, export/comment handling, or variable default semantics are wrong, later modules can be built against the wrong interpretation and silently produce incorrect environment data.",
+      "gate_level": "implementation",
+      "split_reason": "risk_gate",
+      "template_id": "test_first",
+      "depends_on": [],
+      "focus_paths": [
+        "src/dotenv/parser.py",
+        "src/dotenv/variables.py",
+        "src/dotenv/__init__.py"
+      ],
+      "acceptance": {
+        "criteria": [
+          "dotenv.parser.parse_stream returns an iterator of Binding objects with key, value, original, and error fields matching the documented NamedTuple contract.",
+          "The parser handles bare key/value pairs, keys without values, quoted and unquoted values, export prefixes, full-line comments, inline comments, blank lines, malformed lines marked with error=True, and triple-quoted multiline values.",
+          "Original.string preserves the consumed source text for each binding and Original.line records the starting 1-based line number.",
+          "dotenv.variables.parse_variables yields Literal and Variable atoms in input order for POSIX-style ${NAME} and ${NAME:-default} references.",
+          "Literal.resolve returns its literal value unchanged.",
+          "Variable.resolve returns the mapped environment value when present and not None, otherwise the default when provided, otherwise an empty string.",
+          "Atom, Literal, and Variable equality, inequality, repr, and hash behavior are stable enough for tests and downstream comparison."
+        ],
+        "corner_cases": [
+          "Empty streams and streams containing only comments or whitespace produce no successful key/value bindings.",
+          "Values containing # inside quotes are not truncated as comments.",
+          "Unquoted inline comments are stripped only when comment syntax is separated from the value as documented.",
+          "Triple-quoted values may contain embedded newlines and comment-looking text.",
+          "Missing closing quotes or otherwise invalid lines produce Binding entries with error=True instead of crashing.",
+          "Variable references with empty defaults, missing variables, adjacent variables, and surrounding literal text resolve predictably."
+        ],
+        "checks": [
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.parser",
+            "symbol": "Original",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.parser",
+            "symbol": "Binding",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.parser",
+            "symbol": "parse_stream",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.variables",
+            "symbol": "Atom",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.variables",
+            "symbol": "Literal",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.variables",
+            "symbol": "Variable",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.variables",
+            "symbol": "parse_variables",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write an executable test suite from the design for dotenv.parser and dotenv.variables only. Cover Binding/Original tuple shapes, parse_stream syntax, multiline triple quotes, export prefixes, comments, invalid lines, and variable atom resolution including defaults and missing values.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [
+            "src/dotenv/parser.py",
+            "src/dotenv/variables.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "builder_contract_author",
+          "title": "Contract author",
+          "mandate": "Implement the shared parser and interpolation contracts exactly as documented, keeping public symbols importable from dotenv.parser and dotenv.variables and avoiding downstream main/CLI implementation except minimal package scaffolding if needed.",
+          "role": "contract_author",
+          "slot_id": "builder",
+          "focus_paths": [
+            "src/dotenv/parser.py",
+            "src/dotenv/variables.py",
+            "src/dotenv/__init__.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "repairer_gate_repairer",
+          "title": "Gate repairer",
+          "mandate": "Read the failing acceptance-gate report for parser and variables and fix only the named contract or behavior failures without expanding into main loading or CLI work.",
+          "role": "gate_repairer",
+          "slot_id": "repairer",
+          "focus_paths": [
+            "src/dotenv/parser.py",
+            "src/dotenv/variables.py",
+            "src/dotenv/__init__.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 14,
+          "timeout_seconds": 1500.0
+        }
+      ]
+    },
+    {
+      "milestone_id": "dotenv_library_integration",
+      "title": "Implement integrated python-dotenv package, CLI, utilities, and packaging",
+      "objective": "Build the rest of the python_dotenv project around the frozen parser/interpolation contracts: loading .env data into os.environ, dotenv_values, find_dotenv, get/set/unset file operations, CLI commands, IPython extension, package exports, __main__, version, py.typed, and setup.py dependency/package metadata.",
+      "risk_rationale": "This milestone deliberately depends on the parser_variables_contract gate. Its work imports and relies on the frozen Binding/Original and Atom/Literal/Variable/parse_variables contracts; changing or bypassing those would break the shared invariant that every consumer parses the same bytes into the same environment mapping. The remaining pieces are not independent subsystems because CLI, IPython, package exports, and setup wiring all import dotenv.main and the parser/variables substrate.",
+      "gate_level": "integration",
+      "split_reason": "risk_gate",
+      "template_id": "review_then_fix",
+      "depends_on": [
+        "parser_variables_contract"
+      ],
+      "focus_paths": [
+        "setup.py",
+        "setup.cfg",
+        "src/dotenv/__init__.py",
+        "src/dotenv/__main__.py",
+        "src/dotenv/cli.py",
+        "src/dotenv/ipython.py",
+        "src/dotenv/main.py",
+        "src/dotenv/parser.py",
+        "src/dotenv/variables.py",
+        "src/dotenv/version.py",
+        "src/dotenv/py.typed"
+      ],
+      "acceptance": {
+        "criteria": [
+          "load_dotenv loads variables from a path or text stream into os.environ and returns True when variables are available to load.",
+          "load_dotenv respects override=False by preserving existing os.environ values and override=True by replacing them.",
+          "load_dotenv honors interpolate=True using frozen parse_variables semantics, including nested references through previously parsed values and existing environment variables.",
+          "load_dotenv returns False and does not mutate os.environ when disabled by PYTHON_DOTENV_DISABLED.",
+          "dotenv_values returns a dictionary of parsed values without mutating os.environ.",
+          "find_dotenv searches upward from the current working directory when usecwd=True, returns an empty string when not found, and raises IOError when raise_error_if_not_found=True.",
+          "get_key, set_key, and unset_key read, update, append, quote, export, and delete entries in .env files while preserving unrelated original lines.",
+          "CLI group dotenv.cli.cli supports list, get, set, unset, and run commands with --file, --quote, and --export options.",
+          "The package root dotenv re-exports the documented public API, including load_dotenv, dotenv_values, find_dotenv, get_key, set_key, unset_key, get_cli_string, load_ipython_extension, and parser/variable symbols where documented.",
+          "python -m dotenv invokes the CLI entry point.",
+          "IPython integration exposes load_ipython_extension and a %dotenv magic that can load a discovered or explicit .env file with override support.",
+          "setup.py defines an installable package using the src layout and declares the documented dependencies including click>=5.0, pytest, pytest-cov, ipython, twine, and wheel."
+        ],
+        "corner_cases": [
+          "Loading from a stream works even when no filesystem dotenv_path exists, including text wrappers over nonstandard streams such as ZIP file members.",
+          "Files with explicit encodings are decoded according to the encoding parameter for loading, value retrieval, and rewrite operations.",
+          "Existing environment variables are not overwritten unless override=True.",
+          "A key with no value is represented as None in dotenv_values and is not set as a string 'None' in os.environ.",
+          "set_key with quote_mode='always', 'never', and 'auto' produces documented quoting and rejects unknown quote modes with ValueError.",
+          "set_key appends a newline before adding a key when the existing file lacks a trailing newline.",
+          "unset_key returns (None, key) when the file or key does not exist and leaves other lines unchanged.",
+          "CLI run executes a subprocess with loaded environment values and propagates an appropriate exit code.",
+          "find_dotenv behaves in interactive/debugger/current-working-directory situations without requiring __file__.",
+          "Package imports succeed in a clean environment using import dotenv, from dotenv.cli import cli, from dotenv.version import __version__, from dotenv.main import find_dotenv, from dotenv.parser import Binding, Original, parse_stream, and from dotenv.variables import Literal, Variable, parse_variables."
+        ],
+        "checks": [
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.main",
+            "symbol": "load_dotenv",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv",
+            "symbol": "load_dotenv",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.main",
+            "symbol": "dotenv_values",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv",
+            "symbol": "dotenv_values",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.main",
+            "symbol": "find_dotenv",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv",
+            "symbol": "find_dotenv",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.main",
+            "symbol": "get_key",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv",
+            "symbol": "get_key",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.main",
+            "symbol": "set_key",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv",
+            "symbol": "set_key",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.main",
+            "symbol": "unset_key",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv",
+            "symbol": "unset_key",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.main",
+            "symbol": "get_cli_string",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv",
+            "symbol": "get_cli_string",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.cli",
+            "symbol": "cli",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.cli",
+            "symbol": "enumerate_env",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.ipython",
+            "symbol": "load_ipython_extension",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv",
+            "symbol": "load_ipython_extension",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "dotenv.version",
+            "symbol": "__version__",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "dotenv",
+            "symbol": "__version__",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write an executable integration test suite from the public design for loading, dotenv_values, file search, key mutation, CLI commands, IPython extension, package exports, __main__, and setup metadata. Treat the parser/variables behavior from the prior milestone as frozen contract.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [
+            "setup.py",
+            "src/dotenv"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "author_implementer",
+          "title": "Implementer",
+          "mandate": "Implement the integrated python-dotenv package using the frozen parser and variable contracts. Build main.py loading and rewrite utilities, CLI commands, IPython magic, root exports, version, __main__, py.typed, and setup.py dependency/package metadata.",
+          "role": "implementer",
+          "slot_id": "author",
+          "focus_paths": [
+            "setup.py",
+            "setup.cfg",
+            "src/dotenv"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "reviewer_spec_auditor",
+          "title": "Specification auditor",
+          "mandate": "Review the implemented package against the design documents and the previously frozen parser/variables contract. Report missing public exports, signature drift, unsupported documented behavior, CLI deviations, packaging omissions, and any accidental contract changes without editing source.",
+          "role": "spec_auditor",
+          "slot_id": "reviewer",
+          "focus_paths": [
+            "setup.py",
+            "src/dotenv"
+          ],
+          "max_tokens": 6144,
+          "max_steps": 8,
+          "timeout_seconds": 900.0
+        },
+        {
+          "role_id": "fixer_integrator",
+          "title": "Integrator",
+          "mandate": "Apply the reviewer report by fixing public import paths, package re-exports, CLI wiring, __main__, setup metadata, and cross-module integration while preserving the frozen parser and variables contracts.",
+          "role": "integrator",
+          "slot_id": "fixer",
+          "focus_paths": [
+            "setup.py",
+            "setup.cfg",
+            "src/dotenv"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,118 @@
+{
+  "benchmark": "NL2Repo-Bench (arXiv 2512.12730), Medium bucket (1.5-4k LOC)",
+  "selection": "two-milestone plans from the risk-first planner (gpt-5.5) over all 46 Medium tasks; upstream suite reconstructed at the tag whose collected count matches the document; reference must pass its own suite",
+  "dataset_root": "/root/codex-benchmarks/nl2repo/cpe_format",
+  "env_root": "/root/codex-benchmarks/nl2repo/envs",
+  "tasks": [
+    {
+      "task_id": "nl2_aiofiles",
+      "source": "aiofiles",
+      "status": "core",
+      "upstream": "https://github.com/Tinche/aiofiles",
+      "tag": "v23.2.1",
+      "collected": 211,
+      "document_cases": 211,
+      "reference": "1 failed, 200 passed, 8 skipped, 2 errors in 2.05s",
+      "plan": "configs/datasets/nl2repo_medium_plans/aiofiles.plan_draft.json"
+    },
+    {
+      "task_id": "nl2_emoji",
+      "source": "emoji",
+      "status": "core",
+      "upstream": "https://github.com/carpedm20/emoji",
+      "tag": "v2.15.0",
+      "collected": 102,
+      "document_cases": 102,
+      "reference": "102 passed in 24.97s",
+      "plan": "configs/datasets/nl2repo_medium_plans/emoji.plan_draft.json"
+    },
+    {
+      "task_id": "nl2_python-dotenv",
+      "source": "python-dotenv",
+      "status": "core",
+      "upstream": "https://github.com/theskumar/python-dotenv",
+      "tag": "v1.2.0",
+      "collected": 209,
+      "document_cases": 209,
+      "reference": "2 failed, 207 passed, 2 warnings in 2.15s",
+      "plan": "configs/datasets/nl2repo_medium_plans/python-dotenv.plan_draft.json"
+    },
+    {
+      "task_id": "nl2_python-pathspec",
+      "source": "python-pathspec",
+      "status": "core",
+      "upstream": "https://github.com/cpburnz/python-pathspec",
+      "tag": "v0.12.1",
+      "collected": 119,
+      "document_cases": 119,
+      "reference": "119 passed in 0.23s",
+      "plan": "configs/datasets/nl2repo_medium_plans/python-pathspec.plan_draft.json"
+    },
+    {
+      "task_id": "nl2_tablib",
+      "source": "tablib",
+      "status": "core",
+      "upstream": "https://github.com/jazzband/tablib",
+      "tag": "v3.9.0",
+      "collected": 173,
+      "document_cases": 172,
+      "reference": "173 passed in 1.45s",
+      "plan": "configs/datasets/nl2repo_medium_plans/tablib.plan_draft.json"
+    },
+    {
+      "task_id": "nl2_tenacity",
+      "source": "tenacity",
+      "status": "core",
+      "upstream": "https://github.com/jd/tenacity",
+      "tag": "9.1.2",
+      "collected": 124,
+      "document_cases": 124,
+      "reference": "124 passed in 3.66s",
+      "plan": "configs/datasets/nl2repo_medium_plans/tenacity.plan_draft.json"
+    },
+    {
+      "task_id": "nl2_ftfy",
+      "source": "ftfy",
+      "status": "core",
+      "upstream": "https://github.com/rspeer/python-ftfy",
+      "tag": "v6.3.1",
+      "collected": 346,
+      "document_cases": 336,
+      "reference": "6 failed, 330 passed, 10 xfailed in 1.17s",
+      "plan": "configs/datasets/nl2repo_medium_plans/ftfy.plan_draft.json"
+    },
+    {
+      "task_id": "nl2_python-jose",
+      "source": "python-jose",
+      "status": "core",
+      "upstream": "https://github.com/mpdavis/python-jose",
+      "tag": "3.5.0",
+      "collected": 470,
+      "document_cases": 458,
+      "reference": "4 failed, 454 passed, 12 skipped, 15 warnings in 26.25s",
+      "plan": "configs/datasets/nl2repo_medium_plans/python-jose.plan_draft.json"
+    },
+    {
+      "task_id": "nl2_voluptuous",
+      "source": "voluptuous",
+      "status": "core",
+      "upstream": "https://github.com/alecthomas/voluptuous",
+      "tag": "0.15.2",
+      "collected": 149,
+      "document_cases": 152,
+      "reference": "148 passed in 0.41s",
+      "plan": "configs/datasets/nl2repo_medium_plans/voluptuous.plan_draft.json"
+    },
+    {
+      "task_id": "nl2_flask-restful",
+      "source": "flask-restful",
+      "status": "approximate",
+      "upstream": "https://github.com/flask-restful/flask-restful",
+      "tag": "0.3.10",
+      "collected": 322,
+      "document_cases": 362,
+      "reference": "39 failed, 267 passed, 16 xfailed, 17 warnings in 4.20s",
+      "plan": "configs/datasets/nl2repo_medium_plans/flask-restful.plan_draft.json"
+    }
+  ]
+}
