@@ -192,7 +192,7 @@ class OpenAIDiagnosisClient:
         response = client.chat.completions.create(
             model=model,
             temperature=0,
-            messages=messages,
+            messages=_utf8_clean(messages),
         )
         usage = getattr(response, "usage", None)
         return DiagnosisCompletion(
@@ -201,6 +201,23 @@ class OpenAIDiagnosisClient:
             completion_tokens=_optional_int(getattr(usage, "completion_tokens", None)),
             model=model,
         )
+
+
+def _utf8_clean(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Strip lone surrogates from prompt text.
+
+    Gate output decoded with surrogateescape (binary bytes in a pytest tail)
+    serialises as \\udcXX, which the proxy rejects as malformed JSON in a
+    millisecond -- every diagnosis on nl2_aiofiles came back 400 and fell
+    silently to the rule floor.
+    """
+    cleaned = []
+    for m in messages:
+        c = m.get("content")
+        if isinstance(c, str):
+            c = c.encode("utf-8", "replace").decode("utf-8", "replace")
+        cleaned.append({**m, "content": c})
+    return cleaned
 
 
 def refine_diagnosis(
