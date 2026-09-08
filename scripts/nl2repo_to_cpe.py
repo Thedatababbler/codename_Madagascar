@@ -257,6 +257,13 @@ def main() -> int:
     shutil.copytree(up / tests_rel, out / "unit_tests", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     if not (out / "unit_tests" / "__init__.py").exists():
         (out / "unit_tests" / "__init__.py").write_text("")
+    # Suites whose modules escape pytest's default pattern (voluptuous: a single
+    # tests.py, collected upstream via python_files in its ini): rename them.
+    for mod in (out / "unit_tests").rglob("*.py"):
+        if mod.name.startswith("test_") or mod.name.endswith("_test.py") or mod.name in ("conftest.py", "__init__.py"):
+            continue
+        if "def test_" in mod.read_text(errors="replace") or "unittest" in mod.read_text(errors="replace"):
+            mod.rename(mod.with_name(f"test_{mod.name}"))
     for extra in ("conftest.py", "pytest.ini", "setup.cfg", "tox.ini", "pyproject.toml"):
         if (up / extra).exists() and extra == "conftest.py":
             shutil.copy2(up / extra, out / "unit_tests" / "conftest_root.py")
