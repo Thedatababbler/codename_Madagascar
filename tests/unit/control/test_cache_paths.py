@@ -15,5 +15,5 @@ def test_exclude_keeps_caches_out_of_status(tmp_path):
     write_cache_exclude(tmp_path)
     (tmp_path / "pkg").mkdir(); (tmp_path / "pkg" / "__init__.py").write_text("")
     (tmp_path / "pkg" / "__pycache__").mkdir(); (tmp_path / "pkg" / "__pycache__" / "x.pyc").write_bytes(b"x")
-    out = subprocess.run(["git", "status", "--porcelain"], cwd=tmp_path, capture_output=True, text=True).stdout
+    out = subprocess.run(["git", "status", "--porcelain", "-uall"], cwd=tmp_path, capture_output=True, text=True).stdout
     assert "__init__.py" in out and "__pycache__" not in out
