@@ -46,12 +46,13 @@ def sections(md: str) -> list[tuple[str, str]]:
 
 def python_version(md: str) -> str:
     m = re.search(r"Python version[^\n]*?(\d+\.\d+)(?:\.\d+)?", md)
-    return m.group(1) if m else "3.11"
+    v = m.group(1) if m else "3.11"
+    return "3.8" if v in ("3.6", "3.7") else v  # uv ships no 3.7 build
 
 
 def pins(md: str) -> list[str]:
     """`name  version` lines in the dependency block -> name==version."""
-    m = re.search(r"### Versions of Core Dependent Libraries.*?```[^\n]*\n(.*?)```", md, re.S)
+    m = re.search(r"### [^\n]*[Dd]epend[^\n]*\n\s*```[^\n]*\n(.*?)```", md, re.S)
     reqs = []
     for line in (m.group(1) if m else "").splitlines():
         parts = line.split()
@@ -117,6 +118,22 @@ def test_extras(up: Path) -> list[str]:
     return names
 
 
+def ordered_tags(tags: list[str]) -> list[str]:
+    """Release tags newest first, parsed as versions (a leading v/V ignored)."""
+    from packaging.version import InvalidVersion, Version
+    parsed = []
+    for t in tags:
+        core = t[1:] if t[:1] in "vV" and t[1:2].isdigit() else t
+        try:
+            v = Version(core)
+        except InvalidVersion:
+            continue
+        if v.is_prerelease or v.is_devrelease:
+            continue
+        parsed.append((v, t))
+    return [t for _, t in sorted(parsed, reverse=True)]
+
+
 def run(cmd, **kw):
     return subprocess.run(cmd, capture_output=True, text=True, check=False, **kw)
 
@@ -140,7 +157,8 @@ def main() -> int:
     src_dir = BENCH / task
     md = (src_dir / "start.md").read_text(encoding="utf-8", errors="replace")
     want = int((src_dir / "test_case_count.txt").read_text().strip() or 0)
-    tests_rel = json.loads((src_dir / "test_files.json").read_text())[0].strip("/")
+    test_items = [t.strip("/") for t in json.loads((src_dir / "test_files.json").read_text())]
+    tests_rel = test_items[0] if len(test_items) == 1 and "." not in Path(test_items[0]).name else str(Path(test_items[0]).parent)
     url = a.url or (json.load(open(URLS)).get(task) if URLS.exists() else None)
     if not url:
         print(f"no upstream url for {task}", file=sys.stderr); return 2
@@ -168,7 +186,7 @@ def main() -> int:
     if not up.exists():
         r = run(["git", "clone", "-q", url, str(up)])
         if r.returncode: print(r.stderr[-400:], file=sys.stderr); return 5
-    tags = run(["git", "tag", "--sort=-v:refname"], cwd=up).stdout.split()
+    tags = ordered_tags(run(["git", "tag"], cwd=up).stdout.split())
     cands = [a.tag] if a.tag else (tags[: a.max_tags] or ["HEAD"])
     best = None
     for tag in cands:
@@ -223,7 +241,7 @@ def main() -> int:
     cfg = {"PRD": "docs/PRD.md", "UML": [], "dependencies": "requirements.txt", "architecture_design": "docs/architecture_design.md",
            "language": "python", "source_code": sdir, "unit_tests": "unit_tests", "check_tests": "check_tests", "usage_examples": "",
            "required_files": ["requirements.txt"], "unit_test_script": "pytest unit_tests", "check_test_script": "pytest check_tests",
-           "nl2repo": {"task": task, "upstream": url, "tag": tag, "collected": n, "document_cases": want, "python": py, "tests_dir": tests_rel}}
+           "nl2repo": {"task": task, "upstream": url, "tag": tag, "collected": n, "document_cases": want, "python": py, "tests_dir": tests_rel, "test_items": test_items}}
     (out / "config.json").write_text(json.dumps(cfg, indent=2))
     (out / "setup_shell_script.sh").write_text("pip install -r requirements.txt\n")
     print(f"  wrote {out}; env {env}")
