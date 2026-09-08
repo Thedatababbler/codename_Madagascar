@@ -99,6 +99,24 @@ def source_dir(paths: list[str]) -> str:
     return (src or pkgs)[0]
 
 
+def test_extras(up: Path) -> list[str]:
+    """Dependency names from pyproject optional groups named test/tests/dev/testing."""
+    try:
+        import tomllib
+        data = tomllib.loads((up / "pyproject.toml").read_text())
+    except Exception:
+        return []
+    groups = (data.get("project") or {}).get("optional-dependencies") or {}
+    names: list[str] = []
+    for key, deps in groups.items():
+        if any(k in key.lower() for k in ("test", "dev")):
+            for d in deps:
+                name = re.split(r"[<>=!~;\[ ]", d.strip(), 1)[0]
+                if name and name.lower() not in names:
+                    names.append(name)
+    return names
+
+
 def run(cmd, **kw):
     return subprocess.run(cmd, capture_output=True, text=True, check=False, **kw)
 
@@ -169,6 +187,12 @@ def main() -> int:
     tag, n = best
     run(["git", "checkout", "-q", "-f", tag], cwd=up)
     run(["uv", "pip", "uninstall", "-q", "--python", str(epy), task], )
+    # The upstream suite's own extras (aiohttp for aiofiles' server tests, ...):
+    # the document pins the runtime, not what the tests need.
+    extras = test_extras(up)
+    if extras:
+        run(["uv", "pip", "install", "-q", "--python", str(epy), *extras])
+        print(f"  test extras: {extras}")
     print(f"  chosen {tag} ({n} vs document {want})")
     # lay out the task
     if out.exists():
