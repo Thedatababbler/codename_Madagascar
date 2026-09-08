@@ -926,6 +926,24 @@ class FastLoopController:
             state.state_version += 1
             await self._save_checkpoint(state)
             return state
+        if winner.status not in {CandidateStatus.VALID, CandidateStatus.COMMITTED}:
+            # Failure search with nothing to fall back on: the first pass failed
+            # the gate and so did every candidate. The selector still ranks
+            # executed-but-failed candidates, so the "winner" here is the least
+            # bad of them; committing it is refused downstream, and raising
+            # there took a whole task down (cookiecutter, 2026-09-08). Fail the
+            # milestone on the record instead.
+            fl_state.exhausted = True
+            sub.status = SubtaskStatus.FAILED
+            sub.failure_reason = SubtaskFailureReason.HARNESS
+            sub.failure_message = (
+                f"no candidate passed the gate; best was {winner.candidate_id} "
+                f"({winner.status.value})"
+            )
+            fl_state.notes.append(f"search: {sub.failure_message}")
+            state.state_version += 1
+            await self._save_checkpoint(state)
+            return state
 
         ok, reason, code = self.budget_tracker.can_start_candidate(
             fl_state, reserved_backend_calls=0
