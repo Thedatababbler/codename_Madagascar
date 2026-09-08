@@ -10,16 +10,20 @@ withheld, and everything AdaMAS invents stays runner-side as on RealBench.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-DEFAULT_DATASET_ROOT = Path(
+# CPE_DATASET_ROOT / CPE_ENV_ROOT let another dataset in the same on-disk
+# shape (e.g. NL2Repo-Bench tasks converted by scripts/nl2repo_to_cpe.py) run
+# through the same loader, runner and harness without touching the originals.
+DEFAULT_DATASET_ROOT = Path(os.environ.get("CPE_DATASET_ROOT") or 
     "/root/codex-benchmarks/projectgen/datasets/CodeProjectEval/python-subset"
 )
-DEFAULT_ENV_ROOT = Path("/root/codex-benchmarks/cpe_envs")
+DEFAULT_ENV_ROOT = Path(os.environ.get("CPE_ENV_ROOT") or "/root/codex-benchmarks/cpe_envs")
 
 CHECK_TESTS_DIRNAME = "check_tests"
 UNIT_TESTS_DIRNAME = "unit_tests"
