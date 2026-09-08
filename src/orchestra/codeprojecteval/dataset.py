@@ -151,6 +151,9 @@ def build_agent_workspace(task: CpeTask, destination: Path) -> Path:
     _copy(task.repo_root / task.check_tests, dest / task.check_tests)
 
     subprocess.run(["git", "init", "-q"], cwd=dest, check=True)
+    from orchestra.control.fast_loop.workspace import write_cache_exclude
+
+    write_cache_exclude(dest)
     subprocess.run(["git", "add", "-A"], cwd=dest, check=True)
     subprocess.run(
         [

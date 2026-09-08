@@ -75,6 +75,30 @@ class CandidateWorkspaceManager(Protocol):
     async def discard_candidate(self, workspace: WorkspaceRef) -> None: ...
 
 
+def is_cache_path(path: str) -> bool:
+    """Bytecode caches are never part of a change: the gate regenerates them.
+
+    A change set that recorded the deletion of hl7/__pycache__/x.pyc failed
+    its post-apply check because the harness had just written the file back,
+    and a whole milestone was refused (python-hl7, 2026-09-08).
+    """
+    parts = path.replace("\\", "/").split("/")
+    return "__pycache__" in parts or path.endswith((".pyc", ".pyo"))
+
+
+def write_cache_exclude(repo: Path) -> None:
+    """Keep caches out of the index without a .gitignore the agent would see."""
+    info = repo / ".git" / "info"
+    try:
+        info.mkdir(parents=True, exist_ok=True)
+        exclude = info / "exclude"
+        existing = exclude.read_text() if exclude.exists() else ""
+        if "__pycache__/" not in existing:
+            exclude.write_text(existing.rstrip("\n") + "\n__pycache__/\n*.pyc\n*.pyo\n")
+    except OSError:
+        pass
+
+
 def _safe_relpath(root: Path, rel: str) -> Path:
     """Resolve rel under root; reject traversal and symlink escapes."""
     if not rel or rel.startswith("/") or "\x00" in rel:
@@ -210,6 +234,7 @@ class GitCandidateWorkspaceManager:
                     capture_output=True,
                     text=True,
                 )
+                write_cache_exclude(dest)
                 subprocess.run(
                     ["git", "add", "-A"],
                     cwd=dest,
@@ -242,6 +267,8 @@ class GitCandidateWorkspaceManager:
         untracked: list[str] = []
         renames: list[RenameRecord] = []
         for xy, path, rename_from in entries:
+            if is_cache_path(path) or (rename_from and is_cache_path(rename_from)):
+                continue
             if xy == "??":
                 untracked.append(path)
                 continue
@@ -448,6 +475,8 @@ class GitCandidateWorkspaceManager:
                 if len(parts) < 2:
                     continue
                 code, path = parts[0], parts[1]
+                if is_cache_path(path):
+                    continue
                 if code.startswith("A"):
                     added.append(path)
                 elif code.startswith("D"):
@@ -597,6 +626,8 @@ class GitCandidateWorkspaceManager:
                         f"post-apply content mismatch for {rel}"
                     )
         for rel in change_set.deleted_files:
+            if is_cache_path(rel):
+                continue
             dst = _safe_relpath(base_path, rel)
             if dst.exists():
                 raise CandidateWorkspaceError(

@@ -85,6 +85,9 @@ class SharedSubtaskGitWorkspaceManager:
                             capture_output=True,
                             text=True,
                         )
+                        from orchestra.control.fast_loop.workspace import write_cache_exclude
+
+                        write_cache_exclude(dest)
                         if init.returncode != 0:
                             raise RuntimeError(
                                 f"failed to initialize workspace git repo: {init.stderr}"
