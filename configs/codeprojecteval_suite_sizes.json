@@ -95,6 +95,7 @@
       "unit_tests/test_async.py": 8,
       "unit_tests/test_basic.py": 130,
       "unit_tests/test_blueprints.py": 60,
+      "unit_tests/test_cli.py": 58,
       "unit_tests/test_config.py": 19,
       "unit_tests/test_converters.py": 2,
       "unit_tests/test_helpers.py": 35,
@@ -132,6 +133,107 @@
       "unit_tests/test_thread.py": 4,
       "unit_tests/test_util_functions.py": 40,
       "unit_tests/test_version.py": 5
+    },
+    "nl2_aiofiles": {
+      "unit_tests/test_os.py": 35,
+      "unit_tests/test_simple.py": 2,
+      "unit_tests/test_stdio.py": 2,
+      "unit_tests/test_tempfile.py": 25,
+      "unit_tests/threadpool/test_binary.py": 99,
+      "unit_tests/threadpool/test_concurrency.py": 1,
+      "unit_tests/threadpool/test_open.py": 3,
+      "unit_tests/threadpool/test_text.py": 44
+    },
+    "nl2_emoji": {
+      "tests/test_analyze.py": 3,
+      "tests/test_core.py": 33,
+      "tests/test_dict.py": 4,
+      "tests/test_json.py": 40,
+      "tests/test_nfkc.py": 2,
+      "tests/test_unicode_codes.py": 5,
+      "tests/test_versions.py": 4,
+      "tests/test_zwj_common.py": 4,
+      "tests/test_zwj_keep.py": 4,
+      "tests/test_zwj_remove.py": 3,
+      "unit_tests/tests/test_analyze.py": 0,
+      "unit_tests/tests/test_core.py": 0,
+      "unit_tests/tests/test_dict.py": 0,
+      "unit_tests/tests/test_json.py": 0,
+      "unit_tests/tests/test_nfkc.py": 0,
+      "unit_tests/tests/test_unicode_codes.py": 0,
+      "unit_tests/tests/test_versions.py": 0,
+      "unit_tests/tests/test_zwj_common.py": 0,
+      "unit_tests/tests/test_zwj_keep.py": 0,
+      "unit_tests/tests/test_zwj_remove.py": 0
+    },
+    "nl2_flask-restful": {
+      "unit_tests/test_accept.py": 12,
+      "unit_tests/test_api.py": 85,
+      "unit_tests/test_api_with_blueprint.py": 13,
+      "unit_tests/test_cors.py": 4,
+      "unit_tests/test_fields.py": 71,
+      "unit_tests/test_inputs.py": 34,
+      "unit_tests/test_reqparse.py": 103
+    },
+    "nl2_ftfy": {
+      "unit_tests/test_bytes.py": 7,
+      "unit_tests/test_characters.py": 7,
+      "unit_tests/test_cli.py": 6,
+      "unit_tests/test_encodings.py": 2,
+      "unit_tests/test_entities.py": 2,
+      "unit_tests/test_examples_in_json.py": 322
+    },
+    "nl2_python-dotenv": {
+      "unit_tests/test_cli.py": 37,
+      "unit_tests/test_ipython.py": 3,
+      "unit_tests/test_is_interactive.py": 10,
+      "unit_tests/test_main.py": 107,
+      "unit_tests/test_parser.py": 43,
+      "unit_tests/test_utils.py": 1,
+      "unit_tests/test_variables.py": 6,
+      "unit_tests/test_zip_imports.py": 2
+    },
+    "nl2_python-jose": {
+      "unit_tests/algorithms/test_AES.py": 6,
+      "unit_tests/algorithms/test_AES_compat.py": 9,
+      "unit_tests/algorithms/test_EC.py": 18,
+      "unit_tests/algorithms/test_EC_compat.py": 20,
+      "unit_tests/algorithms/test_HMAC.py": 3,
+      "unit_tests/algorithms/test_HMAC_compat.py": 12,
+      "unit_tests/algorithms/test_RSA.py": 21,
+      "unit_tests/algorithms/test_RSA_compat.py": 120,
+      "unit_tests/algorithms/test_base.py": 6,
+      "unit_tests/rfc/test_rfc7520.py": 3,
+      "unit_tests/test_asn1.py": 4,
+      "unit_tests/test_backends.py": 4,
+      "unit_tests/test_firebase.py": 3,
+      "unit_tests/test_jwe.py": 125,
+      "unit_tests/test_jwk.py": 10,
+      "unit_tests/test_jws.py": 43,
+      "unit_tests/test_jwt.py": 61,
+      "unit_tests/test_utils.py": 2
+    },
+    "nl2_python-pathspec": {
+      "unit_tests/test_01_util.py": 19,
+      "unit_tests/test_02_gitwildmatch.py": 50,
+      "unit_tests/test_03_pathspec.py": 33,
+      "unit_tests/test_04_gitignore.py": 17
+    },
+    "nl2_tablib": {
+      "unit_tests/test_tablib.py": 153,
+      "unit_tests/test_tablib_dbfpy_packages_fields.py": 6,
+      "unit_tests/test_tablib_dbfpy_packages_utils.py": 14
+    },
+    "nl2_tenacity": {
+      "unit_tests/test_after.py": 2,
+      "unit_tests/test_asyncio.py": 21,
+      "unit_tests/test_issue_478.py": 2,
+      "unit_tests/test_tenacity.py": 94,
+      "unit_tests/test_tornado.py": 4,
+      "unit_tests/test_utils.py": 1
+    },
+    "nl2_voluptuous": {
+      "unit_tests/test_tests.py": 148
     },
     "parsel": {
       "unit_tests/test_selector.py": 162,
@@ -236,107 +338,6 @@
       "unit_tests/scoring_test.py": 13,
       "unit_tests/time_estimates_test.py": 1,
       "unit_tests/zxcvbn_test.py": 3
-    },
-    "nl2_emoji": {
-      "tests/test_analyze.py": 3,
-      "tests/test_core.py": 33,
-      "tests/test_dict.py": 4,
-      "tests/test_json.py": 40,
-      "tests/test_nfkc.py": 2,
-      "tests/test_unicode_codes.py": 5,
-      "tests/test_versions.py": 4,
-      "tests/test_zwj_common.py": 4,
-      "tests/test_zwj_keep.py": 4,
-      "tests/test_zwj_remove.py": 3,
-      "unit_tests/tests/test_analyze.py": 0,
-      "unit_tests/tests/test_core.py": 0,
-      "unit_tests/tests/test_dict.py": 0,
-      "unit_tests/tests/test_json.py": 0,
-      "unit_tests/tests/test_nfkc.py": 0,
-      "unit_tests/tests/test_unicode_codes.py": 0,
-      "unit_tests/tests/test_versions.py": 0,
-      "unit_tests/tests/test_zwj_common.py": 0,
-      "unit_tests/tests/test_zwj_keep.py": 0,
-      "unit_tests/tests/test_zwj_remove.py": 0
-    },
-    "nl2_flask-restful": {
-      "unit_tests/test_accept.py": 12,
-      "unit_tests/test_api.py": 85,
-      "unit_tests/test_api_with_blueprint.py": 13,
-      "unit_tests/test_cors.py": 4,
-      "unit_tests/test_fields.py": 71,
-      "unit_tests/test_inputs.py": 34,
-      "unit_tests/test_reqparse.py": 103
-    },
-    "nl2_ftfy": {
-      "unit_tests/test_bytes.py": 7,
-      "unit_tests/test_characters.py": 7,
-      "unit_tests/test_cli.py": 6,
-      "unit_tests/test_encodings.py": 2,
-      "unit_tests/test_entities.py": 2,
-      "unit_tests/test_examples_in_json.py": 322
-    },
-    "nl2_python-dotenv": {
-      "unit_tests/test_cli.py": 37,
-      "unit_tests/test_ipython.py": 3,
-      "unit_tests/test_is_interactive.py": 10,
-      "unit_tests/test_main.py": 107,
-      "unit_tests/test_parser.py": 43,
-      "unit_tests/test_utils.py": 1,
-      "unit_tests/test_variables.py": 6,
-      "unit_tests/test_zip_imports.py": 2
-    },
-    "nl2_python-jose": {
-      "unit_tests/algorithms/test_AES.py": 6,
-      "unit_tests/algorithms/test_AES_compat.py": 9,
-      "unit_tests/algorithms/test_EC.py": 18,
-      "unit_tests/algorithms/test_EC_compat.py": 20,
-      "unit_tests/algorithms/test_HMAC.py": 3,
-      "unit_tests/algorithms/test_HMAC_compat.py": 12,
-      "unit_tests/algorithms/test_RSA.py": 21,
-      "unit_tests/algorithms/test_RSA_compat.py": 120,
-      "unit_tests/algorithms/test_base.py": 6,
-      "unit_tests/rfc/test_rfc7520.py": 3,
-      "unit_tests/test_asn1.py": 4,
-      "unit_tests/test_backends.py": 4,
-      "unit_tests/test_firebase.py": 3,
-      "unit_tests/test_jwe.py": 125,
-      "unit_tests/test_jwk.py": 10,
-      "unit_tests/test_jws.py": 43,
-      "unit_tests/test_jwt.py": 61,
-      "unit_tests/test_utils.py": 2
-    },
-    "nl2_python-pathspec": {
-      "unit_tests/test_01_util.py": 19,
-      "unit_tests/test_02_gitwildmatch.py": 50,
-      "unit_tests/test_03_pathspec.py": 33,
-      "unit_tests/test_04_gitignore.py": 17
-    },
-    "nl2_tenacity": {
-      "unit_tests/test_after.py": 2,
-      "unit_tests/test_asyncio.py": 21,
-      "unit_tests/test_issue_478.py": 2,
-      "unit_tests/test_tenacity.py": 94,
-      "unit_tests/test_tornado.py": 4,
-      "unit_tests/test_utils.py": 1
-    },
-    "nl2_voluptuous": {
-      "unit_tests/test_tests.py": 148
-    },
-    "nl2_aiofiles": {
-      "unit_tests/test_os.py": 35,
-      "unit_tests/test_simple.py": 2,
-      "unit_tests/test_stdio.py": 2,
-      "unit_tests/test_tempfile.py": 25,
-      "unit_tests/threadpool/test_binary.py": 99,
-      "unit_tests/threadpool/test_concurrency.py": 1,
-      "unit_tests/threadpool/test_open.py": 3,
-      "unit_tests/threadpool/test_text.py": 44
-    },
-    "nl2_tablib": {
-      "unit_tests/test_tablib.py": 153,
-      "unit_tests/test_tablib_dbfpy_packages_fields.py": 6,
-      "unit_tests/test_tablib_dbfpy_packages_utils.py": 14
     }
   }
 }
