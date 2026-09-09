@@ -181,6 +181,12 @@ def main() -> int:
     want = int((src_dir / "test_case_count.txt").read_text().strip() or 0)
     test_items = [t.strip("/") for t in json.loads((src_dir / "test_files.json").read_text())]
     tests_rel = test_items[0] if len(test_items) == 1 and "." not in Path(test_items[0]).name else str(Path(test_items[0]).parent)
+    if tests_rel in (".", ""):
+        # "." means "run pytest at the root" (emoji); the suite itself lives in
+        # tests/. Copying the whole checkout into unit_tests/ dragged the
+        # reference package and a pyproject.toml along, which reset pytest's
+        # rootdir and broke the pinned module keys.
+        tests_rel = "tests"
     url = a.url or (json.load(open(URLS)).get(task) if URLS.exists() else None)
     if not url:
         print(f"no upstream url for {task}", file=sys.stderr); return 2
