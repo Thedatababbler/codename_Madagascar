@@ -2702,3 +2702,68 @@ python-hl7 0.53 (M1 only; M2 refused), rsa -- (infra). Continuations:
 5 armed, 3 fixed-and-committed (bplustree M1 1/1, imapclient M2 6/6,
 pyjwt M2 5/5), pyjwt M1 0/14 (suite-wide collapse), csvs-to-sqlite 0/2
 (LLM-chosen gate_repairer).
+
+## EXP-20260908-01 (closed 2026-09-09 00:27) -- full CodeProjectEval pass on gpt-5.5: AdaMAS vs five direct-LLM baselines
+
+18 tasks, one model (gpt-5.5), one scoring path (scripts/eval_codeprojecteval.py
+with today's env fixes and re-pins). AdaMAS: continuation arm, v9 test_author,
+every repair-side fix of 2026-09-07/08; frozen plans for four tasks, planner
+drafts (saved under outputs/cpe_full55/plans/) for the rest. Baselines:
+/root/projects/mas-baselines/runner.py, BASELINE_MODEL=gpt-5.5, 207 calls.
+
+| task | AdaMAS | search | persist | continuation (score, ✓committed) | pfix/ptot | milestones | solo | best_of_3 | self_refine | writer_rev | debate | note |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| bplustree | 0.890 | quality/quality | 1/1 | 0.98✓ | 1/1 | CC | 0.118 | 0.082 | 0.082 | 0.890 | 0.087 | held-out imports undocumented ENDIAN (19 cases) |
+| imapclient | 0.356 | none/quality | 6 | 1.00✓ | 6/6 | CC | 0.333 | 0.318 | 0.390 | 0.337 | 0.318 |  |
+| pyjwt | 0.813 | quality/quality | 14/5 | 0.00✗/1.00✓ | 0/14/5/5 | CC | 0.639 | 0.735 | 0.735 | 0.748 | 0.711 |  |
+| simpy | 0.765 | none/none | — | — | — | CC | 0.698 | 0.732 | 0.745 | 0.732 | 0.765 |  |
+| cookiecutter | 0.29† | failure | — | — | — | F | 0.27* | 0.24* | 0.26* | 0.25* | 0.25* | 2 repository/ modules blocked; pin partly static |
+| csvs-to-sqlite | 0.720 | quality | 2 | — | — | C | 0.000 | 0.000 | 0.640 | 0.560 | 0.600 |  |
+| deprecated | 0.585 | none | — | — | — | C | 0.585 | 0.585 | 0.574 | 0.591 | 0.614 |  |
+| djangorestframework-simplejwt | 0.565 | failure/none | — | — | — | CC | 0.031 | 0.031 | 0.026 | 0.031 | 0.000 |  |
+| flask | 0.639 | failure | — | — | — | C | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | conftest imports undocumented flask.globals.app_ctx (env pytest<8 pinned) |
+| parsel | 0.272 | none | — | — | — | C | 0.084 | 0.096 | 0.096 | 0.088 | 0.096 | test_selector imports undocumented LXML_SUPPORTS_HUGE_TREE (162/250 unreachable) |
+| portalocker | 0.00* | none/quality | 0 | — | — | CC | 0.00* | 0.00* | 0.00* | 0.00* | 0.00* | conftest imports undocumented LockerType (63/63 unreachable) |
+| python-hl7 | 0.530 | quality | 3 | 1.00✓ | 3/3 | C | 0.340 | 0.470 | 0.480 | 0.340 | 0.440 |  |
+| rsa | 0.700 | none | — | — | — | C | 0.700 | 0.710 | 0.700 | 0.710 | 0.710 |  |
+| tinydb | 0.750 | failure/none | — | — | — | CC | 0.000 | 0.873 | 0.868 | 0.877 | 0.873 |  |
+| trailscraper | 0.60* | none/failure | — | — | — | CF | 0.56* | 0.65* | 0.57* | 0.41* | 0.56* | 15 modules counted statically (boto not importable in env) |
+| voluptuous | 0.547 | quality | 3 | — | — | C | 0.509 | 0.522 | 0.534 | 0.478 | 0.460 |  |
+| xmnlp | — | none | — | — | — | C | — | — | — | — | — | reference needs tensorflow + downloaded model weights: unscoreable |
+| zxcvbn | 0.65* | quality | 4 | 1.00✓ | 4/4 | C | 0.35* | 0.52* | 0.52* | 0.55* | 0.35* | pin partly static |
+
+* = raw passed/pinned where the strict eval declined to score (static pin or blocked module); † = ungated agent workspace (no milestone committed); C/F = milestone committed/failed
+
+**Aggregates.** Over the 13 rows the strict eval scores for everyone:
+AdaMAS 0.626, writer_reviewer 0.491, self_refine 0.452, debate 0.436,
+best_of_3 0.396, solo 0.311. Over the 17 rows with any number (raw
+fractions included): 0.569 / 0.447 / 0.425 / 0.402 / 0.386 / 0.307. AdaMAS
+is at or above every baseline on 12 of 17 scored rows; below on rsa
+(0.700 vs 0.710, noise), simpy (0.765 = debate), tinydb (0.750 vs ~0.87)
+and trailscraper (0.60 vs 0.65 best_of_3; its milestone 2 failed the
+gate) and one baseline on imapclient (self_refine 0.390 vs 0.356).
+
+**Repair side, whole pass.** Six continuations were armed; they fixed
+**19 of 33** named persistent failures with zero regressions and five
+committed (bplustree M1 1/1, imapclient M2 6/6, pyjwt M2 5/5, python-hl7
+3/3, zxcvbn 4/4); the one that did not (pyjwt M1, 0/14) faced a suite
+that collapsed to 0.00 on every sample. Quality searches with a
+persistent set that armed no continuation: csvs-to-sqlite (LLM diagnosis
+chose gate_repairer, 0/2) and voluptuous (3 persistent, table row
+declined). Two milestones failed the gate cleanly under the new guard
+(cookiecutter; trailscraper M2).
+
+**Ceilings shared by every method** (held-out imports a name no
+document mentions, or the environment cannot run the reference):
+bplustree ENDIAN, parsel LXML_SUPPORTS_HUGE_TREE, portalocker LockerType,
+flask flask.globals.app_ctx (AdaMAS's package happened to define it;
+no baseline did), xmnlp (tensorflow + model weights), and static pins on
+cookiecutter/trailscraper/zxcvbn. flask's env needed pytest<8 and xmnlp's
+never had its own requirements installed.
+
+**Runner bugs this pass exposed and fixed:** failure-search commit raise
+(`bebf8f26`), __pycache__ in change sets (`9ee4ad76`), no-gate-result
+candidates VALID (`60858ee4`), diagnosis model pinned in yamls
+(`4c39b0ca`), infra-failed-but-done chain marker (rerun by hand).
+Upstream outage 17:41-17:59 stopped the chain twice; a supervisor now
+relaunches after three stable probes.
