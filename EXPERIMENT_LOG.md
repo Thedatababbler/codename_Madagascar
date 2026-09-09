@@ -2786,3 +2786,29 @@ search fires) and gate strictness on dataset checks that cannot run in a
 workspace. The other four are inside the noise of a white-box-heavy or
 undocumented-wording suite. On the three no-search rows (deprecated, rsa,
 simpy) AdaMAS was a single pass and scored as one.
+
+## EXP-20260909-01 -- NL2Repo Medium core set on gpt-5.5 (paused: weekly usage limit)
+
+Nine core tasks, continuation arm, v9 test_author then v0 control; five
+direct-LLM baselines on the same nine (done 03:11, 207 calls). At 09:18
+the account's weekly limit hit (`usage_limit_reached`, plan prolite,
+resets 2026-09-15 04:35 UTC) for every main model; only
+gpt-5.3-codex-spark answers. Chain supervisor keeps probing and resumes
+when the account answers.
+
+| task | AdaMAS v9 | solo | best_of_3 | self_refine | writer_rev | debate | note |
+|---|---|---|---|---|---|---|---|
+| aiofiles | rerun pending | 0 | 0 | 0 | 0.910 | 0 | v9 run refused at contracts by the src-layout `module_file_exists` bug (`4352ecd3`); four baselines die at import (eager sys.stdin wrap) |
+| emoji | 0.353 | 0.382 | 0.382 | 0.353 | 0.402 | 0.363 | data ceiling: unicode table not derivable from the documents |
+| python-dotenv | **0.823** | 0.694 | 0.799 | 0.804 | 0.766 | 0.775 | |
+| python-pathspec | 0.756 | 0.681 | 0.622 | 0.765 | 0.714 | 0.773 | |
+| tablib | 0.526 | 0.567 | 0.549 | 0.509 | 0.578 | 0.549 | |
+| tenacity | 0.847 | 0.863 | 0.831 | 0.871 | timeout | 0.847 | |
+| ftfy | pending | 0 | 0.737 | 0 | 0 | 0 | four baselines: missing data file |
+| python-jose | pending | 0.579 | 0.404 | 0.279 | 0.425 | 0.257 | |
+| voluptuous | pending | 0.534 | 0.561 | 0.561 | 0.547 | 0 | |
+
+v0 control: not started. Bug found this pass: `module_file_exists`
+contract path ignored `src/` (every src-layout candidate failed the
+contracts stage at spec 1.0), fixed and verified on the refused
+candidate.
