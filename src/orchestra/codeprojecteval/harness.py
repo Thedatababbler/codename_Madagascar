@@ -868,8 +868,12 @@ def main() -> int:
         attempted_contracts += 1
         try:
             if ctype == "module_file_exists":
-                if not (root / str(check.get("path") or "")).exists():
-                    failed_contracts.append("missing file " + str(check.get("path")))
+                rel = str(check.get("path") or "")
+                # The path is spelled from the import name; on a src-layout
+                # repository the file lives under src/ (nl2_aiofiles: every
+                # candidate failed contracts on "missing aiofiles/__init__.py").
+                if not ((root / rel).exists() or (root / "src" / rel).exists()):
+                    failed_contracts.append("missing file " + rel)
             elif ctype == "import":
                 importlib.import_module(str(check["module"]))
             elif ctype in ("export", "callable_or_class"):
