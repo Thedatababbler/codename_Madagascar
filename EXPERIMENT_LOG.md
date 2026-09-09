@@ -2767,3 +2767,22 @@ candidates VALID (`60858ee4`), diagnosis model pinned in yamls
 (`4c39b0ca`), infra-failed-but-done chain marker (rerun by hand).
 Upstream outage 17:41-17:59 stopped the chain twice; a supervisor now
 relaunches after three stable probes.
+
+**Why AdaMAS did not lead on six CPE rows (per-test diff of the delivered
+package against the best baseline's, same held-out, same env).**
+
+| task | gap (tests) | AdaMAS-only failures | cause | class |
+|---|---|---|---|---|
+| tinydb | 0.75 vs 0.877 (-26) | 23, of which 15 are `LRUCache` lacking `__len__`/`__contains__`/`__iter__`; 4 "did not raise RuntimeError"; 3 NaN->int | the document says `LRUCache(abc.MutableMapping, Generic[K, V])`; AdaMAS built `class LRUCache(Generic[K, V])`. M1 failed its first gate, the failure-search retry passed at spec 0.87 and **froze** the defect; the M1 suite named LRUCache three times but never exercised the mapping protocol; M2's suite passed, so no search reopened M1 | **architectural**: frozen milestone + authored-suite coverage; the cross-milestone limit already recorded |
+| trailscraper | 0.60 vs 0.65 (-4) | 5 (action-list ordering); baseline-only 1 | M2 was refused by the gate's `check_tests` stage -- the dataset's checks import the withheld `unit_tests` package and the env lacks `pkg_resources`; the reference fails them too. The gate honoured unrunnable checks; the baseline shipped ungated | **architectural (gate policy vs. broken dataset checks)**, not code |
+| imapclient | 0.356 vs 0.390 self_refine (-9) | 19 vs 10 the other way; mock-signature and literal-parsing details | net 9 tests inside a suite that is half white-box; the continuation had fixed 6/6 of its own persistent set | noise / ceiling |
+| deprecated | 0.585 vs 0.614 (-5) | 5, all the wording "deprecated classmethod" vs "class method" in sphinx output | the wording appears in no document; the baseline matched the real library's | undocumented string; incidental |
+| rsa | 0.700 vs 0.710 (-1) | 1 (negative-integer encryption error) | one test | noise |
+| simpy | 0.765 = debate | 2 vs 2 (error-message regexes) | tie | noise |
+
+Two of six are structural and both are known levers: the frozen-milestone
+limit (a defect committed at M1 is never revisited unless M1's own
+search fires) and gate strictness on dataset checks that cannot run in a
+workspace. The other four are inside the noise of a white-box-heavy or
+undocumented-wording suite. On the three no-search rows (deprecated, rsa,
+simpy) AdaMAS was a single pass and scored as one.
