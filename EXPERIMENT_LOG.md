@@ -2812,3 +2812,29 @@ v0 control: not started. Bug found this pass: `module_file_exists`
 contract path ignored `src/` (every src-layout candidate failed the
 contracts stage at spec 1.0), fixed and verified on the refused
 candidate.
+
+**Why AdaMAS did not lead on the NL2Repo rows scored so far (per-test
+diff against the best baseline, same held-out, same env; run records).**
+
+| task | AdaMAS vs best | A-only / B-only / both fail | what the run did | cause | class |
+|---|---|---|---|---|---|
+| emoji | 0.353 vs 0.402 wr (-5) | 6 / 1 / **60** | M2 quality search, 1 persistent, continuation 1/1 -> authored 1.00, committed | 60 shared failures are the unicode table (`KeyError: ':lion:'`); the six A-only are skin-tone ZWJ sequences and alias edge cases | data ceiling; noise on top |
+| python-pathspec | 0.756 vs 0.773 debate (-2) | 13 / 11 / 16 | M1 quality search, 4 persistent, LLM chose `pb_q_failures_to_agent`: 1/4, committed at 0.70 | A-only failures assert the reference's exact regex text (`(?P<ps_d>/)` named group) -- representation the documents never state | white-box; noise |
+| tablib | 0.526 vs 0.578 wr (-9) | 26 / 17 / 56 | M2 first pass failed the gate -> **failure search**; `cand_feedback` recovered the gate and was **committed at authored 0.62**; no further search | the failure-search path ends at the first gate pass: a milestone that recovers the gate with 38% of its own suite failing gets no quality/persistence phase and no continuation. A-only failures (HeadersNeeded, getter kwargs, RST databook, Dataset equality) are exactly the unrepaired 38% | **architectural** (search-mode design) |
+| tenacity | 0.847 vs 0.871 sr (-3) | 7 / 4 / 12 | M1: every sample **0.00** on the authored suite -- the suite imports `tomllib` at module top and the task env is Python 3.10; persistent set = the file itself; `pb_q_failures_to_agent` 0/1; first pass committed at 0.00. M2 failure search -> 1.00 committed | the authored suite collected nothing on the task's own interpreter and custody did not catch it (second occurrence: pyjwt M1 on CPE); the search ran blind. The -3 on held-out is noise (log-format strings, stats dict keys) | **architectural** (custody accepts an uncollectable suite) + noise |
+| python-dotenv | **0.823** vs 0.804 (+4) | 9 / 13 / 28 | no search; both milestones passed first try | lead as a single pass | -- |
+| aiofiles | rerun pending | -- | every candidate refused at contracts: `module_file_exists` ignored `src/` | fixed `4352ecd3` | bug, fixed |
+
+Pattern across CPE and NL2Repo so far: the rows AdaMAS loses are never
+the repair machinery failing on what it was aimed at (continuations are
+27/38 fixed, 0 regressions across both sets); they are (1) milestones the
+search never reaches -- a frozen M1 defect (tinydb), a gate-recovery
+committed without a quality phase (tablib), a suite that collapsed before
+the search started (tenacity, pyjwt) -- and (2) held-out content no
+document states (undocumented names, exact representations, data
+tables), which caps every method alike. Two design fixes follow from (1):
+continue into the quality search after a failure search recovers the gate
+below the quality threshold; and refuse at custody any suite that
+collects zero cases on the task interpreter. A third, smaller signal: the
+LLM-chosen `pb_q_failures_to_agent` row is 1/7 across both sets where the
+default continuation is 27/38.
