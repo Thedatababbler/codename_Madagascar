@@ -2838,3 +2838,35 @@ below the quality threshold; and refuse at custody any suite that
 collects zero cases on the task interpreter. A third, smaller signal: the
 LLM-chosen `pb_q_failures_to_agent` row is 1/7 across both sets where the
 default continuation is 27/38.
+
+## EXP-20260909-02 -- best-of-N at the blamed node (bestn branch, v1): first trial
+
+`fdbb435f` on branch `bestn`; arm `codeprojecteval_official_bestn.yaml`
+(continuation arm + `node_resample_n: 3`), gpt-5.5. Design in
+`docs/node_resample_design.md`.
+
+**bplustree `cpe-20260909T203648Z` (20:36-21:39).** M1 passed first try.
+M2 quality search: incumbent 0.333 on a 21-case v9 suite, **14
+persistent / 0 flaky** (bulk insert-reopen per serializer ×9, default
+order past order² ×3, datetime bulk, delete-many). Blame v1: every
+traceback lands in `bplustree/node.py`, last written by the M2
+implementer -> blamed `agent_2_author_implementer` (first editing node,
+14/14). Prefix = the test author's cumulative patch (spec_tests removed);
+custody's result injected into `suite_custody`. Three fresh implementer
+samples on that prefix: all three passed the gate, all three scored
+0.333 with the **identical** 14 failures -- agreement 1.00, chosen sample
+0, 0/14 fixed, tied the incumbent, not committed. Explainability record
+at `tasks/rb_bplustree/fast_loop/node_resample/<milestone>/cand_node_resample.json`
+and `node_resample_records.jsonl`.
+
+Reading: the mechanism did what it was built for, and the answer it
+returned is itself the finding -- perfect agreement with zero gain means
+these 14 failures are not sampling variance at this node; three
+independent implementers converge on the same page-fit/split behaviour
+because `node.py` is milestone 1's design (the page-size/order relation
+the reference itself cannot satisfy at its documented default). The lever
+is the target (contracts / M1), not this node. The record makes that
+legible without a held-out. Cost: three implementer sessions + three
+gates, against three full subgraphs for an anchor resample.
+Follow-up for v2: stop after two identical samples (agreement 1.0 with no
+gain) and spend the remaining budget elsewhere.
