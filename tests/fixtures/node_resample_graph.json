@@ -1,0 +1,476 @@
+{
+ "graph_id": "rb_dynamic_formats_vendor_and_integration",
+ "version": "1.0",
+ "nodes": [
+  {
+   "node_id": "agent_1_test_author_test_author",
+   "node_kind": "agent",
+   "input_slots": {
+    "problem": "ProblemArtifact"
+   },
+   "output_slots": {
+    "repository_change": "RepositoryChangeArtifact"
+   },
+   "timeout_seconds": 1500.0,
+   "contract_id": "rbdyn_formats_vendor_and_integration_test_author_test_author",
+   "backend": {
+    "type": "codex_sdk",
+    "thread_policy": "fresh",
+    "sandbox": "workspace_write",
+    "approval_policy": "never",
+    "require_git_diff": true,
+    "max_steps": 1
+   },
+   "tools": [],
+   "model": {
+    "provider": "openai_compatible",
+    "name": "gpt-5.5",
+    "temperature": 0.0,
+    "max_tokens": 8192
+   },
+   "output_contract": {
+    "parser_id": "repository_change",
+    "output_schema": "RepositoryChangeArtifact",
+    "answer_format": null,
+    "type": null
+   },
+   "prompt_feedback": "",
+   "prompt_prelude": "",
+   "session_policy": null
+  },
+  {
+   "node_id": "agent_2_author_implementer",
+   "node_kind": "agent",
+   "input_slots": {
+    "problem": "ProblemArtifact",
+    "suite_custody": "RepositoryHarnessResultArtifact"
+   },
+   "output_slots": {
+    "repository_change": "RepositoryChangeArtifact"
+   },
+   "timeout_seconds": 1200.0,
+   "contract_id": "rbdyn_formats_vendor_and_integration_author_implementer",
+   "backend": {
+    "type": "codex_sdk",
+    "thread_policy": "fresh",
+    "sandbox": "workspace_write",
+    "approval_policy": "never",
+    "require_git_diff": true,
+    "max_steps": 1
+   },
+   "tools": [],
+   "model": {
+    "provider": "openai_compatible",
+    "name": "gpt-5.5",
+    "temperature": 0.0,
+    "max_tokens": 8192
+   },
+   "output_contract": {
+    "parser_id": "repository_change",
+    "output_schema": "RepositoryChangeArtifact",
+    "answer_format": null,
+    "type": null
+   },
+   "prompt_feedback": "",
+   "prompt_prelude": "",
+   "session_policy": "fresh"
+  },
+  {
+   "node_id": "agent_3_spec_review_spec_auditor",
+   "node_kind": "agent",
+   "input_slots": {
+    "problem": "ProblemArtifact",
+    "upstream_change": "RepositoryChangeArtifact"
+   },
+   "output_slots": {
+    "repository_change": "RepositoryChangeArtifact"
+   },
+   "timeout_seconds": 900.0,
+   "contract_id": "rbdyn_formats_vendor_and_integration_spec_review_spec_auditor",
+   "backend": {
+    "type": "codex_sdk",
+    "thread_policy": "fresh",
+    "sandbox": "workspace_write",
+    "approval_policy": "never",
+    "require_git_diff": false,
+    "max_steps": 1
+   },
+   "tools": [],
+   "model": {
+    "provider": "openai_compatible",
+    "name": "gpt-5.5",
+    "temperature": 0.0,
+    "max_tokens": 6144
+   },
+   "output_contract": {
+    "parser_id": "repository_change",
+    "output_schema": "RepositoryChangeArtifact",
+    "answer_format": null,
+    "type": null
+   },
+   "prompt_feedback": "",
+   "prompt_prelude": "",
+   "session_policy": null
+  },
+  {
+   "node_id": "agent_4_contract_review_contract_critic",
+   "node_kind": "agent",
+   "input_slots": {
+    "problem": "ProblemArtifact",
+    "upstream_change": "RepositoryChangeArtifact"
+   },
+   "output_slots": {
+    "repository_change": "RepositoryChangeArtifact"
+   },
+   "timeout_seconds": 900.0,
+   "contract_id": "rbdyn_formats_vendor_and_integration_contract_review_contract_critic",
+   "backend": {
+    "type": "codex_sdk",
+    "thread_policy": "fresh",
+    "sandbox": "workspace_write",
+    "approval_policy": "never",
+    "require_git_diff": false,
+    "max_steps": 1
+   },
+   "tools": [],
+   "model": {
+    "provider": "openai_compatible",
+    "name": "gpt-5.5",
+    "temperature": 0.0,
+    "max_tokens": 6144
+   },
+   "output_contract": {
+    "parser_id": "repository_change",
+    "output_schema": "RepositoryChangeArtifact",
+    "answer_format": null,
+    "type": null
+   },
+   "prompt_feedback": "",
+   "prompt_prelude": "",
+   "session_policy": null
+  },
+  {
+   "node_id": "agent_5_fixer_gate_repairer",
+   "node_kind": "agent",
+   "input_slots": {
+    "problem": "ProblemArtifact",
+    "upstream_change": "RepositoryChangeArtifact",
+    "upstream_change_2": "RepositoryChangeArtifact"
+   },
+   "output_slots": {
+    "repository_change": "RepositoryChangeArtifact"
+   },
+   "timeout_seconds": 1500.0,
+   "contract_id": "rbdyn_formats_vendor_and_integration_fixer_gate_repairer",
+   "backend": {
+    "type": "codex_sdk",
+    "thread_policy": "fresh",
+    "sandbox": "workspace_write",
+    "approval_policy": "never",
+    "require_git_diff": true,
+    "max_steps": 1
+   },
+   "tools": [],
+   "model": {
+    "provider": "openai_compatible",
+    "name": "gpt-5.5",
+    "temperature": 0.0,
+    "max_tokens": 8192
+   },
+   "output_contract": {
+    "parser_id": "repository_change",
+    "output_schema": "RepositoryChangeArtifact",
+    "answer_format": null,
+    "type": null
+   },
+   "prompt_feedback": "",
+   "prompt_prelude": "",
+   "session_policy": null
+  },
+  {
+   "node_id": "authored_suite_custody",
+   "node_kind": "harness",
+   "input_slots": {
+    "repository_change": "RepositoryChangeArtifact"
+   },
+   "output_slots": {
+    "result": "RepositoryHarnessResultArtifact"
+   },
+   "timeout_seconds": 900.0,
+   "harness_id": "repository_test_harness",
+   "visibility": "public",
+   "command": [
+    "/root/codex-benchmarks/nl2repo/envs/nl2_tablib/bin/python",
+    "/root/projects/AdaMAS/outputs/cpe_official_continuation/cpe-20260909T051434Z/nl2_tablib/harness/adamas_cpe_check.py",
+    "--manifest",
+    "/root/projects/AdaMAS/outputs/cpe_official_continuation/cpe-20260909T051434Z/nl2_tablib/harness/adamas_cpe_harness.json",
+    "--level",
+    "integration",
+    "--contracts",
+    "/root/projects/AdaMAS/outputs/cpe_official_continuation/cpe-20260909T051434Z/nl2_tablib/harness/formats_vendor_and_integration.contracts.json",
+    "--spec-tests",
+    "/root/projects/AdaMAS/outputs/cpe_official_continuation/cpe-20260909T051434Z/nl2_tablib/harness/formats_vendor_and_integration.spec_tests",
+    "--take-custody"
+   ]
+  },
+  {
+   "node_id": "repository_tests",
+   "node_kind": "harness",
+   "input_slots": {
+    "repository_change": "RepositoryChangeArtifact"
+   },
+   "output_slots": {
+    "result": "RepositoryHarnessResultArtifact"
+   },
+   "timeout_seconds": 900.0,
+   "harness_id": "repository_test_harness",
+   "visibility": "public",
+   "command": [
+    "/root/codex-benchmarks/nl2repo/envs/nl2_tablib/bin/python",
+    "/root/projects/AdaMAS/outputs/cpe_official_continuation/cpe-20260909T051434Z/nl2_tablib/harness/adamas_cpe_check.py",
+    "--manifest",
+    "/root/projects/AdaMAS/outputs/cpe_official_continuation/cpe-20260909T051434Z/nl2_tablib/harness/adamas_cpe_harness.json",
+    "--level",
+    "integration",
+    "--contracts",
+    "/root/projects/AdaMAS/outputs/cpe_official_continuation/cpe-20260909T051434Z/nl2_tablib/harness/formats_vendor_and_integration.contracts.json",
+    "--spec-tests",
+    "/root/projects/AdaMAS/outputs/cpe_official_continuation/cpe-20260909T051434Z/nl2_tablib/harness/formats_vendor_and_integration.spec_tests"
+   ]
+  },
+  {
+   "node_id": "freeze_change",
+   "node_kind": "transform",
+   "input_slots": {
+    "repository_change": "RepositoryChangeArtifact",
+    "gate": "RepositoryHarnessResultArtifact"
+   },
+   "output_slots": {
+    "final_change": "RepositoryChangeArtifact"
+   },
+   "timeout_seconds": null,
+   "transform_id": "freeze_repository_change"
+  }
+ ],
+ "edges": [
+  {
+   "edge_id": "custody_to_agent_2_author_implementer",
+   "source_node": "authored_suite_custody",
+   "source_output": "result",
+   "destination_node": "agent_2_author_implementer",
+   "destination_input": "suite_custody",
+   "payload_policy": "full",
+   "condition": null
+  },
+  {
+   "edge_id": "link_agent_2_author_implementer_to_agent_3_spec_review_spec_auditor",
+   "source_node": "agent_2_author_implementer",
+   "source_output": "repository_change",
+   "destination_node": "agent_3_spec_review_spec_auditor",
+   "destination_input": "upstream_change",
+   "payload_policy": "full",
+   "condition": null
+  },
+  {
+   "edge_id": "link_agent_2_author_implementer_to_agent_4_contract_review_contract_critic",
+   "source_node": "agent_2_author_implementer",
+   "source_output": "repository_change",
+   "destination_node": "agent_4_contract_review_contract_critic",
+   "destination_input": "upstream_change",
+   "payload_policy": "full",
+   "condition": null
+  },
+  {
+   "edge_id": "link_agent_3_spec_review_spec_auditor_to_agent_5_fixer_gate_repairer",
+   "source_node": "agent_3_spec_review_spec_auditor",
+   "source_output": "repository_change",
+   "destination_node": "agent_5_fixer_gate_repairer",
+   "destination_input": "upstream_change",
+   "payload_policy": "full",
+   "condition": null
+  },
+  {
+   "edge_id": "link_agent_4_contract_review_contract_critic_to_agent_5_fixer_gate_repairer",
+   "source_node": "agent_4_contract_review_contract_critic",
+   "source_output": "repository_change",
+   "destination_node": "agent_5_fixer_gate_repairer",
+   "destination_input": "upstream_change_2",
+   "payload_policy": "full",
+   "condition": null
+  },
+  {
+   "edge_id": "author_to_custody",
+   "source_node": "agent_1_test_author_test_author",
+   "source_output": "repository_change",
+   "destination_node": "authored_suite_custody",
+   "destination_input": "repository_change",
+   "payload_policy": "full",
+   "condition": null
+  },
+  {
+   "edge_id": "agent_to_tests",
+   "source_node": "agent_5_fixer_gate_repairer",
+   "source_output": "repository_change",
+   "destination_node": "repository_tests",
+   "destination_input": "repository_change",
+   "payload_policy": "full",
+   "condition": null
+  },
+  {
+   "edge_id": "agent_to_freeze",
+   "source_node": "agent_5_fixer_gate_repairer",
+   "source_output": "repository_change",
+   "destination_node": "freeze_change",
+   "destination_input": "repository_change",
+   "payload_policy": "full",
+   "condition": null
+  },
+  {
+   "edge_id": "tests_pass_to_freeze",
+   "source_node": "repository_tests",
+   "source_output": "result",
+   "destination_node": "freeze_change",
+   "destination_input": "gate",
+   "payload_policy": "full",
+   "condition": {
+    "source_field": "passed",
+    "operator": "is_true",
+    "value": null
+   }
+  }
+ ],
+ "initial_artifact_slots": {
+  "problem": "ProblemArtifact"
+ },
+ "final_output_slot": "final_change",
+ "metadata": {
+  "gate_level": "integration",
+  "role": "integration",
+  "benchmark": "codeprojecteval",
+  "topology": "template:parallel_audit",
+  "template_id": "parallel_audit",
+  "public_harness_level": "integration",
+  "agent_backend": "codex_sdk",
+  "milestone_id": "formats_vendor_and_integration",
+  "risk_rationale": "This milestone depends on the frozen core_contracts_and_registry API. The remaining format modules are not independent because they all import Dataset/Databook semantics and register through the same registry; DBF support is also consumed by tablib.formats._dbf. The risk being gated has already been frozen, so this milestone can safely build the dependent implementations together.",
+  "agent_roster": [
+   {
+    "contract_id": "rbdyn_formats_vendor_and_integration_test_author_test_author",
+    "node_id": "test_author_test_author",
+    "role": "test_author",
+    "slot": "test_author",
+    "role_id": "test_author_test_author",
+    "title": "Specification test author",
+    "contract_path": "/root/projects/AdaMAS/outputs/cpe_official_continuation/cpe-20260909T051434Z/nl2_tablib/generated/contracts/rbdyn_formats_vendor_and_integration_test_author_test_author.yaml",
+    "prompt_sha256": "d441e779809f549ca9a05c57f63004c9d688b0837e095a5b9f2c29fb00646391",
+    "prompt_chars": 15353,
+    "max_tokens": 8192,
+    "max_steps": 16,
+    "timeout_seconds": 1500.0,
+    "focus_paths": [
+     "src/tablib/formats",
+     "src/tablib/_vendor/dbfpy",
+     "src/tablib/__init__.py",
+     "pyproject.toml"
+    ]
+   },
+   {
+    "contract_id": "rbdyn_formats_vendor_and_integration_author_implementer",
+    "node_id": "author_implementer",
+    "role": "implementer",
+    "slot": "author",
+    "role_id": "author_implementer",
+    "title": "Implementer",
+    "contract_path": "/root/projects/AdaMAS/outputs/cpe_official_continuation/cpe-20260909T051434Z/nl2_tablib/generated/contracts/rbdyn_formats_vendor_and_integration_author_implementer.yaml",
+    "prompt_sha256": "1abacb02b81a78c75ba2e973e4604d5b3af0b3a02d993e21b3a9876f91ec0d51",
+    "prompt_chars": 6449,
+    "max_tokens": 8192,
+    "max_steps": 12,
+    "timeout_seconds": 1200.0,
+    "focus_paths": [
+     "src/tablib/formats",
+     "src/tablib/core.py",
+     "src/tablib/__init__.py",
+     "pyproject.toml",
+     "setup.py"
+    ]
+   },
+   {
+    "contract_id": "rbdyn_formats_vendor_and_integration_spec_review_spec_auditor",
+    "node_id": "spec_review_spec_auditor",
+    "role": "spec_auditor",
+    "slot": "spec_review",
+    "role_id": "spec_review_spec_auditor",
+    "title": "Specification auditor",
+    "contract_path": "/root/projects/AdaMAS/outputs/cpe_official_continuation/cpe-20260909T051434Z/nl2_tablib/generated/contracts/rbdyn_formats_vendor_and_integration_spec_review_spec_auditor.yaml",
+    "prompt_sha256": "29c317cad95ee8e0ef1ea7c009c653140778cb0d36a102f287536e2285861c98",
+    "prompt_chars": 6374,
+    "max_tokens": 6144,
+    "max_steps": 8,
+    "timeout_seconds": 900.0,
+    "focus_paths": [
+     "src/tablib/formats",
+     "src/tablib/_vendor/dbfpy",
+     "src/tablib/__init__.py"
+    ]
+   },
+   {
+    "contract_id": "rbdyn_formats_vendor_and_integration_contract_review_contract_critic",
+    "node_id": "contract_review_contract_critic",
+    "role": "contract_critic",
+    "slot": "contract_review",
+    "role_id": "contract_review_contract_critic",
+    "title": "Contract critic",
+    "contract_path": "/root/projects/AdaMAS/outputs/cpe_official_continuation/cpe-20260909T051434Z/nl2_tablib/generated/contracts/rbdyn_formats_vendor_and_integration_contract_review_contract_critic.yaml",
+    "prompt_sha256": "9112503e494c60a4149d75c6dba6bf4af514607f9a2c43b514975abb1ae5ccfc",
+    "prompt_chars": 6461,
+    "max_tokens": 6144,
+    "max_steps": 8,
+    "timeout_seconds": 900.0,
+    "focus_paths": [
+     "src/tablib/__init__.py",
+     "src/tablib/core.py",
+     "src/tablib/exceptions.py",
+     "src/tablib/formats",
+     "src/tablib/_vendor/dbfpy"
+    ]
+   },
+   {
+    "contract_id": "rbdyn_formats_vendor_and_integration_fixer_gate_repairer",
+    "node_id": "fixer_gate_repairer",
+    "role": "gate_repairer",
+    "slot": "fixer",
+    "role_id": "fixer_gate_repairer",
+    "title": "Gate repairer",
+    "contract_path": "/root/projects/AdaMAS/outputs/cpe_official_continuation/cpe-20260909T051434Z/nl2_tablib/generated/contracts/rbdyn_formats_vendor_and_integration_fixer_gate_repairer.yaml",
+    "prompt_sha256": "1442cd4c6053412b45725461172ea36b87b9ee59dc35c81d943393ad56a01d36",
+    "prompt_chars": 6366,
+    "max_tokens": 8192,
+    "max_steps": 14,
+    "timeout_seconds": 1500.0,
+    "focus_paths": [
+     "pyproject.toml",
+     "setup.py",
+     "src/tablib"
+    ]
+   }
+  ],
+  "milestone_draft_path": "/root/projects/AdaMAS/outputs/cpe_official_continuation/cpe-20260909T051434Z/nl2_tablib/generated/graphs/formats_vendor_and_integration.draft.json",
+  "generated_root": "/root/projects/AdaMAS/outputs/cpe_official_continuation/cpe-20260909T051434Z/nl2_tablib/generated",
+  "prompt_profile": "codeprojecteval",
+  "parent_graph_hash": "e46d0ac95de59b5d0b3c1ceabceb6cf121841e328d4f4b42763ec5d270b1b429",
+  "edit_lineage": [
+   {
+    "type": "prompt_feedback",
+    "node_id": "agent_2_author_implementer",
+    "feedback": "FAIL milestone contracts:\n  - missing tablib.formats._jira.JIRAFormat"
+   },
+   {
+    "type": "session_policy",
+    "node_id": "agent_2_author_implementer",
+    "policy": "fresh",
+    "parent_session_ref": null
+   }
+  ]
+ }
+}

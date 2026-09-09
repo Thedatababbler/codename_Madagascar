@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import sys
+import shutil
 
 import logging
 import time
@@ -36,6 +38,7 @@ from orchestra.control.fast_loop.playbook_generator import PlaybookCandidateGene
 from orchestra.control.fast_loop.quality_trigger import quality_search_diagnosis
 from orchestra.roles.pool import default_role_pool
 from orchestra.control.fast_loop.repair_evidence import build_repair_evidence
+from orchestra.control.fast_loop import node_resample as nr
 from orchestra.control.fast_loop.persistence import (
     apply_role_floor,
     default_role,
@@ -78,7 +81,7 @@ from orchestra.harness.progress import (
     behaviour_total,
     best_harness_progress,
 )
-from orchestra.ir.artifacts import ArtifactBundle
+from orchestra.ir.artifacts import ArtifactBundle, ArtifactSourceRef
 from orchestra.ir.graph import OrchestraGraph, load_graph
 from orchestra.ir.nodes import NodeKind
 from orchestra.runtime.backend import RunContext
@@ -127,6 +130,7 @@ class FastLoopController:
         anchor_search: bool = False,
         persistence_search: bool = False,
         persistence_probe_samples: int = 2,
+        node_resample_n: int = 0,
         diagnosis_config: DiagnosisConfig | None = None,
         clock=None,
         persist_checkpoints: bool = True,
@@ -152,6 +156,8 @@ class FastLoopController:
             )
         self.persistence_search = bool(persistence_search)
         self.persistence_probe_samples = max(1, int(persistence_probe_samples))
+        # best-of-N at the blamed node from a frozen prefix (docs/node_resample_design.md); 0 = off
+        self.node_resample_n = max(0, int(node_resample_n))
         self.probe_generator = None
         if persistence_search:
             # Two phases on one budget. Phase one resamples the anchor design
@@ -351,6 +357,7 @@ class FastLoopController:
         initial_artifacts: Any,
         base_ws: Any,
         incumbent_artifact: str | None = None,
+        graph_result: Any = None,
     ) -> None:
         """Intersect the probe samples, diagnose the persistent set, spend the rest.
 
@@ -409,7 +416,15 @@ class FastLoopController:
             history=self._playbook_history(fl_state),
         )
         picked = [c for c in generated if c.playbook_id][:remaining]
-        if not picked:
+        resample_record = None
+        if self.node_resample_n > 0 and graph_result is not None and summary.persistent:
+            resample_record = await self._arm_node_resample(
+                state=state, fl_state=fl_state, base_graph=base_graph, incumbent=incumbent,
+                probes=probes, summary=summary, graph_result=graph_result, context=context, base_ws=base_ws,
+            )
+            if resample_record is not None:
+                picked = picked[: max(0, remaining - 1)]
+        if not picked and resample_record is None:
             fl_state.notes.append("persistence: table produced no candidate; phase two declined")
             state.state_version += 1
             await self._save_checkpoint(state)
@@ -428,6 +443,8 @@ class FastLoopController:
                 }
             )
             fl_state.candidates.append(record)
+        if resample_record is not None:
+            fl_state.candidates.append(resample_record)
         base = self._best_base(incumbent, probes)
         if base is not incumbent and base.patch:
             for record in fl_state.candidates:
@@ -873,6 +890,7 @@ class FastLoopController:
                 initial_artifacts=initial_artifacts,
                 base_ws=base_ws,
                 incumbent_artifact=self._final_change_artifact(graph_result),
+                graph_result=graph_result,
             )
 
         winner = self.selector.select(fl_state.candidates, self.budget)
@@ -1130,6 +1148,12 @@ class FastLoopController:
         base_ws: WorkspaceRef | None,
     ) -> None:
         subtask_id = fl_state.subtask_id
+        if record.metadata.get("node_resample") and base_ws is not None:
+            await self._evaluate_node_resample(
+                state=state, fl_state=fl_state, record=record, candidate_graph=candidate_graph,
+                context=context, initial_artifacts=initial_artifacts, base_ws=base_ws,
+            )
+            return
         record.status = CandidateStatus.RUNNING
         started = time.perf_counter()
         cand_ws: WorkspaceRef | None = None
@@ -1301,7 +1325,208 @@ class FastLoopController:
             summary_path = Path(cand_ws.path).parent / "candidate_result.json"
             summary_path.write_text(record.model_dump_json(indent=2), encoding="utf-8")
 
+    async def _arm_node_resample(
+        self, *, state, fl_state, base_graph, incumbent, probes, summary, graph_result, context, base_ws
+    ) -> CandidateRecord | None:
+        """Blame one editing node (v1: file ownership, earliest owner) and arm a
+        best-of-N record that reruns the graph from that node on a frozen prefix."""
+        outputs = getattr(getattr(graph_result, "state", None), "node_outputs", None) or {}
+        changes: dict[str, tuple[str, str]] = {}
+        for node_id, outs in outputs.items():
+            art_id = (outs or {}).get("repository_change")
+            if not art_id:
+                continue
+            try:
+                env = await self.artifact_store.get(str(art_id))
+            except Exception:  # noqa: BLE001
+                continue
+            patch = (getattr(env, "payload", None) or {}).get("patch") or ""
+            changes[node_id] = (str(art_id), patch)
+        steps = nr.writer_steps(base_graph, changes)
+        code_steps = [st for st in steps if not st.is_author]
+        if not code_steps:
+            fl_state.notes.append("node_resample: no editing node produced a change; declined")
+            return None
+        frames: dict[str, str] = {}
+        try:
+            scratch = await self.workspace_manager.fork_candidate_workspace(
+                base=base_ws, run_dir=str(context.run_dir), task_id=state.task_id,
+                subtask_id=fl_state.subtask_id, candidate_id="node_resample_blame",
+            )
+            await self.workspace_manager.apply_patch(scratch, code_steps[-1].patch)
+            python = self._task_python(base_graph)
+            frames = await asyncio.to_thread(
+                nr.traceback_frames, Path(scratch.path), list(summary.persistent), python
+            )
+        except Exception as exc:  # noqa: BLE001
+            fl_state.notes.append(f"node_resample: traceback frames unavailable ({exc}); ownership by last writer")
+        zero = (incumbent.behaviour_score == 0) and all((p.behaviour_score or 0) == 0 for p in probes)
+        blame = nr.blame_v1(list(summary.persistent), frames, steps, suite_collected_zero=zero)
+        fl_state.notes.append(f"node_resample: blame={blame.node_id} position={blame.position}: {blame.reason}")
+        if blame.position not in ("first", "last") or not blame.node_id:
+            fl_state.notes.append("node_resample: declined (v1 handles first/last editing node only)")
+            return None
+        try:
+            suffix, injected, dropped = nr.suffix_graph(base_graph, blame.node_id, outputs)
+        except ValueError as exc:
+            fl_state.notes.append(f"node_resample: declined ({exc})")
+            return None
+        idx = [st.node_id for st in code_steps].index(blame.node_id)
+        prefix_step = code_steps[idx - 1] if idx > 0 else next((st for st in steps if st.is_author), None)
+        cand = LocalCandidate(
+            candidate_id="cand_node_resample", parent_graph_hash=base_graph.content_hash, edits=[],
+            graph=suffix, session_policy=incumbent.session_policy,
+            generation_reason=f"best-of-{self.node_resample_n} at {blame.node_id}", playbook_id="pb_q_node_resample",
+        )
+        record = self._record_from_local(cand, attempt_id=fl_state.base_attempt_id + 1)
+        record.metadata.update({
+            "persistence_phase": 2, "persistent_failures": list(summary.persistent),
+            "node_resample": {
+                "node": blame.node_id, "position": blame.position, "n": self.node_resample_n,
+                "reason": blame.reason, "owners": blame.owners, "frames": frames,
+                "prefix_artifact": prefix_step.artifact_id if prefix_step else None,
+                "injected": injected, "dropped": dropped,
+                "steps": [{"node": st.node_id, "files": sorted(st.files)[:40], "author": st.is_author} for st in steps],
+            },
+        })
+        return record
+
+    def _task_python(self, graph: OrchestraGraph) -> str:
+        for node in graph.nodes:
+            cmd = getattr(node, "command", None)
+            if cmd and isinstance(cmd, (list, tuple)) and str(cmd[0]).endswith("python"):
+                return str(cmd[0])
+        return sys.executable
+
+    async def _evaluate_node_resample(
+        self, *, state, fl_state, record, candidate_graph, context, initial_artifacts, base_ws
+    ) -> None:
+        """Run the suffix graph N times on the frozen prefix, pick by consensus."""
+        from datetime import UTC, datetime
+        from orchestra.control.backend_usage import append_usage_records, collect_usage_from_graph_result
+
+        meta = record.metadata["node_resample"]
+        subtask_id = fl_state.subtask_id
+        record.status = CandidateStatus.RUNNING
+        started = time.perf_counter()
+        bundle = initial_artifacts.model_copy(deep=True)
+        for slot, art_id in (meta.get("injected") or {}).items():
+            env = await self.artifact_store.get(str(art_id))
+            bundle.slots[slot] = env
+            bundle.slot_sources[slot] = ArtifactSourceRef(source="root", producer_subtask_id=subtask_id, artifact_id=str(art_id))
+        prefix_patch = None
+        if meta.get("prefix_artifact"):
+            env = await self.artifact_store.get(str(meta["prefix_artifact"]))
+            prefix_patch = (getattr(env, "payload", None) or {}).get("patch")
+        agent_executor = getattr(self.runtime.executors, "agent", None)
+        register_new_contracts(compiler=self.compiler, graph=candidate_graph, contracts_dir=self.contracts_dir,
+                               executor_contracts=getattr(agent_executor, "contracts", None))
+        compiled = self.compiler.compile(candidate_graph)
+        samples: list[dict] = []
+        cost = CostRecord()
+        sessions = []
+        for i in range(int(meta.get("n") or 1)):
+            sid = f"{record.candidate_id}_s{i}"
+            ws = await self.workspace_manager.fork_candidate_workspace(
+                base=base_ws, run_dir=str(context.run_dir), task_id=state.task_id, subtask_id=subtask_id, candidate_id=sid)
+            if prefix_patch:
+                await self.workspace_manager.apply_patch(ws, prefix_patch)
+            spec_dir = Path(ws.path) / nr.SPEC_DIR
+            if spec_dir.is_dir():
+                shutil.rmtree(spec_dir, ignore_errors=True)
+            run_context = RunContext(
+                run_id=f"{context.run_id}:{sid}", task_id=candidate_task_id(context.task_id, subtask_id, sid),
+                run_dir=context.run_dir, limits=context.limits, semaphores=context.semaphores,
+                contract_hash=context.contract_hash, allow_config_drift=False, subtask_id=subtask_id, workspace_ref=ws.path)
+            t0 = time.perf_counter()
+            try:
+                result = await self.runtime.execute(graph=compiled, initial_artifacts=bundle, context=run_context)
+            except Exception as exc:  # noqa: BLE001
+                samples.append({"index": i, "ws": ws, "error": f"{type(exc).__name__}: {exc}", "gate": False,
+                                "harness": None, "behaviour": None, "failed": set(), "stages": [], "furthest": ""})
+                continue
+            sessions.extend(_collect_sessions(result=result, attempt_id=record.attempt_id, candidate_id=sid))
+            finished_at = datetime.now(UTC)
+            started_at = datetime.fromtimestamp(finished_at.timestamp() - (time.perf_counter() - t0), tz=UTC)
+            state.backend_usage_records = append_usage_records(
+                list(state.backend_usage_records or []),
+                collect_usage_from_graph_result(task_id=state.task_id, subtask_id=subtask_id, attempt_id=record.attempt_id,
+                                                result=result, candidate_id=sid, started_at=started_at, finished_at=finished_at,
+                                                status="node_resample_sample", accounting_source="fast_loop_candidate"))
+            c = _cost_from_result(result)
+            cost = CostRecord(prompt_tokens=cost.prompt_tokens + c.prompt_tokens, completion_tokens=cost.completion_tokens + c.completion_tokens,
+                              estimated_cost_usd=cost.estimated_cost_usd + c.estimated_cost_usd, backend_calls=cost.backend_calls + c.backend_calls)
+            status, reason, message = await classify_subtask_outcome(result=result, artifact_store=self.artifact_store, error=None)
+            harness, stages, furthest = await self._harness_progress(result)
+            samples.append({"index": i, "ws": ws, "result": result, "status": status, "reason": reason, "message": message,
+                            "gate": status is SubtaskStatus.COMMITTED and harness is not None, "harness": harness,
+                            "behaviour": behaviour_score(stages), "failed": set(behaviour_failures(stages) or []),
+                            "total": behaviour_total(stages), "stages": stages, "furthest": furthest})
+        chosen, agreement, consensus, note = nr.consensus_select(
+            [nr.Sample(s["index"], bool(s["gate"]), s["harness"], s["behaviour"], set(s["failed"])) for s in samples])
+        record.latency_ms = int((time.perf_counter() - started) * 1000)
+        record.cost = cost
+        record.backend_sessions = sessions
+        meta.update({"samples": [{"index": s["index"], "gate": s["gate"], "harness": s["harness"], "behaviour": s["behaviour"],
+                                   "failed": sorted(s["failed"])[:60], "error": s.get("error"), "furthest": s.get("furthest")} for s in samples],
+                     "chosen": chosen.index if chosen else None, "agreement": agreement, "consensus_failed": sorted(consensus)[:60], "note": note})
+        fl_state.notes.append(f"node_resample[{meta['node']}]: {note}")
+        if chosen is None:
+            record.status = CandidateStatus.HARNESS_FAILED if any(s.get("result") for s in samples) else CandidateStatus.BACKEND_FAILED
+            record.quality_score = 0.0
+            record.failure_reason = SubtaskFailureReason.HARNESS if record.status is CandidateStatus.HARNESS_FAILED else SubtaskFailureReason.INFRA
+            record.failure_message = note
+            self._write_resample_record(state, fl_state, record, meta, None)
+            return
+        s = samples[chosen.index]
+        record.workspace_ref = s["ws"]
+        record.change_set = await self.workspace_manager.collect_changeset(s["ws"])
+        patch, changed, digest = await self.workspace_manager.collect_patch(s["ws"])
+        record.patch, record.changed_files, record.patch_hash = patch, changed, digest or None
+        record.harness_score, record.furthest_stage = s["harness"], s["furthest"]
+        record.behaviour_score, record.behaviour_failures, record.behaviour_total = s["behaviour"], sorted(s["failed"]), s.get("total")
+        record.status = CandidateStatus.VALID
+        record.quality_score = 1.0
+        record.failure_reason = None
+        record.failure_message = None
+        fid = s["result"].state.final_output_artifact_id
+        if fid:
+            record.output_artifact_ids = [fid]
+        Path(s["ws"].path).parent.joinpath("candidate_result.json").write_text(record.model_dump_json(indent=2), encoding="utf-8")
+        self._write_resample_record(state, fl_state, record, meta, s)
+
+    def _write_resample_record(self, state, fl_state, record, meta, chosen) -> None:
+        """Explainability record: problem, milestone, contracts, topology, failure, blame, repair, outcome."""
+        try:
+            ws = record.workspace_ref.path if record.workspace_ref else None
+            task_dir = Path(ws).parents[4] if ws else None
+            if task_dir is None:
+                return
+            harness_dir = task_dir.parent.parent / "harness"
+            graph = record.metadata.get("graph") or {}
+            payload = {
+                "problem": {"task_id": state.task_id, "milestone": fl_state.subtask_id},
+                "milestone_design": {"plan_draft": str(task_dir.parent.parent / "milestone_plan_draft.json")},
+                "contracts": {"path": str(harness_dir / f"{fl_state.subtask_id}.contracts.json")},
+                "topology": {"nodes": [{"id": n.get("node_id"), "kind": n.get("node_kind"), "inputs": list((n.get("input_slots") or {}).keys())} for n in graph.get("nodes", [])],
+                             "edges": [f"{e.get('source_node')}.{e.get('source_output')} -> {e.get('destination_node')}.{e.get('destination_input')}" for e in graph.get("edges", [])],
+                             "dropped_prefix": meta.get("dropped"), "writer_steps": meta.get("steps")},
+                "failure": {"persistent": record.metadata.get("persistent_failures"), "frames": meta.get("frames"),
+                            "incumbent_behaviour": (fl_state.persistence or {}).get("samples")},
+                "diagnosis": {"blamed_node": meta.get("node"), "position": meta.get("position"), "rule": "v1: last writer of the failing file; earliest owner",
+                              "reason": meta.get("reason"), "owners": meta.get("owners"),
+                              "llm_reflection": getattr(fl_state.diagnosis, "concise_feedback", None)},
+                "repair": {"kind": "best_of_n_from_prefix", "n": meta.get("n"), "prefix_artifact": meta.get("prefix_artifact"), "injected": meta.get("injected")},
+                "outputs": meta.get("samples"),
+                "result": {"chosen": meta.get("chosen"), "agreement": meta.get("agreement"), "consensus_failed": meta.get("consensus_failed"),
+                           "behaviour_score": record.behaviour_score, "harness_score": record.harness_score, "status": str(record.status), "note": meta.get("note")},
+            }
+            nr.write_record(task_dir, fl_state.subtask_id, record.candidate_id, payload)
+        except Exception as exc:  # noqa: BLE001
+            fl_state.notes.append(f"node_resample: record not written ({exc})")
+
     async def _harness_progress(
+
         self, result: GraphExecutionResult
     ) -> tuple[float | None, list[HarnessStageResult], str]:
         """The graded score this candidate's acceptance harness reported.

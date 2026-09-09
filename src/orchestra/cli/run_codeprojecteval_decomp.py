@@ -336,6 +336,7 @@ class TuningConfig:
     # table with the specialist the diagnosis chose.
     persistence_search: bool
     persistence_probe_samples: int
+    node_resample_n: int
     diagnosis: DiagnosisConfig
     pareto: ParetoSelectionConfig
     quality_trigger: QualityTrigger
@@ -382,6 +383,7 @@ def read_tuning_config(config: dict[str, Any]) -> TuningConfig:
         anchor_search=anchor_search,
         persistence_search=persistence_search,
         persistence_probe_samples=persistence_probe_samples,
+        node_resample_n=int(tuning.get("node_resample_n", 0)),
         diagnosis=DiagnosisConfig.from_mapping(tuning.get("diagnosis")),
         pareto=ParetoSelectionConfig.from_mapping(tuning.get("pareto")),
         quality_trigger=QualityTrigger.from_mapping(tuning.get("quality_trigger")),
@@ -643,6 +645,7 @@ async def _run_one(
         anchor_search=tuning.anchor_search,
         persistence_search=tuning.persistence_search,
         persistence_probe_samples=tuning.persistence_probe_samples,
+        node_resample_n=tuning.node_resample_n,
         diagnosis_config=tuning.diagnosis,
         quality_trigger=tuning.quality_trigger,
         slow_loop=SlowLoopController(
