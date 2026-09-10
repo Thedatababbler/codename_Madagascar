@@ -2890,6 +2890,51 @@ baseline (an oracle over five methods) averages 0.691. Without the two
 rows above AdaMAS averages 0.728 on the remaining seven against 0.725 for
 the oracle. v0 control: running.
 
+## EXP-20260910-01 -- bestn v2 (targeted resample, early stop, symbol ownership, re-author): first pass on the same three tasks
+
+Branch bestn, gpt-5.5, `codeprojecteval_official_bestn.yaml` (node_resample_n 3).
+v2 = `da993f77`; routing fix `b42e86a9`; hop `2cf4e169`; re-author
+mechanics `41b03d6e`. Same three tasks as the v1 trial.
+
+| task | path taken | v2 event | internal | held-out (v1 trial / v9 run) |
+|---|---|---|---|---|
+| bplustree | M1 0.96 first pass; **M2 failure search**, `cand_feedback` recovered at 0.941, one probe failed the gate -> 1 voting sample, phase two declined | none | 0.96 / 0.941 | **0.893** (0.86 / 0.699) |
+| nl2_aiofiles | M1 quality search, persistent 0 flaky 2 (declined); **M2 failure search**, `cand_feedback` recovered at 0.846, committed at once | none | 1.00 / 0.846 | **0.929** (0.929 / 0.929) |
+| nl2_python-pathspec | M1 1.0 first pass; M2 first pass **0.0 with the gate passed**, probes 0.0 and 0.0, persistent 3/3 | author verdict -> re-author, 3 samples, chosen a 0.0 suite, not committed | 1.0 / 0.0 | 0.698 (0.65 / 0.756) |
+
+**What blocked v2 twice: the failure-search path.** Both milestones that
+mattered on bplustree and aiofiles failed the gate on the first pass; the
+failure search recovered it with `cand_feedback` and committed at once,
+with 1 and 2 authored cases still failing. That path has no probes, no
+persistent set, and therefore no blamed node -- the tablib pattern of
+EXP-20260909-01 seen from the other side. Fix `2cf4e169`
+(`persistence_after_recovery`, bestn yaml only): a recovered winner below
+1.0 becomes the incumbent of a persistence search on its own graph, with a
+second candidate window; continuations and the node resample start from
+its patch. bplustree and aiofiles are queued again on it.
+
+**pathspec: the author verdict fired, and everything behind it was wrong.**
+The M2 frozen suite collects 10 cases, 7 of them vacuous (they pass on the
+milestone base: M1 had already delivered most of the matching behaviour),
+so the harness grades 3, and all three fail in every sample -- the
+regex-text assertion (`'^src/(?:/.*)?$'`), a bytes/escape case, and a
+"documented bulk example". Every sample at 0.0 is the v2 rule for a
+suite-level cause, so the author was re-run with the condemned suite's
+evidence. Then: (1) the verdict text said "collects nothing" -- false;
+(2) the three re-author samples all wrote to one shared `.reauthor` dir;
+(3) the chooser ranked by collected size and picked a suite with 14
+collected, 13 vacuous, 1 gradable, failing -- score 0.0, no better than
+the condemned one; (4) the persistence ledger credited 3/3 fixed because
+the old names no longer exist. The winner (0.0) did not beat the
+incumbent (0.0) and nothing was committed; held-out 0.698 is the same M1
+as before. All four fixed in `41b03d6e`: one dir per sample, chosen dir
+replaces the frozen suite, selection requires 0 < score < 1 and ranks by
+gradable = collected - vacuous, re-author records carry no ledger, the
+verdict says what it saw. pathspec is queued again after aiofiles.
+
+Cost of the first pass: bplustree 43 min, aiofiles 103 min, pathspec 75
+min; no run used more calls than the v1 trial.
+
 ## EXP-20260909-02 -- best-of-N at the blamed node (bestn branch, v1): first trial
 
 `fdbb435f` on branch `bestn`; arm `codeprojecteval_official_bestn.yaml`
