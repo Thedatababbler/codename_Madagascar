@@ -2869,17 +2869,22 @@ failing agents topologically. A second, policy-level question stays open:
 with no incumbent, a gate-failing candidate at behaviour 1.0 whose only
 defect is missing private helpers is discarded in favour of nothing.
 
-**voluptuous (0.0): our miss, twice.** The documents name `Capitalize`,
-`Lower`, `Upper`, `Title`, `Strip` (architecture_design.md 1350, 1916-1940);
-the agent shipped `util.py` re-exporting two validators and none of the
-string ones; the M2 authored suite (21 cases) tested none of them, so the
-internal 0.952 saw nothing wrong. M1's authored suite scored 0.00 with the
-gate passed (the file itself is the one failed unit): the suite does
-`import tomllib` and the task interpreter is Python 3.10 -- the same
-collapse as tenacity M1, the third occurrence of custody accepting a
-suite that collects nothing (pyjwt M1, tenacity M1). The held-out being a single module turns one missing
-import into a 148-case zero; the baselines that scored 0.53-0.56 shipped
-the string validators.
+**voluptuous (0.0): a module-placement ceiling, corrected 09-10 evening.**
+Both AdaMAS arms *did* implement `Capitalize`, `Lower`, `Upper`, `Title`,
+`Strip` -- in `validators.py` (v9 run lines 616-632, v0 run 638-666). The
+held-out suite imports them from `voluptuous.util`, a placement the
+documents never state (architecture_design.md only shows
+`from voluptuous import ...`; the `util.py` section lists nothing but an
+`__author__`). The three baselines that score 0.53-0.56 put them in
+`util.py`, i.e. the reference layout from the model's memory of the real
+package; `debate` did not and scored 0 too. The earlier reading ("shipped
+a 9-line stub, never implemented them") was wrong: the stub is `util.py`,
+the classes are next door. Held-out being a single module turns the one
+import path into a 148-case zero for every method that follows the
+documents instead of the upstream layout. Separately, M1's authored suite
+scored 0.00 with the gate passed because it does `import tomllib` on
+Python 3.10 -- the same collapse as tenacity M1, third occurrence of
+custody accepting a suite that collects nothing (pyjwt M1, tenacity M1).
 
 v9 arm, all nine: aiofiles 0.929, emoji 0.353, dotenv 0.823, pathspec
 0.756, tablib 0.526, tenacity 0.847, ftfy 0.861, python-jose 0.106,
@@ -2888,7 +2893,30 @@ nine (timeouts and import deaths as 0): best_of_3 0.543, writer_rev
 0.482, solo 0.478, self_refine 0.460, debate 0.396; the per-row best
 baseline (an oracle over five methods) averages 0.691. Without the two
 rows above AdaMAS averages 0.728 on the remaining seven against 0.725 for
-the oracle. v0 control: running.
+the oracle. v0 control (original test_author, same plan, same arm, run 09-10 03:02-16:10):
+
+| task | v9 | v0 |
+|---|---|---|
+| aiofiles | 0.929 | 0.900 |
+| emoji | 0.353 | 0.333 |
+| python-dotenv | 0.823 | 0.766 |
+| python-pathspec | 0.756 | 0.773 |
+| tablib | 0.526 | 0.601 |
+| tenacity | 0.847 | 0.823 |
+| ftfy | 0.861 | 0.821 |
+| python-jose | 0.106 | 0.106 |
+| voluptuous | 0.000 | 0.000 |
+| **mean** | **0.578** | **0.569** |
+
+v9 over v0 on 6/9 rows, mean +0.009: within the same-design noise (one
+case, 0.04), consistent with CPE (the suite version does not set the
+level). The v0 python-jose run had the routing fix (`b42e86a9`) active:
+the missing-symbol report reached the implementer, which added 8 of the
+15 names; the retry still failed the contracts stage on the seven
+`jwt._validate_*` helpers with behaviour 1.0 (53/53), the failure search
+ran out of slots, nothing was committed, 0.106 again. The routing bug is
+gone; the policy question stays -- a milestone whose only defect is
+private helper names the architecture document lists is discarded whole.
 
 ## EXP-20260910-01 -- bestn v2 (targeted resample, early stop, symbol ownership, re-author): first pass on the same three tasks
 
