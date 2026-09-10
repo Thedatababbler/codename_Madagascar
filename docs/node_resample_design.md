@@ -198,3 +198,32 @@ measured* and *what may be revised*; this changes *where the budget is
 spent*. They compose: the adversary produces the persistent failures that
 Layer C needs; contract revision is what a resample of `contract_author`
 would be.
+
+## Routing (2026-09-10, after the v2 trial)
+
+The v1/v2 trials aimed the resample at the *persistent* set and let it take
+a phase-two slot by force. Two things followed: the continuation never ran
+in six bestn runs (the slot was gone), and where the resample did fire the
+three targeted samples agreed 3/3 on the authored suite (aiofiles M1,
+pathspec M2) -- a deterministic defect given evidence, for which one
+continuation is the right instrument and N samples buy nothing. The flaky
+set, where the probes and the incumbent disagree, is the case best-of-N
+was designed for, and phase two used to *decline* on it.
+
+Routing now, all rules, no LLM choice:
+
+| evidence from the probes | route | instrument |
+|---|---|---|
+| persistent set non-empty | continuation table (`pb_q_continue_improve` first) | one evidence-fed continuation on the best sample's patch |
+| flaky set non-empty and ≥ 2/3 of it owned by one editing node | `pb_q_node_resample` (quality-table row, `precondition=flaky_concentrated`, controller-built) | best-of-N at that node from a frozen prefix, flaky failures + evidence in the prompt, majority output kept |
+| flaky set spread across nodes | declined with a note | -- |
+| every sample 0.0 on the persistent set | author verdict | re-author the suite on per-sample dirs |
+
+Order within the slots: continuation rows (they keep the floor), then the
+resample, then the rest of the table. Slots are not added: with
+`fast_loop_candidates: 3` and two probes, one row runs; both routes firing
+means the continuation runs and the resample is logged as "not run for
+budget". Both run, and the Pareto selector judges, only when the budget
+allows. Ownership for the flaky set: last writer of the file the failure
+lands in, by traceback frame on the incumbent or, when the test passes
+there, by the symbol the test refers to.
