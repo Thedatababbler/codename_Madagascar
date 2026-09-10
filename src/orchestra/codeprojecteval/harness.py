@@ -457,8 +457,7 @@ def _per_test_timeout_flags():
     return ["-p", "timeout", "--timeout=120", "--timeout-method=thread"]
 
 
-def _run_pytest(cwd, target, *, timeout, import_root=None):
-    """Run one suite: (passed, total, ran, tail, failed_ids). Never raises."""
+def _pytest_env(cwd, import_root=None):
     env = dict(os.environ)
     roots = [str(import_root or cwd)]
     if import_root is not None and str(import_root) != str(cwd):
@@ -470,6 +469,74 @@ def _run_pytest(cwd, target, *, timeout, import_root=None):
         roots.append(str(Path(cwd) / "src"))
     existing = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = os.pathsep.join([p for p in roots + [existing] if p])
+    return env
+
+
+def _collect_only(cwd, frozen, *, project, timeout):
+    """(collected, hard_errors, soft_errors, tail) for the frozen suite on this interpreter.
+
+    Custody runs before the implementer, so a file that fails only because
+    the project package does not exist yet is a soft error and tolerated;
+    anything else (syntax, a parametrize mismatch, a third-party or stdlib
+    module the environment lacks) is hard. Never raises."""
+    holder = _spec_import_root(frozen)
+    try:
+        command = [
+            sys.executable, "-m", "pytest", "--collect-only", "-q", "--no-header",
+            "-p", "no:cacheprovider", "-o", "addopts=", "--continue-on-collection-errors",
+            str(holder / "spec_tests"),
+        ]
+        try:
+            proc = subprocess.run(
+                command, cwd=str(cwd), env=_pytest_env(cwd, holder),
+                capture_output=True, text=True, timeout=timeout, check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return 0, ["collection timed out"], [], "collection timed out"
+        out = (proc.stdout or "") + (proc.stderr or "")
+        collected = 0
+        for m in re.finditer(r"(\\d+) tests? collected", out):
+            collected = int(m.group(1))
+        if "no tests collected" in out:
+            collected = 0
+        hard = []
+        soft = []
+        project_heads = set(project or [])
+        blocks = re.split(r"_+ ERROR collecting ", out)[1:]
+        for block in blocks:
+            name = block.split(" ", 1)[0].strip("_ ")
+            lines = [ln for ln in block.splitlines() if ln.startswith("E   ")]
+            last = lines[-1][4:] if lines else "collection error"
+            m = re.search(r"No module named '([\\w\\.]+)'", last) or re.search(
+                r"cannot import name .* from '([\\w\\.]+)'", last
+            )
+            if m and m.group(1).split(".")[0] in project_heads:
+                soft.append(name + ": " + last)
+            else:
+                hard.append(name + ": " + last)
+        return collected, hard, soft, out[-2000:]
+    finally:
+        shutil.rmtree(str(holder), ignore_errors=True)
+
+
+def _discard_frozen(frozen):
+    """Drop a refused frozen suite and its sidecars so the next attempt can freeze its own."""
+    frozen = Path(frozen)
+    shutil.rmtree(str(frozen), ignore_errors=True)
+    for suffix in (".baseline.json", ".size.json", ".staging"):
+        side = frozen.parent / (frozen.name + suffix)
+        if side.is_dir():
+            shutil.rmtree(str(side), ignore_errors=True)
+        elif side.exists():
+            side.unlink()
+    repo = frozen.parent / (frozen.name + ".baseline_repo")
+    if repo.is_dir():
+        shutil.rmtree(str(repo), ignore_errors=True)
+
+
+def _run_pytest(cwd, target, *, timeout, import_root=None):
+    """Run one suite: (passed, total, ran, tail, failed_ids). Never raises."""
+    env = _pytest_env(cwd, import_root)
     command = [
         sys.executable,
         "-m",
@@ -703,12 +770,37 @@ def main() -> int:
             print("FAIL: --take-custody requires --spec-tests", file=sys.stderr)
             return 2
         if _freeze_spec_suite(root, spec_dir_rel, args.spec_tests):
+            frozen = Path(args.spec_tests)
             kept = len(
-                [p for p in Path(args.spec_tests).rglob("*.py") if p.name != "conftest.py"]
+                [p for p in frozen.rglob("*.py") if p.name != "conftest.py"]
             )
+            # One exception to "always exits 0": a suite that collects no test on
+            # the task's own interpreter would grade nothing for the whole
+            # milestone and every candidate after it (pyjwt M1, tenacity M1,
+            # voluptuous M1 -- `import tomllib` on 3.10 -- and bplustree M1/M2 on
+            # 2026-09-10, a parametrize with 3 names and 4 values: four zeroed
+            # milestones). Refusing here hands the error to the author while the
+            # milestone is still cheap to redo; the frozen copy is discarded so
+            # the next attempt can freeze its own.
+            collected, hard, soft, tail = _collect_only(
+                root, frozen, project=[*packages, *[m.split(".")[0] for m in modules]], timeout=300
+            )
+            if hard:
+                _discard_frozen(frozen)
+                print(
+                    "FAIL custody refused: " + str(len(hard)) + " file(s) of the authored suite cannot be collected "
+                    "on the task interpreter (" + "; ".join(hard)[:600] + "). A file that does not collect grades "
+                    "nothing for the whole milestone. Make every file collect (run pytest --collect-only with the "
+                    "task interpreter; a project package that does not exist yet must be imported inside the "
+                    "tests, not at module level), then hand the suite over again.\\n" + tail,
+                    file=sys.stderr,
+                )
+                return 2
             print(
                 "CUSTODY " + spec_dir_rel + " -> " + str(args.spec_tests)
-                + " (" + str(kept) + " file(s)); the workspace copy is gone"
+                + " (" + str(kept) + " file(s), " + str(collected) + " case(s) collect"
+                + (", " + str(len(soft)) + " file(s) wait for the project package" if soft else "")
+                + "); the workspace copy is gone"
             )
         else:
             print("NOTE no authored suite at " + spec_dir_rel + "; behaviour ungraded")

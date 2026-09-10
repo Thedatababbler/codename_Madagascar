@@ -689,3 +689,35 @@ def test_a_suite_that_imports_itself_survives_being_frozen(tmp_path: Path) -> No
     )
 
     assert (passed, collected, ran) == (1, 1, True)
+
+
+def test_custody_refuses_a_suite_that_collects_nothing(tmp_path: Path) -> None:
+    """A suite that dies at collection would grade nothing for the whole milestone."""
+    harness = Harness(tmp_path)
+    harness.implement()
+    harness.author(
+        "import pytest\n\n"
+        "@pytest.mark.parametrize('a, b', [(1, 2, 3)])\n"
+        "def test_broken(a, b):\n    assert a\n"
+    )
+    proc = harness.custody()
+    assert proc.returncode == 2
+    assert "custody refused" in proc.stderr
+    assert not harness.frozen.exists()
+    assert not (harness.ws / "spec_tests").exists()  # the workspace copy is still taken
+    # the next attempt can freeze a suite that collects
+    harness.author()
+    proc = harness.custody()
+    assert proc.returncode == 0, proc.stderr
+    assert harness.frozen.exists()
+    assert "case(s) collect" in proc.stdout
+
+
+def test_custody_tolerates_a_project_import_the_implementer_has_not_written_yet(tmp_path: Path) -> None:
+    """Custody runs before the implementer: the package missing is not the suite's fault."""
+    harness = Harness(tmp_path)
+    harness.author("from demo_pkg.core import Widget\n\n\ndef test_widget():\n    assert Widget\n")
+    proc = harness.custody()
+    assert proc.returncode == 0, proc.stderr
+    assert harness.frozen.exists()
+    assert "wait for the project package" in proc.stdout
