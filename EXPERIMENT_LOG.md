@@ -2935,6 +2935,21 @@ verdict says what it saw. pathspec is queued again after aiofiles.
 Cost of the first pass: bplustree 43 min, aiofiles 103 min, pathspec 75
 min; no run used more calls than the v1 trial.
 
+### Reruns with the recovery hop (`2cf4e169`) and the re-author fixes (`41b03d6e`)
+
+| task | path taken | v2 event | internal | held-out |
+|---|---|---|---|---|
+| bplustree (2nd) | M1 quality search, flaky only, 1.00 committed; M2 first pass 0.0 with the gate passed, probes 0.32 and 0.0 -- the two 0.0 samples are "N not collected" (the frozen suite fails to import on those implementations) and do not vote -> 1 sample, declined; `cand_feedback` 0.32 committed | none | 1.00 / 0.32 | 0.896 |
+| nl2_aiofiles (2nd) | M1 quality search: persistent **5/5** across 3 samples at 0.865; blame = first editing node (contract author, 2/5 failures in its files); targeted resample ×3 with the evidence: **3/3 pass the gate at 0.946, identical failing sets, agreement 1.00**; committed (3/5 persistent fixed; the two `__all__` "documented public surface" cases survive every sample). M2: first pass failed the gate, `cand_feedback` recovered at 0.875 -> **hop fired**: probe `cand_feedback_p1` 0.938 committed; the node resample (blamed last editing node) was rejected on `max_total_backend_calls` -- the hop had raised candidates and attempts but not the call ceiling (fixed `47e23cfa`) | M1 resample **+0.081 committed**; M2 hop +0.063 | 0.946 / 0.938 | 0.929 (unchanged: the same 5 failed + 2 errors as every aiofiles run -- `os.access` under root, `NamedTemporaryFile` attributes, two `test_simple` fixture errors) |
+
+First committed node-resample win: aiofiles M1. The three targeted samples
+converged on the same fix for the same three cases and the same two
+misses, so the "robust output" here is a certainty statement (agreement
+1.0) rather than a choice among alternatives; whether resampling adds
+anything over a single evidence-fed continuation on this milestone is not
+decided by one event. Held-out did not move because the task's remaining
+held-out failures are outside both suites' reach.
+
 ## EXP-20260909-02 -- best-of-N at the blamed node (bestn branch, v1): first trial
 
 `fdbb435f` on branch `bestn`; arm `codeprojecteval_official_bestn.yaml`
