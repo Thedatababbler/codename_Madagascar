@@ -71,3 +71,13 @@ def test_v2_helpers(tmp_path):
     g2 = reauthor_graph(g, _ids(g)[0], old + ".reauthor", condemned_suite_feedback(["x.py::t"], 3))
     assert frozen_spec_dir(g2) == old + ".reauthor" and "condemned" not in old
     assert "common cause is in the suite" in [n for n in g2.nodes if n.node_id == _ids(g)[0]][0].prompt_feedback
+
+
+def test_primary_failed_node_uses_graph_order():
+    from orchestra.control.fast_loop.diagnosis import _primary_failed_node
+    g = _graph()
+    ids = _ids(g)
+    author, last = ids[0], ids[-1]
+    # dictionary order lists the author last; graph order must still pick the last editing agent
+    assert _primary_failed_node([last, author, "authored_suite_custody", "repository_tests"], g) == last
+    assert _primary_failed_node([author, last], g) == last

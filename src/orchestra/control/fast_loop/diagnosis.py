@@ -36,6 +36,25 @@ def _failed_nodes_from_graph_result(
     return failed
 
 
+def _topological_order(graph: OrchestraGraph) -> list[str]:
+    indeg = {n.node_id: 0 for n in graph.nodes}
+    out: dict[str, list[str]] = {n.node_id: [] for n in graph.nodes}
+    for e in graph.edges:
+        if e.source_node in out and e.destination_node in indeg:
+            out[e.source_node].append(e.destination_node)
+            indeg[e.destination_node] += 1
+    ready = [n for n, d in indeg.items() if d == 0]
+    order: list[str] = []
+    while ready:
+        n = ready.pop(0)
+        order.append(n)
+        for m in out[n]:
+            indeg[m] -= 1
+            if indeg[m] == 0:
+                ready.append(m)
+    return order
+
+
 def _primary_failed_node(
     failed_ids: list[str],
     graph: OrchestraGraph,
@@ -45,10 +64,16 @@ def _primary_failed_node(
     by_id = {n.node_id: n for n in graph.nodes}
     # Prefer harness, then agent, then others — last failing agent in topo-ish order.
     harness = [i for i in failed_ids if by_id.get(i) and by_id[i].node_kind is NodeKind.HARNESS]
-    agents = [i for i in failed_ids if by_id.get(i) and by_id[i].node_kind is NodeKind.AGENT]
+    order = {node_id: idx for idx, node_id in enumerate(_topological_order(graph))}
+    agents = sorted(
+        (i for i in failed_ids if by_id.get(i) and by_id[i].node_kind is NodeKind.AGENT),
+        key=lambda i: order.get(i, -1),
+    )
     if agents:
-        # When harness also failed, edit the agent that produced harness input
-        # (typically the last agent before harness).
+        # When harness also failed, edit the agent that produced harness input:
+        # the last failing agent in graph order (node_status order is not
+        # topological -- python-jose 09-09 routed a missing-symbol report to
+        # the test author because it happened to be listed last).
         return agents[-1]
     if harness:
         # Attribute harness failure to nearest upstream agent via edges.
