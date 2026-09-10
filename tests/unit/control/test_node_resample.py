@@ -81,3 +81,15 @@ def test_primary_failed_node_uses_graph_order():
     # dictionary order lists the author last; graph order must still pick the last editing agent
     assert _primary_failed_node([last, author, "authored_suite_custody", "repository_tests"], g) == last
     assert _primary_failed_node([author, last], g) == last
+
+
+def test_v2_reauthor_helpers(tmp_path):
+    from orchestra.control.fast_loop.node_resample import blame_v1, gradable_count, with_spec_dir, frozen_spec_dir
+    g = _graph(); old = frozen_spec_dir(g)
+    g2 = with_spec_dir(g, old + ".reauthor_s1"); assert frozen_spec_dir(g2) == old + ".reauthor_s1"
+    d = tmp_path / "ms.spec_tests"; (tmp_path / "ms.spec_tests.baseline.json").write_text('{"vacuous": 7, "collected": 10}')
+    assert gradable_count(str(d)) == 3 and gradable_count(str(tmp_path / "none")) is None
+    steps = [WriterStep("a1", "art", "", {"spec_tests/t.py"}, True), WriterStep("a2", "art2", "", {"pkg/x.py"}, False)]
+    b = blame_v1(["t.py::test_x"], {}, steps, suite_collected_zero=True)
+    assert b.position == "author" and "every gradable case" in b.reason
+    b2 = blame_v1(["spec_tests/t.py"], {}, steps); assert b2.position == "author" and "collects nothing" in b2.reason

@@ -568,6 +568,11 @@ class FastLoopController:
                 continue
             if record.behaviour_score is None:
                 continue
+            if (record.metadata.get("node_resample") or {}).get("reauthor"):
+                # a re-authored suite has different case names: the old persistent
+                # set vanishing is not a fix
+                record.metadata["persistence_ledger"] = {"scored": False, "note": "re-author: suite replaced, ledger not comparable"}
+                continue
             record.metadata["persistence_ledger"] = persistence_ledger(
                 record, list(record.metadata.get("persistent_failures") or [])
             )
@@ -1566,6 +1571,12 @@ class FastLoopController:
         sessions = []
         for i in range(int(meta.get("n") or 1)):
             sid = f"{record.candidate_id}_s{i}"
+            sample_spec_dir = None
+            if meta.get("reauthor") and meta.get("frozen_spec_dir"):
+                # one frozen-suite dir per sample: the samples are graded on their
+                # own suites and the chosen one is what replaces the milestone's
+                sample_spec_dir = f"{meta['frozen_spec_dir']}.reauthor_s{i}"
+                compiled = self.compiler.compile(nr.with_spec_dir(candidate_graph, sample_spec_dir))
             ws = await self.workspace_manager.fork_candidate_workspace(
                 base=base_ws, run_dir=str(context.run_dir), task_id=state.task_id, subtask_id=subtask_id, candidate_id=sid)
             if prefix_patch:
@@ -1604,7 +1615,9 @@ class FastLoopController:
             samples.append({"index": i, "ws": ws, "result": result, "status": status, "reason": reason, "message": message,
                             "gate": status is SubtaskStatus.COMMITTED and harness is not None, "harness": harness,
                             "behaviour": behaviour_score(stages), "failed": set(behaviour_failures(stages) or []),
-                            "total": behaviour_total(stages), "stages": stages, "furthest": furthest})
+                            "total": behaviour_total(stages), "stages": stages, "furthest": furthest,
+                            "spec_dir": sample_spec_dir,
+                            "gradable": nr.gradable_count(sample_spec_dir) if sample_spec_dir else None})
             stop = nr.should_stop([nr.Sample(s["index"], bool(s["gate"]), s["harness"], s["behaviour"], set(s["failed"])) for s in samples],
                                   meta.get("base_behaviour")) if not meta.get("reauthor") else None
             if stop:
@@ -1615,12 +1628,17 @@ class FastLoopController:
             # different suites per sample: pick a gate-passing, discriminating suite (0 < score < 1),
             # largest first, then highest score; never consensus across unrelated test sets
             ok = [s for s in samples if s["gate"] and s["behaviour"] is not None]
-            disc = [s for s in ok if 0 < (s["behaviour"] or 0) < 1] or ok
-            best = max(disc, key=lambda s: ((s.get("total") or 0), s["behaviour"] or 0), default=None)
+            disc = [s for s in ok if 0 < (s["behaviour"] or 0) < 1]
+            best = max(disc, key=lambda s: ((s.get("gradable") or 0), s["behaviour"] or 0), default=None)
             chosen = nr.Sample(best["index"], True, best["harness"], best["behaviour"], set(best["failed"])) if best else None
             agreement, consensus = 0.0, set()
-            note = (f"re-author: {len(ok)}/{len(samples)} passed the gate; chosen sample {best['index']} "
-                    f"(suite {best.get('total')} cases, score {best['behaviour']:.3f})" if best else "re-author: no sample passed the gate")
+            sizes = ", ".join(f"s{s['index']}: {s.get('gradable')} gradable, {s['behaviour']:.2f}" for s in ok)
+            if best:
+                meta["reauthor_spec_dir"] = best.get("spec_dir")
+                note = (f"re-author: {len(ok)}/{len(samples)} passed the gate; chosen sample {best['index']} "
+                        f"({best.get('gradable')} gradable cases, score {best['behaviour']:.3f}); [{sizes}]")
+            else:
+                note = f"re-author declined: no sample's suite discriminates (0 < score < 1) [{sizes}]" if ok else "re-author: no sample passed the gate"
         else:
             chosen, agreement, consensus, note = nr.consensus_select(
                 [nr.Sample(s["index"], bool(s["gate"]), s["harness"], s["behaviour"], set(s["failed"])) for s in samples])

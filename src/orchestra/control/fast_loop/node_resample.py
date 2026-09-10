@@ -163,8 +163,11 @@ def blame_v1(persistent: list[str], frames: dict[str, str], steps: list[WriterSt
     """Each persistent failure is owned by the last writer of the file it lands in;
     the earliest owner is blamed. Suite that collects nothing -> the author."""
     code_steps = [s for s in steps if not s.is_author]
-    if suite_collected_zero or (persistent and all(failure_key(f).split("::")[0].endswith(".py") and "::" not in f.split("::", 1)[-1] and f.split("::", 1)[-1] == "" for f in persistent)):
-        return Blame(next((s.node_id for s in steps if s.is_author), None), "author", "suite collects nothing on the task interpreter; re-author, do not resample")
+    author = next((s.node_id for s in steps if s.is_author), None)
+    if persistent and all("::" not in f for f in persistent):
+        return Blame(author, "author", "suite collects nothing on the task interpreter (the failing unit is the file); re-author, do not resample")
+    if suite_collected_zero:
+        return Blame(author, "author", f"every gradable case fails in every sample ({len(persistent)} persistent, no sample above 0.0): suite-level cause; re-author, do not resample")
     if not code_steps:
         return Blame(None, "none", "no editing node produced a change")
     owners: dict[str, str] = {}
@@ -397,3 +400,26 @@ def condemned_suite_feedback(persistent: list[str], samples: int) -> str:
         "differently. Re-author the suite from the documents. Every test must quote the sentence it enforces; "
         "import project symbols inside each test; keep the depth and breadth of the mandate."
     )
+
+
+def with_spec_dir(graph: OrchestraGraph, spec_dir: str) -> OrchestraGraph:
+    """Every harness node pointed at `spec_dir` (one frozen-suite dir per re-author sample)."""
+    nodes = []
+    for n in graph.nodes:
+        cmd = list(getattr(n, "command", None) or [])
+        if cmd and "--spec-tests" in cmd:
+            cmd[cmd.index("--spec-tests") + 1] = spec_dir
+            nodes.append(n.model_copy(update={"command": cmd}))
+        else:
+            nodes.append(n)
+    return graph.model_copy(update={"nodes": nodes})
+
+
+def gradable_count(spec_dir: str) -> int | None:
+    """collected - vacuous from the harness baseline beside a frozen suite, if written."""
+    p = Path(str(spec_dir) + ".baseline.json")
+    try:
+        d = json.loads(p.read_text())
+        return max(0, int(d.get("collected") or 0) - int(d.get("vacuous") or 0))
+    except (OSError, ValueError, TypeError):
+        return None
