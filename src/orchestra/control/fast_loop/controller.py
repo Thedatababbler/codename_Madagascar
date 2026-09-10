@@ -383,7 +383,19 @@ class FastLoopController:
             f"persistence: samples={summary.samples} "
             f"persistent={len(summary.persistent)} flaky={len(summary.flaky)}"
         )
-        if summary.samples < 2 or not (summary.persistent or summary.flaky):
+        scored_zero_empty = [
+            c for c in [incumbent, *probes]
+            if c.status in (CandidateStatus.VALID, CandidateStatus.COMMITTED)
+            and (c.behaviour_score or 0) == 0 and not c.behaviour_failures
+        ]
+        collects_nothing = (
+            summary.samples == 0 and len(scored_zero_empty) >= 2
+        ) or (bool(summary.persistent) and all("::" not in f for f in summary.persistent))
+        if collects_nothing:
+            fl_state.notes.append(
+                f"persistence: the frozen suite collects nothing on {max(len(scored_zero_empty), summary.samples)} "
+                "gate-passing samples; the persistent set is the file itself -> author route")
+        elif summary.samples < 2 or not (summary.persistent or summary.flaky):
             fl_state.notes.append("persistence: no persistent or flaky failures; phase two declined")
             state.state_version += 1
             await self._save_checkpoint(state)
@@ -398,7 +410,7 @@ class FastLoopController:
         # continuation, which then never ran: EXP-20260910-01).
         remaining = slots if slots else max(1, self.budget.max_candidates - len(probes))
         picked: list = []
-        if summary.persistent:
+        if summary.persistent and not collects_nothing:
             diagnosis = fl_state.diagnosis.model_copy(
                 update={
                     "behaviour_failures": list(summary.persistent),
@@ -433,12 +445,16 @@ class FastLoopController:
         resample_record = None
         if self.node_resample_n > 0 and graph_result is not None:
             zero = (incumbent.behaviour_score == 0) and all((p.behaviour_score or 0) == 0 for p in probes)
-            if summary.persistent and zero:
-                # every sample at 0.0: suite-level cause -> re-author (author verdict)
+            if collects_nothing or (summary.persistent and zero):
+                # every sample at 0.0 (or nothing collected): suite-level cause -> re-author
+                targets = list(summary.persistent) or [
+                    str(p.relative_to(nr.frozen_spec_dir(base_graph)))
+                    for p in sorted(Path(nr.frozen_spec_dir(base_graph)).rglob("test_*.py"))
+                ] if nr.frozen_spec_dir(base_graph) else list(summary.persistent)
                 resample_record = await self._arm_node_resample(
                     state=state, fl_state=fl_state, base_graph=base_graph, incumbent=incumbent,
                     probes=probes, summary=summary, graph_result=graph_result, context=context, base_ws=base_ws,
-                    targets=list(summary.persistent), mode="author",
+                    targets=targets, mode="author",
                 )
             elif summary.flaky:
                 resample_record = await self._arm_node_resample(
@@ -449,12 +465,16 @@ class FastLoopController:
         # order: continuation rows first when there is a persistent set (they
         # keep the floor), then the resample, then the rest of the table
         ordered: list = []
-        if resample_record is not None and not summary.persistent:
+        author_route = resample_record is not None and (resample_record.metadata.get("node_resample") or {}).get("reauthor")
+        if resample_record is not None and (not summary.persistent or author_route):
+            # a condemned suite outranks everything: no continuation can fix a
+            # suite that grades nothing (bplustree 09-10 19:52: the re-author
+            # was dropped for budget behind a continuation scored 0/1)
             ordered.append(resample_record)
         cont = [c for c in picked if getattr(c, "continue_from_incumbent", False) or "continue" in (c.playbook_id or "")]
         rest = [c for c in picked if c not in cont]
         ordered.extend(cont)
-        if resample_record is not None and summary.persistent:
+        if resample_record is not None and summary.persistent and not author_route:
             ordered.append(resample_record)
         ordered.extend(rest)
         chosen_rows = ordered[:remaining]

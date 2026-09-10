@@ -392,6 +392,17 @@ def frozen_spec_dir(graph: OrchestraGraph) -> str | None:
 
 def condemned_suite_feedback(persistent: list[str], samples: int) -> str:
     listed = "\n".join(f"- {failure_key(n).split('::', 1)[-1]}" for n in persistent[:40])
+    if persistent and all("::" not in f for f in persistent):
+        # file-level: the suite collected no test at all on the task interpreter
+        return (
+            f"Your previous suite for this milestone collected NO test on the task's own interpreter, on every one "
+            f"of {samples} independent implementations: the run stopped at import/collection of\n{listed}\n"
+            "So the suite graded nothing. The cause is in the suite, not the code: a module-level import the task "
+            "environment does not have (check the interpreter version and the pinned dependencies), a fixture or "
+            "helper the documents do not promise, or an import of a project symbol at module level that must be "
+            "inside the test. Re-author the suite from the documents; import project symbols inside each test; run "
+            "the suite with the task interpreter before handing it over; keep the depth and breadth of the mandate."
+        )
     return (
         f"Your previous suite for this milestone failed on every one of {samples} independent implementations -- "
         f"{len(persistent)} cases, all of them, in every attempt:\n{listed}\n"

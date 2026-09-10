@@ -111,3 +111,9 @@ def test_routing_helpers_and_table_row():
     class Ctx:  # the generator must skip a controller-built row whatever the context says
         behaviour_failures = ["t.py::x"]
     assert playbook_applies(row, Ctx()) is False
+
+
+def test_condemned_feedback_distinguishes_collect_nothing():
+    from orchestra.control.fast_loop.node_resample import condemned_suite_feedback
+    assert "collected NO test" in condemned_suite_feedback(["spec_tests/test_x.py"], 3)
+    assert "collected NO test" not in condemned_suite_feedback(["spec_tests/test_x.py::test_a"], 3)
