@@ -2839,6 +2839,57 @@ collects zero cases on the task interpreter. A third, smaller signal: the
 LLM-chosen `pb_q_failures_to_agent` row is 1/7 across both sets where the
 default continuation is 27/38.
 
+### EXP-20260909-01 addendum (2026-09-10 03:20) -- the account reset at ~20:00 09-09; the v9 arm is complete
+
+The supervisor resumed on its own. Remaining v9 rows (held-out, same env,
+same suite as the baselines):
+
+| task | AdaMAS v9 | best baseline | milestones | note |
+|---|---|---|---|---|
+| aiofiles (rerun) | **0.929** | 0.910 writer_rev | M1 0.909 first pass, M2 failure search -> 1.00 | the `src/` contracts bug fixed; four baselines die at import |
+| ftfy | **0.861** | 0.737 best_of_3 | M1 0.875, M2 `cand_feedback_r2` 0.914 | four baselines: missing data file |
+| python-jose | 0.106 | 0.579 solo | M1 0.857 committed; **M2 never committed** | routing bug, see below; the rejected M2 candidate scores **0.693** on held-out |
+| voluptuous | 0.0 | 0.561 best_of_3 / self_refine | M1 suite collapsed (0.00, gate passed); M2 0.952 committed | `voluptuous/util.py` shipped as a 9-line stub; the held-out suite is one module and its import of `Capitalize` zeroes all 148 cases |
+
+**python-jose (0.106): a misrouted repair, not a model failure.** M2's
+first pass passed all 22 authored behaviours but failed the gate at the
+contracts stage: 15 names the architecture document lists (`jwt._validate_exp`
+... `jwe._decrypt_and_auth`, `jwk.get_key`) were absent. The diagnosis LLM
+classified it functional with an empty `target_node_id`, so the fallback
+`_primary_failed_node` chose the last failing *agent in node_status
+order*, which was the **test author**; the "missing symbol" feedback was
+attached to `agent_1_test_author_test_author` (candidate_result
+`edits[0].feedback`), the implementer never saw it, `cand_feedback` failed
+the same 15 checks, and the failure search stopped ("no candidate passed
+the gate"). The final repository is M1's stubs (`... is not implemented in
+this milestone`, 94+73+57+52 held-out cases). The rejected candidate,
+scored in a scratch copy with the held-out suite: 331/478 = 0.693, which
+would have led the row. Fix `b42e86a9` (bestn): the fallback now orders
+failing agents topologically. A second, policy-level question stays open:
+with no incumbent, a gate-failing candidate at behaviour 1.0 whose only
+defect is missing private helpers is discarded in favour of nothing.
+
+**voluptuous (0.0): our miss, twice.** The documents name `Capitalize`,
+`Lower`, `Upper`, `Title`, `Strip` (architecture_design.md 1350, 1916-1940);
+the agent shipped `util.py` re-exporting two validators and none of the
+string ones; the M2 authored suite (21 cases) tested none of them, so the
+internal 0.952 saw nothing wrong. M1's authored suite scored 0.00 with the
+gate passed (the file itself is the one failed unit): the suite does
+`import tomllib` and the task interpreter is Python 3.10 -- the same
+collapse as tenacity M1, the third occurrence of custody accepting a
+suite that collects nothing (pyjwt M1, tenacity M1). The held-out being a single module turns one missing
+import into a 148-case zero; the baselines that scored 0.53-0.56 shipped
+the string validators.
+
+v9 arm, all nine: aiofiles 0.929, emoji 0.353, dotenv 0.823, pathspec
+0.756, tablib 0.526, tenacity 0.847, ftfy 0.861, python-jose 0.106,
+voluptuous 0.0 -> mean **0.578**; per-method baseline means on the same
+nine (timeouts and import deaths as 0): best_of_3 0.543, writer_rev
+0.482, solo 0.478, self_refine 0.460, debate 0.396; the per-row best
+baseline (an oracle over five methods) averages 0.691. Without the two
+rows above AdaMAS averages 0.728 on the remaining seven against 0.725 for
+the oracle. v0 control: running.
+
 ## EXP-20260909-02 -- best-of-N at the blamed node (bestn branch, v1): first trial
 
 `fdbb435f` on branch `bestn`; arm `codeprojecteval_official_bestn.yaml`
