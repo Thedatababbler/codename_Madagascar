@@ -21,6 +21,7 @@ experiment:
     persistence_search: true
     persistence_probe_samples: 2
     node_resample_n: 3
+    persistence_after_recovery: true
     fast_loop_candidates: 3
     diagnosis:
       mode: llm

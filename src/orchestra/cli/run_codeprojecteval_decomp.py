@@ -337,6 +337,7 @@ class TuningConfig:
     persistence_search: bool
     persistence_probe_samples: int
     node_resample_n: int
+    persistence_after_recovery: bool
     diagnosis: DiagnosisConfig
     pareto: ParetoSelectionConfig
     quality_trigger: QualityTrigger
@@ -384,6 +385,7 @@ def read_tuning_config(config: dict[str, Any]) -> TuningConfig:
         persistence_search=persistence_search,
         persistence_probe_samples=persistence_probe_samples,
         node_resample_n=int(tuning.get("node_resample_n", 0)),
+        persistence_after_recovery=bool(tuning.get("persistence_after_recovery", False)),
         diagnosis=DiagnosisConfig.from_mapping(tuning.get("diagnosis")),
         pareto=ParetoSelectionConfig.from_mapping(tuning.get("pareto")),
         quality_trigger=QualityTrigger.from_mapping(tuning.get("quality_trigger")),
@@ -646,6 +648,7 @@ async def _run_one(
         persistence_search=tuning.persistence_search,
         persistence_probe_samples=tuning.persistence_probe_samples,
         node_resample_n=tuning.node_resample_n,
+        persistence_after_recovery=tuning.persistence_after_recovery,
         diagnosis_config=tuning.diagnosis,
         quality_trigger=tuning.quality_trigger,
         slow_loop=SlowLoopController(

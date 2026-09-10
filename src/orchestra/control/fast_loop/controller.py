@@ -131,6 +131,7 @@ class FastLoopController:
         persistence_search: bool = False,
         persistence_probe_samples: int = 2,
         node_resample_n: int = 0,
+        persistence_after_recovery: bool = False,
         diagnosis_config: DiagnosisConfig | None = None,
         clock=None,
         persist_checkpoints: bool = True,
@@ -158,6 +159,10 @@ class FastLoopController:
         self.persistence_probe_samples = max(1, int(persistence_probe_samples))
         # best-of-N at the blamed node from a frozen prefix (docs/node_resample_design.md); 0 = off
         self.node_resample_n = max(0, int(node_resample_n))
+        self.persistence_after_recovery = bool(persistence_after_recovery)
+        # graph results of executed candidates, by (subtask, candidate): the
+        # recovery hop needs the winner's node outputs to blame a node
+        self._results: dict[tuple[str, str], Any] = {}
         self.probe_generator = None
         if persistence_search:
             # Two phases on one budget. Phase one resamples the anchor design
@@ -358,6 +363,7 @@ class FastLoopController:
         base_ws: Any,
         incumbent_artifact: str | None = None,
         graph_result: Any = None,
+        slots: int | None = None,
     ) -> None:
         """Intersect the probe samples, diagnose the persistent set, spend the rest.
 
@@ -403,7 +409,7 @@ class FastLoopController:
         )
         fl_state.diagnosis = diagnosis
 
-        remaining = max(1, self.budget.max_candidates - len(probes))
+        remaining = slots if slots else max(1, self.budget.max_candidates - len(probes))
         caps = self._caps_for_graph(base_graph)
         generated = self.generator.generate(
             graph=base_graph,
@@ -471,6 +477,87 @@ class FastLoopController:
         )
         self._score_persistence(fl_state)
 
+    async def _persistence_after_recovery(
+        self, *, state, fl_state, sub, subtask_id, context, initial_artifacts, base_ws
+    ) -> None:
+        """A failure search that recovered the gate below 1.0 continues as a quality search.
+
+        The failure search used to end at the first gate pass (tablib
+        committed at 0.62 with no persistence phase, EXP-20260909-01). Here
+        the recovered winner becomes the incumbent of a persistence search
+        on its own graph: probes resample it, the persistent set is
+        diagnosed, and continuations / the node resample start from its
+        patch. A second candidate window of the same size pays for it.
+        Idempotent on resume: probes already present, or a persistence
+        note, mean the hop has run.
+        """
+        if self.probe_generator is None or base_ws is None:
+            return
+        if any(c.metadata.get("persistence_phase") for c in fl_state.candidates):
+            return
+        if any(str(n).startswith("persistence:") for n in fl_state.notes):
+            return
+        recovered = self.selector.select(fl_state.candidates, self.budget)
+        if recovered is None or recovered.status is not CandidateStatus.VALID:
+            return
+        score = recovered.behaviour_score
+        if score is None or score <= 0.0 or score >= 1.0 or not recovered.patch:
+            return
+        payload = recovered.metadata.get("graph")
+        if not payload:
+            return
+        rgraph = OrchestraGraph.model_validate(payload)
+        spent = len([c for c in fl_state.candidates if c.status is not CandidateStatus.REJECTED])
+        probes_n = min(self.persistence_probe_samples, self.budget.max_candidates)
+        slots = max(1, self.budget.max_candidates - probes_n)
+        saved = (self.budget, self.budget_tracker)
+        self.budget = self.budget.model_copy(update={
+            "max_candidates": self.budget.max_candidates + spent,
+            "max_attempts_per_subtask": self.budget.max_attempts_per_subtask + spent,
+        })
+        self.budget_tracker = FastLoopBudgetTracker(self.budget, clock=saved[1]._clock)
+        try:
+            fl_state.notes.append(
+                f"recovery: gate recovered by {recovered.candidate_id} at {score:.3f}; "
+                f"persistence search continues from it ({probes_n} probes, {slots} slot(s))"
+            )
+            recovered.metadata["recovered_incumbent"] = True
+            diagnosis = quality_search_diagnosis(recovered, rgraph)
+            generated = self.probe_generator.generate(
+                graph=rgraph, diagnosis=diagnosis,
+                budget=self.budget.model_copy(update={"max_candidates": probes_n}),
+                capabilities=self._caps_for_graph(rgraph), search_reason="quality",
+            )
+            taken = {c.candidate_id for c in fl_state.candidates}
+            for i, cand in enumerate(generated, 1):
+                cid = cand.candidate_id
+                while cid in taken:
+                    cid = f"{cand.candidate_id}_p{i}"
+                    i += 1
+                taken.add(cid)
+                record = self._record_from_local(
+                    cand.model_copy(update={"candidate_id": cid}), attempt_id=fl_state.base_attempt_id + 1
+                )
+                record.metadata["persistence_phase"] = 1
+                record.metadata["probe_of"] = recovered.candidate_id
+                fl_state.candidates.append(record)
+            state.state_version += 1
+            await self._save_checkpoint(state)
+            await self._run_pending_candidates(
+                state=state, fl_state=fl_state, context=context,
+                initial_artifacts=initial_artifacts, base_ws=base_ws,
+            )
+            await self._persistence_phase_two(
+                state=state, fl_state=fl_state, sub=sub, subtask_id=subtask_id,
+                base_graph=rgraph, incumbent=recovered, context=context,
+                initial_artifacts=initial_artifacts, base_ws=base_ws,
+                incumbent_artifact=f"candidate:{recovered.candidate_id}",
+                graph_result=self._results.get((subtask_id, recovered.candidate_id)),
+                slots=slots,
+            )
+        finally:
+            self.budget, self.budget_tracker = saved
+
     @staticmethod
     def _score_persistence(fl_state: FastLoopState) -> None:
         """Write the ledger: what each phase-two candidate did about the persistent set."""
@@ -496,6 +583,10 @@ class FastLoopController:
             if base is not None and base.patch:
                 patch = base.patch
                 artifact_id = f"candidate:{base_id}"
+        if patch is None and artifact_id and str(artifact_id).startswith("candidate:") and fl_state is not None:
+            base = next((c for c in fl_state.candidates if c.candidate_id == str(artifact_id)[len("candidate:"):]), None)
+            if base is not None and base.patch:
+                patch = base.patch
         if patch is None and artifact_id:
             try:
                 artifact = await self.artifact_store.get(str(artifact_id))
@@ -878,6 +969,11 @@ class FastLoopController:
             initial_artifacts=initial_artifacts,
             base_ws=base_ws,
         )
+        if incumbent is None and self.persistence_search and self.persistence_after_recovery:
+            await self._persistence_after_recovery(
+                state=state, fl_state=fl_state, sub=sub, subtask_id=subtask_id,
+                context=context, initial_artifacts=initial_artifacts, base_ws=base_ws,
+            )
         if self.persistence_search and incumbent is not None:
             await self._persistence_phase_two(
                 state=state,
@@ -1202,6 +1298,7 @@ class FastLoopController:
                 initial_artifacts=initial_artifacts,
                 context=run_context,
             )
+            self._results[(fl_state.subtask_id, record.candidate_id)] = result
         except Exception as exc:  # noqa: BLE001
             from datetime import UTC, datetime
 
