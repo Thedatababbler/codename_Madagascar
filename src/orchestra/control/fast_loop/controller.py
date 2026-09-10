@@ -511,9 +511,17 @@ class FastLoopController:
         probes_n = min(self.persistence_probe_samples, self.budget.max_candidates)
         slots = max(1, self.budget.max_candidates - probes_n)
         saved = (self.budget, self.budget_tracker)
+        # a second window of the same size: candidates, attempts, and the
+        # call/cost/token ceilings all move up by what the failure search spent
+        # (aiofiles M2 09-10: the node resample was rejected on
+        # max_total_backend_calls while the candidate slots were still open)
+        used = spent_from_state(fl_state)
         self.budget = self.budget.model_copy(update={
             "max_candidates": self.budget.max_candidates + spent,
             "max_attempts_per_subtask": self.budget.max_attempts_per_subtask + spent,
+            "max_total_backend_calls": self.budget.max_total_backend_calls + int(used.backend_calls or 0),
+            "max_total_cost": None if self.budget.max_total_cost is None else self.budget.max_total_cost + float(used.estimated_cost_usd or 0.0),
+            "max_total_tokens": None if self.budget.max_total_tokens is None else self.budget.max_total_tokens + int((used.prompt_tokens or 0) + (used.completion_tokens or 0)),
         })
         self.budget_tracker = FastLoopBudgetTracker(self.budget, clock=saved[1]._clock)
         try:
