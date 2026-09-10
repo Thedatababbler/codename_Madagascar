@@ -10,6 +10,7 @@ does the forking, running and grading.
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 import shutil
@@ -281,3 +282,118 @@ def write_record(batch_task_dir: Path, milestone: str, candidate_id: str, payloa
     except OSError:
         pass
     return path
+
+
+# --------------------------------------------------------------------------
+# v2: symbol ownership, targeted feedback, short-circuit, re-author graph
+# --------------------------------------------------------------------------
+
+def repo_symbol_index(repo: Path) -> dict[str, str]:
+    """top-level class/function name -> repository-relative file (first definition wins)."""
+    index: dict[str, str] = {}
+    for py in sorted(Path(repo).rglob("*.py")):
+        parts = py.relative_to(repo).parts
+        if any(x in parts for x in ("unit_tests", "check_tests", SPEC_DIR, "__pycache__", "blame_evidence", "repair_evidence", ".git")):
+            continue
+        try:
+            tree = ast.parse(py.read_text(errors="replace"))
+        except SyntaxError:
+            continue
+        for node in tree.body:
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                index.setdefault(node.name, str(py.relative_to(repo)))
+    return index
+
+
+def symbols_in_test(test_file: Path, test_name: str) -> set[str]:
+    """Identifiers a test body refers to (names and attribute heads), e.g. GitWildMatchPattern."""
+    try:
+        tree = ast.parse(Path(test_file).read_text(errors="replace"))
+    except (OSError, SyntaxError):
+        return set()
+    base = test_name.split("[", 1)[0].split("::")[-1]
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == base:
+            for sub in ast.walk(node):
+                if isinstance(sub, ast.Name):
+                    out.add(sub.id)
+                elif isinstance(sub, ast.Attribute):
+                    out.add(sub.attr)
+    return out
+
+
+def symbol_frames(repo: Path, failures: list[str]) -> dict[str, str]:
+    """failure -> file that defines a symbol the test refers to (assertion-only failures
+    have no repository frame; the symbol under test still names the owner)."""
+    index = repo_symbol_index(repo)
+    out: dict[str, str] = {}
+    for f in failures:
+        r = resolve_failure(Path(repo), f)
+        if r is None:
+            continue
+        root, rel, tid = r
+        names = symbols_in_test(root / rel, tid)
+        hits = [index[n] for n in names if n in index]
+        if hits:
+            out[f] = Counter(hits).most_common(1)[0][0]
+    return out
+
+
+def targeted_feedback(persistent: list[str], evidence_relpath: str = "../repair_evidence") -> str:
+    listed = "\n".join(f"- {failure_key(n).split('::', 1)[-1]}" for n in persistent)
+    return (
+        "The acceptance gate passed, but these behaviours fail in every independent attempt at this "
+        f"milestone ({len(persistent)}); they are systematic, not flaky, and they are this run's target:\n{listed}\n"
+        f"The tests for them, their output on the previous attempt, and the exact command to run them are beside "
+        f"this repository in {evidence_relpath}/ (start with README.md). Run them before and after each change; "
+        "they are copies of a sealed suite, so editing them changes nothing. Do not delete spec_tests, check_tests "
+        "or documented public symbols."
+    )
+
+
+def should_stop(samples: list["Sample"], base_score: float | None) -> str | None:
+    """Stop early when two gate-passing samples already agree exactly and neither beats the base."""
+    ok = [s for s in samples if s.gate_passed and s.behaviour_score is not None]
+    if len(ok) < 2:
+        return None
+    if all(s.failed == ok[0].failed for s in ok) and (base_score is None or max(s.behaviour_score for s in ok) <= base_score):
+        return f"{len(ok)} samples identical (agreement 1.0) with no gain over {base_score}; stopping early"
+    return None
+
+
+def reauthor_graph(graph: OrchestraGraph, author_node: str, spec_dir: str, feedback: str) -> OrchestraGraph:
+    """The full graph with the author told why the suite is condemned and every harness node
+    pointed at a candidate-specific frozen-suite directory."""
+    nodes = []
+    for n in graph.nodes:
+        if n.node_id == author_node:
+            nodes.append(n.model_copy(update={"prompt_feedback": ((getattr(n, "prompt_feedback", "") or "") + "\n\n" + feedback).strip()}))
+        elif getattr(n, "node_kind", "") == "harness" and getattr(n, "command", None):
+            cmd = list(n.command)
+            if "--spec-tests" in cmd:
+                cmd[cmd.index("--spec-tests") + 1] = spec_dir
+            nodes.append(n.model_copy(update={"command": cmd}))
+        else:
+            nodes.append(n)
+    return graph.model_copy(update={"nodes": nodes, "graph_id": f"{graph.graph_id}__reauthor"})
+
+
+def frozen_spec_dir(graph: OrchestraGraph) -> str | None:
+    for n in graph.nodes:
+        cmd = getattr(n, "command", None)
+        if cmd and "--spec-tests" in cmd:
+            return str(cmd[list(cmd).index("--spec-tests") + 1])
+    return None
+
+
+def condemned_suite_feedback(persistent: list[str], samples: int) -> str:
+    listed = "\n".join(f"- {failure_key(n).split('::', 1)[-1]}" for n in persistent[:40])
+    return (
+        f"Your previous suite for this milestone failed on every one of {samples} independent implementations -- "
+        f"{len(persistent)} cases, all of them, in every attempt:\n{listed}\n"
+        "When every implementation fails every case, the common cause is in the suite, not the code: a fixture or "
+        "import the documents do not promise, a wrong shared assumption, a construction the documents describe "
+        "differently. Re-author the suite from the documents. Every test must quote the sentence it enforces; "
+        "import project symbols inside each test; keep the depth and breadth of the mandate."
+    )

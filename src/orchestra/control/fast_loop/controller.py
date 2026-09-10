@@ -1348,6 +1348,7 @@ class FastLoopController:
             fl_state.notes.append("node_resample: no editing node produced a change; declined")
             return None
         frames: dict[str, str] = {}
+        evidence_dir = None
         try:
             scratch = await self.workspace_manager.fork_candidate_workspace(
                 base=base_ws, run_dir=str(context.run_dir), task_id=state.task_id,
@@ -1358,11 +1359,45 @@ class FastLoopController:
             frames = await asyncio.to_thread(
                 nr.traceback_frames, Path(scratch.path), list(summary.persistent), python
             )
+            # assertion-only failures have no repository frame: own them by the symbol under test
+            sym = await asyncio.to_thread(nr.symbol_frames, Path(scratch.path), list(summary.persistent))
+            for k, v in sym.items():
+                frames.setdefault(k, v)
+            evidence_dir = await asyncio.to_thread(
+                build_repair_evidence, Path(scratch.path), list(summary.persistent)
+            )
         except Exception as exc:  # noqa: BLE001
+            evidence_dir = None
             fl_state.notes.append(f"node_resample: traceback frames unavailable ({exc}); ownership by last writer")
         zero = (incumbent.behaviour_score == 0) and all((p.behaviour_score or 0) == 0 for p in probes)
         blame = nr.blame_v1(list(summary.persistent), frames, steps, suite_collected_zero=zero)
         fl_state.notes.append(f"node_resample: blame={blame.node_id} position={blame.position}: {blame.reason}")
+        if blame.position == "author" and blame.node_id:
+            # v2: the suite is condemned -> re-author it with the evidence, on a
+            # candidate-specific frozen-suite directory; the gate grades on it.
+            old_dir = nr.frozen_spec_dir(base_graph)
+            if not old_dir:
+                fl_state.notes.append("node_resample: re-author declined (no frozen suite dir on the graph)")
+                return None
+            new_dir = f"{old_dir}.reauthor"
+            samples_n = len(probes) + 1
+            graph2 = nr.reauthor_graph(base_graph, blame.node_id, new_dir,
+                                       nr.condemned_suite_feedback(list(summary.persistent), samples_n))
+            cand = LocalCandidate(
+                candidate_id="cand_reauthor", parent_graph_hash=base_graph.content_hash, edits=[],
+                graph=graph2, session_policy=incumbent.session_policy,
+                generation_reason="re-author the condemned suite", playbook_id="pb_q_reauthor",
+            )
+            record = self._record_from_local(cand, attempt_id=fl_state.base_attempt_id + 1)
+            record.metadata.update({
+                "persistence_phase": 2, "persistent_failures": list(summary.persistent),
+                "node_resample": {"node": blame.node_id, "position": "author", "n": self.node_resample_n,
+                                   "reason": blame.reason, "reauthor": True, "reauthor_spec_dir": new_dir,
+                                   "frozen_spec_dir": old_dir, "base_behaviour": incumbent.behaviour_score,
+                                   "injected": {}, "dropped": [], "prefix_artifact": None,
+                                   "steps": [{"node": st.node_id, "files": sorted(st.files)[:40], "author": st.is_author} for st in steps]},
+            })
+            return record
         if blame.position not in ("first", "last") or not blame.node_id:
             fl_state.notes.append("node_resample: declined (v1 handles first/last editing node only)")
             return None
@@ -1371,6 +1406,11 @@ class FastLoopController:
         except ValueError as exc:
             fl_state.notes.append(f"node_resample: declined ({exc})")
             return None
+        # v2: targeted -- the blamed node is told the persistent failures and gets the evidence
+        feedback = nr.targeted_feedback(list(summary.persistent))
+        suffix = suffix.model_copy(update={"nodes": [
+            n.model_copy(update={"prompt_feedback": ((getattr(n, "prompt_feedback", "") or "") + "\n\n" + feedback).strip()})
+            if n.node_id == blame.node_id else n for n in suffix.nodes]})
         idx = [st.node_id for st in code_steps].index(blame.node_id)
         prefix_step = code_steps[idx - 1] if idx > 0 else next((st for st in steps if st.is_author), None)
         cand = LocalCandidate(
@@ -1386,6 +1426,8 @@ class FastLoopController:
                 "reason": blame.reason, "owners": blame.owners, "frames": frames,
                 "prefix_artifact": prefix_step.artifact_id if prefix_step else None,
                 "injected": injected, "dropped": dropped,
+                "evidence_dir": str(evidence_dir) if evidence_dir else None,
+                "base_behaviour": incumbent.behaviour_score, "targeted": True,
                 "steps": [{"node": st.node_id, "files": sorted(st.files)[:40], "author": st.is_author} for st in steps],
             },
         })
@@ -1432,8 +1474,12 @@ class FastLoopController:
             if prefix_patch:
                 await self.workspace_manager.apply_patch(ws, prefix_patch)
             spec_dir = Path(ws.path) / nr.SPEC_DIR
-            if spec_dir.is_dir():
+            if spec_dir.is_dir() and not meta.get("reauthor"):
                 shutil.rmtree(spec_dir, ignore_errors=True)
+            if meta.get("evidence_dir") and Path(meta["evidence_dir"]).is_dir():
+                dst = Path(ws.path).parent / "repair_evidence"
+                shutil.rmtree(dst, ignore_errors=True)
+                shutil.copytree(meta["evidence_dir"], dst)
             run_context = RunContext(
                 run_id=f"{context.run_id}:{sid}", task_id=candidate_task_id(context.task_id, subtask_id, sid),
                 run_dir=context.run_dir, limits=context.limits, semaphores=context.semaphores,
@@ -1462,8 +1508,25 @@ class FastLoopController:
                             "gate": status is SubtaskStatus.COMMITTED and harness is not None, "harness": harness,
                             "behaviour": behaviour_score(stages), "failed": set(behaviour_failures(stages) or []),
                             "total": behaviour_total(stages), "stages": stages, "furthest": furthest})
-        chosen, agreement, consensus, note = nr.consensus_select(
-            [nr.Sample(s["index"], bool(s["gate"]), s["harness"], s["behaviour"], set(s["failed"])) for s in samples])
+            stop = nr.should_stop([nr.Sample(s["index"], bool(s["gate"]), s["harness"], s["behaviour"], set(s["failed"])) for s in samples],
+                                  meta.get("base_behaviour")) if not meta.get("reauthor") else None
+            if stop:
+                fl_state.notes.append(f"node_resample[{meta['node']}]: {stop}")
+                meta["stopped_early"] = stop
+                break
+        if meta.get("reauthor"):
+            # different suites per sample: pick a gate-passing, discriminating suite (0 < score < 1),
+            # largest first, then highest score; never consensus across unrelated test sets
+            ok = [s for s in samples if s["gate"] and s["behaviour"] is not None]
+            disc = [s for s in ok if 0 < (s["behaviour"] or 0) < 1] or ok
+            best = max(disc, key=lambda s: ((s.get("total") or 0), s["behaviour"] or 0), default=None)
+            chosen = nr.Sample(best["index"], True, best["harness"], best["behaviour"], set(best["failed"])) if best else None
+            agreement, consensus = 0.0, set()
+            note = (f"re-author: {len(ok)}/{len(samples)} passed the gate; chosen sample {best['index']} "
+                    f"(suite {best.get('total')} cases, score {best['behaviour']:.3f})" if best else "re-author: no sample passed the gate")
+        else:
+            chosen, agreement, consensus, note = nr.consensus_select(
+                [nr.Sample(s["index"], bool(s["gate"]), s["harness"], s["behaviour"], set(s["failed"])) for s in samples])
         record.latency_ms = int((time.perf_counter() - started) * 1000)
         record.cost = cost
         record.backend_sessions = sessions
@@ -1552,6 +1615,16 @@ class FastLoopController:
             raise CandidateWorkspaceError("winner missing workspace_ref")
         if winner.status is not CandidateStatus.VALID:
             raise CandidateWorkspaceError("refusing to commit non-valid winner")
+        nrm = (winner.metadata or {}).get("node_resample") or {}
+        if nrm.get("reauthor") and nrm.get("reauthor_spec_dir") and nrm.get("frozen_spec_dir"):
+            # the re-authored suite becomes the milestone's frozen suite; the condemned one is kept aside
+            new_dir, old_dir = Path(nrm["reauthor_spec_dir"]), Path(nrm["frozen_spec_dir"])
+            if new_dir.is_dir():
+                if old_dir.is_dir():
+                    shutil.rmtree(str(old_dir) + ".condemned", ignore_errors=True)
+                    old_dir.rename(str(old_dir) + ".condemned")
+                shutil.copytree(new_dir, old_dir)
+                fl_state.notes.append(f"node_resample: frozen suite replaced by the re-authored one ({new_dir.name})")
 
         expected_rev = base_ws.base_revision
         change_set = winner.change_set or await self.workspace_manager.collect_changeset(

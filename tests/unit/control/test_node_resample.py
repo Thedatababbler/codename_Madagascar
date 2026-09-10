@@ -53,3 +53,21 @@ def test_consensus_prefers_agreement_within_epsilon():
     chosen, agreement, consensus, _ = consensus_select(s)
     assert chosen.index in (0, 1) and consensus == {"a"} and 0 < agreement <= 1
     assert consensus_select([Sample(0, False, None, None, set())])[0] is None
+
+
+def test_v2_helpers(tmp_path):
+    from orchestra.control.fast_loop.node_resample import (
+        condemned_suite_feedback, frozen_spec_dir, reauthor_graph, repo_symbol_index, should_stop, symbols_in_test, targeted_feedback,
+    )
+    (tmp_path / "pkg").mkdir(); (tmp_path / "pkg" / "core.py").write_text("class GitWildMatchPattern:\n    pass\n\ndef helper():\n    pass\n")
+    t = tmp_path / "test_x.py"; t.write_text("def test_regex():\n    assert GitWildMatchPattern.pattern_to_regex('*') == 'x'\n")
+    idx = repo_symbol_index(tmp_path); assert idx["GitWildMatchPattern"] == "pkg/core.py"
+    assert "GitWildMatchPattern" in symbols_in_test(t, "test_regex")
+    assert "target" in targeted_feedback(["a.py::test_b"]) and "repair_evidence" in targeted_feedback(["a.py::test_b"])
+    assert should_stop([Sample(0, True, 1.0, 0.5, {"a"}), Sample(1, True, 1.0, 0.5, {"a"})], 0.5)
+    assert should_stop([Sample(0, True, 1.0, 0.5, {"a"}), Sample(1, True, 1.0, 0.7, {"a"})], 0.5) is None
+    assert should_stop([Sample(0, True, 1.0, 0.5, {"a"}), Sample(1, True, 1.0, 0.5, {"b"})], 0.5) is None
+    g = _graph(); old = frozen_spec_dir(g); assert old and old.endswith(".spec_tests")
+    g2 = reauthor_graph(g, _ids(g)[0], old + ".reauthor", condemned_suite_feedback(["x.py::t"], 3))
+    assert frozen_spec_dir(g2) == old + ".reauthor" and "condemned" not in old
+    assert "common cause is in the suite" in [n for n in g2.nodes if n.node_id == _ids(g)[0]][0].prompt_feedback
