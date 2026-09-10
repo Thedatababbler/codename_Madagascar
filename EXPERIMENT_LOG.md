@@ -2870,3 +2870,36 @@ legible without a held-out. Cost: three implementer sessions + three
 gates, against three full subgraphs for an anchor resample.
 Follow-up for v2: stop after two identical samples (agreement 1.0 with no
 gain) and spend the remaining budget elsewhere.
+
+**Trial 2/3 -- nl2_aiofiles `cpe-20260909T225142Z`, nl2_python-pathspec
+`cpe-20260910T001641Z`.** Chain done 02:12; four resample events over the
+three tasks, every one recorded under `fast_loop/node_resample/`.
+
+| task / milestone | persistent | blame (v1) | samples (gate, score, #fail) | agreement | resample vs incumbent | held-out |
+|---|---|---|---|---|---|---|
+| bplustree M2 | 14/0 | implementer (first), 14/14 via `node.py` | 3× pass, 0.333, 14 / 0.333, 14 / 0.333, 14 | **1.00** | tie, not committed, 0/14 | 0.357 (slow-package draw; prior 0.89/0.90/0.90/0.46) |
+| aiofiles M1 | 19/0, every sample 0.0 | **author** -> declined (suite-level cause) | -- | -- | LLM row `failures_to_agent` 0/19 | **0.929** (best aiofiles yet) |
+| pathspec M1 | 1/0 | contract_author (only editing node; no frame parsed) | 0.6, 2 / 0.6, 2 / 0.8, 1 | 0.83 | tie 0.8, not committed, 0/1 | 0.740 (prior 0.756) |
+| pathspec M2 | 1/1 | implementer (first; no frame parsed) | 0.667, 1 / 0.333, 2 / 0.667, 1 | 0.83 | tie with the best base 0.667, discarded, 0/1 | |
+
+Scorecard: **0 of 16 persistent failures fixed** by resampling, against
+27/38 for the evidence-fed continuation on the same kind of set. The
+mechanism is sound (prefix rebuilt, suffix graph injected, samples gated,
+consensus picked, records written) and it is a good *diagnostic*: agreement
+1.00 with no gain (bplustree) says the failure is deterministic at that
+node -- the target's, not the node's; agreement 0.83 with the best sample
+only tying (pathspec) says one of three draws is worse and none is better.
+As a *repair* it is weak, and the reason is structural: the resampled node
+runs blind -- same prompt, same inputs, no failure names, no evidence --
+so it reproduces the same behaviour. The continuation wins because the
+repairer is told what failed and can run it.
+
+v2, in order: (1) **targeted resample** -- inject the persistent failures
+and the repair evidence into the blamed node's prompt, so the N samples
+are N attempts at the known failures rather than N re-rolls; (2) stop
+after two identical samples (agreement 1.0, no gain); (3) the author
+verdict should trigger re-authoring, not a decline; (4) traceback frames
+came back empty on pathspec (parser), so ownership fell to the last
+writer; fix the parser and log frames per failure. The blame rule itself
+was never wrong in this trial: first editing node three times (correct
+for a first-pass defect), author once (correct, confirmed by the 0.929).
