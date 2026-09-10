@@ -423,3 +423,50 @@ def gradable_count(spec_dir: str) -> int | None:
         return max(0, int(d.get("collected") or 0) - int(d.get("vacuous") or 0))
     except (OSError, ValueError, TypeError):
         return None
+
+
+FLAKY_SHARE = 2 / 3
+
+
+def owner_share(targets: list[str], frames: dict[str, str], steps: list[WriterStep]) -> tuple[str | None, float, dict[str, str]]:
+    """The editing node owning most of `targets` (last writer of the file each
+    lands in; unowned -> last writer) and its share of them."""
+    code_steps = [s for s in steps if not s.is_author]
+    if not code_steps or not targets:
+        return None, 0.0, {}
+    owners: dict[str, str] = {}
+    for f in targets:
+        file = frames.get(f)
+        owner = None
+        if file:
+            for s in code_steps:
+                if file in s.files:
+                    owner = s.node_id
+        owners[f] = owner or code_steps[-1].node_id
+    counts = Counter(owners.values())
+    node, n = counts.most_common(1)[0]
+    return node, n / len(owners), owners
+
+
+def node_position(node_id: str, steps: list[WriterStep]) -> str:
+    order = [s.node_id for s in steps if not s.is_author]
+    if not order or node_id not in order:
+        return "none"
+    if node_id == order[0]:
+        return "first"
+    if node_id == order[-1]:
+        return "last"
+    return "middle"
+
+
+def flaky_feedback(flaky: list[str], evidence_relpath: str = "../repair_evidence") -> str:
+    listed = "\n".join(f"- {failure_key(n).split('::', 1)[-1]}" for n in flaky)
+    return (
+        f"The acceptance gate passed. These behaviours ({len(flaky)}) pass in some independent attempts at this "
+        f"milestone and fail in others -- they are unstable, and making them hold every time is this run's "
+        f"target:\n{listed}\n"
+        f"The tests for them, their last output, and the exact command to run them are beside this repository "
+        f"in {evidence_relpath}/ (start with README.md). Run them before and after each change; they are copies "
+        "of a sealed suite, so editing them changes nothing. Keep everything that already passes. Do not delete "
+        "spec_tests, check_tests or documented public symbols."
+    )

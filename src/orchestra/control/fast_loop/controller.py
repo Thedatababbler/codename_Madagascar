@@ -383,53 +383,87 @@ class FastLoopController:
             f"persistence: samples={summary.samples} "
             f"persistent={len(summary.persistent)} flaky={len(summary.flaky)}"
         )
-        if summary.samples < 2 or not summary.persistent:
-            # Every failure flipped at least once: the defect is luck, and the
-            # probes already are the right tool for that. Nothing to diagnose.
-            fl_state.notes.append("persistence: no persistent failures; phase two declined")
+        if summary.samples < 2 or not (summary.persistent or summary.flaky):
+            fl_state.notes.append("persistence: no persistent or flaky failures; phase two declined")
             state.state_version += 1
             await self._save_checkpoint(state)
             return
 
-        diagnosis = fl_state.diagnosis.model_copy(
-            update={
-                "behaviour_failures": list(summary.persistent),
-                "persistence_samples": summary.samples,
-            }
-        )
-        diagnosis = self._settle_roles(
-            diagnosis,
-            graph=base_graph,
-            sub=sub,
-            state=state,
-            fl_state=fl_state,
-            context=context,
-            subtask_id=subtask_id,
-            search_reason="quality",
-        )
-        fl_state.diagnosis = diagnosis
-
+        # Routing, not rivalry: the persistent set (fails in every sample) is
+        # deterministic given evidence and goes to the continuation table; the
+        # flaky set (disagreement between samples) goes to a best-of-N at the
+        # node that owns it. Both rows may be generated; the slots decide how
+        # many run and the Pareto selector judges afterwards. No slot is taken
+        # by force (the v1/v2 trials let the resample displace the
+        # continuation, which then never ran: EXP-20260910-01).
         remaining = slots if slots else max(1, self.budget.max_candidates - len(probes))
-        caps = self._caps_for_graph(base_graph)
-        generated = self.generator.generate(
-            graph=base_graph,
-            diagnosis=diagnosis,
-            # +1 because index zero of the draft list is always the anchor,
-            # which phase one has already sampled.
-            budget=self.budget.model_copy(update={"max_candidates": remaining + 1}),
-            capabilities=caps,
-            search_reason="quality",
-            history=self._playbook_history(fl_state),
-        )
-        picked = [c for c in generated if c.playbook_id][:remaining]
-        resample_record = None
-        if self.node_resample_n > 0 and graph_result is not None and summary.persistent:
-            resample_record = await self._arm_node_resample(
-                state=state, fl_state=fl_state, base_graph=base_graph, incumbent=incumbent,
-                probes=probes, summary=summary, graph_result=graph_result, context=context, base_ws=base_ws,
+        picked: list = []
+        if summary.persistent:
+            diagnosis = fl_state.diagnosis.model_copy(
+                update={
+                    "behaviour_failures": list(summary.persistent),
+                    "persistence_samples": summary.samples,
+                }
             )
-            if resample_record is not None:
-                picked = picked[: max(0, remaining - 1)]
+            diagnosis = self._settle_roles(
+                diagnosis,
+                graph=base_graph,
+                sub=sub,
+                state=state,
+                fl_state=fl_state,
+                context=context,
+                subtask_id=subtask_id,
+                search_reason="quality",
+            )
+            fl_state.diagnosis = diagnosis
+            caps = self._caps_for_graph(base_graph)
+            generated = self.generator.generate(
+                graph=base_graph,
+                diagnosis=diagnosis,
+                # +1 because index zero of the draft list is always the anchor,
+                # which phase one has already sampled.
+                budget=self.budget.model_copy(update={"max_candidates": remaining + 1}),
+                capabilities=caps,
+                search_reason="quality",
+                history=self._playbook_history(fl_state),
+            )
+            picked = [c for c in generated if c.playbook_id]
+        else:
+            diagnosis = fl_state.diagnosis
+        resample_record = None
+        if self.node_resample_n > 0 and graph_result is not None:
+            zero = (incumbent.behaviour_score == 0) and all((p.behaviour_score or 0) == 0 for p in probes)
+            if summary.persistent and zero:
+                # every sample at 0.0: suite-level cause -> re-author (author verdict)
+                resample_record = await self._arm_node_resample(
+                    state=state, fl_state=fl_state, base_graph=base_graph, incumbent=incumbent,
+                    probes=probes, summary=summary, graph_result=graph_result, context=context, base_ws=base_ws,
+                    targets=list(summary.persistent), mode="author",
+                )
+            elif summary.flaky:
+                resample_record = await self._arm_node_resample(
+                    state=state, fl_state=fl_state, base_graph=base_graph, incumbent=incumbent,
+                    probes=probes, summary=summary, graph_result=graph_result, context=context, base_ws=base_ws,
+                    targets=list(summary.flaky), mode="flaky",
+                )
+        # order: continuation rows first when there is a persistent set (they
+        # keep the floor), then the resample, then the rest of the table
+        ordered: list = []
+        if resample_record is not None and not summary.persistent:
+            ordered.append(resample_record)
+        cont = [c for c in picked if getattr(c, "continue_from_incumbent", False) or "continue" in (c.playbook_id or "")]
+        rest = [c for c in picked if c not in cont]
+        ordered.extend(cont)
+        if resample_record is not None and summary.persistent:
+            ordered.append(resample_record)
+        ordered.extend(rest)
+        chosen_rows = ordered[:remaining]
+        dropped_rows = [getattr(r, "playbook_id", None) or getattr(r, "candidate_id", "?") for r in ordered[remaining:]]
+        if dropped_rows:
+            fl_state.notes.append(f"persistence: {remaining} slot(s); not run for budget: {dropped_rows}")
+        picked = [r for r in chosen_rows if r is not resample_record]
+        if resample_record is not None and resample_record not in chosen_rows:
+            resample_record = None
         if not picked and resample_record is None:
             fl_state.notes.append("persistence: table produced no candidate; phase two declined")
             state.state_version += 1
@@ -1436,10 +1470,17 @@ class FastLoopController:
             summary_path.write_text(record.model_dump_json(indent=2), encoding="utf-8")
 
     async def _arm_node_resample(
-        self, *, state, fl_state, base_graph, incumbent, probes, summary, graph_result, context, base_ws
+        self, *, state, fl_state, base_graph, incumbent, probes, summary, graph_result, context, base_ws,
+        targets: list[str] | None = None, mode: str = "flaky",
     ) -> CandidateRecord | None:
-        """Blame one editing node (v1: file ownership, earliest owner) and arm a
-        best-of-N record that reruns the graph from that node on a frozen prefix."""
+        """Arm a best-of-N record at the editing node that owns `targets`.
+
+        mode="flaky": the row's precondition -- at least FLAKY_SHARE of the
+        targets owned by one node -- else declined. mode="author": every
+        sample scored 0.0 on the persistent set -> re-author the suite.
+        Ownership: last writer of the file the failure lands in (traceback
+        frame, else the symbol the test refers to)."""
+        targets = list(targets if targets is not None else summary.persistent)
         outputs = getattr(getattr(graph_result, "state", None), "node_outputs", None) or {}
         changes: dict[str, tuple[str, str]] = {}
         for node_id, outs in outputs.items():
@@ -1467,21 +1508,32 @@ class FastLoopController:
             await self.workspace_manager.apply_patch(scratch, code_steps[-1].patch)
             python = self._task_python(base_graph)
             frames = await asyncio.to_thread(
-                nr.traceback_frames, Path(scratch.path), list(summary.persistent), python
+                nr.traceback_frames, Path(scratch.path), targets, python
             )
-            # assertion-only failures have no repository frame: own them by the symbol under test
-            sym = await asyncio.to_thread(nr.symbol_frames, Path(scratch.path), list(summary.persistent))
+            # assertion-only failures have no repository frame (and a flaky one
+            # may pass on the incumbent): own them by the symbol under test
+            sym = await asyncio.to_thread(nr.symbol_frames, Path(scratch.path), targets)
             for k, v in sym.items():
                 frames.setdefault(k, v)
             evidence_dir = await asyncio.to_thread(
-                build_repair_evidence, Path(scratch.path), list(summary.persistent)
+                build_repair_evidence, Path(scratch.path), targets
             )
         except Exception as exc:  # noqa: BLE001
             evidence_dir = None
             fl_state.notes.append(f"node_resample: traceback frames unavailable ({exc}); ownership by last writer")
-        zero = (incumbent.behaviour_score == 0) and all((p.behaviour_score or 0) == 0 for p in probes)
-        blame = nr.blame_v1(list(summary.persistent), frames, steps, suite_collected_zero=zero)
-        fl_state.notes.append(f"node_resample: blame={blame.node_id} position={blame.position}: {blame.reason}")
+        if mode == "author":
+            blame = nr.blame_v1(targets, frames, steps, suite_collected_zero=True)
+        else:
+            node, share, owners = nr.owner_share(targets, frames, steps)
+            if node is None or share < nr.FLAKY_SHARE:
+                fl_state.notes.append(
+                    f"node_resample: precondition not met -- flaky failures spread across nodes "
+                    f"(best {share:.2f} at {node}); declined")
+                return None
+            blame = nr.Blame(node, nr.node_position(node, steps),
+                             f"{sum(1 for o in owners.values() if o == node)}/{len(owners)} flaky failures land in files last written by {node}",
+                             owners)
+        fl_state.notes.append(f"node_resample[{mode}]: blame={blame.node_id} position={blame.position}: {blame.reason}")
         if blame.position == "author" and blame.node_id:
             # v2: the suite is condemned -> re-author it with the evidence, on a
             # candidate-specific frozen-suite directory; the gate grades on it.
@@ -1516,8 +1568,8 @@ class FastLoopController:
         except ValueError as exc:
             fl_state.notes.append(f"node_resample: declined ({exc})")
             return None
-        # v2: targeted -- the blamed node is told the persistent failures and gets the evidence
-        feedback = nr.targeted_feedback(list(summary.persistent))
+        # targeted -- the blamed node is told the target failures and gets the evidence
+        feedback = nr.flaky_feedback(targets) if mode == "flaky" else nr.targeted_feedback(targets)
         suffix = suffix.model_copy(update={"nodes": [
             n.model_copy(update={"prompt_feedback": ((getattr(n, "prompt_feedback", "") or "") + "\n\n" + feedback).strip()})
             if n.node_id == blame.node_id else n for n in suffix.nodes]})
@@ -1530,8 +1582,11 @@ class FastLoopController:
         )
         record = self._record_from_local(cand, attempt_id=fl_state.base_attempt_id + 1)
         record.metadata.update({
-            "persistence_phase": 2, "persistent_failures": list(summary.persistent),
+            # the ledger scores the targets: for a flaky-mode row that is the flaky set
+            "persistence_phase": 2, "persistent_failures": targets, "ledger_targets": mode,
+            "flaky_failures": list(summary.flaky), "persistent_set": list(summary.persistent),
             "node_resample": {
+                "mode": mode, "targets": targets,
                 "node": blame.node_id, "position": blame.position, "n": self.node_resample_n,
                 "reason": blame.reason, "owners": blame.owners, "frames": frames,
                 "prefix_artifact": prefix_step.artifact_id if prefix_step else None,
@@ -1697,7 +1752,9 @@ class FastLoopController:
                 "topology": {"nodes": [{"id": n.get("node_id"), "kind": n.get("node_kind"), "inputs": list((n.get("input_slots") or {}).keys())} for n in graph.get("nodes", [])],
                              "edges": [f"{e.get('source_node')}.{e.get('source_output')} -> {e.get('destination_node')}.{e.get('destination_input')}" for e in graph.get("edges", [])],
                              "dropped_prefix": meta.get("dropped"), "writer_steps": meta.get("steps")},
-                "failure": {"persistent": record.metadata.get("persistent_failures"), "frames": meta.get("frames"),
+                "failure": {"mode": meta.get("mode"), "targets": meta.get("targets"),
+                            "persistent": record.metadata.get("persistent_set", record.metadata.get("persistent_failures")),
+                            "flaky": record.metadata.get("flaky_failures"), "frames": meta.get("frames"),
                             "incumbent_behaviour": (fl_state.persistence or {}).get("samples")},
                 "diagnosis": {"blamed_node": meta.get("node"), "position": meta.get("position"), "rule": "v1: last writer of the failing file; earliest owner",
                               "reason": meta.get("reason"), "owners": meta.get("owners"),

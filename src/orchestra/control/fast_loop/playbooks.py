@@ -134,6 +134,11 @@ class Playbook:
     #: a clean fork of the milestone base: the floor that already passed the
     #: gate cannot be re-rolled away, and the graph carries no builder to roll.
     continue_from_incumbent: bool = False
+    #: A row the generator cannot bind on its own: the controller builds it
+    #: from run evidence when ``precondition`` holds (node_resample needs the
+    #: incumbent's per-node changes and the probes' failure lists).
+    controller_built: bool = False
+    precondition: str = ""
     #: Which search this row belongs to. Default is failure: existing rows were
     #: written for a gate that did not pass. Quality rows must opt in.
     search_reasons: frozenset[SearchReason] = field(
@@ -357,6 +362,8 @@ def playbook_applies(playbook: Playbook, ctx: PlaybookContext) -> bool:
     # names ride along when the gate produced any (a compile failure names
     # none, and that is exactly when a shape with a dependency resolver is
     # the right move).
+    if playbook.controller_built:
+        return False
     if playbook.include_failure_list and not ctx.behaviour_failures and playbook.layer == "edit":
         return False
     if playbook.layer == "edit" and ctx.node_for(playbook.target) is None:
@@ -856,6 +863,29 @@ QUALITY_CATALOG: tuple[Playbook, ...] = (
         switch_template="continuation",
         role_from_diagnosis="improver",
         continue_from_incumbent=True,
+        search_reasons=_QUALITY,
+    ),
+    # Routing partner of the continuation, not its rival: the persistent set
+    # is deterministic given evidence (one continuation fixes it or nothing
+    # does -- three targeted samples agreed 3/3 on aiofiles and pathspec,
+    # 2026-09-10); the *flaky* set is where independent attempts disagree,
+    # so the node whose files own those failures is re-sampled best-of-N
+    # from a frozen prefix and the output closest to the majority is kept.
+    # Precondition: the flaky set is non-empty and at least two thirds of it
+    # is owned by one editing node. Built by the controller (needs the
+    # incumbent's per-node changes); the generator skips it.
+    Playbook(
+        playbook_id="pb_q_node_resample",
+        intent="flaky failures made deterministic by re-sampling the node that owns them",
+        reason="best-of-N at the editing node that owns the flaky failures, prefix frozen, majority output kept",
+        classes=_NO_CLASS,
+        templates=frozenset(
+            {"test_first", "test_first_improve", "test_first_quality_diagnosed"}
+        ),
+        target="improver",
+        include_failure_list=True,
+        controller_built=True,
+        precondition="flaky_concentrated",
         search_reasons=_QUALITY,
     ),
     #

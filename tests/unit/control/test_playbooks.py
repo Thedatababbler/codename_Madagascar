@@ -80,6 +80,7 @@ def test_quality_search_has_its_own_test_first_table() -> None:
         for p in playbooks_for("test_first", search_reason=SearchReason.QUALITY)
     ] == [
         "pb_q_continue_improve",
+        "pb_q_node_resample",
         "pb_tf_q_improve_after_gate",
         "pb_tf_q_diagnose_then_improve",
     ]
@@ -91,6 +92,7 @@ def test_quality_search_on_an_improve_shape_targets_the_improver() -> None:
         for p in playbooks_for("test_first_improve", search_reason=SearchReason.QUALITY)
     ] == [
         "pb_q_continue_improve",
+        "pb_q_node_resample",
         "pb_tf_q_failures_to_improver",
         "pb_tf_q_diagnose_from_improve",
     ]
@@ -101,6 +103,7 @@ def test_quality_search_on_an_improve_shape_targets_the_improver() -> None:
         )
     ] == [
         "pb_q_continue_improve",
+        "pb_q_node_resample",
         "pb_tf_q_failures_to_improver",
     ]
 

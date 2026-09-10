@@ -93,3 +93,21 @@ def test_v2_reauthor_helpers(tmp_path):
     b = blame_v1(["t.py::test_x"], {}, steps, suite_collected_zero=True)
     assert b.position == "author" and "every gradable case" in b.reason
     b2 = blame_v1(["spec_tests/t.py"], {}, steps); assert b2.position == "author" and "collects nothing" in b2.reason
+
+
+def test_routing_helpers_and_table_row():
+    from orchestra.control.fast_loop.node_resample import FLAKY_SHARE, flaky_feedback, node_position, owner_share
+    from orchestra.control.fast_loop.playbooks import QUALITY_CATALOG, playbook_applies
+    steps = [WriterStep("author", "a", "", {"spec_tests/t.py"}, True), WriterStep("impl", "i", "", {"pkg/a.py", "pkg/b.py"}, False), WriterStep("fix", "f", "", {"pkg/b.py"}, False)]
+    frames = {"t.py::x": "pkg/a.py", "t.py::y": "pkg/a.py", "t.py::z": "pkg/b.py"}
+    node, share, owners = owner_share(["t.py::x", "t.py::y", "t.py::z"], frames, steps)
+    assert node == "impl" and abs(share - 2 / 3) < 1e-9 and owners["t.py::z"] == "fix" and share >= FLAKY_SHARE
+    node2, share2, _ = owner_share(["t.py::x", "t.py::z"], frames, steps)
+    assert share2 == 0.5  # spread: below the precondition
+    assert node_position("impl", steps) == "first" and node_position("fix", steps) == "last"
+    assert "unstable" in flaky_feedback(["t.py::x"]) and "repair_evidence" in flaky_feedback(["t.py::x"])
+    row = next(r for r in QUALITY_CATALOG if r.playbook_id == "pb_q_node_resample")
+    assert row.controller_built and row.precondition == "flaky_concentrated"
+    class Ctx:  # the generator must skip a controller-built row whatever the context says
+        behaviour_failures = ["t.py::x"]
+    assert playbook_applies(row, Ctx()) is False
