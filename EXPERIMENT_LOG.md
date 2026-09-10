@@ -2950,6 +2950,52 @@ anything over a single evidence-fed continuation on this milestone is not
 decided by one event. Held-out did not move because the task's remaining
 held-out failures are outside both suites' reach.
 
+| nl2_python-pathspec (2nd) | M1 quality search, flaky only, `cand_feedback` 1.00 committed; M2 quality search: first pass **0.125** (8 gradable of 22 collected), probes 0.25 and 0.25, persistent **5/5**, blame = first editing node (builder, 5/5 in its files); targeted resample ×3: **3/3 at 0.875, identical failing sets, agreement 1.00**; committed (5/5 persistent fixed) | M2 resample **+0.625 committed** | 1.00 / 0.875 | **0.681** (v9 run 0.756, first v2 pass 0.698) |
+
+**pathspec: the biggest internal win of the trial is a held-out loss, and
+the suite is why.** Every M2 candidate of this run scored on the held-out
+suite in a scratch copy (same env, same 119 cases):
+
+| M2 candidate | authored suite | held-out |
+|---|---|---|
+| incumbent (first pass) | 0.125 | **0.790** |
+| probe `cand_feedback` | 0.250 | 0.655 |
+| probe `cand_feedback_r2` | 0.250 | 0.723 |
+| resample s0 (**chosen**) | 0.875 | 0.681 |
+| resample s1 | 0.875 | 0.739 |
+| resample s2 | 0.875 | 0.731 |
+
+The five persistent cases were all `pattern_to_regex` **exact regex
+text** assertions ("returns documented ... example": `r"^src/(?:/.*)?$"`
+for `src/`, `r"^(?:.*/)?build/(?:/.*)?$"` for `**/build/`, ...). The
+samples satisfied them by rewriting the translator, and every one of them
+then fails held-out cases the incumbent passed: empty pattern, comment
+lines, escaped asterisks, `**` regex equivalence, bytes matching, current-
+dir paths (11 new failures, 2 recovered). The ruler pointed away from the
+reference; the resample followed it faithfully, and agreement 1.0 on the
+authored outcomes hid a 7-case spread between the three samples on
+held-out. The chosen sample was the worst of the three.
+
+Two facts about the mechanism come out of this, independent of pathspec's
+ruler: (1) "identical failing sets on the authored suite" is not
+"identical behaviour" -- aiofiles M1's three samples (agreement 1.0) also
+differ on held-out by 13 cases (s0 13 fails, s1 14, s2 13; incumbent 16),
+so the consensus tie-break decides more than it knows; (2) the arm can
+only be as good as the suite that scores it, and on pathspec every
+internal gain since v1 has been bought with held-out.
+
+**Trial verdict (three tasks, two passes each).** The mechanism now fires
+where it should (quality path with persistent failures; failure-search
+recoveries via the hop) and its records are complete. Committed events:
+aiofiles M1 +0.081 internal / held-out unchanged (ceiling); pathspec M2
++0.625 internal / **-0.109 held-out** against the incumbent; bplustree
+never armed (suite fails to collect on two of three samples, one voter).
+Net: no held-out gain on any task. The next lever is not in the
+resampler: it is the suite's exact-representation cases (a test_author
+rule against asserting regex/repr text the documents do not state
+verbatim, and a custody check that a case's expected value is quoted from
+the documents) and the "not collected" samples that cannot vote.
+
 ## EXP-20260909-02 -- best-of-N at the blamed node (bestn branch, v1): first trial
 
 `fdbb435f` on branch `bestn`; arm `codeprojecteval_official_bestn.yaml`
