@@ -2918,6 +2918,42 @@ ran out of slots, nothing was committed, 0.106 again. The routing bug is
 gone; the policy question stays -- a milestone whose only defect is
 private helper names the architecture document lists is discarded whole.
 
+## EXP-20260911-01 -- routing trial (persistent -> continuation, flaky -> node resample), stopped by the weekly quota
+
+Branch bestn `4c4d35d9` (routing), `6e7f7173` (collect-nothing -> author
+first), `204115a7` (custody refuses hard collection errors), gpt-5.5,
+bestn yaml. Same three tasks; the account's gpt-5.5 window hit 100% at
+03:12 UTC on 09-11 (resets in 137 h) in the middle of the third task.
+
+| task | what happened | v2 events | held-out |
+|---|---|---|---|
+| bplustree | **both authored suites collected 0 cases** on the task interpreter (M1: a parametrize with 3 names and 4 values, 0/18; M2 0/9). Custody passed them; both milestones committed their first pass at behaviour 0.0 with the gate passed. M1: persistent = the file itself -> author verdict, but the re-author row was ordered behind a continuation scored 0/1 on a suite that grades nothing, and dropped for budget. M2: every sample "not collected" -> samples=0 -> declined | author verdict fired, not run | **0.16** (0.86-0.90 before) |
+| nl2_aiofiles | M1 first pass 0.0, 10 persistent on 3 samples -> **re-author on per-sample dirs**: s0 12 gradable/0.83, s1 13/0.85, s2 9/0.89; s1 chosen, frozen suite replaced, 0.846 committed. M2: persistent 1, flaky 3, all three flaky in the first implementer's files -> **flaky route**: best-of-3, 3/3 at 0.95, identical failing sets; the best probe was also 0.95 and won the Pareto tie on cost | re-author committed; flaky resample tied and discarded | 0.929 (every aiofiles run) |
+| nl2_python-pathspec | M1 persistent 4, flaky 1 -> flaky route armed on **one** flaky case at the contract author; two of the three samples and M2's author died on `429 Too Many Requests` (quota); M2 failed both attempts (GraphDeadlockError after the author's infra_error); final repo = M1 at 0.333 | resample killed by quota | 0.723 (M1 only) |
+
+Fixes that came out of it, all on bestn: (1) custody now runs
+`pytest --collect-only` on the frozen copy with the task interpreter and
+refuses a hard collection error (syntax, parametrize mismatch, a module
+the environment lacks), discarding the frozen copy so the retry freezes
+its own; a file whose only error is the project package not existing
+yet is tolerated (custody runs before the implementer). Fourth zeroed
+milestone by this cause (pyjwt M1, tenacity M1, voluptuous M1, bplustree
+M1+M2). (2) A suite that collects nothing routes to the author first and
+generates no continuation. (3) `FLAKY_MIN = 2`. (4) **The continuation row
+did not exist on the NL2Repo shapes**: it was limited to the three
+test_first templates, and the NL2Repo plans compile to review_then_fix
+(9/18 milestones), chain, parallel_audit, gate_then_repair -- so on
+NL2Repo the instrument with the 27/38 record never ran, and the
+LLM-chosen `pb_q_failures_to_agent` (1/7) took its slot in every quality
+search since 09-09. Widened to every authored-suite shape and verified by
+recompiling review_then_fix and chain into the continuation shape.
+
+Status of the routing question after two firings: both routes work
+mechanically; the re-author route produced its first committed suite
+replacement; the flaky route again found three identical samples. Nothing
+here moved held-out. Reruns (bplustree with custody refusal; pathspec) wait
+for the quota.
+
 ## EXP-20260910-01 -- bestn v2 (targeted resample, early stop, symbol ownership, re-author): first pass on the same three tasks
 
 Branch bestn, gpt-5.5, `codeprojecteval_official_bestn.yaml` (node_resample_n 3).
