@@ -437,6 +437,7 @@ def gradable_count(spec_dir: str) -> int | None:
 
 
 FLAKY_SHARE = 2 / 3
+FLAKY_MIN = 2  # one flaky case is luck, not a node to resample
 
 
 def owner_share(targets: list[str], frames: dict[str, str], steps: list[WriterStep]) -> tuple[str | None, float, dict[str, str]]:

@@ -456,12 +456,14 @@ class FastLoopController:
                     probes=probes, summary=summary, graph_result=graph_result, context=context, base_ws=base_ws,
                     targets=targets, mode="author",
                 )
-            elif summary.flaky:
+            elif len(summary.flaky) >= nr.FLAKY_MIN:
                 resample_record = await self._arm_node_resample(
                     state=state, fl_state=fl_state, base_graph=base_graph, incumbent=incumbent,
                     probes=probes, summary=summary, graph_result=graph_result, context=context, base_ws=base_ws,
                     targets=list(summary.flaky), mode="flaky",
                 )
+        if resample_record is None and 0 < len(summary.flaky) < nr.FLAKY_MIN and self.node_resample_n > 0:
+            fl_state.notes.append(f"node_resample: {len(summary.flaky)} flaky failure(s) is below the minimum of {nr.FLAKY_MIN}; not armed")
         # order: continuation rows first when there is a persistent set (they
         # keep the floor), then the resample, then the rest of the table
         ordered: list = []

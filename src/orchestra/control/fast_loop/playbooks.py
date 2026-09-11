@@ -843,6 +843,10 @@ CATALOG: tuple[Playbook, ...] = (
 )
 
 _QUALITY = frozenset({SearchReason.QUALITY})
+_AUTHORED_SUITE_SHAPES = frozenset({
+    "test_first", "test_first_improve", "test_first_quality_diagnosed",
+    "review_then_fix", "chain", "parallel_audit", "gate_then_repair",
+})
 _NO_CLASS = frozenset()
 
 QUALITY_CATALOG: tuple[Playbook, ...] = (
@@ -854,9 +858,12 @@ QUALITY_CATALOG: tuple[Playbook, ...] = (
         intent="persistent failures fixed on the incumbent's own state, floor kept",
         reason="one diagnosed specialist continues on the incumbent's work, told the persistent failures",
         classes=_NO_CLASS,
-        templates=frozenset(
-            {"test_first", "test_first_improve", "test_first_quality_diagnosed"}
-        ),
+        # Every authored-suite shape, not only test_first: the NL2Repo plans
+        # compile to review_then_fix (9 of 18 milestones), chain, parallel_audit
+        # and gate_then_repair, and on those the continuation -- the one row
+        # with a repair record (27/38) -- never existed, so the LLM-chosen
+        # pb_q_failures_to_agent (1/7) ran instead (EXP-20260911-01).
+        templates=_AUTHORED_SUITE_SHAPES,
         target="improver",
         include_failure_list=True,
         extra_prompt=_QUALITY_GUARD + " " + _REPAIR_EVIDENCE_NOTE,
@@ -879,9 +886,7 @@ QUALITY_CATALOG: tuple[Playbook, ...] = (
         intent="flaky failures made deterministic by re-sampling the node that owns them",
         reason="best-of-N at the editing node that owns the flaky failures, prefix frozen, majority output kept",
         classes=_NO_CLASS,
-        templates=frozenset(
-            {"test_first", "test_first_improve", "test_first_quality_diagnosed"}
-        ),
+        templates=_AUTHORED_SUITE_SHAPES,
         target="improver",
         include_failure_list=True,
         controller_built=True,

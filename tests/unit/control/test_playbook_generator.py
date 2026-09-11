@@ -618,3 +618,42 @@ def test_the_three_search_modes_are_mutually_exclusive() -> None:
             playbook_search=True,
             anchor_search=True,
         )
+
+
+def test_continuation_row_exists_on_every_authored_suite_shape() -> None:
+    """NL2Repo plans compile to review_then_fix and chain; the continuation must be offered there too."""
+    from orchestra.control.fast_loop.node_resample import writer_steps  # noqa: F401  (import check only)
+
+    shapes = {
+        "review_then_fix": [
+            {"slot": "test_author", "role": "test_author", "mandate": "write the suite"},
+            {"slot": "author", "role": "contract_author", "mandate": "author"},
+            {"slot": "reviewer", "role": "spec_auditor", "mandate": "review"},
+            {"slot": "fixer", "role": "gate_repairer", "mandate": "fix"},
+        ],
+        "chain": [
+            {"slot": "test_author", "role": "test_author", "mandate": "write the suite"},
+            {"slot": "first", "role": "implementer", "mandate": "first"},
+            {"slot": "second", "role": "implementer", "mandate": "second"},
+            {"slot": "third", "role": "integrator", "mandate": "third"},
+        ],
+    }
+    for template_id, agents in shapes.items():
+        graph = _compiled(template_id, agents)
+        incumbent = build_incumbent_record(
+            attempt_id=1, graph_hash=graph.content_hash, harness_score=0.8, behaviour_score=0.5,
+            behaviour_failures=["pkg.tests.TestX::test_a", "pkg.tests.TestX::test_b"],
+            behaviour_total=4, furthest_stage="spec_tests",
+        )
+        built = PlaybookCandidateGenerator(role_pool=_pool()).generate(
+            graph=graph, diagnosis=quality_search_diagnosis(incumbent, graph),
+            budget=FastLoopBudget(max_candidates=2, max_total_backend_calls=99),
+            capabilities={}, search_reason=SearchReason.QUALITY,
+        )
+        ids = [c.playbook_id for c in built if c.playbook_id]
+        assert ids and ids[0] == "pb_q_continue_improve", (template_id, ids)
+        cont = built[[c.playbook_id for c in built].index("pb_q_continue_improve")]
+        # capabilities={} rejects every candidate on the backend check; the recompile itself must have worked
+        assert cont.continue_from_incumbent and "capabilities" in (cont.rejection_message or "capabilities"), (template_id, cont.rejection_message)
+        assert cont.plan_recompile is not None and cont.plan_recompile.template_id == "continuation"
+        assert any(node.node_kind is NodeKind.AGENT for node in cont.graph.nodes)
