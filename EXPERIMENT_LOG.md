@@ -2918,6 +2918,43 @@ ran out of slots, nothing was committed, 0.106 again. The routing bug is
 gone; the policy question stays -- a milestone whose only defect is
 private helper names the architecture document lists is discarded whole.
 
+## EXP-20260912-01 -- feature-first milestone planning (branch `milestones`, opened; waiting for the quota)
+
+**Why.** Every plan so far has 1 or 2 milestones: CPE full pass 9x1 / 9x2
+(cap 4), NL2Repo core set 9x2 (selected for being multi-milestone), the
+09-08 planner probe 12x1 / 6x2. Not a hard-coded limit: the risk-first
+prompt says "one milestone remains the expected answer" and allows a
+split only for a blast-radius gate or an independent subsystem, so the
+model finds one contract seam and stops. The user's intent is the
+opposite: cut a task into small modules accepted on their own (database,
+then backend, then frontend), so a defect surfaces at the gate of the
+module that owns it and is located faster.
+
+**What.** `9d13dd3d` on `milestones` (branched from bestn `1f1808e8`):
+`decomposition.split_policy: feature` renders a different split section
+and system message (2..max feature_module milestones by documented
+feature group, foundations first, integration milestone last; forbidden:
+read-only milestones, cutting one coupled class, a milestone whose
+behaviour cannot be exercised until a later one), the parser accepts
+`feature_module` and keeps the collapse rule for unargued splits, the
+milestone brief tells a feature milestone what it delivers. The risk
+policy is unchanged. Yaml `codeprojecteval_official_milestones.yaml`
+(bestn arm + feature policy, max_subtasks 5, depth 6). Probe script
+saves plan files.
+
+**Plan.** (1) Planner-only probe on the 18 CPE tasks (one LLM call each):
+does the count stably exceed 2? Baseline for the same 18: mean 1.5. (2)
+Run one or two tasks on the feature plans and record. Both wait for the
+account quota (gpt-5.5 and terra both `usage_limit_reached` until
+~09-16 20:00 UTC); a supervisor polls and starts the probe on its own.
+
+Known risks, recorded before the data: more milestones = more frozen
+seams with no cross-milestone repair (tinydb class); the gate reruns only
+the milestone's own frozen suite, so regressions of earlier milestones'
+behaviour are invisible (proposal: rerun every earlier frozen suite at each
+gate); cost roughly linear in milestone count; numbers not comparable to
+the 2-milestone runs.
+
 ## EXP-20260911-01 -- routing trial (persistent -> continuation, flaky -> node resample), stopped by the weekly quota
 
 Branch bestn `4c4d35d9` (routing), `6e7f7173` (collect-nothing -> author
