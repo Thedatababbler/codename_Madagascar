@@ -282,7 +282,18 @@ def _milestone_brief(
         # point of a gate, and simply false across a seam nothing imports --
         # said there it invites an agent to design for consumers that will never
         # exist, and to treat another subsystem's absence as its own problem.
-        if milestone.split_reason == "independent_subsystem":
+        if milestone.split_reason == "feature_module":
+            lines += [
+                "## What this milestone delivers",
+                milestone.risk_rationale,
+                "",
+                "Later milestones build on what you commit here and are told to "
+                "extend it, not redesign it. Deliver this module's documented "
+                "behaviour completely; do not stub toward features a later "
+                "milestone owns.",
+                "",
+            ]
+        elif milestone.split_reason == "independent_subsystem":
             lines += [
                 "## Why this milestone stands alone",
                 milestone.risk_rationale,

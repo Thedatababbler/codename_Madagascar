@@ -22,7 +22,15 @@ def main() -> int:
     ap.add_argument("--tasks", type=str, default="")
     ap.add_argument("--backend", type=str, default="codex_sdk")
     ap.add_argument("--out", type=Path, default=Path("outputs/cpe_planner_probe.json"))
+    ap.add_argument("--split-policy", type=str, default="risk", choices=["risk", "feature"])
+    ap.add_argument("--max-milestones", type=int, default=4)
+    ap.add_argument("--plans-dir", type=Path, default=None,
+                    help="save each draft as <task>.plan.json, usable with run_codeprojecteval_decomp --plan-file")
+    ap.add_argument("--dataset-root", type=Path, default=None)
     args = ap.parse_args()
+    if args.dataset_root is not None:
+        import os
+        os.environ["CPE_DATASET_ROOT"] = str(args.dataset_root)
 
     names = [n.strip() for n in args.tasks.split(",") if n.strip()] or available_tasks()
     results: dict[str, dict] = {}
@@ -39,7 +47,15 @@ def main() -> int:
             workspace=task.repo_root,
             agent_backend=args.backend,
             brief=brief,
+            enable=True,
+            max_milestones=args.max_milestones,
+            split_policy=args.split_policy,
         )
+        if draft is not None and args.plans_dir is not None:
+            args.plans_dir.mkdir(parents=True, exist_ok=True)
+            (args.plans_dir / f"{name}.plan.json").write_text(
+                json.dumps({"generator": "llm", "split_policy": args.split_policy, **draft.to_dict()},
+                           indent=2, ensure_ascii=False), encoding="utf-8")
         if draft is None:
             results[name] = {"modules": len(modules), "loc": loc, "draft": None}
             print(f"{name:32s} modules={len(modules):3d} loc={loc:5d} planner=UNAVAILABLE")
@@ -50,6 +66,8 @@ def main() -> int:
             "milestones": [
                 {
                     "id": m.milestone_id,
+                    "split_reason": m.split_reason,
+                    "template": m.template_id,
                     "role": m.role,
                     "risk_rationale": m.risk_rationale,
                     "agents": len(m.agents),

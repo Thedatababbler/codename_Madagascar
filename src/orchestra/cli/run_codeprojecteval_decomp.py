@@ -203,6 +203,7 @@ def build_cpe_task_plan(
             enable=True,
             max_milestones=int(deco_cfg.get("max_subtasks", 6)),
             brief=cpe_brief(task),
+            split_policy=str(deco_cfg.get("split_policy") or "") or None,
         )
     if draft is None:
         raise SystemExit(

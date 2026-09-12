@@ -51,8 +51,22 @@ Role = GateLevel  # Legacy alias for callers that still import ``Role``.
 #: separates capabilities that do not import each other, so each gets its own
 #: gate and budget — a decomposition hypothesis in its own right, and one the
 #: planner used to be forbidden from proposing.
-SplitReason = Literal["risk_gate", "independent_subsystem"]
-SPLIT_REASONS: frozenset[str] = frozenset({"risk_gate", "independent_subsystem"})
+SplitReason = Literal["risk_gate", "independent_subsystem", "feature_module"]
+SPLIT_REASONS: frozenset[str] = frozenset({"risk_gate", "independent_subsystem", "feature_module"})
+
+#: How the planner is asked to segment. ``risk`` (the original): one milestone
+#: unless a blast-radius risk or an independent subsystem justifies more.
+#: ``feature``: the documented functionality is split into 2..N modules that
+#: can each be built and verified on their own, foundations first, an
+#: integration milestone last -- so a defect surfaces at the gate of the
+#: module that owns it instead of at the end of one long run.
+SplitPolicy = Literal["risk", "feature"]
+SPLIT_POLICY_ENV = "ADAMAS_PLAN_SPLIT_POLICY"
+
+
+def split_policy_from_env(default: str = "risk") -> str:
+    value = (os.getenv(SPLIT_POLICY_ENV) or default or "risk").strip().lower()
+    return value if value in ("risk", "feature") else "risk"
 
 PLAN_ENV_FLAG = "ADAMAS_REALBENCH_DYNAMIC_PLAN"
 PLAN_MODEL_ENV = "ADAMAS_REALBENCH_PLANNER_MODEL"
@@ -600,38 +614,46 @@ def build_planner_prompt(
     workspace: Path,
     agent_backend: str,
     max_milestones: int = MAX_MILESTONES,
+    split_policy: str = "risk",
 ) -> str:
-    """Render the risk-first decomposition prompt from public inputs only."""
+    """Render the decomposition prompt from public inputs only."""
     return render_planner_prompt(
         brief=realbench_brief(task_id=task_id, workspace=Path(workspace)),
         agent_backend=agent_backend,
         max_milestones=max_milestones,
+        split_policy=split_policy,
     )
 
 
-def render_planner_prompt(
-    *,
-    brief: PlanningBrief,
-    agent_backend: str,
-    max_milestones: int = MAX_MILESTONES,
-    pool: RolePool | None = None,
-    templates: dict[str, SubgraphTemplate] | None = None,
-) -> str:
-    """Render the risk-first decomposition prompt for any dataset's brief."""
-    task_id = brief.task_id
-    modules = brief.modules
-    exports = brief.exports
-    design_sections = "\n\n".join(
-        f"## {title}\n{text or '(missing)'}" for title, text in brief.documents
-    )
-    role_catalogue = "\n".join((pool or default_role_pool()).catalog_lines())
-    template_catalogue = "\n".join(
-        template_catalog_lines(templates or default_templates())
-    )
+def _split_section(split_policy: str, max_milestones: int) -> str:
+    if split_policy == "feature":
+        return f"""# How to split (feature-first)
+A milestone is built, graded and frozen on its own, and the next one starts
+from what it committed. Split the documented functionality into **2 to
+{max_milestones} milestones**, each a module or feature group that can be built
+and verified on its own from the design documents, so that a defect is caught
+at the gate of the module that owns it rather than at the end of one long run.
+Set `split_reason` to `feature_module` for every milestone and use
+`risk_rationale` to state, concretely, what the milestone delivers and how its
+gate can verify it without the milestones that come after it.
 
-    return f"""You plan milestones for an autonomous repository-implementation run.
+Order by dependency, foundations first: shared data structures, constants and
+contracts other modules import; then the core logic that builds on them; then
+the outward-facing layers (public API, CLI, adapters); the LAST milestone
+integrates everything and is graded on the full public contract. Every
+milestone must own real, documented behaviour that a test can exercise on the
+repository as it stands when that milestone finishes. When the documents
+describe the project as a small set of features, one milestone per feature
+group is the expected shape; two milestones is the minimum, not the target.
 
-# The two reasons a milestone may exist
+# Forbidden ways to split
+- A milestone that only reads, reviews, documents, scaffolds or "maps" code.
+- Cutting one tightly coupled class or module across two milestones.
+- A non-final milestone whose behaviour cannot be exercised until a later one
+  exists (then merge it into that later one).
+- More than {max_milestones} milestones.
+"""
+    return f"""# The two reasons a milestone may exist
 A milestone is built, graded and frozen on its own. Exactly two things justify
 more than one, and you must say which applies in `split_reason`:
 
@@ -657,7 +679,51 @@ One milestone remains the expected answer for most tasks.
 - Milestones that only read, review, document, or "map" the code.
 - Milestones whose failure would merely cost some local rework.
 - More than {max_milestones} milestones.
+"""
 
+
+def planner_system_message(split_policy: str = "risk") -> str:
+    if split_policy == "feature":
+        return (
+            "You decompose repository tasks into milestones and emit only JSON. "
+            "You split the documented functionality into 2 or more modules that "
+            "can each be built and verified on their own, foundations first, an "
+            "integration milestone last."
+        )
+    return (
+        "You decompose repository tasks into milestones and emit "
+        "only JSON. You prefer one milestone unless a genuine "
+        "blast-radius risk exists, or two subsystems are "
+        "genuinely independent of each other."
+    )
+
+
+def render_planner_prompt(
+    *,
+    brief: PlanningBrief,
+    agent_backend: str,
+    max_milestones: int = MAX_MILESTONES,
+    pool: RolePool | None = None,
+    templates: dict[str, SubgraphTemplate] | None = None,
+    split_policy: str = "risk",
+) -> str:
+    """Render the decomposition prompt for any dataset's brief."""
+    task_id = brief.task_id
+    modules = brief.modules
+    exports = brief.exports
+    design_sections = "\n\n".join(
+        f"## {title}\n{text or '(missing)'}" for title, text in brief.documents
+    )
+    role_catalogue = "\n".join((pool or default_role_pool()).catalog_lines())
+    template_catalogue = "\n".join(
+        template_catalog_lines(templates or default_templates())
+    )
+
+    split_section = _split_section(split_policy, max_milestones)
+    reasons = "feature_module" if split_policy == "feature" else "risk_gate|independent_subsystem"
+    return f"""You plan milestones for an autonomous repository-implementation run.
+
+{split_section}
 Milestones run in the order you declare them, each starting from a repository
 containing everything the earlier ones committed, and each receives a log of
 what they changed and the symbols their gates froze. That holds even for
@@ -736,8 +802,8 @@ Return ONLY a JSON object:
       "milestone_id": "snake_case_id",
       "title": "...",
       "objective": "what to build, concretely",
-      "split_reason": "risk_gate|independent_subsystem",
-      "risk_rationale": "what breaks downstream if wrong, or why nothing imports across the seam",
+      "split_reason": "{reasons}",
+      "risk_rationale": "what breaks downstream if wrong, or why nothing imports across the seam, or (feature_module) what this milestone delivers and how its gate verifies it alone",
       "gate_level": "discovery|implementation|integration",
       "template_id": "one of the template ids above",
       "depends_on": ["earlier_milestone_id"],
@@ -784,8 +850,10 @@ def plan_milestones(
     enable: bool | None = None,
     max_milestones: int = MAX_MILESTONES,
     brief: PlanningBrief | None = None,
+    split_policy: str | None = None,
 ) -> MilestonePlanDraft | None:
-    """Ask an LLM for a risk-first milestone DAG; ``None`` when unavailable."""
+    """Ask an LLM for a milestone DAG (risk-first or feature-first); ``None`` when unavailable."""
+    split_policy = split_policy or split_policy_from_env()
     if not planner_enabled(enable):
         return None
     api_key = os.getenv("OPENAI_API_KEY")
@@ -797,6 +865,7 @@ def plan_milestones(
         brief=brief or realbench_brief(task_id=task_id, workspace=Path(workspace)),
         agent_backend=agent_backend,
         max_milestones=max_milestones,
+        split_policy=split_policy,
     )
     try:
         from openai import OpenAI
@@ -812,15 +881,7 @@ def plan_milestones(
             model=model,
             temperature=0,
             messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You decompose repository tasks into milestones and emit "
-                        "only JSON. You prefer one milestone unless a genuine "
-                        "blast-radius risk exists, or two subsystems are "
-                        "genuinely independent of each other."
-                    ),
-                },
+                {"role": "system", "content": planner_system_message(split_policy)},
                 {"role": "user", "content": prompt},
             ],
         )
