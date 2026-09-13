@@ -454,7 +454,13 @@ def _per_test_timeout_flags():
         import pytest_timeout  # noqa: F401
     except ImportError:
         return []
-    return ["-p", "timeout", "--timeout=120", "--timeout-method=thread"]
+    # signal, not thread: the thread method cannot interrupt the test, so on a
+    # timeout it dumps every stack and exits the whole pytest process -- no
+    # summary line, zero counts, and the grade read "N not collected" for a
+    # tree layer that merely fsync-ed itself past 120 s (bplustree M3/M4,
+    # 2026-09-13). The signal method raises inside the test and the run
+    # goes on; a case it cannot interrupt is caught by the stage budget.
+    return ["-p", "timeout", "--timeout=120", "--timeout-method=signal"]
 
 
 def _pytest_env(cwd, import_root=None):
@@ -601,7 +607,9 @@ def _run_pytest(cwd, target, *, timeout, import_root=None):
             os.unlink(log.name)
         except OSError:
             pass
-    if timed_out:
+    passed, total, ran = _pytest_counts(out)
+    aborted = (not timed_out) and total == 0 and bool(ids) and not re.search(r"\\d+ (?:passed|failed|error)", out)
+    if timed_out or aborted:
         seen_pass = set(re.findall(r"^(\\S+::\\S+) PASSED", out, re.M))
         seen_fail = set(re.findall(r"^(\\S+::\\S+) (?:FAILED|ERROR)", out, re.M))
         # collect-only and -v may spell the same case with different path
@@ -612,22 +620,20 @@ def _run_pytest(cwd, target, *, timeout, import_root=None):
         passed_keys = {_key(n) for n in seen_pass}
         known = set(ids) or (seen_pass | seen_fail)
         failed = {n for n in known if _key(n) not in passed_keys} | seen_fail
+        head = ("TIMED OUT after " + str(timeout) + "s" if timed_out
+                else "ABORTED: pytest exited without a summary (exit code " + str(proc.returncode) + ")")
         tail = (
-            "TIMED OUT after " + str(timeout) + "s: " + str(len(seen_pass) + len(seen_fail)) + "/" + str(len(known))
+            head + ": " + str(len(seen_pass) + len(seen_fail)) + "/" + str(len(known))
             + " cases finished; every unfinished case is counted as failed (a hang is a failure)\\n" + out[-1500:]
         )
         return len(seen_pass), len(known), len(seen_pass) + len(seen_fail), tail, failed
 
-    class _Proc:
-        stdout = out
-    proc = _Proc()
-    passed, total, ran = _pytest_counts(proc.stdout)
     return (
         passed,
         total,
         ran,
-        (proc.stdout or "")[-2000:],
-        _failed_test_ids(proc.stdout),
+        (out or "")[-2000:],
+        _failed_test_ids(out),
     )
 
 
@@ -910,12 +916,12 @@ def main() -> int:
                 # travel in the score marker, which the selector reads and no
                 # prompt does.
                 uncollected = max(0, total - ran)
-                timed_out = tail.startswith("TIMED OUT")
+                timed_out = tail.startswith("TIMED OUT") or tail.startswith("ABORTED")
                 print(
                     "SPEC spec_tests "
                     + str(max(0, passed - vacuous)) + "/" + str(gradable)
                     + " (vacuous " + str(vacuous) + " excluded"
-                    + ("; TIMED OUT, " + str(uncollected) + " unfinished case(s) counted failed" if timed_out
+                    + ("; " + tail.split(":", 1)[0] + ", " + str(uncollected) + " unfinished case(s) counted failed" if timed_out
                        else ("; " + str(uncollected) + " not collected" if uncollected else ""))
                     + ")"
                 )

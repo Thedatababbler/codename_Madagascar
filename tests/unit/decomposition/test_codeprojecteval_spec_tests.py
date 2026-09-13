@@ -747,3 +747,28 @@ def test_a_suite_that_runs_out_of_time_names_its_unfinished_cases(tmp_path: Path
     assert names == {"test_hangs", "test_never_runs"}, spec
     assert spec["passed_units"] == 1
     assert "TIMED OUT" in proc.stdout
+
+
+def test_a_run_that_dies_without_a_summary_names_its_unfinished_cases(tmp_path: Path) -> None:
+    """pytest-timeout's thread method used to kill the whole process; a dead run is not 'not collected'."""
+    harness = Harness(tmp_path)
+    harness.implement()
+    harness.author(
+        "import os\n"
+        "from demo_pkg.core import Widget\n\n\n"
+        "def test_fast():\n    assert Widget\n\n\n"
+        "def test_dies():\n    os._exit(7)\n\n\n"
+        "def test_never_runs():\n    assert True\n"
+    )
+    harness.custody()
+    proc = subprocess.run(harness.command, cwd=harness.ws, capture_output=True, text=True, check=False)
+    report: dict = {}
+    for line in proc.stdout.splitlines():
+        if line.startswith("ADAMAS_HARNESS_SCORE "):
+            report = json.loads(line.split(" ", 1)[1])
+    spec = Harness.stage(report, "spec_tests")
+    assert spec is not None, proc.stdout[-800:]
+    names = {f.split("::")[-1] for f in spec["failed_tests"]}
+    assert names == {"test_dies", "test_never_runs"}, spec
+    assert spec["passed_units"] == 1
+    assert "ABORTED" in proc.stdout
