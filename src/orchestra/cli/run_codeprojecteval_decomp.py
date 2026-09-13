@@ -694,8 +694,20 @@ async def _run_one(
                     prior.fast_loop_states.pop(sid, None)
                     reset.append(sid)
             prior.pareto_state = None
+            # The graph-level checkpoints of the reset milestones (and their
+            # infra retries / candidates) record the interrupted node statuses;
+            # left in place, the runtime resumes them and deadlocks at once
+            # ("no ready nodes") without a single backend call.
+            cleared = 0
+            for sid in reset:
+                for d in (run_dir / "tasks").glob(f"{plan.task_id}__*{sid}*"):
+                    ck = d / "checkpoint.json"
+                    if ck.exists():
+                        ck.unlink()
+                        cleared += 1
             state = prior
-            print(f"resume: {len(prior.subtasks) - len(reset)} milestone(s) kept committed, reset {reset}", flush=True)
+            print(f"resume: {len(prior.subtasks) - len(reset)} milestone(s) kept committed, reset {reset}, "
+                  f"{cleared} graph checkpoint(s) cleared", flush=True)
         else:
             print("resume: no prior task state found; starting fresh", flush=True)
     await event_writer.append(
