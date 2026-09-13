@@ -2948,6 +2948,25 @@ Run one or two tasks on the feature plans and record. Both wait for the
 account quota (gpt-5.5 and terra both `usage_limit_reached` until
 ~09-16 20:00 UTC); a supervisor polls and starts the probe on its own.
 
+**Step 1 result (09-13 02:59-03:40 UTC, gpt-5.5 on the qandy Plus account,
+re-enabled with the user's approval for planner calls only; 18 calls cost
+27% of its 5 h window).** Every task split: **13 x 5, 4 x 4, 1 x 3, mean
+4.67** (risk-first probe on the same 18: 12 x 1, 6 x 2, mean 1.33; full
+pass 1.5). The cap of 5 binds on 13/18 -- the prompt's "two is the
+minimum, not the target" pushes to the ceiling, so the count is a
+prompt/cap choice, not a property of the tasks. Shapes are the documented
+dependency layers: bplustree = serialization/entry contracts -> node
+hierarchy -> file memory + WAL -> tree operations -> package integration;
+tinydb = storage/utils contracts -> query language + operations -> table
+CRUD -> database/middleware integration (its first milestone now owns
+`LRUCache`, the exact frozen defect of the 09-08 loss: a direct test of
+the frozen-seam risk). Every plan ends in an integration milestone; the
+planner mixes templates (test_first, review_then_fix, gate_then_repair,
+parallel_audit with 5 agents). Plans saved under
+`configs/datasets/cpe_feature_plans/` (table in its README). Cost note
+before step 2: 5 milestones x (first pass + up to 3 candidates) per task,
+on templates with 4-5 agents -- roughly 2.5-3x a 2-milestone run.
+
 Known risks, recorded before the data: more milestones = more frozen
 seams with no cross-milestone repair (tinydb class); the gate reruns only
 the milestone's own frozen suite, so regressions of earlier milestones'
