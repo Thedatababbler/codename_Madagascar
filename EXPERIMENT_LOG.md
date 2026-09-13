@@ -3021,6 +3021,22 @@ a committed base (fail the milestone; the task keeps the last good
 state), and the persistent set must be named (fixed `fd99a4a3`) so the
 search can act on a hang instead of blaming the author.
 
+**Milestone 4 redone (`--resume-from`, 13:43-14:30 UTC, third Plus window).**
+Canonical rolled back to milestone 3 (tree layer 585 -> 156 lines).
+First pass and one probe again 0/13 with no names; the second probe and
+the re-author died when the window closed at 14:30. The new guard
+(`refuse_zero_commit_over_base`) **refused the commit**: milestone 4
+failed, milestone 5 was not started, the task ends on milestones 1-3,
+**held-out 0.882** (was 0.329 after the unguarded commit). Why the zero
+still had no names: pytest-timeout ran with `--timeout-method=thread`,
+which on a per-test timeout dumps the stacks and exits the whole pytest
+process -- no summary line, zero counts, "13 not collected". The
+implementation's defect underneath is an `os.fsync` per WAL page that
+puts the delete tests past 120 s. Fixed after this run: signal method,
+and a run that dies without a summary names its unfinished cases
+(ABORTED). Cost: three Plus windows for one task, milestones 4-5 still
+not delivered.
+
 Known risks, recorded before the data: more milestones = more frozen
 seams with no cross-milestone repair (tinydb class); the gate reruns only
 the milestone's own frozen suite, so regressions of earlier milestones'
