@@ -132,6 +132,7 @@ class FastLoopController:
         persistence_probe_samples: int = 2,
         node_resample_n: int = 0,
         persistence_after_recovery: bool = False,
+        refuse_zero_commit_over_base: bool = False,
         diagnosis_config: DiagnosisConfig | None = None,
         clock=None,
         persist_checkpoints: bool = True,
@@ -160,6 +161,7 @@ class FastLoopController:
         # best-of-N at the blamed node from a frozen prefix (docs/node_resample_design.md); 0 = off
         self.node_resample_n = max(0, int(node_resample_n))
         self.persistence_after_recovery = bool(persistence_after_recovery)
+        self.refuse_zero_commit_over_base = bool(refuse_zero_commit_over_base)
         # graph results of executed candidates, by (subtask, candidate): the
         # recovery hop needs the winner's node outputs to blame a node
         self._results: dict[tuple[str, str], Any] = {}
@@ -966,7 +968,7 @@ class FastLoopController:
             if not ok:
                 fl_state.exhausted = True
                 if incumbent is not None:
-                    self._keep_incumbent(sub, fl_state, incumbent, reason)
+                    self._keep_incumbent(sub, fl_state, incumbent, reason, state=state)
                 else:
                     sub.status = SubtaskStatus.FAILED
                     sub.failure_message = reason
@@ -1012,7 +1014,7 @@ class FastLoopController:
             fl_state.exhausted = True
             if incumbent is not None:
                 self._keep_incumbent(
-                    sub, fl_state, incumbent, "no candidate designs were generated"
+                    sub, fl_state, incumbent, "no candidate designs were generated", state=state
                 )
             else:
                 sub.status = SubtaskStatus.FAILED
@@ -1069,7 +1071,7 @@ class FastLoopController:
             fl_state.exhausted = True
             if incumbent is not None:
                 self._keep_incumbent(
-                    sub, fl_state, incumbent, "no candidate was selectable"
+                    sub, fl_state, incumbent, "no candidate was selectable", state=state
                 )
             else:
                 sub.status = SubtaskStatus.FAILED
@@ -1086,7 +1088,7 @@ class FastLoopController:
         # already committed, so the first pass stands and no patch is applied.
         if incumbent is not None and winner.metadata.get("incumbent"):
             self._keep_incumbent(
-                sub, fl_state, winner, "no candidate improved on the first pass"
+                sub, fl_state, winner, "no candidate improved on the first pass", state=state
             )
             state.state_version += 1
             await self._save_checkpoint(state)
@@ -1105,6 +1107,7 @@ class FastLoopController:
                 fl_state,
                 incumbent,
                 f"winner {winner.candidate_id} did not pass the gate",
+                state=state,
             )
             state.state_version += 1
             await self._save_checkpoint(state)
@@ -1163,12 +1166,34 @@ class FastLoopController:
         await self._save_checkpoint(state)
         return state
 
+    def refuses_zero_commit(self, sub: SubtaskState, incumbent: CandidateRecord, state) -> str | None:
+        """Why a first pass must not be kept: it scored 0 on a graded suite and
+        would be committed over a base that earlier milestones built.
+
+        bplustree on the 5-milestone plan (2026-09-13): milestone 4's tree
+        layer hung, scored 0/11 on its own suite, the gate passed on
+        structure, nothing in the search beat it, and committing it took the
+        task from 0.882 to 0.329 on held-out. A milestone that grades nothing
+        of its own behaviour has not delivered it; failing it keeps the last
+        good state and stops the milestones that depend on it."""
+        if not self.refuse_zero_commit_over_base or state is None:
+            return None
+        if (incumbent.behaviour_score or 0.0) > 0.0 or not (incumbent.behaviour_total or 0):
+            return None
+        deps = list(getattr(getattr(sub, "spec", None), "dependencies", None) or [])
+        committed = [d for d in deps if getattr(state.subtasks.get(d), "status", None) is SubtaskStatus.COMMITTED]
+        if not committed:
+            return None
+        return (f"first pass scored 0/{incumbent.behaviour_total} on its own suite and no candidate improved; "
+                f"refusing to commit over the committed base ({', '.join(committed)})")
+
     def _keep_incumbent(
         self,
         sub: SubtaskState,
         fl_state: FastLoopState,
         incumbent: CandidateRecord,
         reason: str,
+        state=None,
     ) -> None:
         """End a quality search by keeping the first pass, as a success.
 
@@ -1178,6 +1203,15 @@ class FastLoopController:
         search it was subjected to found nothing — the one outcome a search for
         improvements must never produce.
         """
+        refusal = self.refuses_zero_commit(sub, incumbent, state)
+        if refusal:
+            fl_state.selected_candidate_id = None
+            fl_state.exhausted = True
+            sub.status = SubtaskStatus.FAILED
+            sub.failure_reason = SubtaskFailureReason.HARNESS
+            sub.failure_message = refusal
+            fl_state.notes.append(f"quality search declined: {reason}; {refusal}")
+            return
         incumbent.status = CandidateStatus.COMMITTED
         fl_state.selected_candidate_id = incumbent.candidate_id
         fl_state.exhausted = True

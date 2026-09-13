@@ -16,6 +16,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import shutil
 import logging
 import os
 import time
@@ -339,6 +340,7 @@ class TuningConfig:
     persistence_probe_samples: int
     node_resample_n: int
     persistence_after_recovery: bool
+    refuse_zero_commit_over_base: bool
     diagnosis: DiagnosisConfig
     pareto: ParetoSelectionConfig
     quality_trigger: QualityTrigger
@@ -387,6 +389,7 @@ def read_tuning_config(config: dict[str, Any]) -> TuningConfig:
         persistence_probe_samples=persistence_probe_samples,
         node_resample_n=int(tuning.get("node_resample_n", 0)),
         persistence_after_recovery=bool(tuning.get("persistence_after_recovery", False)),
+        refuse_zero_commit_over_base=bool(tuning.get("refuse_zero_commit_over_base", False)),
         diagnosis=DiagnosisConfig.from_mapping(tuning.get("diagnosis")),
         pareto=ParetoSelectionConfig.from_mapping(tuning.get("pareto")),
         quality_trigger=QualityTrigger.from_mapping(tuning.get("quality_trigger")),
@@ -442,6 +445,7 @@ async def _run_one(
     plan_file: Path | None = None,
     arm: str = "planner",
     resume: bool = False,
+    resume_from: str | None = None,
 ) -> dict[str, Any]:
     started_at = datetime.now(UTC)
     wall_started = time.perf_counter()
@@ -651,6 +655,7 @@ async def _run_one(
         persistence_probe_samples=tuning.persistence_probe_samples,
         node_resample_n=tuning.node_resample_n,
         persistence_after_recovery=tuning.persistence_after_recovery,
+        refuse_zero_commit_over_base=tuning.refuse_zero_commit_over_base,
         diagnosis_config=tuning.diagnosis,
         quality_trigger=tuning.quality_trigger,
         slow_loop=SlowLoopController(
@@ -686,6 +691,35 @@ async def _run_one(
             from orchestra.control.task_state import SubtaskStatus as _SS
 
             reset = []
+            order = [m.milestone_id for m in draft.milestones]
+            cut = order.index(resume_from) if resume_from in order else None
+            if resume_from and cut is None:
+                raise SystemExit(f"--resume-from {resume_from!r} is not a milestone of this plan: {order}")
+            if cut is not None:
+                # redo this milestone and everything after it: roll the canonical
+                # repository back to the last kept commit, forget those commits,
+                # deliveries and frozen suites, so the milestones run as new
+                redo = set(order[cut:])
+                kept = [r for r in prior.workspace_commit_records if r.subtask_id not in redo]
+                base_rev = kept[-1].committed_revision if kept else prior.canonical_revision
+                repo = Path(prior.canonical_workspace_ref or "")
+                if repo.is_dir() and base_rev:
+                    import subprocess as _sp
+
+                    _sp.run(["git", "reset", "--hard", str(base_rev)], cwd=repo, check=True, capture_output=True)
+                    _sp.run(["git", "clean", "-fdq"], cwd=repo, check=False, capture_output=True)
+                    prior.canonical_revision = base_rev
+                prior.workspace_commit_records = kept
+                prior.delivery_ledger = [d for d in prior.delivery_ledger if d.target_subtask_id not in redo]
+                for sid in redo:
+                    frozen = spec_tests_path_for(harness_dir, sid)
+                    for side in [*harness_dir.glob(frozen.name + "*")]:
+                        if side.is_dir():
+                            shutil.rmtree(side, ignore_errors=True)
+                        else:
+                            side.unlink(missing_ok=True)
+                    prior.subtasks[sid].status = _SS.PENDING
+                print(f"resume: canonical reset to {str(base_rev)[:8]} (before {resume_from}); redo {sorted(redo, key=order.index)}", flush=True)
             for sid, sub in prior.subtasks.items():
                 if sub.status is not _SS.COMMITTED:
                     sub.status = _SS.PENDING
@@ -877,7 +911,8 @@ async def _run(args: argparse.Namespace) -> int:
             agent_backend=agent_backend,
             plan_file=Path(args.plan_file) if args.plan_file else None,
             arm=str(args.arm),
-            resume=bool(getattr(args, "resume", False)),
+            resume=bool(getattr(args, "resume", False)) or bool(getattr(args, "resume_from", None)),
+            resume_from=getattr(args, "resume_from", None),
         )
         results.append(summary)
         print(json.dumps(summary, indent=2, sort_keys=True, ensure_ascii=False))
@@ -919,6 +954,10 @@ def main() -> int:
     parser.add_argument(
         "--resume", action="store_true",
         help="With --run-id: keep committed milestones from the prior run and redo the rest.",
+    )
+    parser.add_argument(
+        "--resume-from", default=None,
+        help="With --run-id: redo this milestone and every later one on the canonical state before it.",
     )
     parser.add_argument(
         "--task-id",

@@ -117,3 +117,19 @@ def test_condemned_feedback_distinguishes_collect_nothing():
     from orchestra.control.fast_loop.node_resample import condemned_suite_feedback
     assert "collected NO test" in condemned_suite_feedback(["spec_tests/test_x.py"], 3)
     assert "collected NO test" not in condemned_suite_feedback(["spec_tests/test_x.py::test_a"], 3)
+
+
+def test_refuses_zero_commit_over_a_committed_base():
+    from types import SimpleNamespace as NS
+    from orchestra.control.fast_loop.controller import FastLoopController
+    from orchestra.control.task_state import SubtaskStatus
+    refuse = FastLoopController.refuses_zero_commit
+    ctl = NS(refuse_zero_commit_over_base=True)
+    state = NS(subtasks={"m1": NS(status=SubtaskStatus.COMMITTED)})
+    sub = NS(spec=NS(dependencies=["m1"]))
+    zero = NS(behaviour_score=0.0, behaviour_total=11)
+    assert "refusing to commit" in refuse(ctl, sub, zero, state)
+    assert refuse(ctl, sub, NS(behaviour_score=0.3, behaviour_total=11), state) is None   # scored something
+    assert refuse(ctl, sub, NS(behaviour_score=0.0, behaviour_total=0), state) is None    # nothing graded
+    assert refuse(ctl, NS(spec=NS(dependencies=[])), zero, state) is None                 # first milestone
+    assert refuse(NS(refuse_zero_commit_over_base=False), sub, zero, state) is None       # knob off
