@@ -691,7 +691,7 @@ async def _run_one(
             from orchestra.control.task_state import SubtaskStatus as _SS
 
             reset = []
-            order = [m.milestone_id for m in draft.milestones]
+            order = [s.subtask_id for s in plan.subtasks]
             cut = order.index(resume_from) if resume_from in order else None
             if resume_from and cut is None:
                 raise SystemExit(f"--resume-from {resume_from!r} is not a milestone of this plan: {order}")
