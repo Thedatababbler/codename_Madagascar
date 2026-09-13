@@ -3009,6 +3009,18 @@ the resume for milestone 5 is armed for the next window.
 
 Cost so far: two full Plus 5 h windows for four milestones of one task.
 
+**Held-out after milestone 4: 0.329** (117/356; it was 0.882 on
+milestones 1-3). The committed tree layer (585 lines, hangs) replaced the
+156-line one milestone 2/3 had left, and 197 more held-out cases time
+out. This is the frozen-seam risk written down before the run, in its
+worst form: a milestone that scored 0.0 on its own suite was committed
+over a working base because the gate passed on structure and nothing in
+the search beat the first pass. Two things must hold before the split
+can pay: a first pass at 0.0 on a graded suite must not be committed over
+a committed base (fail the milestone; the task keeps the last good
+state), and the persistent set must be named (fixed `fd99a4a3`) so the
+search can act on a hang instead of blaming the author.
+
 Known risks, recorded before the data: more milestones = more frozen
 seams with no cross-milestone repair (tinydb class); the gate reruns only
 the milestone's own frozen suite, so regressions of earlier milestones'
