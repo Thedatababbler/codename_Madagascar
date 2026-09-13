@@ -534,14 +534,37 @@ def _discard_frozen(frozen):
         shutil.rmtree(str(repo), ignore_errors=True)
 
 
+def _collect_ids(cwd, target, env, *, timeout=180):
+    """Node ids the suite collects, in pytest's own spelling. Empty on any failure."""
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "pytest", "--collect-only", "-q", "--no-header", "-p", "no:cacheprovider",
+             "-o", "addopts=", "--continue-on-collection-errors", str(target)],
+            cwd=str(cwd), env=env, capture_output=True, text=True, timeout=timeout, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return []
+    return [ln.strip() for ln in (proc.stdout or "").splitlines() if "::" in ln and " " not in ln.strip()]
+
+
 def _run_pytest(cwd, target, *, timeout, import_root=None):
-    """Run one suite: (passed, total, ran, tail, failed_ids). Never raises."""
+    """Run one suite: (passed, total, ran, tail, failed_ids). Never raises.
+
+    A suite that runs out of the stage budget used to come back as
+    (0, 0, 0, "timed out", set()): no names, so the grade read "N not
+    collected", the persistence search saw a zero with an empty failure
+    list, and a hanging implementation was diagnosed as a suite that
+    grades nothing (bplustree M3/M4 2026-09-13). Now the run streams a
+    verbose log; on timeout the cases that finished are read back and every
+    case that did not is a named failure, which is what a hang is.
+    """
     env = _pytest_env(cwd, import_root)
+    ids = _collect_ids(cwd, target, env)
     command = [
         sys.executable,
         "-m",
         "pytest",
-        "-q",
+        "-v",
         "--no-header",
         "-p",
         "no:cacheprovider",
@@ -560,18 +583,44 @@ def _run_pytest(cwd, target, *, timeout, import_root=None):
         *_per_test_timeout_flags(),
         str(target),
     ]
+    log = tempfile.NamedTemporaryFile(prefix="adamas_pytest_", suffix=".log", delete=False)
+    log.close()
+    timed_out = False
     try:
-        proc = subprocess.run(
-            command,
-            cwd=str(cwd),
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
+        with open(log.name, "w", encoding="utf-8", errors="replace") as handle:
+            proc = subprocess.Popen(command, cwd=str(cwd), env=env, stdout=handle, stderr=subprocess.STDOUT, text=True)
+            try:
+                proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                proc.kill()
+                proc.wait()
+        out = Path(log.name).read_text(encoding="utf-8", errors="replace")
+    finally:
+        try:
+            os.unlink(log.name)
+        except OSError:
+            pass
+    if timed_out:
+        seen_pass = set(re.findall(r"^(\\S+::\\S+) PASSED", out, re.M))
+        seen_fail = set(re.findall(r"^(\\S+::\\S+) (?:FAILED|ERROR)", out, re.M))
+        # collect-only and -v may spell the same case with different path
+        # prefixes (rootdir vs. the import holder): match on file name + id
+        def _key(nid):
+            file, _, rest = nid.partition("::")
+            return file.rsplit("/", 1)[-1] + "::" + rest
+        passed_keys = {_key(n) for n in seen_pass}
+        known = set(ids) or (seen_pass | seen_fail)
+        failed = {n for n in known if _key(n) not in passed_keys} | seen_fail
+        tail = (
+            "TIMED OUT after " + str(timeout) + "s: " + str(len(seen_pass) + len(seen_fail)) + "/" + str(len(known))
+            + " cases finished; every unfinished case is counted as failed (a hang is a failure)\\n" + out[-1500:]
         )
-    except subprocess.TimeoutExpired:
-        return 0, 0, 0, "timed out", set()
+        return len(seen_pass), len(known), len(seen_pass) + len(seen_fail), tail, failed
+
+    class _Proc:
+        stdout = out
+    proc = _Proc()
     passed, total, ran = _pytest_counts(proc.stdout)
     return (
         passed,
@@ -861,11 +910,13 @@ def main() -> int:
                 # travel in the score marker, which the selector reads and no
                 # prompt does.
                 uncollected = max(0, total - ran)
+                timed_out = tail.startswith("TIMED OUT")
                 print(
                     "SPEC spec_tests "
                     + str(max(0, passed - vacuous)) + "/" + str(gradable)
                     + " (vacuous " + str(vacuous) + " excluded"
-                    + ("; " + str(uncollected) + " not collected" if uncollected else "")
+                    + ("; TIMED OUT, " + str(uncollected) + " unfinished case(s) counted failed" if timed_out
+                       else ("; " + str(uncollected) + " not collected" if uncollected else ""))
                     + ")"
                 )
         progress.emit()

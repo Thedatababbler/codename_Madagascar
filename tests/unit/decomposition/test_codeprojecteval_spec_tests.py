@@ -721,3 +721,29 @@ def test_custody_tolerates_a_project_import_the_implementer_has_not_written_yet(
     assert proc.returncode == 0, proc.stderr
     assert harness.frozen.exists()
     assert "wait for the project package" in proc.stdout
+
+
+def test_a_suite_that_runs_out_of_time_names_its_unfinished_cases(tmp_path: Path) -> None:
+    """A hanging implementation is a failure with names, not 'N not collected'."""
+    harness = Harness(tmp_path)
+    harness.implement()
+    harness.author(
+        "import time\n"
+        "from demo_pkg.core import Widget\n\n\n"
+        "def test_fast():\n    assert Widget\n\n\n"
+        "def test_hangs():\n    time.sleep(30)\n\n\n"
+        "def test_never_runs():\n    assert True\n"
+    )
+    harness.custody()
+    command = [*harness.command, "--timeout", "4"]
+    proc = subprocess.run(command, cwd=harness.ws, capture_output=True, text=True, check=False)
+    report: dict = {}
+    for line in proc.stdout.splitlines():
+        if line.startswith("ADAMAS_HARNESS_SCORE "):
+            report = json.loads(line.split(" ", 1)[1])
+    spec = Harness.stage(report, "spec_tests")
+    assert spec is not None, proc.stdout[-800:]
+    names = {f.split("::")[-1] for f in spec["failed_tests"]}
+    assert names == {"test_hangs", "test_never_runs"}, spec
+    assert spec["passed_units"] == 1
+    assert "TIMED OUT" in proc.stdout
