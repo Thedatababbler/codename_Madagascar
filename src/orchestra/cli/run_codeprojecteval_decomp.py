@@ -441,6 +441,7 @@ async def _run_one(
     agent_backend: str,
     plan_file: Path | None = None,
     arm: str = "planner",
+    resume: bool = False,
 ) -> dict[str, Any]:
     started_at = datetime.now(UTC)
     wall_started = time.perf_counter()
@@ -673,6 +674,30 @@ async def _run_one(
         plan, artifact_store_ref=str(run_dir / "artifacts")
     )
     state.pareto_state = None
+    if resume:
+        # Continue an interrupted run (same --run-id, same plan): committed
+        # milestones and the canonical workspace are kept, failed / skipped /
+        # in-flight ones are reset to pending and their search state dropped,
+        # so the scheduler picks them up on the committed base. A run cut by
+        # an account window (bplustree 09-13: 3/5 committed, then every call
+        # refused) costs the interrupted milestone, not the whole task.
+        prior = await task_checkpoint_store.load(plan.task_id, allow_config_drift=True)
+        if prior is not None:
+            from orchestra.control.task_state import SubtaskStatus as _SS
+
+            reset = []
+            for sid, sub in prior.subtasks.items():
+                if sub.status is not _SS.COMMITTED:
+                    sub.status = _SS.PENDING
+                    sub.failure_reason = None
+                    sub.failure_message = None
+                    prior.fast_loop_states.pop(sid, None)
+                    reset.append(sid)
+            prior.pareto_state = None
+            state = prior
+            print(f"resume: {len(prior.subtasks) - len(reset)} milestone(s) kept committed, reset {reset}", flush=True)
+        else:
+            print("resume: no prior task state found; starting fresh", flush=True)
     await event_writer.append(
         TelemetryEvent(
             run_id=context.run_id,
@@ -840,6 +865,7 @@ async def _run(args: argparse.Namespace) -> int:
             agent_backend=agent_backend,
             plan_file=Path(args.plan_file) if args.plan_file else None,
             arm=str(args.arm),
+            resume=bool(getattr(args, "resume", False)),
         )
         results.append(summary)
         print(json.dumps(summary, indent=2, sort_keys=True, ensure_ascii=False))
@@ -878,6 +904,10 @@ def main() -> int:
     parser.add_argument("--dataset-root")
     parser.add_argument("--output-root")
     parser.add_argument("--run-id")
+    parser.add_argument(
+        "--resume", action="store_true",
+        help="With --run-id: keep committed milestones from the prior run and redo the rest.",
+    )
     parser.add_argument(
         "--task-id",
         action="append",

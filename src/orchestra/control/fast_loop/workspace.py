@@ -89,6 +89,8 @@ def is_cache_path(path: str) -> bool:
 def write_cache_exclude(repo: Path) -> None:
     """Keep caches out of the index without a .gitignore the agent would see."""
     info = repo / ".git" / "info"
+    if not (repo / ".git").is_dir():
+        return
     try:
         info.mkdir(parents=True, exist_ok=True)
         exclude = info / "exclude"

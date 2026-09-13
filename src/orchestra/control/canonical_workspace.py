@@ -17,6 +17,9 @@ from orchestra.harness.command_runner import run_authoritative_harness_command
 from orchestra.workspaces.base import WorkspaceRef
 
 
+from orchestra.control.fast_loop.workspace import write_cache_exclude
+
+
 class CanonicalCommitError(RuntimeError):
     """Raised when staging apply/harness/promotion fails."""
 
@@ -94,10 +97,12 @@ class CanonicalTaskWorkspaceManager:
                     capture_output=True,
                     text=True,
                 )
+                write_cache_exclude(dest)
                 if clone.returncode != 0:
                     if dest.exists():
                         shutil.rmtree(dest)
                     shutil.copytree(source, dest, symlinks=False)
+                    write_cache_exclude(dest)
                     if not (dest / ".git").exists():
                         subprocess.run(
                             ["git", "init"],
@@ -170,10 +175,12 @@ class CanonicalTaskWorkspaceManager:
                 capture_output=True,
                 text=True,
             )
+            write_cache_exclude(dest)
             if clone.returncode != 0:
                 if dest.exists():
                     shutil.rmtree(dest)
                 shutil.copytree(src, dest, symlinks=False)
+                write_cache_exclude(dest)
             rev = self._rev_parse(dest)
             return WorkspaceRef(
                 workspace_id=f"{task_id}/{subtask_id}",
@@ -209,10 +216,12 @@ class CanonicalTaskWorkspaceManager:
                 capture_output=True,
                 text=True,
             )
+            write_cache_exclude(dest)
             if clone.returncode != 0:
                 if dest.exists():
                     shutil.rmtree(dest)
                 shutil.copytree(src, dest, symlinks=False)
+                write_cache_exclude(dest)
             rev = self._rev_parse(dest)
             return WorkspaceRef(
                 workspace_id=f"{task_id}/staging/{subtask_id}/{attempt_id}",
@@ -256,10 +265,12 @@ class CanonicalTaskWorkspaceManager:
                     capture_output=True,
                     text=True,
                 )
+                write_cache_exclude(dest)
                 if clone.returncode != 0:
                     if dest.exists():
                         shutil.rmtree(dest)
                     shutil.copytree(src, dest, symlinks=False)
+                    write_cache_exclude(dest)
                 if backup.exists():
                     shutil.rmtree(backup)
             except Exception:
