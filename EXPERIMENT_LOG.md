@@ -2967,6 +2967,29 @@ parallel_audit with 5 agents). Plans saved under
 before step 2: 5 milestones x (first pass + up to 3 candidates) per task,
 on templates with 4-5 agents -- roughly 2.5-3x a 2-milestone run.
 
+**Step 2, bplustree on the 5-milestone plan (batch `outputs/cpe_milestones/cpe-20260913T035348Z`, gpt-5.5, qandy Plus account, 03:53-04:47 UTC).**
+Milestones 1-3 committed in 54 min: serialization/entry contracts 1.00
+(first pass), node hierarchy 0.947 (first pass), file memory + WAL
+committed at 0.0 with the gate passed (its suite ran 0/10 under the
+harness timeout; on the shipped repo it collects and runs, 3 failures and
+one 20 s timeout). From 04:45 every backend call -- a contract critic, two
+test authors, an infra retry -- died within seconds on a 400
+`invalid_prompt: flagged as potentially violating our usage policy`; the
+same milestone-4 prompt, replayed through the proxy at 05:20, completes.
+The Plus account's 5 h window read 27% at 03:40 and 100% at 04:47: the
+window was exhausted mid-run and the upstream reported it as a content
+flag. Milestones 4 (tree operations) and 5 (integration) never ran.
+**Held-out 0.882** (314/356, eval 1.9 s -- a fast package) on the three
+committed milestones: the 23 failures are all `test_tree` cases (iter
+slice, overflow, checkpoint, batch insert), i.e. milestone 4's scope;
+the 2-milestone runs on the same model scored 0.86-0.90 with everything
+built. A partial run at the previous level, with the tree layer still
+to come, is a favourable signal for the split; not a result yet.
+Side finding: the file-memory handoff payload delivered to milestone 4
+carried eight binary `.pyc` diffs (62 KB) -- the canonical repository
+has no `__pycache__` exclude (the exclude is written only when a
+workspace is `git init`-ed, and the canonical copy is not).
+
 Known risks, recorded before the data: more milestones = more frozen
 seams with no cross-milestone repair (tinydb class); the gate reruns only
 the milestone's own frozen suite, so regressions of earlier milestones'
