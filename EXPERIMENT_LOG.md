@@ -2990,6 +2990,25 @@ carried eight binary `.pyc` diffs (62 KB) -- the canonical repository
 has no `__pycache__` exclude (the exclude is written only when a
 workspace is `git init`-ed, and the canonical copy is not).
 
+**Step 2, continued (resume 08:42-10:29 UTC, second Plus window).**
+`--resume` (`1d3f55bf`, `e8074852`) kept milestones 1-3 and ran milestone
+4 (tree operations): three gate-passing samples all graded **0/11 with no
+names**, the run took the whole window (100% again at 10:29), and
+milestone 5 never started. Reading it: custody saw 19 cases collect; at
+grading the tree implementation **hangs** (per-test timeouts), the spec
+run exceeded the 900 s stage budget, and the runner returned "timed out"
+with no names, which the grade printed as "11 not collected". The
+persistence search then read a zero with an empty failure list as a
+suite-level cause, routed to the author (re-author: one sample ran before
+the window closed, declined), and committed the first pass at 0.0 with
+the gate passed. Same mechanism as milestone 3. Fix `fd99a4a3`: the
+runner streams a verbose log and, on timeout, every unfinished case is a
+named failure (a hang is a failure), so the persistent set is named and
+the search goes to the implementer. Milestone 4 stays committed as is;
+the resume for milestone 5 is armed for the next window.
+
+Cost so far: two full Plus 5 h windows for four milestones of one task.
+
 Known risks, recorded before the data: more milestones = more frozen
 seams with no cross-milestone repair (tinydb class); the gate reruns only
 the milestone's own frozen suite, so regressions of earlier milestones'
