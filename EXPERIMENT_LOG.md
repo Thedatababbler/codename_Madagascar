@@ -3097,6 +3097,23 @@ undocumented LockerType ceiling -- last). Each task resumes itself across
 account windows (up to 3), and stops on a task-level failure (guard,
 gate, custody).
 
+**pyjwt, 5 milestones (run `cpe-20260914T161457Z-pyjwt`, 16:16-17:14, one pass, 2% of the prolite window).**
+All five committed at 1.00 / 1.00 / 0.95 / 1.00 / 1.00 on their own suites,
+every one on the first pass. **Held-out 0.779** (229/290) vs 0.813 for the
+2-milestone run (239/290). Per-test diff: 17 old failures now pass (EC and
+OKP key rejection and JWK export, JWS encode with mismatched alg headers,
+kid type checks, `aud=None` handling); 27 new failures. 12 of them are one
+cause in `PyJWKClient`: the implementation does `from urllib.request
+import urlopen`, and the held-out tests patch `urllib.request.urlopen`,
+which a name bound at import never sees -- an import-style detail no
+document states (white-box). The other 13 are in `test_algorithms`
+(RSA JWK with partial CRT values raises "missing p" instead of deriving
+them, non-string keys not rejected for HMAC/RSA/EC), milestone 1's scope,
+whose suite passed 1.00 without asking. Reading: a net -10 cases, of which
+12 are one white-box import; the breadth problem the integration brief
+targets shows up here in an early milestone, which that brief does not
+reach.
+
 Known risks, recorded before the data: more milestones = more frozen
 seams with no cross-milestone repair (tinydb class); the gate reruns only
 the milestone's own frozen suite, so regressions of earlier milestones'
