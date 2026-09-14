@@ -3078,6 +3078,25 @@ cover. Reading: the split removed the structural loss it was meant to
 remove and traded it for breadth misses in the last milestone; net +0.12
 on this task, still 0.01 under the best baseline.
 
+**Step 3 opened (09-14 16:14 UTC, zqin30 prolite, weekly reset).** Fixes
+merged back: `bestn` fast-forwarded to `milestones` at `cc9c52fb` (harness
+signal-method timeout and named unfinished cases, zero-score commit guard
+-- now also on in the bestn yaml --, `--resume/--resume-from`, canonical
+cache exclude; the feature planner stays opt-in). New in `cc9c52fb`: the
+test author of a final integration milestone with committed dependencies
+gets a breadth brief (every documented public entry through its import
+path, documented error paths, object protocol, cross-module state) --
+aimed at tinydb's 27 integration misses. Chain `milestones_multi.sh` runs
+the feature plans on the CPE tasks that were multi-milestone under the
+risk-first planner, bplustree and tinydb excluded (already run, before
+the breadth brief): pyjwt (2-ms 0.813 / best baseline 0.748), simpy
+(0.765 / 0.765), imapclient (0.356 / 0.390), python-hl7 (0.530 / 0.480),
+djangorestframework-simplejwt (0.565 / 0.031), flask (0.639 / 0.000),
+trailscraper (0.60* / 0.65*, static pin), portalocker (0.00* all methods,
+undocumented LockerType ceiling -- last). Each task resumes itself across
+account windows (up to 3), and stops on a task-level failure (guard,
+gate, custody).
+
 Known risks, recorded before the data: more milestones = more frozen
 seams with no cross-milestone repair (tinydb class); the gate reruns only
 the milestone's own frozen suite, so regressions of earlier milestones'
