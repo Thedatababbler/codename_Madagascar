@@ -3037,6 +3037,27 @@ and a run that dies without a summary names its unfinished cases
 (ABORTED). Cost: three Plus windows for one task, milestones 4-5 still
 not delivered.
 
+**Milestones 4 and 5 redone on the fixed harness (`--resume-from`, 18:57-19:42 UTC, fourth Plus window): all five committed, held-out 0.902.**
+With the signal-method timeout and named unfinished cases, milestone 4
+(tree operations) passed its own suite 14/15 on the first pass (the hang
+was gone with a fresh implementer; tree layer 614 lines) and milestone 5
+(package integration) 22/22, contracts 17/17, check_tests 8/8. **Held-out
+321/356 = 0.902** in 127 s -- the highest bplustree score of the gpt-5.5
+series (2-milestone runs: 0.890, 0.899, 0.893, 0.896, 0.882). Remaining
+failures: test_memory 7, test_serializer 3, test_tree 3, test_node
+collection error (the undocumented `ENDIAN` family, a shared ceiling).
+Per-milestone gate scores of the delivered chain: 1.00 / 0.947 / 0.0
+(milestone 3, still the thread-method zero) / 0.933 / 1.00.
+
+Reading, one task only: the 5-milestone split delivered a package at
+least as good as the 2-milestone one, and the intermediate gates did
+their job once two blind spots were closed -- the guard against
+committing a 0.0 milestone over a working base (which turned a 0.329
+into 0.882 on the previous attempt) and a harness that names a hang. The
+price was four Plus 5 h windows (the 2-milestone run fits in one) and
+three of the four attempts were spent on harness and account problems
+rather than on the task.
+
 Known risks, recorded before the data: more milestones = more frozen
 seams with no cross-milestone repair (tinydb class); the gate reruns only
 the milestone's own frozen suite, so regressions of earlier milestones'
