@@ -3058,6 +3058,26 @@ price was four Plus 5 h windows (the 2-milestone run fits in one) and
 three of the four attempts were spent on harness and account problems
 rather than on the task.
 
+**tinydb on the 4-milestone plan (batch `outputs/cpe_milestones/cpe-20260914T052228Z-tinydb`, 05:24-06:14 UTC, one Plus window, 65% of it).**
+All four committed on one pass: storage/utils contracts (first pass 0.64
+with 9 failures -> probes 0.96 -> persistent 1 / flaky 8 -> the
+continuation fixed 1/1 and was committed at 1.00; the flaky-route
+resample was generated and not run for budget), query language 1.00,
+table CRUD 1.00, database/middleware integration 1.00 -- every later
+milestone first pass. **Held-out 0.868** (2-milestone run of 09-08:
+0.750; best baselines 0.873-0.877). Per-test diff against the 2-milestone
+repository (same held-out, same env): the old run's single failure was
+the `test_utils` collection error -- `LRUCache` without the mapping
+interface, the frozen milestone-1 defect that cost the whole module --
+and it is **gone**: milestone 1 owned `LRUCache`, its own suite caught
+it, the continuation fixed it. The new run fails 27 cases the old one
+passed, 20 of them in `test_tinydb` (insert validation of non-dicts and
+duplicate doc ids, upsert by id, query cache, `repr`/`hash`), i.e. the
+integration milestone's own behaviour, which its suite (22/22) did not
+cover. Reading: the split removed the structural loss it was meant to
+remove and traded it for breadth misses in the last milestone; net +0.12
+on this task, still 0.01 under the best baseline.
+
 Known risks, recorded before the data: more milestones = more frozen
 seams with no cross-milestone repair (tinydb class); the gate reruns only
 the milestone's own frozen suite, so regressions of earlier milestones'
