@@ -51,6 +51,33 @@ _SMOLAGENTS_TOOLS: list[str] = list(REPOSITORY_TOOL_IDS)
 # of the workspace, so there is nothing for them to preserve, read, or delete —
 # and nothing to say to them about it. Naming a directory they cannot see would
 # only invite them to look for it.
+#: Extra brief for the test author of a final integration milestone that
+#: builds on earlier committed milestones. Their suites tested each module on
+#: its own and no longer run, so this suite is the only one that grades the
+#: finished library through its public surface. tinydb on the 4-milestone
+#: plan (2026-09-14): the integration suite passed 22/22 and held-out failed
+#: 27 cases it never asked about -- non-dict and duplicate-id inserts, upsert
+#: by id, query-cache invalidation, repr/hash (EXP-20260912-01).
+_INTEGRATION_SUITE_BREADTH = (
+    "\nThis is the integration milestone. Earlier milestones built and froze "
+    "the modules, and their suites no longer run: a documented behaviour your "
+    "suite does not exercise is graded nowhere. Test the finished library the "
+    "way a user reaches it, through the documented import paths, and cover "
+    "breadth before depth:\n"
+    "- every public class, function and method the design documents list, "
+    "called at least once through its documented import path;\n"
+    "- the documented error paths of each: wrong argument types, invalid, "
+    "missing or duplicate identifiers, empty inputs -- what the documents say "
+    "is rejected, and how;\n"
+    "- the documented object protocol: repr, equality, hashing, length, "
+    "iteration, containment, context-manager use;\n"
+    "- state that crosses modules: caches and their invalidation after writes, "
+    "identifier allocation, persistence round-trips and reopen.\n"
+    "Every case still quotes the sentence it enforces. Prefer many small cases "
+    "to a few long scenarios.\n"
+)
+
+
 _AUTHORED_SUITE_EXPECTED = (
     "`spec_tests/` is the exception to the rule above: it is written for this "
     "milestone rather than described by the documents, and it must be present in "
@@ -238,6 +265,8 @@ def _system_prompt(
     edits = role is None or role.edits_repository
     shipping = profile.shipping if edits else ""
     suite = _AUTHORED_SUITE_EXPECTED if edits and agent.role == "test_author" else ""
+    if suite and milestone.gate_level == "integration" and milestone.depends_on:
+        suite = suite + _INTEGRATION_SUITE_BREADTH
     return (
         f"You are the {title} on milestone `{milestone.milestone_id}` of a "
         f"{profile.label}.\n\n"
