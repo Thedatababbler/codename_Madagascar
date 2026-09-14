@@ -3114,6 +3114,16 @@ whose suite passed 1.00 without asking. Reading: a net -10 cases, of which
 targets shows up here in an early milestone, which that brief does not
 reach.
 
+**simpy, 4 milestones (run `cpe-20260914T171413Z-simpy`, 17:15-18:03, one pass).**
+All four committed: core events/environment 1.00, shared capacity
+resources 1.00 (a probe won; 1 flaky failure, below the resample
+minimum), containers/stores 1.00, public API/realtime/utilities 0.90.
+**Held-out 0.805** (120/149) vs 0.765 for the 2-milestone run and the
+best baseline (debate 0.765). Per-test diff against the 2-milestone
+repository: 8 old failures fixed (test_util 4, test_resources 2,
+test_environment 1, test_rt 1), 2 new ones (`any_of` on an empty list,
+condition callback removal). Net +6 cases.
+
 Known risks, recorded before the data: more milestones = more frozen
 seams with no cross-milestone repair (tinydb class); the gate reruns only
 the milestone's own frozen suite, so regressions of earlier milestones'
