@@ -3124,6 +3124,25 @@ repository: 8 old failures fixed (test_util 4, test_resources 2,
 test_environment 1, test_rt 1), 2 new ones (`any_of` on an empty list,
 condition callback removal). Net +6 cases.
 
+**Step 3 interim (09-15 04:25 UTC; flask running, trailscraper and portalocker queued).** All runs one pass on zqin30, no resume needed, no guard refusal, every milestone committed; the window moved 34% for ~12 h of runs.
+
+| task | milestones | own-suite scores | min | held-out (feature) | 2-milestone (full pass) | best baseline |
+|---|---|---|---|---|---|---|
+| bplustree | 5 | 1.00 / 0.95 / 0.00 / 0.93 / 1.00 | 4 windows | 0.902 | 0.890 | 0.890 |
+| tinydb | 4 | 1.00 / 1.00 / 1.00 / 1.00 | 50 | 0.868 | 0.750 | 0.877 |
+| pyjwt | 5 | 1.00 / 1.00 / 0.95 / 1.00 / 1.00 | 57 | 0.779 | 0.813 | 0.748 |
+| simpy | 4 | 1.00 / 1.00 / 1.00 / 0.90 | 48 | 0.805 | 0.765 | 0.765 |
+| imapclient | 5 | 0.97 / 0.94 / 0.82 / 0.65 / 0.79 | 199 | 0.412 | 0.356 | 0.390 |
+| python-hl7 | 5 | 0.95 / 0.73 / 0.92 / 0.91 / 1.00 | 109 | 0.530 | 0.530 | 0.480 |
+| drf-simplejwt | 5 | 1.00 / 1.00 / 0.96 / 1.00 / 1.00 | 153 | 0.759 | 0.565 | 0.031 |
+| **mean (7)** | | | | **0.722** | **0.667** | 0.597 |
+
+Feature-first >= 2-milestone on 6/7 (one tie), below on pyjwt (-0.034,
+12 of its 27 new failures one white-box import). n=1 per cell; same-design
+noise is about one test (0.04), so tinydb (+0.12) and drf-simplejwt
+(+0.19) are the only differences clearly outside it. bplustree and tinydb
+ran before the integration breadth brief, the other five with it.
+
 Known risks, recorded before the data: more milestones = more frozen
 seams with no cross-milestone repair (tinydb class); the gate reruns only
 the milestone's own frozen suite, so regressions of earlier milestones'
