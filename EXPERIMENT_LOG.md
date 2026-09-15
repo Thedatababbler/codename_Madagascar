@@ -3161,6 +3161,25 @@ voluptuous's plan never mentions the string validators (`Capitalize`,
 `Lower`, ...) that the held-out suite imports from `voluptuous.util` --
 the module-placement ceiling is still there.
 
+**NL2Repo sample, 1/3: tablib on 5 milestones (run `cpe-20260915T182714Z-nl2_tablib`, 18:28-21:09, zqin30).**
+All five committed (1.00 / 1.00 / 0.98 / 0.90 / 0.86). The fix under test
+worked mechanically: the continuation row now exists on these shapes and
+ran three times, committing twice (1/1 and 7/7 persistent failures fixed);
+the third got no gate result after a probe died on "input exceeds" (a
+context-length refusal). **Held-out 0.249** (43/173) vs 0.526 for the
+2-milestone v9 run. Cause, one seam: the shipped package never registers
+its built-in formats on import -- `tablib.Dataset().export("csv")` raises
+UnsupportedFormat and `Dataset.csv`, `.xlsx`, `.latex` ... do not exist;
+the 2-milestone repository has them. Every one of the five frozen suites
+called `registry.register_builtins()` in its own setup (2 to 21 calls per
+suite, the integration suite included), so every gate graded a registry
+that had been primed by hand, and no milestone owned "formats are
+available after `import tablib`" -- the PRD lists `register_builtins` as a
+method and never says it runs on import. A cross-milestone invariant that
+falls between feature modules, invisible to per-milestone suites that
+each set up their own world; the integration breadth brief did not stop
+its suite from doing the same.
+
 Known risks, recorded before the data: more milestones = more frozen
 seams with no cross-milestone repair (tinydb class); the gate reruns only
 the milestone's own frozen suite, so regressions of earlier milestones'
