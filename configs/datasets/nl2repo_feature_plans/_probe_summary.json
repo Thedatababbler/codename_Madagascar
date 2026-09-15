@@ -1,0 +1,585 @@
+{
+  "nl2_aiofiles": {
+    "modules": 10,
+    "loc": 1021,
+    "milestones": [
+      {
+        "id": "core_threadpool_file_wrappers",
+        "split_reason": "feature_module",
+        "template": "test_first",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers the contracts every later file-like feature imports: AsyncBase, AiofilesContextManager, executor delegation helpers, concrete text/binary wrappers, wrap dispatch, and threadpool.open. Its gate can verify the module alone by opening real text and binary files, awaiting read/write methods, using async with, using async for line iteration, and confirming custom loop/executor arguments are accepted, without needing os, tempfile, or root package integration.",
+        "agents": 3,
+        "criteria": [
+          "aiofiles.threadpool.open returns an awaitable async context manager whose entered object exposes asynchronous read, write, readline, readlines, writelines, seek, tell, flush, close, and truncate where supported by the underlying file.",
+          "Text files and binary files are wrapped in the appropriate async wrapper classes and preserve normal Python file semantics for encoding, newline handling, bytes versus str values, positions, and closed state.",
+          "Blocking file methods delegated by wrappers run through the event loop executor and accept an explicitly supplied executor and loop reference."
+        ]
+      },
+      {
+        "id": "async_os_and_path_operations",
+        "split_reason": "feature_module",
+        "template": "gate_then_repair",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers a separate feature group: asynchronous filesystem metadata, directory, link, rename, delete, traversal, and path-query operations. Its gate can verify these functions alone against temporary directories and files by comparing results and exceptions to os and os.path, without requiring tempfile abstractions or package-root exports that come later.",
+        "agents": 3,
+        "criteria": [
+          "aiofiles.os exposes asynchronous functions for stat, statvfs where available, sendfile where available, mkdir, makedirs, rmdir, removedirs, rename, renames, replace, remove, unlink, symlink, readlink, link, listdir, and scandir where supported by the platform.",
+          "Each aiofiles.os function returns an awaitable coroutine and delegates the corresponding blocking os operation through the event loop executor.",
+          "aiofiles.ospath exposes asynchronous versions of common os.path queries such as exists, lexists, isfile, isdir, islink, ismount, getsize, getmtime, getatime, getctime, samefile, sameopenfile, and samestat where supported."
+        ]
+      },
+      {
+        "id": "async_tempfile_module",
+        "split_reason": "feature_module",
+        "template": "review_then_fix",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers the async temporary-file feature group on top of the frozen core wrappers. Its gate can verify creation, async file operations, context cleanup, named-file visibility, spooled rollover behavior, and temporary-directory cleanup using only the already-frozen threadpool wrappers, without depending on final package-root integration.",
+        "agents": 4,
+        "criteria": [
+          "aiofiles.tempfile.TemporaryFile and NamedTemporaryFile return awaitable async context managers whose entered file objects support asynchronous read, write, seek, flush, close, and async iteration according to text or binary mode.",
+          "NamedTemporaryFile exposes a usable name property and follows tempfile cleanup semantics after async context exit or explicit close.",
+          "SpooledTemporaryFile supports asynchronous reads/writes before and after rollover, exposes rollover functionality, and wraps the current underlying file correctly."
+        ]
+      },
+      {
+        "id": "public_api_stdio_and_packaging_integration",
+        "split_reason": "feature_module",
+        "template": "parallel_audit",
+        "role": "integration",
+        "risk_rationale": "This final milestone delivers the outward-facing integration contract consumers use: from aiofiles import open/aioopen/wrap/stdin/stdout/stderr variants, submodule imports, installable metadata, and cross-module compatibility. Its gate verifies the full public contract end-to-end after all features exist, catching missing re-exports, broken package layout, stdio wrapper errors, dependency metadata problems, and regressions in earlier modules.",
+        "agents": 5,
+        "criteria": [
+          "The package is installable/importable using the src layout and pyproject.toml declares the aiofiles project metadata and relevant development/test dependencies described by the documents.",
+          "aiofiles.__init__ re-exports the documented public API, including aioopen/open behavior, wrap, main, stdin, stdout, stderr, stdin_bytes, stdout_bytes, and stderr_bytes.",
+          "Standard stream objects are asynchronous wrappers over sys.stdin, sys.stdout, sys.stderr and their buffer byte streams where available, supporting appropriate async read/write/flush methods without closing the real process streams unexpectedly."
+        ]
+      }
+    ],
+    "rationale": "The repository is split feature-first into four milestones ordered by dependency: shared async wrapper/threadpool contracts first, standalone asynchronous filesystem operations second, temporary-file abstractions that depend on the core wrappers third, and final public API/std-stream/package integration last. This catches defects at the owning module gate: incorrect wrapper behavior is caught before tempfile builds on it, OS operation delegation is verified independently, tempfile lifecycle errors are isolated, and only the last milestone grades complete import/export and end-to-end public contract."
+  },
+  "nl2_emoji": {
+    "modules": 12,
+    "loc": 1269,
+    "milestones": [
+      {
+        "id": "unicode_data_contracts",
+        "split_reason": "feature_module",
+        "template": "gate_then_repair",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers the shared data contract used by every later feature: language codes, status values, default metadata keys, aliases, emoji versions, and localized names. Its gate can verify it alone by importing emoji.unicode_codes and emoji.unicode_codes.data_dict, checking the documented constants, and confirming representative emoji records such as 😀, 🅰/🅰️, 🇦🇫, and ZWJ family entries have stable metadata without needing tokenizer or conversion APIs.",
+        "agents": 3,
+        "criteria": [
+          "emoji.unicode_codes imports cleanly in Python 3.11 without network access.",
+          "EMOJI_DATA is populated from the bundled JSON files and maps Unicode emoji strings to dictionaries containing at least English name, Unicode emoji version E, and status.",
+          "LANGUAGES contains the documented language identifiers including en, es, ja, ko, pt, it, fr, de, fa, id, zh, ru, tr, and ar."
+        ]
+      },
+      {
+        "id": "tokenizer_expression_parser",
+        "split_reason": "feature_module",
+        "template": "test_first",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers the expression parser layer independently of name conversion. Its gate can verify it by calling tokenizer APIs directly on strings containing raw Unicode emoji and checking token spans and matched emoji values. If tokenizer boundaries or ZWJ handling are wrong, downstream analysis and replacement functions will count, replace, or classify the wrong substrings.",
+        "agents": 3,
+        "criteria": [
+          "emoji.tokenizer imports the frozen EMOJI_DATA from emoji.unicode_codes.",
+          "Tokenizer functions find emoji substrings in surrounding natural-language text while preserving start and end positions.",
+          "ZWJ composite expressions such as 👨‍👩‍👧‍👦 are treated as one emoji match when present in EMOJI_DATA."
+        ]
+      },
+      {
+        "id": "core_conversion_analysis",
+        "split_reason": "feature_module",
+        "template": "review_then_fix",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers the main functional library behavior while still avoiding public package integration concerns. Its gate can verify it alone by importing emoji.core and calling conversion and analysis functions directly. Defects here would make the final public API re-export correct names but incorrect behavior, especially around aliases, delimiters, languages, version filters, repeated emoji, and ZWJ matches.",
+        "agents": 4,
+        "criteria": [
+          "emojize converts documented colon-delimited names and aliases into Unicode emoji.",
+          "demojize converts Unicode emoji into standardized colon-delimited names and supports documented language selection.",
+          "Custom delimiters are supported for name conversion where documented."
+        ]
+      },
+      {
+        "id": "public_api_packaging_cli_integration",
+        "split_reason": "feature_module",
+        "template": "parallel_audit",
+        "role": "integration",
+        "risk_rationale": "This final milestone integrates all completed feature modules and is graded on the full public contract. Its gate verifies consumers can install/import the package, access the main functions with import emoji, rely on exported constants, and invoke command-line entry points. Earlier milestones prove internals; this one catches broken re-exports, missing package data, dependency metadata errors, and cross-module hookup defects.",
+        "agents": 5,
+        "criteria": [
+          "import emoji exposes the documented main functions from the package root, including conversion, analysis, detection, replacement, and version helpers.",
+          "emoji.__version__ is available and pyproject.toml defines installable package metadata for the Emoji-Process project.",
+          "pyproject.toml declares the documented dependencies including requests>=2.32.3, beautifulsoup4>=4.12.3, cloudscraper>=1.2.71, pytest>=7.4.4, sphinx>=7.2.6, and django>=4.1.1."
+        ]
+      }
+    ],
+    "rationale": "The work is split feature-first into four dependency-ordered milestones: Unicode data/contracts first, tokenizer/parser next, conversion and analysis logic after that, and final public API/packaging/CLI integration last. This keeps shared constants and data shape decisions frozen before parser and core functions depend on them, then verifies each functional module independently before the integration milestone grades the complete documented import surface and installable package contract."
+  },
+  "nl2_python-dotenv": {
+    "modules": 9,
+    "loc": 1013,
+    "milestones": [
+      {
+        "id": "parser_and_variable_foundations",
+        "split_reason": "feature_module",
+        "template": "test_first",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers the shared syntax and interpolation substrate. Later loading, file mutation, and CLI features all depend on agreeing how lines, comments, quotes, multiline values, and ${VAR:-default} references are interpreted. Its gate can verify the parser and variable resolver directly from StringIO streams and environment mappings, without needing load_dotenv, set_key, or CLI commands.",
+        "agents": 3,
+        "criteria": [
+          "parse_stream reads a text stream and yields Binding objects containing parsed key, value, original source text, and error status.",
+          "The parser accepts unquoted, single-quoted, double-quoted, empty, and valueless assignments.",
+          "The parser ignores full-line comments and supports inline comments after unquoted values."
+        ]
+      },
+      {
+        "id": "core_environment_api",
+        "split_reason": "feature_module",
+        "template": "test_first",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers the library's core behaviour independently of the command line. Its gate can create temporary directories and .env files, call the public functions directly, and inspect os.environ and file contents. If this layer is wrong, the CLI and package root will faithfully expose broken loading and mutation semantics downstream.",
+        "agents": 3,
+        "criteria": [
+          "find_dotenv searches upward from the current working directory or caller context and returns the matching .env path or an empty string when not found.",
+          "load_dotenv loads parsed values from a path or stream into os.environ.",
+          "load_dotenv respects override behaviour so existing environment variables are preserved unless override is requested."
+        ]
+      },
+      {
+        "id": "command_line_interface",
+        "split_reason": "feature_module",
+        "template": "review_then_fix",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers the outward-facing CLI adapter over the already-verifiable core APIs. Its gate can invoke the click command with CliRunner against temporary dotenv files and subprocess-safe commands, without waiting for final package metadata. If wrong, users cannot operate the documented command-line workflow even if the core library works.",
+        "agents": 4,
+        "criteria": [
+          "dotenv.cli.cli is a click group with --file, --quote, and --export options matching the documented behaviour.",
+          "The list command prints dotenv file key-value pairs.",
+          "The get command prints the value for a requested key and fails cleanly for missing keys."
+        ]
+      },
+      {
+        "id": "public_package_integration",
+        "split_reason": "feature_module",
+        "template": "parallel_audit",
+        "role": "integration",
+        "risk_rationale": "This final milestone integrates all feature modules into the public contract users install and import. Its gate can verify documented imports from dotenv, dotenv.main, dotenv.parser, dotenv.variables, dotenv.cli, and dotenv.version; validate setup.py dependency and entry-point metadata; and run full end-to-end workflows from pip-style imports through CLI invocation.",
+        "agents": 5,
+        "criteria": [
+          "The package root dotenv re-exports the documented major functions so imports such as from dotenv import load_dotenv, dotenv_values, find_dotenv, get_key, set_key, unset_key, get_cli_string work.",
+          "dotenv.version exposes __version__.",
+          "setup.py defines an installable package using the src layout and declares dependencies including click>=5.0, pytest, pytest-cov, ipython, twine, and wheel as required by the PRD."
+        ]
+      }
+    ],
+    "rationale": "The project is best split feature-first into four dependency-ordered milestones: parsing/interpolation foundations, core dotenv file/environment operations, CLI commands, and final public/package integration. Parser and variable expansion are shared substrate used by both core APIs and CLI, so they come first. Core loading and file mutation can then be verified without the CLI. The CLI is an outward-facing adapter over the frozen core APIs. The final milestone wires documented import paths, package metadata, entry points, and full integration behaviour."
+  },
+  "nl2_python-pathspec": {
+    "modules": 10,
+    "loc": 2122,
+    "milestones": [
+      {
+        "id": "shared_contracts_and_utilities",
+        "split_reason": "feature_module",
+        "template": "test_first",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers the shared substrate used by GitWildMatchPattern, PathSpec, and GitIgnoreSpec. Its gate can verify behavior independently with simple dummy RegexPattern/Pattern instances and temporary directories, without needing Git wildmatch or PathSpec. If path normalization, tree traversal, CheckResult, or pattern lookup are wrong, every downstream matcher can appear internally consistent while exposing the wrong public behavior.",
+        "agents": 3,
+        "criteria": [
+          "The package metadata defines the documented development version.",
+          "Base pattern classes can be subclassed or instantiated as documented and expose include/match behavior usable by utility helpers.",
+          "normalize_file returns stable slash-separated relative paths from strings and os.PathLike values, honoring custom separators."
+        ]
+      },
+      {
+        "id": "git_wildmatch_pattern_engine",
+        "split_reason": "feature_module",
+        "template": "test_first",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers the core pattern engine independently of PathSpec batching and GitIgnoreSpec priority rules. Its gate can instantiate GitWildMatchPattern directly and verify wildcard, double-star, comments, escapes, negation flags, and directory marker behavior. If this parser is wrong, later PathSpec and GitIgnoreSpec tests may fail diffusely even though their orchestration code is correct.",
+        "agents": 3,
+        "criteria": [
+          "GitWildMatchPattern inherits from RegexPattern and exposes include state and regex matching consistent with Git-style wildmatch patterns.",
+          "Plain names, anchored paths, slash-containing patterns, single-star, question-mark, character classes, and double-star patterns match documented paths.",
+          "Negated patterns beginning with unescaped ! set include to false while escaped exclamation marks match literal filenames."
+        ]
+      },
+      {
+        "id": "pathspec_matching_interface",
+        "split_reason": "feature_module",
+        "template": "review_then_fix",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers the central programmatic interface separately from GitIgnoreSpec specialization and final package re-exports. Its gate can compile GitWildMatchPattern lines through PathSpec and verify single-file, batch, negate, entry, and tree matching behavior. If this orchestration layer is wrong, applications using PathSpec.from_lines and match_files fail even when individual patterns are correct.",
+        "agents": 4,
+        "criteria": [
+          "PathSpec stores compiled patterns and compares equal to another PathSpec with equivalent pattern collections.",
+          "PathSpec.from_lines accepts a registered factory name such as gitwildmatch and a callable factory, skipping ignored lines according to the pattern factory contract.",
+          "check_file and check_files return CheckResult objects with normalized file names and the decisive matched pattern."
+        ]
+      },
+      {
+        "id": "gitignore_and_public_api_integration",
+        "split_reason": "feature_module",
+        "template": "parallel_audit",
+        "role": "integration",
+        "risk_rationale": "This final milestone delivers the outward-facing package contract and the GitIgnoreSpec specialization after its dependencies are frozen. Its gate verifies the full public API through documented import paths, .gitignore-style matching behavior, examples, and packaging together. This is high blast radius because a correct internal implementation still fails users if __init__ re-exports, pyproject metadata, or GitIgnoreSpec priority rules are wrong.",
+        "agents": 5,
+        "criteria": [
+          "GitIgnoreSpec inherits from PathSpec and implements Git .gitignore matching semantics, including pattern priority, negation, and directory matching logic.",
+          "GitIgnoreSpec.from_lines compiles gitwildmatch patterns and can be used to ignore and re-include files according to documented .gitignore examples.",
+          "All major public symbols are importable from the documented modules, especially package-root imports from pathspec."
+        ]
+      }
+    ],
+    "rationale": "The repository is split feature-first into four dependency-ordered milestones: shared contracts/utilities, the Git wildmatch parser, the PathSpec matching interface, and final GitIgnore/public API integration. This catches defects at the module that owns them: path normalization and result contracts before pattern code imports them, pattern translation before PathSpec depends on it, batch/tree matching before GitIgnoreSpec specializes it, and finally the documented package-level surface and installable metadata. The final milestone integrates all documented behavior and import paths."
+  },
+  "nl2_tablib": {
+    "modules": 28,
+    "loc": 4396,
+    "milestones": [
+      {
+        "id": "shared_contracts_and_registry",
+        "split_reason": "feature_module",
+        "template": "test_first",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers the cross-module substrate: exceptions, Row semantics, and the registry API that Dataset, formats, CLI, and public package exports depend on. Its gate can verify these contracts directly by importing tablib.core, tablib.exceptions, and tablib.formats, constructing Row objects, raising UnsupportedFormat, registering dummy formats, and calling detect_format on simple streams without requiring Dataset export/import implementations from later milestones.",
+        "agents": 3,
+        "criteria": [
+          "TablibException and UnsupportedFormat exist, import cleanly, and UnsupportedFormat inherits from both TablibException and NotImplementedError.",
+          "Row can be constructed from an iterable, exposes tuple and list representations, supports index and slice access, append, insert, copy, rpush, lpush, and tag checks.",
+          "Registry supports register, register_builtins, formats, get_format, and stores registered formats in _formats keyed by format name."
+        ]
+      },
+      {
+        "id": "dataset_and_databook_core",
+        "split_reason": "feature_module",
+        "template": "review_then_fix",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers the in-memory model that every format module reads from and writes to. Its gate can verify Dataset and Databook behavior without later concrete format implementations by exercising row/header mutation, indexing, title/sheet organization, unsupported export errors, and registry dispatch with dummy test formats.",
+        "agents": 4,
+        "criteria": [
+          "Dataset can be created with headers and title, accepts rows through append and related mutation helpers, and returns Row instances on row access.",
+          "Dataset supports access by row index and row field name according to documented Row/header behavior.",
+          "Dataset exposes common representations needed by formats, including headers, height, width, list-like rows, dict-style records, and a mapping from headers to row values."
+        ]
+      },
+      {
+        "id": "text_dataframe_formats",
+        "split_reason": "feature_module",
+        "template": "test_first",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers the mainstream non-binary format group that can be fully verified using the Dataset and Databook core from earlier milestones. Its gate can round-trip small datasets through each text/dataframe format, check registry registration, verify detection for obvious payloads, and confirm malformed data raises Tablib exceptions without requiring DBF or office-file support.",
+        "agents": 3,
+        "criteria": [
+          "registry.register_builtins registers csv, tsv, json, yaml, html, latex, rst, jira, sql, and df format handlers.",
+          "Dataset.export and import_set round-trip headers and rows through CSV, TSV, JSON, YAML, HTML, LaTeX, RST, Jira, SQL, and Pandas DataFrame formats where the format is documented as dataset-capable.",
+          "Databook import/export works for formats in this group that support multi-table data or fails with UnsupportedFormat where documented as unsupported."
+        ]
+      },
+      {
+        "id": "office_and_dbf_formats",
+        "split_reason": "feature_module",
+        "template": "review_then_fix",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers the binary/office/database format family, separate from text formats because it depends on file encodings, workbook libraries, and DBF field definitions. Its gate can verify this module alone by round-tripping datasets through xls, xlsx, ods, and dbf handlers; constructing DBF field definitions; checking DBF utility date conversion; and confirming registration with the existing Registry.",
+        "agents": 4,
+        "criteria": [
+          "registry.register_builtins registers xls, xlsx, ods, and dbf format handlers.",
+          "Dataset can export and import simple data through XLS, XLSX, ODS, and DBF formats using bytes or file-like streams as appropriate.",
+          "Databook can export and import multi-sheet workbook formats where supported."
+        ]
+      },
+      {
+        "id": "public_api_cli_packaging_integration",
+        "split_reason": "feature_module",
+        "template": "parallel_audit",
+        "role": "integration",
+        "risk_rationale": "This final milestone integrates all feature modules and delivers the user-facing package. Its gate verifies the complete public contract: from tablib imports, from tablib.core/exceptions/formats imports, from tablib._vendor.dbfpy import * behavior, installability metadata, CLI availability, built-in format registration, detection, and end-to-end conversion across all documented format families.",
+        "agents": 5,
+        "criteria": [
+          "The package is installable with the declared pyproject.toml metadata and dependencies needed by the implemented formats.",
+          "src/tablib/__init__.py exposes Dataset, Databook, Row, detect_format, import_set, import_book, UnsupportedFormat, registry, and version information at the documented root import path.",
+          "tablib.core, tablib.exceptions, tablib.formats, and tablib._vendor.dbfpy expose the documented symbols without requiring private imports by users."
+        ]
+      }
+    ],
+    "rationale": "The work is split into five feature modules ordered by dependency: shared contracts first, core table structures next, import/export formats built on the core, DBF/vendor support as its own format family, and a final packaging/API/CLI integration milestone. This avoids one long run where format bugs, registry bugs, and public import-path bugs would only be discovered at the end. Each milestone produces behavior that can be tested immediately from the documented API before later milestones exist, and the final milestone verifies the full public contract."
+  },
+  "nl2_tenacity": {
+    "modules": 13,
+    "loc": 2101,
+    "milestones": [
+      {
+        "id": "strategy_primitives",
+        "split_reason": "feature_module",
+        "template": "test_first",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers the reusable policy layer. Its gate can instantiate strategies and call them against simple retry-state test doubles without needing Retrying or AsyncRetrying. If these contracts are wrong, every later retry controller will make incorrect stop, wait, or retry decisions while appearing structurally complete.",
+        "agents": 3,
+        "criteria": [
+          "Stop strategies return the documented boolean decision for attempt counts and elapsed times, including stop_after_attempt, stop_after_delay, stop_before_delay, stop_never, and AND/OR combinations.",
+          "Wait strategies compute deterministic or bounded sleep durations for fixed, none, random, incremental, exponential, random exponential, exponential jitter, chained, and combined waits.",
+          "Retry predicates decide from exception type, exception instance, exception message, exception cause chain, and result values, and support AND/OR/NOT composition."
+        ]
+      },
+      {
+        "id": "sync_retry_engine",
+        "split_reason": "feature_module",
+        "template": "review_then_fix",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers the central synchronous behavior using the already-frozen strategy primitives. Its gate can decorate normal functions, call Retrying directly, and use the for/with AttemptManager pattern without needing async adapters or final package re-exports. If this state machine is wrong, later async and public integration layers will faithfully expose broken retry semantics.",
+        "agents": 4,
+        "criteria": [
+          "@retry works both as @retry and @retry(...) for synchronous functions and preserves wrapped function metadata.",
+          "Retrying.__call__ retries on configured exceptions or results, stops according to stop strategies, sleeps according to wait strategies, and returns the successful result.",
+          "before, after, and before_sleep callbacks receive RetryCallState at the documented points."
+        ]
+      },
+      {
+        "id": "async_retry_ecosystems",
+        "split_reason": "feature_module",
+        "template": "review_then_fix",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers async and multi-ecosystem behavior on top of the frozen synchronous state model and strategies. Its gate can run asyncio coroutine tests, inject trio-style async sleeps, and verify tornado adapter imports without requiring final package cleanup. If async detection or awaiting is wrong, users will block event loops, fail to retry coroutine results, or receive unawaited coroutine objects.",
+        "agents": 4,
+        "criteria": [
+          "AsyncRetrying retries coroutine functions without blocking the event loop and returns awaited successful results.",
+          "@retry automatically wraps async functions with async retry behavior while continuing to support synchronous functions from the previous milestone.",
+          "Async callbacks before, after, before_sleep, retry predicates where supported, and retry_error_callback are awaited correctly."
+        ]
+      },
+      {
+        "id": "public_api_packaging_integration",
+        "split_reason": "feature_module",
+        "template": "parallel_audit",
+        "role": "integration",
+        "risk_rationale": "This final milestone integrates the independently verified modules into the installable public package. Its gate verifies the full documented import contract, packaging metadata, root-level convenience exports, and cross-module behavior through public imports only. Defects here would not necessarily appear in module-level gates but would break real consumers using from tenacity import xxx or pip installation.",
+        "agents": 5,
+        "criteria": [
+          "The package imports cleanly as import tenacity in a clean environment.",
+          "All major documented symbols are importable from tenacity using from tenacity import xxx.",
+          "Submodule imports documented in the architecture guide work, including tenacity.wait.wait_fixed, tenacity.asyncio, and tenacity.tornadoweb."
+        ]
+      }
+    ],
+    "rationale": "The project is split feature-first into four dependency-ordered milestones: strategy/callback primitives first, synchronous retry engine second, asynchronous ecosystem support third, and final public packaging/API integration last. This catches defects at the owning feature gate: strategy algebra can be verified without any retry loop, the sync engine can be verified without async adapters, async behavior can be verified after the core state machine exists, and the final milestone validates the documented import surface and installable package contract."
+  },
+  "nl2_ftfy": {
+    "modules": 11,
+    "loc": 3254,
+    "milestones": [
+      {
+        "id": "foundation_contracts_and_primitives",
+        "split_reason": "feature_module",
+        "template": "review_then_fix",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers the cross-module contracts and primitive behavior that all later repair APIs import: TextFixerConfig, ExplanationStep, ExplainedText, low-level fixers, possible_encoding, bad codec hooks, display_ljust, and is_bad. Its gate can verify these modules directly without fix_text or the CLI by importing the symbols and exercising primitive behavior such as HTML unescaping, control removal, surrogate repair, width-aware padding, and encoding compatibility checks. If these contracts are wrong, downstream modules will either import the wrong symbols or build heuristics against incompatible data shapes.",
+        "agents": 4,
+        "criteria": [
+          "The repository is an installable Python package named ftfy and declares wcwidth as a runtime dependency.",
+          "TextFixerConfig supports documented repair toggles and can be copied or overridden by later APIs.",
+          "ExplanationStep and ExplainedText behave as tuple-like or attribute-accessible containers suitable for returning repair plans."
+        ]
+      },
+      {
+        "id": "encoding_repair_heuristics",
+        "split_reason": "feature_module",
+        "template": "test_first",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers the core mojibake feature independently of full text cleanup and the CLI. Its gate can call fix_encoding on documented examples such as 'sÃ³', 'l\\'humanitÃ©', and multi-layer corruption, verify clean text remains unchanged, and verify that fix_encoding_and_explain returns a replayable plan consumed by apply_plan. If this module is wrong, the later complete text pipeline will either over-correct clean Unicode or fail the central purpose of the library.",
+        "agents": 3,
+        "criteria": [
+          "fix_encoding repairs common UTF-8-as-Latin-1 and UTF-8-as-Windows-1252 mojibake.",
+          "fix_encoding can improve documented multi-layer mojibake by iterating only while text quality improves.",
+          "fix_encoding avoids changing ordinary clean Unicode when there is insufficient evidence of corruption."
+        ]
+      },
+      {
+        "id": "configurable_text_pipeline",
+        "split_reason": "feature_module",
+        "template": "test_first",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers the complete character-level repair pipeline for a single segment, independently of streaming files and the CLI. Its gate can exercise fix_text_segment and fix_and_explain directly on strings and configurations, verifying each documented fixer can be enabled or disabled and that explanation steps accurately describe applied repairs. If this module is wrong, later fix_text and fix_file will merely stream or segment incorrect behavior at scale.",
+        "agents": 3,
+        "criteria": [
+          "fix_text_segment applies the configured repair pipeline to one segment and returns repaired Unicode text.",
+          "fix_and_explain returns ExplainedText with the repaired text and ordered explanation steps for applied transformations.",
+          "HTML entity decoding supports repeated and case-insensitive entities where needed."
+        ]
+      },
+      {
+        "id": "streaming_file_and_public_utilities",
+        "split_reason": "feature_module",
+        "template": "gate_then_repair",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers the non-CLI outward utility layer that consumers use programmatically for whole texts, byte streams, and files. Its gate can verify these APIs without the command-line entry point by passing strings, BytesIO/StringIO objects, and captured stdout. If this module is wrong, the core segment repair may work but real programmatic users will get broken streaming, wrong byte decoding, or missing documented root exports.",
+        "agents": 3,
+        "criteria": [
+          "fix_text processes multi-line or long text by segment while preserving line boundaries and applying the same configured repairs as fix_text_segment.",
+          "guess_bytes identifies or safely defaults encodings for byte sequences and returns decoded text with the guessed encoding information as documented.",
+          "fix_file accepts text file objects and yields repaired lines."
+        ]
+      },
+      {
+        "id": "cli_and_full_public_contract_integration",
+        "split_reason": "feature_module",
+        "template": "parallel_audit",
+        "role": "integration",
+        "risk_rationale": "This final milestone integrates all previously frozen modules into the complete public contract. Its gate can run the full visible test suite, import every documented public symbol from ftfy and submodules, invoke the CLI entry point on files and streams, and verify that command-line options delegate correctly to the repair pipeline. This is intentionally last because it depends on all prior behavior and catches cross-module wiring, packaging, and user-facing regressions.",
+        "agents": 5,
+        "criteria": [
+          "ftfy.cli.main parses documented command-line arguments for input file path, encoding guessing, explicit encoding, and Unicode normalization form.",
+          "The CLI repairs file input and standard input and writes repaired text to standard output.",
+          "The CLI can provide detailed explanation output when the documented option is enabled."
+        ]
+      }
+    ],
+    "rationale": "The project is split feature-first into five milestones: shared contracts and primitive fixers first, then mojibake repair heuristics, then the configurable text-repair pipeline, then file/public utility APIs, and finally CLI plus whole-package integration. This order freezes the data types, low-level modules, and import paths that later modules depend on, while ensuring every non-final milestone has independently testable documented behavior rather than just scaffolding."
+  },
+  "nl2_python-jose": {
+    "modules": 15,
+    "loc": 3099,
+    "milestones": [
+      {
+        "id": "shared_contracts_and_utilities",
+        "split_reason": "feature_module",
+        "template": "review_then_fix",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers the cross-module contracts that every later feature imports: algorithm names, zip constants, error classes, and byte/base64 helpers. Its gate can verify these directly by importing the package modules, checking exported constants/classes, and exercising utility encoding/decoding without requiring JWK, JWS, JWT, or JWE implementations.",
+        "agents": 4,
+        "criteria": [
+          "The project is installable as a Python package named python-jose with dependencies declared for cryptography, pycryptodome, rsa, ecdsa, pyasn1, and pytest.",
+          "jose.constants exports algorithm and compression registries used by all JOSE modules.",
+          "jose.exceptions defines a common JOSEError base class and feature-specific JWTError, JWSError, JWKError, JWEError, and JWEParseError subclasses."
+        ]
+      },
+      {
+        "id": "jwk_and_backend_keys",
+        "split_reason": "feature_module",
+        "template": "chain",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers the key layer consumed by JWS, JWT, and JWE. Its gate can verify key creation, parsing, import/export, backend selection, and key-set lookup using jose.jwk and jose.backends directly, without needing token signing or encryption modules that come later.",
+        "agents": 4,
+        "criteria": [
+          "jose.backends exposes RSAKey, ECKey, HMACKey, AESKey, DIRKey, and get_random_bytes following the fallback behavior described in the architecture.",
+          "jose.backends.base defines the shared Key interface and DIRKey direct key-management implementation.",
+          "jose.backends.native provides a usable HMACKey and NativeHMACKey-compatible implementation for HS256, HS384, and HS512 signing and verification."
+        ]
+      },
+      {
+        "id": "jws_signatures",
+        "split_reason": "feature_module",
+        "template": "test_first",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers digital signatures independently of JWT claims. Its gate can sign and verify payloads through jose.jws using HMAC/RSA/EC keys from the frozen key layer, check compact-token formatting, and verify tamper rejection without depending on JWT claim validation or JWE encryption.",
+        "agents": 3,
+        "criteria": [
+          "jws.sign(payload, key, headers=None, algorithm=ALGORITHMS.HS256) returns a compact three-segment JWS string.",
+          "jws.verify(token, key, algorithms, verify=True) validates signatures and returns the original payload bytes.",
+          "Header algorithm selection is enforced against the allowed algorithms argument."
+        ]
+      },
+      {
+        "id": "jwt_tokens_and_claims",
+        "split_reason": "feature_module",
+        "template": "test_first",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers authentication-token behavior that builds on the frozen JWS layer. Its gate can encode and decode signed JWTs, inspect unverified claims/headers, and verify claim-validation failures without needing JWE or final package re-export wiring.",
+        "agents": 3,
+        "criteria": [
+          "jwt.encode(claims, key, algorithm=ALGORITHMS.HS256, headers=None, access_token=None) returns a signed compact JWT string.",
+          "jwt.decode(token, key, algorithms=None, options=None, audience=None, issuer=None, subject=None, access_token=None) verifies the signature and returns a claims dictionary.",
+          "Datetime exp, iat, and nbf values are serialized to numeric dates during encode."
+        ]
+      },
+      {
+        "id": "jwe_and_public_integration",
+        "split_reason": "feature_module",
+        "template": "parallel_audit",
+        "role": "integration",
+        "risk_rationale": "This final milestone delivers confidentiality features and integrates all modules at their documented import paths. Its gate verifies JWE behavior directly and then grades the full public contract: from jose imports for jwt, jws, jwk, jwe, utils, ALGORITHMS, ZIPS, exception classes, backend key classes, NativeHMACKey, verify, Key, plus end-to-end JWT/JWS/JWE/JWK workflows.",
+        "agents": 5,
+        "criteria": [
+          "jwe.encrypt(plaintext, key, encryption=ALGORITHMS.A256GCM, algorithm=ALGORITHMS.DIR, zip=None, cty=None, kid=None) returns a compact JWE token as bytes or a documented bytes-compatible value.",
+          "jwe.decrypt(token, key) parses, authenticates, decrypts, and returns the original plaintext bytes.",
+          "JWE protected headers include alg, enc, and optional zip, cty, and kid fields."
+        ]
+      }
+    ],
+    "rationale": "Split into five feature modules ordered by dependency: shared contracts and utilities first, key/backends next, then JWS signatures, then JWT claim handling built on JWS, and finally JWE plus public package integration. This catches format/constant/import contract mistakes before cryptographic features depend on them, catches key abstraction defects before signing, and leaves the final milestone to verify the complete documented public surface and end-to-end JOSE workflows."
+  },
+  "nl2_voluptuous": {
+    "modules": 7,
+    "loc": 4852,
+    "milestones": [
+      {
+        "id": "error_contracts",
+        "split_reason": "feature_module",
+        "template": "test_first",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers the shared failure contract that every schema, marker, validator, decorator, and humanized message will raise or inspect. Its gate can verify it alone by constructing errors directly, checking string messages, nested paths, and MultipleInvalid aggregation without needing Schema or validators.",
+        "agents": 3,
+        "criteria": [
+          "Invalid instances preserve msg, error_message, path, error_type, and support human-readable string conversion.",
+          "MultipleInvalid stores a list of Invalid errors, exposes the first error where expected, and renders useful messages for single and multiple failures.",
+          "Specialized error subclasses exist for schema, dict, object, sequence, type, value, markers, ranges, lengths, URLs, emails, dates, files, literals, membership, and boolean validation."
+        ]
+      },
+      {
+        "id": "schema_core_and_markers",
+        "split_reason": "feature_module",
+        "template": "test_first",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers the core data-structure validation behavior that later validators, decorators, and examples compose with. Its gate can verify Schema directly using built-in Python types and simple callables, including required/missing fields, defaults, removal, inclusive/exclusive groups, path tracking, and nested dict/list/tuple validation, without requiring the full validator catalogue.",
+        "agents": 3,
+        "criteria": [
+          "Schema(int), Schema(str), Schema(float), and Schema(bool) accept valid values and reject invalid values with TypeInvalid or MultipleInvalid.",
+          "Nested dictionaries, lists, tuples, and mixed structures validate recursively and preserve validated data shape.",
+          "Required fields report missing keys with paths; Optional fields support default values and default callables."
+        ]
+      },
+      {
+        "id": "validator_catalogue",
+        "split_reason": "feature_module",
+        "template": "review_then_fix",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers the reusable validation functions/classes that users combine with Schema and custom callables. Its gate can verify validators both standalone and inside Schema because the Schema core already exists, while not depending on final package re-exports or examples.",
+        "agents": 4,
+        "criteria": [
+          "All applies validators in order and returns the transformed value; Any accepts the first successful validator and raises AnyInvalid when none pass.",
+          "Range, Clamp, Length, Match, Email, Url, and FqdnUrl enforce documented constraints and raise the documented Invalid subclass.",
+          "Coerce converts values or raises CoerceInvalid without hiding conversion errors."
+        ]
+      },
+      {
+        "id": "helpers_inference_and_decorators",
+        "split_reason": "feature_module",
+        "template": "review_then_fix",
+        "role": "implementation",
+        "risk_rationale": "This milestone delivers auxiliary user-facing behavior that depends on Schema, validators, and errors but is separate from final import wiring. Its gate can verify helper functions through direct module imports, inferred Schema usability, decorator parameter/return validation, custom message rendering, and repeated-validation performance without relying on the package root.",
+        "agents": 4,
+        "criteria": [
+          "humanize_error or equivalent documented humanized rendering includes failing value context, message, and path for single and multiple errors.",
+          "raises can be used as a helper/context manager or callable helper for asserting expected validation failures.",
+          "Schema inference from simple, nested, and mixed sample structures produces a Schema that validates equivalent data."
+        ]
+      },
+      {
+        "id": "public_api_packaging_and_full_integration",
+        "split_reason": "feature_module",
+        "template": "parallel_audit",
+        "role": "integration",
+        "risk_rationale": "This final milestone integrates all frozen modules into the documented consumer-facing package. Its gate verifies the full public contract: clean imports, from voluptuous import * usability, root-level constants/classes/functions, installable packaging metadata, visible tests, examples, and end-to-end validation across Schema, markers, validators, helpers, and errors.",
+        "agents": 5,
+        "criteria": [
+          "All documented symbols can be imported from voluptuous directly and from voluptuous import *.",
+          "The package exposes version information and includes py.typed for type-aware consumers.",
+          "pyproject.toml describes an installable package and declares the requested runtime/development dependency metadata including setuptools, pytest, pytest-cov, coverage, black, isort, flake8, and mypy."
+        ]
+      }
+    ],
+    "rationale": "The implementation is split feature-first into five dependency-ordered modules: error contracts first, schema construction and structural validation second, reusable validators third, auxiliary user-facing helpers fourth, and package-level integration last. This catches defects at the owning layer: downstream code depends on stable exception classes and paths, validators depend on Schema semantics, helpers depend on both, and the final milestone verifies the documented public import surface and packaging."
+  }
+}

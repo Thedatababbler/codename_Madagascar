@@ -1,0 +1,856 @@
+{
+  "generator": "llm",
+  "split_policy": "feature",
+  "rationale": "The project is split feature-first into five milestones: shared contracts and primitive fixers first, then mojibake repair heuristics, then the configurable text-repair pipeline, then file/public utility APIs, and finally CLI plus whole-package integration. This order freezes the data types, low-level modules, and import paths that later modules depend on, while ensuring every non-final milestone has independently testable documented behavior rather than just scaffolding.",
+  "split": true,
+  "milestones": [
+    {
+      "milestone_id": "foundation_contracts_and_primitives",
+      "title": "Shared contracts, packaging, primitive fixers, and codec substrate",
+      "objective": "Create the installable ftfy package substrate: pyproject metadata with required dependencies, public configuration/explanation data types, low-level repair primitives, Unicode display formatting, badness detection, encoding compatibility checks, and custom codec registration/UTF-8 variant incremental decoding.",
+      "risk_rationale": "This milestone delivers the cross-module contracts and primitive behavior that all later repair APIs import: TextFixerConfig, ExplanationStep, ExplainedText, low-level fixers, possible_encoding, bad codec hooks, display_ljust, and is_bad. Its gate can verify these modules directly without fix_text or the CLI by importing the symbols and exercising primitive behavior such as HTML unescaping, control removal, surrogate repair, width-aware padding, and encoding compatibility checks. If these contracts are wrong, downstream modules will either import the wrong symbols or build heuristics against incompatible data shapes.",
+      "gate_level": "implementation",
+      "split_reason": "feature_module",
+      "template_id": "review_then_fix",
+      "depends_on": [],
+      "focus_paths": [
+        "pyproject.toml",
+        "ftfy/__init__.py",
+        "ftfy/fixes.py",
+        "ftfy/chardata.py",
+        "ftfy/badness.py",
+        "ftfy/formatting.py",
+        "ftfy/bad_codecs/__init__.py",
+        "ftfy/bad_codecs/sloppy.py",
+        "ftfy/bad_codecs/utf8_variants.py",
+        "ftfy/py.typed"
+      ],
+      "acceptance": {
+        "criteria": [
+          "The repository is an installable Python package named ftfy and declares wcwidth as a runtime dependency.",
+          "TextFixerConfig supports documented repair toggles and can be copied or overridden by later APIs.",
+          "ExplanationStep and ExplainedText behave as tuple-like or attribute-accessible containers suitable for returning repair plans.",
+          "unescape_html decodes standard and case-insensitive named entities and numeric entities.",
+          "fix_surrogates repairs valid surrogate pairs and handles isolated surrogates without crashing.",
+          "remove_control_chars removes non-printing controls while preserving newline, tab, and carriage return.",
+          "remove_terminal_escapes strips ANSI terminal escape sequences.",
+          "possible_encoding reports whether text can be represented in a named encoding.",
+          "search_function can be registered with codecs and returns custom codec support where implemented without breaking normal codecs.",
+          "IncrementalDecoder decodes UTF-8 variant byte streams incrementally and handles incomplete sequences across chunks.",
+          "display_ljust pads according to terminal display width using wcwidth.",
+          "is_bad returns true for obvious mojibake/surrogate-heavy text and false for ordinary clean Unicode text."
+        ],
+        "corner_cases": [
+          "Empty strings and ASCII-only strings remain unchanged by primitive fixers.",
+          "HTML entities with uppercase or mixed-case names are decoded.",
+          "Unknown HTML entities remain safe and do not raise.",
+          "ANSI escape sequences with parameters are removed without deleting adjacent text.",
+          "Full-width and combining characters are handled correctly by display_ljust.",
+          "Invalid encoding names passed to possible_encoding return false or fail gracefully as documented.",
+          "IncrementalDecoder handles byte sequences split between decode calls.",
+          "Isolated high or low surrogate characters do not crash the fixer."
+        ],
+        "checks": [
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "TextFixerConfig",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "ExplainedText",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "ExplanationStep",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "ftfy",
+            "symbol": "__version__",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.fixes",
+            "symbol": "unescape_html",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.fixes",
+            "symbol": "fix_surrogates",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.fixes",
+            "symbol": "remove_control_chars",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.fixes",
+            "symbol": "remove_terminal_escapes",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.chardata",
+            "symbol": "possible_encoding",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.badness",
+            "symbol": "is_bad",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.formatting",
+            "symbol": "display_ljust",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.bad_codecs",
+            "symbol": "search_function",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.bad_codecs.utf8_variants",
+            "symbol": "IncrementalDecoder",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write executable tests for the foundation contracts and primitive functions from the design documents only: package importability, pyproject dependency metadata, configuration/explanation data types, primitive fixer behavior, chardata encoding checks, bad codec registration, UTF-8 variant incremental decoding, display width padding, and badness detection.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "author_contract_author",
+          "title": "Contract author",
+          "mandate": "Implement the shared public contracts and low-level modules exactly at the documented import paths, prioritizing stable signatures and behavior that later milestones can import without redefining.",
+          "role": "contract_author",
+          "slot_id": "author",
+          "focus_paths": [
+            "pyproject.toml",
+            "ftfy/__init__.py",
+            "ftfy/fixes.py",
+            "ftfy/chardata.py",
+            "ftfy/badness.py",
+            "ftfy/formatting.py",
+            "ftfy/bad_codecs",
+            "ftfy/py.typed"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "reviewer_spec_auditor",
+          "title": "Specification auditor",
+          "mandate": "Review the implemented foundation modules against the PRD and architecture guide, reporting missing documented symbols, misplaced exports, signature mismatches, and primitive behavior gaps without editing.",
+          "role": "spec_auditor",
+          "slot_id": "reviewer",
+          "focus_paths": [],
+          "max_tokens": 6144,
+          "max_steps": 8,
+          "timeout_seconds": 900.0
+        },
+        {
+          "role_id": "fixer_gate_repairer",
+          "title": "Gate repairer",
+          "mandate": "Fix only the deviations reported by the reviewer or acceptance gate for the foundation contracts and primitives, preserving documented import paths.",
+          "role": "gate_repairer",
+          "slot_id": "fixer",
+          "focus_paths": [],
+          "max_tokens": 8192,
+          "max_steps": 14,
+          "timeout_seconds": 1500.0
+        }
+      ]
+    },
+    {
+      "milestone_id": "encoding_repair_heuristics",
+      "title": "Mojibake detection, repair, and reproducible encoding plans",
+      "objective": "Implement the encoding-focused repair API: fix_encoding, fix_encoding_and_explain, and apply_plan, including heuristic detection that repairs Latin-1/Windows-1252-style mojibake and multi-layer mojibake while avoiding false positives on clean text.",
+      "risk_rationale": "This milestone delivers the core mojibake feature independently of full text cleanup and the CLI. Its gate can call fix_encoding on documented examples such as 'sÃ³', 'l\\'humanitÃ©', and multi-layer corruption, verify clean text remains unchanged, and verify that fix_encoding_and_explain returns a replayable plan consumed by apply_plan. If this module is wrong, the later complete text pipeline will either over-correct clean Unicode or fail the central purpose of the library.",
+      "gate_level": "implementation",
+      "split_reason": "feature_module",
+      "template_id": "test_first",
+      "depends_on": [
+        "foundation_contracts_and_primitives"
+      ],
+      "focus_paths": [
+        "ftfy/__init__.py",
+        "ftfy/badness.py",
+        "ftfy/chardata.py",
+        "ftfy/fixes.py"
+      ],
+      "acceptance": {
+        "criteria": [
+          "fix_encoding repairs common UTF-8-as-Latin-1 and UTF-8-as-Windows-1252 mojibake.",
+          "fix_encoding can improve documented multi-layer mojibake by iterating only while text quality improves.",
+          "fix_encoding avoids changing ordinary clean Unicode when there is insufficient evidence of corruption.",
+          "fix_encoding_and_explain returns an ExplainedText containing fixed text and a list of encoding/decoding steps.",
+          "apply_plan reproduces the result of a returned explanation plan on equivalent corrupted text.",
+          "Configuration overrides can disable or constrain encoding repair behavior without breaking default behavior."
+        ],
+        "corner_cases": [
+          "ASCII-only text is unchanged.",
+          "Valid accented text such as 'café' is not converted into mojibake.",
+          "Mixed clean text and a localized mojibake word are handled without corrupting the clean portion.",
+          "Text containing Windows-1252 smart quote mojibake such as 'â€œ' can be repaired.",
+          "Invalid or unreplayable plan steps in apply_plan fail safely with a clear exception or documented no-op behavior.",
+          "Repeated repair attempts terminate and do not loop indefinitely."
+        ],
+        "checks": [
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "fix_encoding",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "fix_encoding_and_explain",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "apply_plan",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.badness",
+            "symbol": "is_bad",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.chardata",
+            "symbol": "possible_encoding",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Create a frozen behavioral test suite for mojibake repair from the PRD examples and API guide, covering fix_encoding, fix_encoding_and_explain, apply_plan replay, multi-layer repair, Windows-1252 cases, and false-positive avoidance.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "builder_implementer",
+          "title": "Implementer",
+          "mandate": "Implement the encoding repair heuristics and public root exports from the design documents alone, using the already frozen foundation contracts and primitive helpers.",
+          "role": "implementer",
+          "slot_id": "builder",
+          "focus_paths": [
+            "ftfy/__init__.py",
+            "ftfy/badness.py",
+            "ftfy/chardata.py",
+            "ftfy/fixes.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "repairer_gate_repairer",
+          "title": "Gate repairer",
+          "mandate": "If the gate fails, fix exactly the reported mojibake repair, explanation-plan, or import/export failures without broadening scope into full text repair or CLI behavior.",
+          "role": "gate_repairer",
+          "slot_id": "repairer",
+          "focus_paths": [],
+          "max_tokens": 8192,
+          "max_steps": 14,
+          "timeout_seconds": 1500.0
+        }
+      ]
+    },
+    {
+      "milestone_id": "configurable_text_pipeline",
+      "title": "Segment text repair pipeline with configurable fixers and explanations",
+      "objective": "Implement fix_text_segment and fix_and_explain as the configurable single-segment repair pipeline, combining HTML entity decoding, control and terminal escape cleanup, surrogate repair, Unicode normalization, full-width standardization, ligature expansion, quote standardization, and optional encoding repair.",
+      "risk_rationale": "This milestone delivers the complete character-level repair pipeline for a single segment, independently of streaming files and the CLI. Its gate can exercise fix_text_segment and fix_and_explain directly on strings and configurations, verifying each documented fixer can be enabled or disabled and that explanation steps accurately describe applied repairs. If this module is wrong, later fix_text and fix_file will merely stream or segment incorrect behavior at scale.",
+      "gate_level": "implementation",
+      "split_reason": "feature_module",
+      "template_id": "test_first",
+      "depends_on": [
+        "foundation_contracts_and_primitives",
+        "encoding_repair_heuristics"
+      ],
+      "focus_paths": [
+        "ftfy/__init__.py",
+        "ftfy/fixes.py"
+      ],
+      "acceptance": {
+        "criteria": [
+          "fix_text_segment applies the configured repair pipeline to one segment and returns repaired Unicode text.",
+          "fix_and_explain returns ExplainedText with the repaired text and ordered explanation steps for applied transformations.",
+          "HTML entity decoding supports repeated and case-insensitive entities where needed.",
+          "Control characters and terminal escape sequences are removed while preserving meaningful whitespace.",
+          "Unicode normalization options such as NFC, NFD, and NFKC are honored.",
+          "Full-width characters, ligatures, and curly quotes are standardized according to configuration.",
+          "Encoding repair is integrated into the segment pipeline but can be disabled independently."
+        ],
+        "corner_cases": [
+          "Empty segment returns an empty string and an empty or none explanation as configured.",
+          "Repeated entities such as nested ampersands are decoded through the documented pipeline without infinite loops.",
+          "Ligatures such as 'ﬁ' expand under the appropriate normalization or fixer setting.",
+          "Full-width ASCII forms normalize to ordinary ASCII when configured.",
+          "Configuration keyword overrides take precedence over a provided TextFixerConfig.",
+          "explain=False avoids collecting explanation data while preserving repaired text.",
+          "Unknown normalization forms are rejected clearly or ignored only if documented."
+        ],
+        "checks": [
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "fix_text_segment",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "fix_and_explain",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "TextFixerConfig",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "ExplainedText",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.fixes",
+            "symbol": "unescape_html",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.fixes",
+            "symbol": "fix_surrogates",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.fixes",
+            "symbol": "remove_control_chars",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.fixes",
+            "symbol": "remove_terminal_escapes",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write tests for the single-segment repair pipeline from the design documents only, covering configurable fixers, explanation ordering, normalization, entity handling, control cleanup, ligature/full-width/quote repair, and interaction with encoding repair.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "builder_implementer",
+          "title": "Implementer",
+          "mandate": "Implement fix_text_segment and fix_and_explain using the frozen primitive fixers, configuration classes, explanation data types, and encoding repair APIs.",
+          "role": "implementer",
+          "slot_id": "builder",
+          "focus_paths": [
+            "ftfy/__init__.py",
+            "ftfy/fixes.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "repairer_gate_repairer",
+          "title": "Gate repairer",
+          "mandate": "If the gate fails, repair only the reported segment-pipeline behavior, configuration override handling, or explanation-plan defects.",
+          "role": "gate_repairer",
+          "slot_id": "repairer",
+          "focus_paths": [],
+          "max_tokens": 8192,
+          "max_steps": 14,
+          "timeout_seconds": 1500.0
+        }
+      ]
+    },
+    {
+      "milestone_id": "streaming_file_and_public_utilities",
+      "title": "Segment-aware full-text repair, byte guessing, file streaming, and Unicode explanation utilities",
+      "objective": "Implement fix_text, guess_bytes, fix_file, and explain_unicode, wiring them to the configured segment pipeline while supporting line/chunk segmentation, binary/text file inputs, encoding guessing, and formatted Unicode inspection output.",
+      "risk_rationale": "This milestone delivers the non-CLI outward utility layer that consumers use programmatically for whole texts, byte streams, and files. Its gate can verify these APIs without the command-line entry point by passing strings, BytesIO/StringIO objects, and captured stdout. If this module is wrong, the core segment repair may work but real programmatic users will get broken streaming, wrong byte decoding, or missing documented root exports.",
+      "gate_level": "implementation",
+      "split_reason": "feature_module",
+      "template_id": "gate_then_repair",
+      "depends_on": [
+        "foundation_contracts_and_primitives",
+        "encoding_repair_heuristics",
+        "configurable_text_pipeline"
+      ],
+      "focus_paths": [
+        "ftfy/__init__.py",
+        "ftfy/formatting.py"
+      ],
+      "acceptance": {
+        "criteria": [
+          "fix_text processes multi-line or long text by segment while preserving line boundaries and applying the same configured repairs as fix_text_segment.",
+          "guess_bytes identifies or safely defaults encodings for byte sequences and returns decoded text with the guessed encoding information as documented.",
+          "fix_file accepts text file objects and yields repaired lines.",
+          "fix_file accepts binary file objects, decodes them using an explicit encoding or guessed encoding, and yields repaired lines.",
+          "explain_unicode prints a table containing code point, glyph, Unicode category, and character name for each character.",
+          "All documented utility APIs are importable from ftfy's package root."
+        ],
+        "corner_cases": [
+          "Empty files yield no lines or an empty repaired line according to input semantics.",
+          "Files without a trailing newline preserve the absence of the trailing newline.",
+          "Binary input containing a UTF-8 BOM or Latin-1-compatible bytes is decoded safely.",
+          "Very long text is segmented according to max_decode_length without dropping characters.",
+          "guess_bytes handles undecodable bytes without crashing.",
+          "explain_unicode handles combining marks, unassigned/control characters, and wide characters."
+        ],
+        "checks": [
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "fix_text",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "guess_bytes",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "fix_file",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "explain_unicode",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "fix_text_segment",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.formatting",
+            "symbol": "display_ljust",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write executable tests for programmatic utilities: fix_text segmentation, max_decode_length behavior, guess_bytes, fix_file on text and binary streams, and explain_unicode output formatting.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "author_integrator",
+          "title": "Integrator",
+          "mandate": "Wire the existing segment pipeline into the public whole-text, byte, file, and Unicode-inspection APIs at the ftfy root, preserving all earlier contracts.",
+          "role": "integrator",
+          "slot_id": "author",
+          "focus_paths": [
+            "ftfy/__init__.py",
+            "ftfy/formatting.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "repairer_gate_repairer",
+          "title": "Gate repairer",
+          "mandate": "If the gate fails, fix exactly the reported public utility, streaming, segmentation, or root-export defects.",
+          "role": "gate_repairer",
+          "slot_id": "repairer",
+          "focus_paths": [],
+          "max_tokens": 8192,
+          "max_steps": 14,
+          "timeout_seconds": 1500.0
+        }
+      ]
+    },
+    {
+      "milestone_id": "cli_and_full_public_contract_integration",
+      "title": "Command-line interface and full package integration",
+      "objective": "Implement ftfy.cli.main and final integration wiring so the installed package exposes the complete documented public API, the CLI can repair files or standard input with encoding guessing and normalization options, and all visible repository tests pass.",
+      "risk_rationale": "This final milestone integrates all previously frozen modules into the complete public contract. Its gate can run the full visible test suite, import every documented public symbol from ftfy and submodules, invoke the CLI entry point on files and streams, and verify that command-line options delegate correctly to the repair pipeline. This is intentionally last because it depends on all prior behavior and catches cross-module wiring, packaging, and user-facing regressions.",
+      "gate_level": "integration",
+      "split_reason": "feature_module",
+      "template_id": "parallel_audit",
+      "depends_on": [
+        "foundation_contracts_and_primitives",
+        "encoding_repair_heuristics",
+        "configurable_text_pipeline",
+        "streaming_file_and_public_utilities"
+      ],
+      "focus_paths": [
+        "ftfy/__init__.py",
+        "ftfy/cli.py",
+        "pyproject.toml",
+        "README.md",
+        "docs/cli.rst"
+      ],
+      "acceptance": {
+        "criteria": [
+          "ftfy.cli.main parses documented command-line arguments for input file path, encoding guessing, explicit encoding, and Unicode normalization form.",
+          "The CLI repairs file input and standard input and writes repaired text to standard output.",
+          "The CLI can provide detailed explanation output when the documented option is enabled.",
+          "pyproject.toml exposes an installable package and a command-line entry point if supported by the project metadata.",
+          "Every documented public API symbol is importable from ftfy or its documented submodule path.",
+          "The full visible check_tests suite passes at integration."
+        ],
+        "corner_cases": [
+          "CLI invocation with no file reads from stdin without hanging in testable noninteractive usage.",
+          "CLI handles binary files containing non-UTF-8 bytes when explicit encoding or guessing is requested.",
+          "CLI reports invalid normalization or encoding options with a nonzero exit or clear error.",
+          "CLI preserves newlines when processing multi-line files.",
+          "Package root re-exports do not shadow submodules such as ftfy.bad_codecs.",
+          "Running imports in a clean environment does not require optional documentation or notebook dependencies."
+        ],
+        "checks": [
+          {
+            "type": "callable_or_class",
+            "module": "ftfy.cli",
+            "symbol": "main",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "fix_text",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "fix_text_segment",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "fix_encoding",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "fix_encoding_and_explain",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "fix_and_explain",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "apply_plan",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "explain_unicode",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "fix_file",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "guess_bytes",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "TextFixerConfig",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "ExplainedText",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "ftfy",
+            "symbol": "ExplanationStep",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "ftfy",
+            "symbol": "bad_codecs",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "ftfy",
+            "symbol": "__version__",
+            "required_levels": [
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write integration tests for the complete documented public contract and CLI behavior, including root imports, submodule imports, command-line file/stdin processing, encoding and normalization options, explanation output, and package entry-point metadata.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "author_implementer",
+          "title": "Implementer",
+          "mandate": "Implement the CLI and final package wiring so all modules are reachable at documented import paths and command-line behavior delegates to the already implemented repair APIs.",
+          "role": "implementer",
+          "slot_id": "author",
+          "focus_paths": [
+            "ftfy/cli.py",
+            "ftfy/__init__.py",
+            "pyproject.toml"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "spec_review_spec_auditor",
+          "title": "Specification auditor",
+          "mandate": "Audit the final package and CLI against the PRD, architecture guide, and API usage guide, reporting missing public symbols, unsupported CLI options, and behavior that deviates from documented examples without editing.",
+          "role": "spec_auditor",
+          "slot_id": "spec_review",
+          "focus_paths": [],
+          "max_tokens": 6144,
+          "max_steps": 8,
+          "timeout_seconds": 900.0
+        },
+        {
+          "role_id": "contract_review_contract_critic",
+          "title": "Contract critic",
+          "mandate": "Audit the final changes against contracts frozen by earlier milestones, especially root exports, configuration/explanation data types, primitive functions, encoding APIs, and utility signatures, reporting regressions without editing.",
+          "role": "contract_critic",
+          "slot_id": "contract_review",
+          "focus_paths": [],
+          "max_tokens": 6144,
+          "max_steps": 8,
+          "timeout_seconds": 900.0
+        },
+        {
+          "role_id": "fixer_gate_repairer",
+          "title": "Gate repairer",
+          "mandate": "Fix the specific integration, CLI, packaging, or contract violations reported by the auditors or acceptance gate while preserving all previously frozen behavior.",
+          "role": "gate_repairer",
+          "slot_id": "fixer",
+          "focus_paths": [],
+          "max_tokens": 8192,
+          "max_steps": 14,
+          "timeout_seconds": 1500.0
+        }
+      ]
+    }
+  ]
+}

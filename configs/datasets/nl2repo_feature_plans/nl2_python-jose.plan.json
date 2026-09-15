@@ -1,0 +1,959 @@
+{
+  "generator": "llm",
+  "split_policy": "feature",
+  "rationale": "Split into five feature modules ordered by dependency: shared contracts and utilities first, key/backends next, then JWS signatures, then JWT claim handling built on JWS, and finally JWE plus public package integration. This catches format/constant/import contract mistakes before cryptographic features depend on them, catches key abstraction defects before signing, and leaves the final milestone to verify the complete documented public surface and end-to-end JOSE workflows.",
+  "split": true,
+  "milestones": [
+    {
+      "milestone_id": "shared_contracts_and_utilities",
+      "title": "Shared JOSE constants, exceptions, utilities, and packaging",
+      "objective": "Create the installable jose package foundation: pyproject metadata/dependencies, constants, exception hierarchy, and reusable utility functions for JSON and base64url byte handling.",
+      "risk_rationale": "This milestone delivers the cross-module contracts that every later feature imports: algorithm names, zip constants, error classes, and byte/base64 helpers. Its gate can verify these directly by importing the package modules, checking exported constants/classes, and exercising utility encoding/decoding without requiring JWK, JWS, JWT, or JWE implementations.",
+      "gate_level": "implementation",
+      "split_reason": "feature_module",
+      "template_id": "review_then_fix",
+      "depends_on": [],
+      "focus_paths": [
+        "pyproject.toml",
+        "jose/__init__.py",
+        "jose/constants.py",
+        "jose/exceptions.py",
+        "jose/utils.py"
+      ],
+      "acceptance": {
+        "criteria": [
+          "The project is installable as a Python package named python-jose with dependencies declared for cryptography, pycryptodome, rsa, ecdsa, pyasn1, and pytest.",
+          "jose.constants exports algorithm and compression registries used by all JOSE modules.",
+          "jose.exceptions defines a common JOSEError base class and feature-specific JWTError, JWSError, JWKError, JWEError, and JWEParseError subclasses.",
+          "jose.utils provides deterministic base64url encode/decode helpers that operate on bytes and strings without padding in encoded output."
+        ],
+        "corner_cases": [
+          "Base64url decoding accepts unpadded input whose length requires padding restoration.",
+          "Utility helpers reject or fail clearly on malformed base64url input.",
+          "Exception subclasses can be caught through JOSEError.",
+          "Importing jose.constants, jose.exceptions, and jose.utils succeeds in a clean environment before later modules are implemented."
+        ],
+        "checks": [
+          {
+            "type": "export",
+            "module": "jose.constants",
+            "symbol": "ALGORITHMS",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "jose.constants",
+            "symbol": "ZIPS",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "jose.constants",
+            "symbol": "JWE_SIZE_LIMIT",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.exceptions",
+            "symbol": "JOSEError",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.exceptions",
+            "symbol": "JWTError",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.exceptions",
+            "symbol": "JWSError",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.exceptions",
+            "symbol": "JWKError",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.exceptions",
+            "symbol": "JWEError",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.exceptions",
+            "symbol": "JWEParseError",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.utils",
+            "symbol": "base64url_encode",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.utils",
+            "symbol": "base64url_decode",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write executable tests from the PRD and architecture for package installation metadata, jose.constants exports, exception inheritance, and base64url utility behavior. Do not modify source.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [
+            "pyproject.toml",
+            "jose/constants.py",
+            "jose/exceptions.py",
+            "jose/utils.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "author_contract_author",
+          "title": "Contract author",
+          "mandate": "Implement the shared constants, exception hierarchy, utility functions, minimal package files, and pyproject dependency/configuration contract that later JOSE modules will import.",
+          "role": "contract_author",
+          "slot_id": "author",
+          "focus_paths": [
+            "pyproject.toml",
+            "jose/constants.py",
+            "jose/exceptions.py",
+            "jose/utils.py",
+            "jose/__init__.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "reviewer_spec_auditor",
+          "title": "Specification auditor",
+          "mandate": "Review the shared substrate against the design documents, especially exported constant names, exception names, pyproject dependencies, and utility byte/string behavior. Report deviations without editing.",
+          "role": "spec_auditor",
+          "slot_id": "reviewer",
+          "focus_paths": [
+            "pyproject.toml",
+            "jose/constants.py",
+            "jose/exceptions.py",
+            "jose/utils.py"
+          ],
+          "max_tokens": 6144,
+          "max_steps": 8,
+          "timeout_seconds": 900.0
+        },
+        {
+          "role_id": "fixer_implementer",
+          "title": "Implementer",
+          "mandate": "Fix only the shared-contract deviations reported by the reviewer while preserving the exported names that later milestones will import.",
+          "role": "implementer",
+          "slot_id": "fixer",
+          "focus_paths": [
+            "pyproject.toml",
+            "jose/constants.py",
+            "jose/exceptions.py",
+            "jose/utils.py",
+            "jose/__init__.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        }
+      ]
+    },
+    {
+      "milestone_id": "jwk_and_backend_keys",
+      "title": "JWK management and cryptographic key backends",
+      "objective": "Implement key abstractions, backend key classes, random byte support, and JWK construction/import/export for HMAC, RSA, EC, AES, oct, and key-set use cases.",
+      "risk_rationale": "This milestone delivers the key layer consumed by JWS, JWT, and JWE. Its gate can verify key creation, parsing, import/export, backend selection, and key-set lookup using jose.jwk and jose.backends directly, without needing token signing or encryption modules that come later.",
+      "gate_level": "implementation",
+      "split_reason": "feature_module",
+      "template_id": "chain",
+      "depends_on": [
+        "shared_contracts_and_utilities"
+      ],
+      "focus_paths": [
+        "jose/jwk.py",
+        "jose/backends/__init__.py",
+        "jose/backends/base.py",
+        "jose/backends/native.py",
+        "jose/backends/cryptography_backend.py",
+        "jose/backends/rsa_backend.py",
+        "jose/backends/ecdsa_backend.py",
+        "jose/backends/_asn1.py"
+      ],
+      "acceptance": {
+        "criteria": [
+          "jose.backends exposes RSAKey, ECKey, HMACKey, AESKey, DIRKey, and get_random_bytes following the fallback behavior described in the architecture.",
+          "jose.backends.base defines the shared Key interface and DIRKey direct key-management implementation.",
+          "jose.backends.native provides a usable HMACKey and NativeHMACKey-compatible implementation for HS256, HS384, and HS512 signing and verification.",
+          "jose.jwk exposes Key and construct(), and can construct appropriate key objects from raw secrets, JWK dictionaries, JWK sets, and documented algorithm names.",
+          "JWK import/export preserves required fields such as kty, kid, alg, use, key material fields, and public/private distinction where applicable."
+        ],
+        "corner_cases": [
+          "Unknown kty or unsupported algorithm raises JWKError instead of returning an unusable object.",
+          "JWK sets with multiple keys can select by kid when a kid is supplied.",
+          "Missing kid in a multi-key set fails clearly instead of choosing a random key.",
+          "HMAC secrets are accepted as str and bytes and produce equivalent verification behavior.",
+          "RSA and EC backend imports degrade according to the documented fallback rules if an optional backend is unavailable."
+        ],
+        "checks": [
+          {
+            "type": "callable_or_class",
+            "module": "jose.backends.base",
+            "symbol": "Key",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.backends.base",
+            "symbol": "DIRKey",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.backends.native",
+            "symbol": "HMACKey",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.backends.native",
+            "symbol": "get_random_bytes",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "jose.backends",
+            "symbol": "RSAKey",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "jose.backends",
+            "symbol": "ECKey",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "jose.backends",
+            "symbol": "HMACKey",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "jose.backends",
+            "symbol": "AESKey",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "jose.backends",
+            "symbol": "DIRKey",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jwk",
+            "symbol": "Key",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jwk",
+            "symbol": "construct",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write executable tests for backend exports, Key/DIRKey/HMACKey behavior, get_random_bytes, jwk.construct with raw secrets, JWK dictionaries, and JWK sets. Do not modify source.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [
+            "jose/jwk.py",
+            "jose/backends"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "first_contract_author",
+          "title": "Contract author",
+          "mandate": "Implement the backend Key contract, DIRKey, backend package exports, native HMAC key behavior, and random byte helper while preserving constants/exceptions from the previous milestone.",
+          "role": "contract_author",
+          "slot_id": "first",
+          "focus_paths": [
+            "jose/backends/base.py",
+            "jose/backends/native.py",
+            "jose/backends/__init__.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "second_implementer",
+          "title": "Implementer",
+          "mandate": "Implement jose.jwk key construction, key-set selection, JWK import/export, and cryptography/rsa/ecdsa backend adapters required for RSA, EC, AES, oct, and direct key use.",
+          "role": "implementer",
+          "slot_id": "second",
+          "focus_paths": [
+            "jose/jwk.py",
+            "jose/backends/cryptography_backend.py",
+            "jose/backends/rsa_backend.py",
+            "jose/backends/ecdsa_backend.py",
+            "jose/backends/_asn1.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "third_edge_case_hardener",
+          "title": "Edge-case hardener",
+          "mandate": "Harden key parsing and backend behavior for unsupported algorithms, malformed JWKs, multi-key JWK sets, str/bytes secrets, and optional-backend fallback paths.",
+          "role": "edge_case_hardener",
+          "slot_id": "third",
+          "focus_paths": [
+            "jose/jwk.py",
+            "jose/backends"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        }
+      ]
+    },
+    {
+      "milestone_id": "jws_signatures",
+      "title": "JWS signing and verification",
+      "objective": "Implement compact JWS signing, verification, header handling, payload serialization, and algorithm enforcement using the key layer.",
+      "risk_rationale": "This milestone delivers digital signatures independently of JWT claims. Its gate can sign and verify payloads through jose.jws using HMAC/RSA/EC keys from the frozen key layer, check compact-token formatting, and verify tamper rejection without depending on JWT claim validation or JWE encryption.",
+      "gate_level": "implementation",
+      "split_reason": "feature_module",
+      "template_id": "test_first",
+      "depends_on": [
+        "shared_contracts_and_utilities",
+        "jwk_and_backend_keys"
+      ],
+      "focus_paths": [
+        "jose/jws.py",
+        "jose/jwk.py",
+        "jose/backends"
+      ],
+      "acceptance": {
+        "criteria": [
+          "jws.sign(payload, key, headers=None, algorithm=ALGORITHMS.HS256) returns a compact three-segment JWS string.",
+          "jws.verify(token, key, algorithms, verify=True) validates signatures and returns the original payload bytes.",
+          "Header algorithm selection is enforced against the allowed algorithms argument.",
+          "Payloads supplied as dict, str, or bytes are serialized consistently and recoverable as bytes.",
+          "Tampered payload, tampered signature, malformed compact serialization, and unsupported algorithms raise JWSError."
+        ],
+        "corner_cases": [
+          "alg='none' is not accepted unless explicitly supported by the documented contract.",
+          "A token with fewer or more than three compact segments is rejected.",
+          "Verification with algorithms as a single string behaves the same as a one-item list.",
+          "verify=False returns payload bytes without requiring signature verification but still parses compact JWS safely.",
+          "Custom headers are preserved in the protected header without overriding the selected alg incorrectly."
+        ],
+        "checks": [
+          {
+            "type": "callable_or_class",
+            "module": "jose.jws",
+            "symbol": "sign",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jws",
+            "symbol": "verify",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jws",
+            "symbol": "get_unverified_header",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jws",
+            "symbol": "get_unverified_claims",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write executable tests for compact JWS signing, verification, algorithm allow-list enforcement, payload serialization, header inspection, malformed token handling, and tamper rejection. Do not modify source.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [
+            "jose/jws.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "builder_implementer",
+          "title": "Implementer",
+          "mandate": "Implement jose.jws directly from the design documents using the frozen constants, exceptions, utilities, jwk.construct, and backend key contracts.",
+          "role": "implementer",
+          "slot_id": "builder",
+          "focus_paths": [
+            "jose/jws.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "repairer_gate_repairer",
+          "title": "Gate repairer",
+          "mandate": "If the milestone gate fails, fix exactly the reported JWS behavior or exported-symbol failures without changing earlier frozen contracts except where required to preserve compatibility.",
+          "role": "gate_repairer",
+          "slot_id": "repairer",
+          "focus_paths": [
+            "jose/jws.py",
+            "jose/jwk.py",
+            "jose/backends"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 14,
+          "timeout_seconds": 1500.0
+        }
+      ]
+    },
+    {
+      "milestone_id": "jwt_tokens_and_claims",
+      "title": "JWT encode/decode and registered claim validation",
+      "objective": "Implement JWT token generation and verification on top of JWS, including standard registered claims, options, leeway, audience, issuer, subject, jti, and at_hash handling.",
+      "risk_rationale": "This milestone delivers authentication-token behavior that builds on the frozen JWS layer. Its gate can encode and decode signed JWTs, inspect unverified claims/headers, and verify claim-validation failures without needing JWE or final package re-export wiring.",
+      "gate_level": "implementation",
+      "split_reason": "feature_module",
+      "template_id": "test_first",
+      "depends_on": [
+        "shared_contracts_and_utilities",
+        "jwk_and_backend_keys",
+        "jws_signatures"
+      ],
+      "focus_paths": [
+        "jose/jwt.py",
+        "jose/jws.py"
+      ],
+      "acceptance": {
+        "criteria": [
+          "jwt.encode(claims, key, algorithm=ALGORITHMS.HS256, headers=None, access_token=None) returns a signed compact JWT string.",
+          "jwt.decode(token, key, algorithms=None, options=None, audience=None, issuer=None, subject=None, access_token=None) verifies the signature and returns a claims dictionary.",
+          "Datetime exp, iat, and nbf values are serialized to numeric dates during encode.",
+          "decode validates exp, nbf, iat, aud, iss, sub, jti, and at_hash according to options and explicit arguments.",
+          "get_unverified_header and get_unverified_claims expose token data without signature verification for inspection workflows."
+        ],
+        "corner_cases": [
+          "Expired tokens fail unless leeway permits them.",
+          "Tokens with nbf in the future fail unless leeway permits them.",
+          "Audience can be a string or list, and missing audience handling follows verification options.",
+          "Issuer can be a string or list.",
+          "Subject mismatch raises JWTError.",
+          "Malformed numeric date values raise JWTError instead of being silently accepted.",
+          "access_token plus at_hash mismatch raises JWTError.",
+          "options can disable individual claim checks without disabling unrelated checks."
+        ],
+        "checks": [
+          {
+            "type": "callable_or_class",
+            "module": "jose.jwt",
+            "symbol": "encode",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jwt",
+            "symbol": "decode",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jwt",
+            "symbol": "get_unverified_header",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jwt",
+            "symbol": "get_unverified_claims",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write executable tests for jwt.encode/decode, registered claim validation, options, leeway, audience/issuer/subject handling, at_hash behavior, datetime conversion, and unverified accessors. Do not modify source.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [
+            "jose/jwt.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "builder_implementer",
+          "title": "Implementer",
+          "mandate": "Implement jose.jwt directly from the PRD and architecture using the frozen JWS signing/verification API and shared constants/exceptions/utilities.",
+          "role": "implementer",
+          "slot_id": "builder",
+          "focus_paths": [
+            "jose/jwt.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "repairer_gate_repairer",
+          "title": "Gate repairer",
+          "mandate": "If the milestone gate fails, fix exactly the reported JWT encode/decode, claim validation, or exported-symbol failures without changing the frozen JWS public contract.",
+          "role": "gate_repairer",
+          "slot_id": "repairer",
+          "focus_paths": [
+            "jose/jwt.py",
+            "jose/jws.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 14,
+          "timeout_seconds": 1500.0
+        }
+      ]
+    },
+    {
+      "milestone_id": "jwe_and_public_integration",
+      "title": "JWE encryption/decryption and unified public API integration",
+      "objective": "Implement compact JWE encryption/decryption, enforce JWE limits and options, wire jose.__init__ public exports, and verify the complete documented python-jose API surface end to end.",
+      "risk_rationale": "This final milestone delivers confidentiality features and integrates all modules at their documented import paths. Its gate verifies JWE behavior directly and then grades the full public contract: from jose imports for jwt, jws, jwk, jwe, utils, ALGORITHMS, ZIPS, exception classes, backend key classes, NativeHMACKey, verify, Key, plus end-to-end JWT/JWS/JWE/JWK workflows.",
+      "gate_level": "integration",
+      "split_reason": "feature_module",
+      "template_id": "parallel_audit",
+      "depends_on": [
+        "shared_contracts_and_utilities",
+        "jwk_and_backend_keys",
+        "jws_signatures",
+        "jwt_tokens_and_claims"
+      ],
+      "focus_paths": [
+        "jose/jwe.py",
+        "jose/__init__.py",
+        "jose/constants.py",
+        "jose/exceptions.py",
+        "jose/jwk.py",
+        "jose/jws.py",
+        "jose/jwt.py",
+        "jose/backends"
+      ],
+      "acceptance": {
+        "criteria": [
+          "jwe.encrypt(plaintext, key, encryption=ALGORITHMS.A256GCM, algorithm=ALGORITHMS.DIR, zip=None, cty=None, kid=None) returns a compact JWE token as bytes or a documented bytes-compatible value.",
+          "jwe.decrypt(token, key) parses, authenticates, decrypts, and returns the original plaintext bytes.",
+          "JWE protected headers include alg, enc, and optional zip, cty, and kid fields.",
+          "Direct symmetric JWE with A256GCM works using supported oct/AES key material.",
+          "Compression using documented ZIPS values works when requested and rejects unsupported zip values.",
+          "Tokens larger than JWE_SIZE_LIMIT are rejected with JWEError or JWEParseError.",
+          "jose.__init__ exposes the documented unified API modules, constants, exceptions, backend key classes, NativeHMACKey, jws.verify, jwk.Key, and version information.",
+          "The visible check_tests suite and the milestone behavioral suite pass together."
+        ],
+        "corner_cases": [
+          "Malformed compact JWE with the wrong number of segments raises JWEParseError.",
+          "Tampered ciphertext, IV, tag, encrypted key, or protected header fails authentication and does not return plaintext.",
+          "Decrypting with the wrong key raises JWEError.",
+          "Plaintext may be str or bytes and decrypts to the original byte content.",
+          "Unsupported key-management or content-encryption algorithms fail clearly.",
+          "The package contains only the jose top-level package required by the design and no duplicate implementation package.",
+          "Public imports from jose work in a clean interpreter without requiring private-module import order."
+        ],
+        "checks": [
+          {
+            "type": "callable_or_class",
+            "module": "jose.jwe",
+            "symbol": "encrypt",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jwe",
+            "symbol": "decrypt",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose.jwe",
+            "symbol": "get_unverified_header",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "jose",
+            "symbol": "jwt",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "jose",
+            "symbol": "jws",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "jose",
+            "symbol": "jwk",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "jose",
+            "symbol": "jwe",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "jose",
+            "symbol": "utils",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "jose",
+            "symbol": "ALGORITHMS",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "jose",
+            "symbol": "ZIPS",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "jose",
+            "symbol": "version",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose",
+            "symbol": "JOSEError",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose",
+            "symbol": "JWTError",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose",
+            "symbol": "JWSError",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose",
+            "symbol": "JWKError",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose",
+            "symbol": "JWEError",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose",
+            "symbol": "JWEParseError",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "jose",
+            "symbol": "RSAKey",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "jose",
+            "symbol": "ECKey",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "jose",
+            "symbol": "HMACKey",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "jose",
+            "symbol": "AESKey",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose",
+            "symbol": "NativeHMACKey",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose",
+            "symbol": "verify",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "jose",
+            "symbol": "Key",
+            "required_levels": [
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write executable tests for JWE encrypt/decrypt, malformed/tampered token failures, size-limit enforcement, compression/header options, and all documented root-level jose imports. Do not modify source.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [
+            "jose/jwe.py",
+            "jose/__init__.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "author_implementer",
+          "title": "Implementer",
+          "mandate": "Implement jose.jwe and wire jose.__init__ so every documented module, function, class, constant, exception, backend key, NativeHMACKey, verify, Key, and version export is reachable at the public import path.",
+          "role": "implementer",
+          "slot_id": "author",
+          "focus_paths": [
+            "jose/jwe.py",
+            "jose/__init__.py",
+            "jose/backends",
+            "jose/jwk.py",
+            "jose/jws.py",
+            "jose/jwt.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "spec_review_spec_auditor",
+          "title": "Specification auditor",
+          "mandate": "Audit the completed repository against the PRD, architecture, directory tree, and API guide, focusing on JWE behavior and documented public imports. Report deviations without editing.",
+          "role": "spec_auditor",
+          "slot_id": "spec_review",
+          "focus_paths": [
+            "jose",
+            "pyproject.toml"
+          ],
+          "max_tokens": 6144,
+          "max_steps": 8,
+          "timeout_seconds": 900.0
+        },
+        {
+          "role_id": "contract_review_contract_critic",
+          "title": "Contract critic",
+          "mandate": "Audit that final JWE and __init__ integration did not break frozen contracts from constants, exceptions, utils, backends, jwk, jws, and jwt. Report contract violations without editing.",
+          "role": "contract_critic",
+          "slot_id": "contract_review",
+          "focus_paths": [
+            "jose"
+          ],
+          "max_tokens": 6144,
+          "max_steps": 8,
+          "timeout_seconds": 900.0
+        },
+        {
+          "role_id": "fixer_gate_repairer",
+          "title": "Gate repairer",
+          "mandate": "Fix exactly the issues reported by the spec and contract auditors or the integration gate, preserving all earlier frozen symbols and making the full public contract pass.",
+          "role": "gate_repairer",
+          "slot_id": "fixer",
+          "focus_paths": [
+            "jose",
+            "pyproject.toml"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 14,
+          "timeout_seconds": 1500.0
+        }
+      ]
+    }
+  ]
+}

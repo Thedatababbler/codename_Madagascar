@@ -3143,6 +3143,16 @@ noise is about one test (0.04), so tinydb (+0.12) and drf-simplejwt
 (+0.19) are the only differences clearly outside it. bplustree and tinydb
 ran before the integration breadth brief, the other five with it.
 
+**NL2Repo core set, planner only (09-15 04:42, zqin30).** 9/9 split: 5 x 4,
+4 x 5, mean 4.44 (risk-first plans: 9 x 2); every plan ends in a
+parallel_audit integration milestone. Plans in
+`configs/datasets/nl2repo_feature_plans/`. Two known traps checked:
+python-jose's plan pins no underscore-private names (the 15 private
+helpers that failed its milestone-2 contracts came from plan checks);
+voluptuous's plan never mentions the string validators (`Capitalize`,
+`Lower`, ...) that the held-out suite imports from `voluptuous.util` --
+the module-placement ceiling is still there.
+
 Known risks, recorded before the data: more milestones = more frozen
 seams with no cross-milestone repair (tinydb class); the gate reruns only
 the milestone's own frozen suite, so regressions of earlier milestones'

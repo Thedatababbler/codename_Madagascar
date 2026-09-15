@@ -1,0 +1,682 @@
+{
+  "generator": "llm",
+  "split_policy": "feature",
+  "rationale": "The work is split feature-first into four dependency-ordered milestones: Unicode data/contracts first, tokenizer/parser next, conversion and analysis logic after that, and final public API/packaging/CLI integration last. This keeps shared constants and data shape decisions frozen before parser and core functions depend on them, then verifies each functional module independently before the integration milestone grades the complete documented import surface and installable package contract.",
+  "split": true,
+  "milestones": [
+    {
+      "milestone_id": "unicode_data_contracts",
+      "title": "Unicode emoji data, constants, and language contracts",
+      "objective": "Build the emoji.unicode_codes data layer: load bundled JSON emoji data, expose language/status constants, alias/name metadata, and the shared EMOJI_DATA dictionary that later parser and converter modules import.",
+      "risk_rationale": "This milestone delivers the shared data contract used by every later feature: language codes, status values, default metadata keys, aliases, emoji versions, and localized names. Its gate can verify it alone by importing emoji.unicode_codes and emoji.unicode_codes.data_dict, checking the documented constants, and confirming representative emoji records such as 😀, 🅰/🅰️, 🇦🇫, and ZWJ family entries have stable metadata without needing tokenizer or conversion APIs.",
+      "gate_level": "implementation",
+      "split_reason": "feature_module",
+      "template_id": "gate_then_repair",
+      "depends_on": [],
+      "focus_paths": [
+        "emoji/unicode_codes",
+        "emoji/py.typed"
+      ],
+      "acceptance": {
+        "criteria": [
+          "emoji.unicode_codes imports cleanly in Python 3.11 without network access.",
+          "EMOJI_DATA is populated from the bundled JSON files and maps Unicode emoji strings to dictionaries containing at least English name, Unicode emoji version E, and status.",
+          "LANGUAGES contains the documented language identifiers including en, es, ja, ko, pt, it, fr, de, fa, id, zh, ru, tr, and ar.",
+          "STATUS exposes the documented integer mapping for component, fully_qualified, minimally_qualified, and unqualified.",
+          "Aliases and localized names are preserved in records where present."
+        ],
+        "corner_cases": [
+          "Emoji with variation selectors such as 🅰 and 🅰️ remain distinct records when both are present.",
+          "Flag sequences made from regional indicators are loaded as single dictionary keys.",
+          "ZWJ composite sequences are loaded without being split into individual code points.",
+          "Missing optional translation fields do not prevent the data module from importing.",
+          "Repeated imports reuse stable module-level constants rather than rebuilding incompatible objects."
+        ],
+        "checks": [
+          {
+            "type": "export",
+            "module": "emoji.unicode_codes.data_dict",
+            "symbol": "STATUS",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "emoji.unicode_codes.data_dict",
+            "symbol": "LANGUAGES",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "emoji.unicode_codes",
+            "symbol": "_DEFAULT_KEYS",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "emoji.unicode_codes",
+            "symbol": "EMOJI_DATA",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write tests from the design documents that validate the unicode data layer imports, constants, representative records, aliases, languages, statuses, variation selectors, flags, and ZWJ keys without using any future tokenizer or core APIs.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [
+            "emoji/unicode_codes"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "author_contract_author",
+          "title": "Contract author",
+          "mandate": "Implement the unicode data contract exactly at the documented modules, including bundled JSON loading, STATUS, LANGUAGES, _DEFAULT_KEYS, and EMOJI_DATA exports that downstream modules can import.",
+          "role": "contract_author",
+          "slot_id": "author",
+          "focus_paths": [
+            "emoji/unicode_codes",
+            "emoji/py.typed"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "repairer_gate_repairer",
+          "title": "Gate repairer",
+          "mandate": "Repair only failures reported by the milestone gate for unicode data imports, constants, and data shape compatibility.",
+          "role": "gate_repairer",
+          "slot_id": "repairer",
+          "focus_paths": [
+            "emoji/unicode_codes",
+            "emoji/py.typed"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 14,
+          "timeout_seconds": 1500.0
+        }
+      ]
+    },
+    {
+      "milestone_id": "tokenizer_expression_parser",
+      "title": "Expression tokenizer and Unicode parser",
+      "objective": "Build emoji.tokenizer so Unicode emoji expressions can be discovered in text, including single-codepoint emoji, variation-selector forms, flags, skin-tone/gender modifiers, and ZWJ composites.",
+      "risk_rationale": "This milestone delivers the expression parser layer independently of name conversion. Its gate can verify it by calling tokenizer APIs directly on strings containing raw Unicode emoji and checking token spans and matched emoji values. If tokenizer boundaries or ZWJ handling are wrong, downstream analysis and replacement functions will count, replace, or classify the wrong substrings.",
+      "gate_level": "implementation",
+      "split_reason": "feature_module",
+      "template_id": "test_first",
+      "depends_on": [
+        "unicode_data_contracts"
+      ],
+      "focus_paths": [
+        "emoji/tokenizer.py",
+        "emoji/unicode_codes"
+      ],
+      "acceptance": {
+        "criteria": [
+          "emoji.tokenizer imports the frozen EMOJI_DATA from emoji.unicode_codes.",
+          "Tokenizer functions find emoji substrings in surrounding natural-language text while preserving start and end positions.",
+          "ZWJ composite expressions such as 👨‍👩‍👧‍👦 are treated as one emoji match when present in EMOJI_DATA.",
+          "Flag expressions made from two regional indicator symbols are treated as one emoji match.",
+          "Skin tone and gender modifier sequences are consumed as part of the emoji expression rather than reported as unrelated text."
+        ],
+        "corner_cases": [
+          "Adjacent repeated emoji such as 😀😀 produce two separate matches with correct non-overlapping spans.",
+          "Text with no emoji produces only non-emoji text tokens or an empty emoji-match list, not false positives.",
+          "Variation selector forms such as 🅰 and 🅰️ are matched according to available data and do not corrupt indices.",
+          "Incomplete ZWJ sequences do not crash and do not consume unrelated following text.",
+          "Multi-codepoint matches report Python string offsets, not byte offsets."
+        ],
+        "checks": [
+          {
+            "type": "export",
+            "module": "emoji.tokenizer",
+            "symbol": "_ZWJ",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "emoji.tokenizer",
+            "symbol": "_SEARCH_TREE",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "emoji.tokenizer",
+            "symbol": "EMOJI_DATA",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.tokenizer",
+            "symbol": "tokenize",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.tokenizer",
+            "symbol": "filter_tokens",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.tokenizer",
+            "symbol": "Token",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.tokenizer",
+            "symbol": "EmojiMatch",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write parser-focused tests that exercise tokenizer behavior directly for Unicode emoji, positions, repeated emoji, flags, modifiers, variation selectors, ZWJ family sequences, and no-emoji text.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [
+            "emoji/tokenizer.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "builder_implementer",
+          "title": "Implementer",
+          "mandate": "Implement emoji.tokenizer from the design documents using the frozen unicode data contract, including search tree construction, token objects, match objects, tokenize, and filter_tokens.",
+          "role": "implementer",
+          "slot_id": "builder",
+          "focus_paths": [
+            "emoji/tokenizer.py",
+            "emoji/unicode_codes"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "repairer_gate_repairer",
+          "title": "Gate repairer",
+          "mandate": "Repair only parser/tokenizer failures reported by the gate, preserving unicode data exports frozen by the previous milestone.",
+          "role": "gate_repairer",
+          "slot_id": "repairer",
+          "focus_paths": [
+            "emoji/tokenizer.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 14,
+          "timeout_seconds": 1500.0
+        }
+      ]
+    },
+    {
+      "milestone_id": "core_conversion_analysis",
+      "title": "Core conversion and analysis functions",
+      "objective": "Build emoji.core functions for converting names to Unicode and Unicode to names, replacing/removing emoji, detecting emoji, listing matches with positions, counting, deduplicating, version detection, and status-aware behavior.",
+      "risk_rationale": "This milestone delivers the main functional library behavior while still avoiding public package integration concerns. Its gate can verify it alone by importing emoji.core and calling conversion and analysis functions directly. Defects here would make the final public API re-export correct names but incorrect behavior, especially around aliases, delimiters, languages, version filters, repeated emoji, and ZWJ matches.",
+      "gate_level": "implementation",
+      "split_reason": "feature_module",
+      "template_id": "review_then_fix",
+      "depends_on": [
+        "unicode_data_contracts",
+        "tokenizer_expression_parser"
+      ],
+      "focus_paths": [
+        "emoji/core.py",
+        "emoji/tokenizer.py",
+        "emoji/unicode_codes"
+      ],
+      "acceptance": {
+        "criteria": [
+          "emojize converts documented colon-delimited names and aliases into Unicode emoji.",
+          "demojize converts Unicode emoji into standardized colon-delimited names and supports documented language selection.",
+          "Custom delimiters are supported for name conversion where documented.",
+          "replace_emoji can remove emoji or substitute them with a string or callback-derived value.",
+          "analyze, emoji_list, distinct_emoji_list, and emoji_count report repeated emoji and positions correctly for examples such as Hello 😀😀.",
+          "is_emoji and purely_emoji distinguish a single valid emoji expression from plain text and mixed strings.",
+          "version returns the Unicode emoji version metadata for a recognized emoji and supports non-emoji fallback behavior."
+        ],
+        "corner_cases": [
+          "Unknown colon names are preserved or handled according to documented conversion policy instead of raising accidental errors.",
+          "Aliases such as :atm: and language names resolve to the same Unicode emoji as canonical names when present.",
+          "Adjacent emoji and ZWJ composites are not double-counted.",
+          "Emoji with variation selectors and unqualified variants produce stable demojize/emojize round trips where data allows.",
+          "Version filtering excludes emoji newer than the requested version without corrupting surrounding text.",
+          "Callbacks used for replacement receive enough match/data information to make deterministic substitutions."
+        ],
+        "checks": [
+          {
+            "type": "callable_or_class",
+            "module": "emoji.core",
+            "symbol": "emojize",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.core",
+            "symbol": "demojize",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.core",
+            "symbol": "analyze",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.core",
+            "symbol": "emoji_list",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.core",
+            "symbol": "distinct_emoji_list",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.core",
+            "symbol": "emoji_count",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.core",
+            "symbol": "is_emoji",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.core",
+            "symbol": "purely_emoji",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.core",
+            "symbol": "replace_emoji",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji.core",
+            "symbol": "version",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write core behavior tests from the PRD/API guide for emojize, demojize, aliases, languages, custom delimiters, replacement callbacks, analyze/list/count/deduplicate, detection, version filtering, and ZWJ/flag/modifier handling through emoji.core.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [
+            "emoji/core.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "author_implementer",
+          "title": "Implementer",
+          "mandate": "Implement emoji.core conversion, replacement, detection, version, and analysis functions using the frozen unicode data and tokenizer contracts.",
+          "role": "implementer",
+          "slot_id": "author",
+          "focus_paths": [
+            "emoji/core.py",
+            "emoji/tokenizer.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "reviewer_spec_auditor",
+          "title": "Specification auditor",
+          "mandate": "Read the design documents and the implemented emoji.core behavior, then report quiet deviations in signatures, options, return shapes, alias/language handling, version filtering, or analyzer position semantics without editing files.",
+          "role": "spec_auditor",
+          "slot_id": "reviewer",
+          "focus_paths": [
+            "emoji/core.py",
+            "emoji/tokenizer.py",
+            "emoji/unicode_codes"
+          ],
+          "max_tokens": 6144,
+          "max_steps": 8,
+          "timeout_seconds": 900.0
+        },
+        {
+          "role_id": "fixer_edge_case_hardener",
+          "title": "Edge-case hardener",
+          "mandate": "Fix the deviations and edge cases identified by the reviewer while preserving the frozen unicode data and tokenizer contracts.",
+          "role": "edge_case_hardener",
+          "slot_id": "fixer",
+          "focus_paths": [
+            "emoji/core.py",
+            "emoji/tokenizer.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        }
+      ]
+    },
+    {
+      "milestone_id": "public_api_packaging_cli_integration",
+      "title": "Public API, packaging, CLI, and full integration",
+      "objective": "Wire the completed modules into the documented package surface: emoji.__init__ re-exports, version information, pyproject.toml install metadata and dependencies, package data inclusion, and terminal-callable interfaces for parsing, conversion, analysis, and detection.",
+      "risk_rationale": "This final milestone integrates all completed feature modules and is graded on the full public contract. Its gate verifies consumers can install/import the package, access the main functions with import emoji, rely on exported constants, and invoke command-line entry points. Earlier milestones prove internals; this one catches broken re-exports, missing package data, dependency metadata errors, and cross-module hookup defects.",
+      "gate_level": "integration",
+      "split_reason": "feature_module",
+      "template_id": "parallel_audit",
+      "depends_on": [
+        "unicode_data_contracts",
+        "tokenizer_expression_parser",
+        "core_conversion_analysis"
+      ],
+      "focus_paths": [
+        "emoji/__init__.py",
+        "emoji/core.py",
+        "emoji/tokenizer.py",
+        "emoji/unicode_codes",
+        "pyproject.toml",
+        "MANIFEST.in",
+        "README.rst"
+      ],
+      "acceptance": {
+        "criteria": [
+          "import emoji exposes the documented main functions from the package root, including conversion, analysis, detection, replacement, and version helpers.",
+          "emoji.__version__ is available and pyproject.toml defines installable package metadata for the Emoji-Process project.",
+          "pyproject.toml declares the documented dependencies including requests>=2.32.3, beautifulsoup4>=4.12.3, cloudscraper>=1.2.71, pytest>=7.4.4, sphinx>=7.2.6, and django>=4.1.1.",
+          "Bundled Unicode JSON data files are included as package data for installed usage.",
+          "Terminal-callable interfaces or console scripts support parse, convert, analyze, and detect-style operations with clear text input and machine-readable or stable textual output.",
+          "The visible check_tests suite and milestone behavioral tests pass together at integration level."
+        ],
+        "corner_cases": [
+          "A clean environment can import emoji without importing optional documentation or utility-only modules unnecessarily.",
+          "Package root exports point to the same behavior as emoji.core and do not wrap away documented keyword arguments.",
+          "CLI commands handle Unicode input, colon-name input, no-emoji input, and ZWJ composite input without shell encoding assumptions.",
+          "Public constants such as LANGUAGES, STATUS, and EMOJI_DATA are reachable at the documented import paths.",
+          "No generated scratch directories, duplicate packages, or test-only fixtures are required for runtime behavior."
+        ],
+        "checks": [
+          {
+            "type": "export",
+            "module": "emoji",
+            "symbol": "__version__",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "emoji",
+            "symbol": "LANGUAGES",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "emoji",
+            "symbol": "STATUS",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "emoji",
+            "symbol": "EMOJI_DATA",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji",
+            "symbol": "emojize",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji",
+            "symbol": "demojize",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji",
+            "symbol": "analyze",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji",
+            "symbol": "emoji_list",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji",
+            "symbol": "distinct_emoji_list",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji",
+            "symbol": "emoji_count",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji",
+            "symbol": "is_emoji",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji",
+            "symbol": "purely_emoji",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji",
+            "symbol": "replace_emoji",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "emoji",
+            "symbol": "version",
+            "required_levels": [
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write integration tests from the design documents that exercise import emoji, root re-exports, package constants, install metadata, package data availability, and CLI parse/convert/analyze/detect usage.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [
+            "emoji/__init__.py",
+            "pyproject.toml",
+            "MANIFEST.in"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "author_implementer",
+          "title": "Implementer",
+          "mandate": "Wire all completed modules into the package root, add version metadata, ensure package data and dependencies are declared in pyproject.toml, and implement documented terminal-callable interfaces without changing frozen internal contracts.",
+          "role": "implementer",
+          "slot_id": "author",
+          "focus_paths": [
+            "emoji/__init__.py",
+            "emoji/core.py",
+            "emoji/tokenizer.py",
+            "emoji/unicode_codes",
+            "pyproject.toml",
+            "MANIFEST.in"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "spec_review_spec_auditor",
+          "title": "Specification auditor",
+          "mandate": "Audit the integrated repository against PRD.md, architecture_design.md, and directory_tree.txt for missing public API, dependency declarations, CLI coverage, version information, package data, and documented behavior gaps without editing files.",
+          "role": "spec_auditor",
+          "slot_id": "spec_review",
+          "focus_paths": [
+            "emoji",
+            "pyproject.toml",
+            "MANIFEST.in",
+            "README.rst"
+          ],
+          "max_tokens": 6144,
+          "max_steps": 8,
+          "timeout_seconds": 900.0
+        },
+        {
+          "role_id": "contract_review_contract_critic",
+          "title": "Contract critic",
+          "mandate": "Audit the final integration against contracts frozen by earlier milestones, especially unicode constants, tokenizer exports, core function signatures, and root re-export paths, without editing files.",
+          "role": "contract_critic",
+          "slot_id": "contract_review",
+          "focus_paths": [
+            "emoji/__init__.py",
+            "emoji/core.py",
+            "emoji/tokenizer.py",
+            "emoji/unicode_codes"
+          ],
+          "max_tokens": 6144,
+          "max_steps": 8,
+          "timeout_seconds": 900.0
+        },
+        {
+          "role_id": "fixer_gate_repairer",
+          "title": "Gate repairer",
+          "mandate": "Apply fixes required by both auditors, remove stray scaffolding or duplicate surfaces, and leave the repository installable with exactly the documented runtime files and public API.",
+          "role": "gate_repairer",
+          "slot_id": "fixer",
+          "focus_paths": [
+            "emoji",
+            "pyproject.toml",
+            "MANIFEST.in",
+            "README.rst"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 14,
+          "timeout_seconds": 1500.0
+        }
+      ]
+    }
+  ]
+}

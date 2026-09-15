@@ -1,0 +1,654 @@
+{
+  "generator": "llm",
+  "split_policy": "feature",
+  "rationale": "The project is best split feature-first into four dependency-ordered milestones: parsing/interpolation foundations, core dotenv file/environment operations, CLI commands, and final public/package integration. Parser and variable expansion are shared substrate used by both core APIs and CLI, so they come first. Core loading and file mutation can then be verified without the CLI. The CLI is an outward-facing adapter over the frozen core APIs. The final milestone wires documented import paths, package metadata, entry points, and full integration behaviour.",
+  "split": true,
+  "milestones": [
+    {
+      "milestone_id": "parser_and_variable_foundations",
+      "title": "Dotenv file parser and variable interpolation foundations",
+      "objective": "Implement dotenv.parser and dotenv.variables so .env streams can be parsed into bindings and values can be resolved with literals, variable references, defaults, and nested references.",
+      "risk_rationale": "This milestone delivers the shared syntax and interpolation substrate. Later loading, file mutation, and CLI features all depend on agreeing how lines, comments, quotes, multiline values, and ${VAR:-default} references are interpreted. Its gate can verify the parser and variable resolver directly from StringIO streams and environment mappings, without needing load_dotenv, set_key, or CLI commands.",
+      "gate_level": "implementation",
+      "split_reason": "feature_module",
+      "template_id": "test_first",
+      "depends_on": [],
+      "focus_paths": [
+        "src/dotenv/parser.py",
+        "src/dotenv/variables.py"
+      ],
+      "acceptance": {
+        "criteria": [
+          "parse_stream reads a text stream and yields Binding objects containing parsed key, value, original source text, and error status.",
+          "The parser accepts unquoted, single-quoted, double-quoted, empty, and valueless assignments.",
+          "The parser ignores full-line comments and supports inline comments after unquoted values.",
+          "The parser supports optional export prefixes before assignments.",
+          "The parser supports multiline values delimited with triple quotes.",
+          "parse_variables splits a value into Literal and Variable atoms.",
+          "Variable resolution supports ${NAME}, ${NAME:-default}, references to os.environ/provided mappings, and nested references."
+        ],
+        "corner_cases": [
+          "Blank lines and comment-only lines do not create meaningful key-value assignments.",
+          "Whitespace around keys, equals signs, and values is tolerated.",
+          "A # character inside quoted values is preserved rather than treated as a comment.",
+          "Malformed lines produce a Binding with error information rather than crashing the whole stream parse.",
+          "Missing interpolation variables resolve consistently, using defaults where supplied and an empty value where appropriate.",
+          "Nested references terminate deterministically and do not recurse forever."
+        ],
+        "checks": [
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.parser",
+            "symbol": "Original",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.parser",
+            "symbol": "Binding",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.parser",
+            "symbol": "parse_stream",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.variables",
+            "symbol": "Literal",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.variables",
+            "symbol": "Variable",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.variables",
+            "symbol": "parse_variables",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write executable tests for dotenv.parser and dotenv.variables from the PRD and architecture guide, covering assignment syntax, comments, quoting, triple-quoted multiline values, malformed lines, and interpolation including defaults and nested references.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [
+            "src/dotenv/parser.py",
+            "src/dotenv/variables.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "builder_contract_author",
+          "title": "Contract author",
+          "mandate": "Implement the parser and variable-resolution contracts that later modules import, preserving the documented class and function names and making the behaviour directly testable from streams and mappings.",
+          "role": "contract_author",
+          "slot_id": "builder",
+          "focus_paths": [
+            "src/dotenv/parser.py",
+            "src/dotenv/variables.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "repairer_gate_repairer",
+          "title": "Gate repairer",
+          "mandate": "If the milestone gate fails, fix only the parser and variable interpolation behaviours named in the failure report while preserving the exported contracts.",
+          "role": "gate_repairer",
+          "slot_id": "repairer",
+          "focus_paths": [
+            "src/dotenv/parser.py",
+            "src/dotenv/variables.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 14,
+          "timeout_seconds": 1500.0
+        }
+      ]
+    },
+    {
+      "milestone_id": "core_environment_api",
+      "title": "Core dotenv loading and file utility API",
+      "objective": "Implement dotenv.main functions and DotEnv behaviour for finding .env files, reading streams/files, loading values into os.environ, retrieving values, and setting/deleting/replacing keys in .env files.",
+      "risk_rationale": "This milestone delivers the library's core behaviour independently of the command line. Its gate can create temporary directories and .env files, call the public functions directly, and inspect os.environ and file contents. If this layer is wrong, the CLI and package root will faithfully expose broken loading and mutation semantics downstream.",
+      "gate_level": "implementation",
+      "split_reason": "feature_module",
+      "template_id": "test_first",
+      "depends_on": [
+        "parser_and_variable_foundations"
+      ],
+      "focus_paths": [
+        "src/dotenv/main.py",
+        "src/dotenv/parser.py",
+        "src/dotenv/variables.py"
+      ],
+      "acceptance": {
+        "criteria": [
+          "find_dotenv searches upward from the current working directory or caller context and returns the matching .env path or an empty string when not found.",
+          "load_dotenv loads parsed values from a path or stream into os.environ.",
+          "load_dotenv respects override behaviour so existing environment variables are preserved unless override is requested.",
+          "dotenv_values returns parsed key-value data without mutating os.environ.",
+          "get_key returns a single key's value from a dotenv file.",
+          "set_key writes or updates a key-value pair using the requested quote and export behaviour.",
+          "unset_key removes a key from the dotenv file and reports whether it was removed.",
+          "rewrite safely overwrites dotenv file content through a temporary rewrite workflow."
+        ],
+        "corner_cases": [
+          "Missing .env files return False or empty results where documented rather than crashing by default.",
+          "Stream loading works without a filesystem path.",
+          "Empty values, valueless keys, quoted values, inline comments, multiline values, and interpolated values round-trip through the core APIs.",
+          "Existing os.environ values are not overwritten when override is false.",
+          "set_key creates the target file if needed and preserves unrelated existing entries.",
+          "unset_key leaves the file valid when deleting first, middle, last, or absent keys."
+        ],
+        "checks": [
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.main",
+            "symbol": "DotEnv",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.main",
+            "symbol": "find_dotenv",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.main",
+            "symbol": "load_dotenv",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.main",
+            "symbol": "dotenv_values",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.main",
+            "symbol": "get_key",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.main",
+            "symbol": "set_key",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.main",
+            "symbol": "unset_key",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.main",
+            "symbol": "rewrite",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write executable tests for dotenv.main core APIs using temporary files, streams, cwd changes, and isolated os.environ mutations. Cover loading, override rules, dotenv_values, find_dotenv, get_key, set_key, unset_key, and rewrite.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [
+            "src/dotenv/main.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "builder_implementer",
+          "title": "Implementer",
+          "mandate": "Implement the core environment-loading and dotenv file utility functions on top of the frozen parser and variable resolver contracts.",
+          "role": "implementer",
+          "slot_id": "builder",
+          "focus_paths": [
+            "src/dotenv/main.py",
+            "src/dotenv/parser.py",
+            "src/dotenv/variables.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "repairer_gate_repairer",
+          "title": "Gate repairer",
+          "mandate": "If the milestone gate fails, repair the named core API behaviours while preserving parser and variable contracts frozen by the previous milestone.",
+          "role": "gate_repairer",
+          "slot_id": "repairer",
+          "focus_paths": [
+            "src/dotenv/main.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 14,
+          "timeout_seconds": 1500.0
+        }
+      ]
+    },
+    {
+      "milestone_id": "command_line_interface",
+      "title": "Click-based dotenv command-line interface",
+      "objective": "Implement dotenv.cli and module execution so users can list, get, set, unset/delete, and run commands with variables loaded from a .env file.",
+      "risk_rationale": "This milestone delivers the outward-facing CLI adapter over the already-verifiable core APIs. Its gate can invoke the click command with CliRunner against temporary dotenv files and subprocess-safe commands, without waiting for final package metadata. If wrong, users cannot operate the documented command-line workflow even if the core library works.",
+      "gate_level": "implementation",
+      "split_reason": "feature_module",
+      "template_id": "review_then_fix",
+      "depends_on": [
+        "core_environment_api"
+      ],
+      "focus_paths": [
+        "src/dotenv/cli.py",
+        "src/dotenv/__main__.py",
+        "src/dotenv/main.py"
+      ],
+      "acceptance": {
+        "criteria": [
+          "dotenv.cli.cli is a click group with --file, --quote, and --export options matching the documented behaviour.",
+          "The list command prints dotenv file key-value pairs.",
+          "The get command prints the value for a requested key and fails cleanly for missing keys.",
+          "The set command writes or updates a key-value pair using the selected quote and export options.",
+          "The unset/delete command removes a key-value pair from the dotenv file.",
+          "The run command executes a command with environment variables loaded from the selected dotenv file.",
+          "python -m dotenv delegates to the CLI entry point."
+        ],
+        "corner_cases": [
+          "CLI commands handle a missing dotenv file with a clear non-zero result where appropriate.",
+          "Values containing spaces, quotes, # characters, and empty strings are quoted or printed correctly.",
+          "run preserves the parent process environment while applying dotenv values to the child process.",
+          "The quote modes always, never, and auto produce distinct documented file output where applicable.",
+          "The export flag writes export-prefixed assignments accepted by the parser."
+        ],
+        "checks": [
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.cli",
+            "symbol": "cli",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.cli",
+            "symbol": "list_values",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.cli",
+            "symbol": "get",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.cli",
+            "symbol": "set",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.cli",
+            "symbol": "unset",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv.cli",
+            "symbol": "run",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write executable CLI tests with click.testing.CliRunner for list, get, set, unset/delete, run, quote modes, export mode, and python -m dotenv delegation assumptions.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [
+            "src/dotenv/cli.py",
+            "src/dotenv/__main__.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "author_implementer",
+          "title": "Implementer",
+          "mandate": "Implement the Click CLI commands using the frozen dotenv.main APIs, keeping command names and options aligned with the architecture guide.",
+          "role": "implementer",
+          "slot_id": "author",
+          "focus_paths": [
+            "src/dotenv/cli.py",
+            "src/dotenv/__main__.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "reviewer_spec_auditor",
+          "title": "Specification auditor",
+          "mandate": "Review the CLI implementation against the PRD and architecture guide, especially option names, command behaviours, quote/export handling, and run-command environment semantics. Report deviations only.",
+          "role": "spec_auditor",
+          "slot_id": "reviewer",
+          "focus_paths": [
+            "src/dotenv/cli.py",
+            "src/dotenv/__main__.py"
+          ],
+          "max_tokens": 6144,
+          "max_steps": 8,
+          "timeout_seconds": 900.0
+        },
+        {
+          "role_id": "fixer_gate_repairer",
+          "title": "Gate repairer",
+          "mandate": "Fix the CLI deviations or gate failures reported by the reviewer and tests without changing the frozen core parser or main API contracts unless strictly necessary for compatibility.",
+          "role": "gate_repairer",
+          "slot_id": "fixer",
+          "focus_paths": [
+            "src/dotenv/cli.py",
+            "src/dotenv/__main__.py"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 14,
+          "timeout_seconds": 1500.0
+        }
+      ]
+    },
+    {
+      "milestone_id": "public_package_integration",
+      "title": "Public API exports, packaging, version, IPython hook, and full integration",
+      "objective": "Wire the documented package-level imports, setup.py metadata/dependencies, console entry points, version module, py.typed marker, and integration behaviour across parser, core APIs, and CLI.",
+      "risk_rationale": "This final milestone integrates all feature modules into the public contract users install and import. Its gate can verify documented imports from dotenv, dotenv.main, dotenv.parser, dotenv.variables, dotenv.cli, and dotenv.version; validate setup.py dependency and entry-point metadata; and run full end-to-end workflows from pip-style imports through CLI invocation.",
+      "gate_level": "integration",
+      "split_reason": "feature_module",
+      "template_id": "parallel_audit",
+      "depends_on": [
+        "command_line_interface"
+      ],
+      "focus_paths": [
+        "src/dotenv/__init__.py",
+        "src/dotenv/version.py",
+        "src/dotenv/ipython.py",
+        "src/dotenv/py.typed",
+        "setup.py",
+        "setup.cfg",
+        "MANIFEST.in",
+        "src/dotenv/cli.py",
+        "src/dotenv/main.py",
+        "src/dotenv/parser.py",
+        "src/dotenv/variables.py"
+      ],
+      "acceptance": {
+        "criteria": [
+          "The package root dotenv re-exports the documented major functions so imports such as from dotenv import load_dotenv, dotenv_values, find_dotenv, get_key, set_key, unset_key, get_cli_string work.",
+          "dotenv.version exposes __version__.",
+          "setup.py defines an installable package using the src layout and declares dependencies including click>=5.0, pytest, pytest-cov, ipython, twine, and wheel as required by the PRD.",
+          "The console script entry point invokes dotenv.cli.cli.",
+          "The package includes the documented modules and py.typed marker.",
+          "get_cli_string returns a shell-oriented dotenv command string for supported path/action/key/value/quote combinations.",
+          "The IPython integration module is importable and can load dotenv support without breaking normal package imports.",
+          "End-to-end workflows pass: parse a dotenv file, load into os.environ, read/update/delete keys, invoke CLI commands, and import all documented symbols."
+        ],
+        "corner_cases": [
+          "Package-root exports point to the same callable objects as their implementation modules.",
+          "No import cycle prevents importing dotenv, dotenv.main, dotenv.cli, dotenv.parser, or dotenv.variables in a clean interpreter.",
+          "Installing metadata does not require executing tests or importing unavailable optional tooling.",
+          "CLI entry point and python -m dotenv both reach the same command group.",
+          "The final package does not omit py.typed or version metadata from the source tree.",
+          "Public imports continue to work after earlier modules are wired through __init__.py."
+        ],
+        "checks": [
+          {
+            "type": "export",
+            "module": "dotenv.version",
+            "symbol": "__version__",
+            "required_levels": [
+              "implementation",
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "dotenv",
+            "symbol": "load_dotenv",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "dotenv",
+            "symbol": "dotenv_values",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "dotenv",
+            "symbol": "find_dotenv",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "dotenv",
+            "symbol": "get_key",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "dotenv",
+            "symbol": "set_key",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "dotenv",
+            "symbol": "unset_key",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "export",
+            "module": "dotenv",
+            "symbol": "get_cli_string",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv",
+            "symbol": "load_dotenv",
+            "required_levels": [
+              "integration"
+            ]
+          },
+          {
+            "type": "callable_or_class",
+            "module": "dotenv",
+            "symbol": "get_cli_string",
+            "required_levels": [
+              "integration"
+            ]
+          }
+        ]
+      },
+      "agents": [
+        {
+          "role_id": "test_author_test_author",
+          "title": "Specification test author",
+          "mandate": "Write executable integration tests for package-root imports, version export, get_cli_string, setup.py dependency/entry-point metadata, py.typed presence, module importability, and end-to-end load/update/CLI workflows.",
+          "role": "test_author",
+          "slot_id": "test_author",
+          "focus_paths": [
+            "src/dotenv",
+            "setup.py",
+            "setup.cfg",
+            "MANIFEST.in"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 16,
+          "timeout_seconds": 1500.0
+        },
+        {
+          "role_id": "author_implementer",
+          "title": "Implementer",
+          "mandate": "Wire the documented public API in dotenv.__init__, implement version and auxiliary integration pieces, ensure setup.py and packaging metadata expose the installable src-layout project and CLI entry point.",
+          "role": "implementer",
+          "slot_id": "author",
+          "focus_paths": [
+            "src/dotenv/__init__.py",
+            "src/dotenv/version.py",
+            "src/dotenv/ipython.py",
+            "src/dotenv/py.typed",
+            "setup.py",
+            "setup.cfg",
+            "MANIFEST.in"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 12,
+          "timeout_seconds": 1200.0
+        },
+        {
+          "role_id": "spec_review_spec_auditor",
+          "title": "Specification auditor",
+          "mandate": "Audit the integrated repository against the PRD and architecture guide, checking that every documented function group, module, dependency, and import example is satisfied. Report discrepancies only.",
+          "role": "spec_auditor",
+          "slot_id": "spec_review",
+          "focus_paths": [
+            "src/dotenv",
+            "setup.py",
+            "setup.cfg",
+            "MANIFEST.in"
+          ],
+          "max_tokens": 6144,
+          "max_steps": 8,
+          "timeout_seconds": 900.0
+        },
+        {
+          "role_id": "contract_review_contract_critic",
+          "title": "Contract critic",
+          "mandate": "Audit that final integration preserves the contracts frozen by earlier milestones for parser, variables, core main APIs, and CLI symbols. Report any moved, missing, narrowed, or incompatible public contract only.",
+          "role": "contract_critic",
+          "slot_id": "contract_review",
+          "focus_paths": [
+            "src/dotenv"
+          ],
+          "max_tokens": 6144,
+          "max_steps": 8,
+          "timeout_seconds": 900.0
+        },
+        {
+          "role_id": "fixer_gate_repairer",
+          "title": "Gate repairer",
+          "mandate": "Fix integration, packaging, export, and contract issues reported by the auditors or final gate while preserving all earlier milestone behaviours.",
+          "role": "gate_repairer",
+          "slot_id": "fixer",
+          "focus_paths": [
+            "src/dotenv",
+            "setup.py",
+            "setup.cfg",
+            "MANIFEST.in"
+          ],
+          "max_tokens": 8192,
+          "max_steps": 14,
+          "timeout_seconds": 1500.0
+        }
+      ]
+    }
+  ]
+}
