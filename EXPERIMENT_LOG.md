@@ -3197,6 +3197,37 @@ outcome classifier does look for any harness result with passed=false;
 the custody artifact (passed=false) is not reaching that path on this
 commit route -- to trace before fixing.
 
+**NL2Repo sample, 3/3: python-jose on 5 milestones (run `cpe-20260915T220834Z-nl2_python-jose`, 22:10-23:13).**
+**Nothing committed, held-out 0.0** (v9 and v0 runs: 0.106). Milestone 1
+failed its gate at the contracts stage on a single missing constant
+(`jose.constants.JWE_SIZE_LIMIT`, 14/15) -- so the old failure mode (15
+private helper names) is gone and the plan-level fix held, but a new
+single-symbol gate failure took its place. The failure search then made
+it worse: `cand_feedback` broke `jose/backends/__init__.py`'s
+cross-imports, two plan-layer candidates produced no gate result, the
+milestone failed, and milestones 2-5 never ran. Custody had also refused
+this milestone's suite (`test_packaging_con...` uncollectable), and that
+refusal text became the diagnosis's concise feedback, which routed the
+repair to the test author rather than to the implementer that owed the
+constant.
+
+**Sample verdict (3 NL2Repo tasks, one run each).** The three fixes under
+test did fire -- the continuation exists on NL2Repo shapes (tablib, 2
+commits), custody detects uncollectable suites (tenacity, python-jose),
+the private-name contract trap is gone (python-jose) -- but two of the
+three tasks came out worse than the 2-milestone runs (tablib 0.249 vs
+0.526, python-jose 0.0 vs 0.106) and one better (tenacity 0.919 vs
+0.847). The common defect is custody refusal being half-wired: it
+discards the suite and then either leaves the milestone ungraded but
+committed (tenacity) or poisons the failure search's feedback and takes
+the whole task down (python-jose). Proposal before any further NL2Repo
+runs: custody refusal should not fail the gate at all; it should mark the
+suite rejected and arm the existing re-author candidate (`pb_q_reauthor`)
+for the test author, leaving the milestone's structural stages to decide
+the commit. Separately, tablib's registry seam argues for a rule in the
+integration brief: the suite may not call registration or bootstrap
+helpers that a user of the documented public API would not call.
+
 Known risks, recorded before the data: more milestones = more frozen
 seams with no cross-milestone repair (tinydb class); the gate reruns only
 the milestone's own frozen suite, so regressions of earlier milestones'
