@@ -3180,6 +3180,23 @@ falls between feature modules, invisible to per-milestone suites that
 each set up their own world; the integration breadth brief did not stop
 its suite from doing the same.
 
+**NL2Repo sample, 2/3: tenacity on 4 milestones (run `cpe-20260915T210959Z-nl2_tenacity`, 21:10-22:08).**
+All four committed on the first pass, **held-out 0.919** (114/124; v9 run
+0.847, best baseline 0.871). The fix under test fired: the integration
+milestone's author again wrote `import tomllib` on Python 3.10, and custody
+refused it ("1 file(s) ... cannot be collected ... No module named
+'tomllib'", exit 2, frozen copy discarded). But the refusal did not do what
+it was built for. The custody harness node still counts as succeeded, the
+graph continued, the milestone's gate ran **without a spec stage**
+(compile/imports/cross_imports/contracts/check_tests only) and the
+milestone committed on attempt 1 -- reported as behaviour 1.00, i.e.
+ungraded rather than re-authored. Better than the 09-09 collapse (a 0.0
+suite that blinded the search), still a gap: a refused suite must fail the
+milestone into a failure search aimed at the test author. The subtask
+outcome classifier does look for any harness result with passed=false;
+the custody artifact (passed=false) is not reaching that path on this
+commit route -- to trace before fixing.
+
 Known risks, recorded before the data: more milestones = more frozen
 seams with no cross-milestone repair (tinydb class); the gate reruns only
 the milestone's own frozen suite, so regressions of earlier milestones'
