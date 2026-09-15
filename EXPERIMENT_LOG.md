@@ -3139,11 +3139,11 @@ condition callback removal). Net +6 cases.
 | trailscraper | 5 | 1.00 / 1.00 / 0.62 / 1.00 / 1.00 | 205 | 0.67* (62/93) | 0.60* | 0.65* |
 | portalocker | 5 | 1.00 / 1.00 / 1.00 / 0.44 / 0.86 | 153 | 0.00* | 0.00* | 0.00* |
 | **mean (7)** | | | | **0.722** | **0.667** | 0.597 |
-| **mean (8)** | | | | **0.727** | **0.663** | 0.522 |
+| **mean (8)** | | | | **0.727** | **0.664** | 0.523 |
 
 \* trailscraper: the strict evaluator declines to score (15 modules counted statically, boto not importable in the env); raw passed/pinned, same convention as the full-pass table, kept out of the means. portalocker: the held-out conftest imports the undocumented `LockerType`, 63/63 unreachable for every method.
 
-**Step 3 closed (09-15 11:09 UTC).** All 10 multi-milestone CPE tasks ran on feature plans; every milestone of every task committed (46 milestones), one pass each after the harness fixes, no guard refusal. On the 8 strictly scored tasks: **feature-first 0.727 vs 2-milestone 0.663 vs best baseline 0.522**; >= 2-milestone on 7/8, clearly above noise on tinydb, drf-simplejwt and flask, below on pyjwt. The two statically scored tasks are flat against their ceilings. zqin30 at 55% of the week after the batch.
+**Step 3 closed (09-15 11:09 UTC).** All 10 multi-milestone CPE tasks ran on feature plans; every milestone of every task committed (48 milestones), one pass each after the harness fixes, no guard refusal. On the 8 strictly scored tasks: **feature-first 0.727 vs 2-milestone 0.664 vs best baseline 0.523**; >= 2-milestone on 7/8, clearly above noise on tinydb, drf-simplejwt and flask, below on pyjwt. The two statically scored tasks are flat against their ceilings. zqin30 at 55% of the week after the batch.
 
 Feature-first >= 2-milestone on 6/7 (one tie), below on pyjwt (-0.034,
 12 of its 27 new failures one white-box import). n=1 per cell; same-design
