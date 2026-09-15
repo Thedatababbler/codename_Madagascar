@@ -3135,7 +3135,9 @@ condition callback removal). Net +6 cases.
 | imapclient | 5 | 0.97 / 0.94 / 0.82 / 0.65 / 0.79 | 199 | 0.412 | 0.356 | 0.390 |
 | python-hl7 | 5 | 0.95 / 0.73 / 0.92 / 0.91 / 1.00 | 109 | 0.530 | 0.530 | 0.480 |
 | drf-simplejwt | 5 | 1.00 / 1.00 / 0.96 / 1.00 / 1.00 | 153 | 0.759 | 0.565 | 0.031 |
+| flask | 5 | 1.00 / 1.00 / 1.00 / 1.00 / 0.91 | 198 | 0.763 | 0.639 | 0.000 |
 | **mean (7)** | | | | **0.722** | **0.667** | 0.597 |
+| **mean (8)** | | | | **0.727** | **0.663** | 0.522 |
 
 Feature-first >= 2-milestone on 6/7 (one tie), below on pyjwt (-0.034,
 12 of its 27 new failures one white-box import). n=1 per cell; same-design
