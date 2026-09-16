@@ -919,6 +919,55 @@ class FastLoopController:
                 c.candidate_id == incumbent.candidate_id for c in fl_state.candidates
             ):
                 fl_state.candidates.append(incumbent)
+        refusal = (incumbent.metadata or {}).get("suite_refused") if incumbent is not None else None
+        if refusal and not any(c.metadata.get("persistence_phase") == 2 for c in fl_state.candidates):
+            # The suite was refused at custody: probing an ungraded milestone
+            # measures nothing. Re-author the suite (the author is told the
+            # refusal), grade the samples on their own suites, and let the
+            # selector judge against the ungraded incumbent.
+            fl_state.notes.append(
+                f"suite refused at custody ({', '.join(str(f)[:80] for f in refusal.get('files', []))[:300]}); re-author")
+            record = await self._arm_node_resample(
+                state=state, fl_state=fl_state, base_graph=base_graph, incumbent=incumbent, probes=[],
+                summary=persistent_failures([]), graph_result=graph_result, context=context,
+                base_ws=base_workspace, targets=[str(f).split(":", 1)[0] for f in refusal.get("files", [])] or ["spec_tests"],
+                mode="author", extra_feedback=str(refusal.get("tail") or "")[-1200:],
+            )
+            if record is not None:
+                fl_state.candidates.append(record)
+                self.budget_tracker.mark_started(fl_state)
+                state.state_version += 1
+                await self._save_checkpoint(state)
+                base_ws = base_workspace
+                if base_ws is None and source_repo:
+                    base_ws = await self.workspace_manager.prepare_base_snapshot(
+                        source_repo=source_repo, run_dir=str(context.run_dir),
+                        task_id=state.task_id, subtask_id=subtask_id)
+                    sub.workspace_ref = base_ws.path
+                await self._run_pending_candidates(
+                    state=state, fl_state=fl_state, context=context,
+                    initial_artifacts=initial_artifacts, base_ws=base_ws)
+                winner = self.selector.select(fl_state.candidates, self.budget)
+                fl_state.pareto_frontier = list(getattr(self.selector, "last_frontier", []) or [])
+                fl_state.selection_rule = str(getattr(self.selector, "last_rule", "") or "scalar")
+                if winner is None or winner.metadata.get("incumbent") or winner.status is not CandidateStatus.VALID:
+                    self._keep_incumbent(sub, fl_state, incumbent, "re-authored suite did not beat the ungraded first pass", state=state)
+                    state.state_version += 1
+                    await self._save_checkpoint(state)
+                    return state
+                if base_ws is None:
+                    await self._commit_non_repo_winner(state, fl_state, winner, subtask_id)
+                else:
+                    await self._commit_winner(state=state, fl_state=fl_state, winner=winner, base_ws=base_ws,
+                                              subtask_id=subtask_id, base_graph=base_graph)
+                state.state_version += 1
+                await self._save_checkpoint(state)
+                return state
+            fl_state.notes.append("re-author declined; keeping the ungraded first pass")
+            self._keep_incumbent(sub, fl_state, incumbent, "re-author could not be armed", state=state)
+            state.state_version += 1
+            await self._save_checkpoint(state)
+            return state
         # Every search settles who the next candidate should be, not only the
         # persistence arm: rules where they are unambiguous, the model for the
         # residue, a named pair last. Persistence defers this to phase two,
@@ -1527,7 +1576,7 @@ class FastLoopController:
 
     async def _arm_node_resample(
         self, *, state, fl_state, base_graph, incumbent, probes, summary, graph_result, context, base_ws,
-        targets: list[str] | None = None, mode: str = "flaky",
+        targets: list[str] | None = None, mode: str = "flaky", extra_feedback: str = "",
     ) -> CandidateRecord | None:
         """Arm a best-of-N record at the editing node that owns `targets`.
 
@@ -1551,7 +1600,7 @@ class FastLoopController:
             changes[node_id] = (str(art_id), patch)
         steps = nr.writer_steps(base_graph, changes)
         code_steps = [st for st in steps if not st.is_author]
-        if not code_steps:
+        if not code_steps and mode != "author":
             fl_state.notes.append("node_resample: no editing node produced a change; declined")
             return None
         frames: dict[str, str] = {}
@@ -1590,6 +1639,12 @@ class FastLoopController:
                              f"{sum(1 for o in owners.values() if o == node)}/{len(owners)} flaky failures land in files last written by {node}",
                              owners)
         fl_state.notes.append(f"node_resample[{mode}]: blame={blame.node_id} position={blame.position}: {blame.reason}")
+        if blame.position == "author" and not blame.node_id:
+            # no author step in the change log (custody moved the suite before it
+            # was recorded): the graph's test-author node is the author
+            fallback = next((n.node_id for n in base_graph.nodes if "test_author" in n.node_id), None)
+            if fallback:
+                blame = nr.Blame(fallback, "author", blame.reason + " (author node by name)", blame.owners)
         if blame.position == "author" and blame.node_id:
             # v2: the suite is condemned -> re-author it with the evidence, on a
             # candidate-specific frozen-suite directory; the gate grades on it.
@@ -1599,8 +1654,10 @@ class FastLoopController:
                 return None
             new_dir = f"{old_dir}.reauthor"
             samples_n = len(probes) + 1
-            graph2 = nr.reauthor_graph(base_graph, blame.node_id, new_dir,
-                                       nr.condemned_suite_feedback(list(summary.persistent), samples_n))
+            brief = nr.condemned_suite_feedback(targets, samples_n)
+            if extra_feedback:
+                brief += "\n\nWhat custody saw when it tried to collect the previous suite:\n" + extra_feedback
+            graph2 = nr.reauthor_graph(base_graph, blame.node_id, new_dir, brief)
             cand = LocalCandidate(
                 candidate_id="cand_reauthor", parent_graph_hash=base_graph.content_hash, edits=[],
                 graph=graph2, session_policy=incumbent.session_policy,

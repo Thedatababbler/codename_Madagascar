@@ -701,9 +701,11 @@ def test_custody_refuses_a_suite_that_collects_nothing(tmp_path: Path) -> None:
         "def test_broken(a, b):\n    assert a\n"
     )
     proc = harness.custody()
-    assert proc.returncode == 2
-    assert "custody refused" in proc.stderr
+    assert proc.returncode == 0, proc.stderr          # refusal is not a failed gate
+    assert "CUSTODY REFUSED" in proc.stdout
     assert not harness.frozen.exists()
+    side = harness.frozen.parent / (harness.frozen.name + ".refused.json")
+    assert side.is_file() and "test_spec.py" in side.read_text()
     assert not (harness.ws / "spec_tests").exists()  # the workspace copy is still taken
     # the next attempt can freeze a suite that collects
     harness.author()
@@ -772,3 +774,13 @@ def test_a_run_that_dies_without_a_summary_names_its_unfinished_cases(tmp_path: 
     assert names == {"test_dies", "test_never_runs"}, spec
     assert spec["passed_units"] == 1
     assert "ABORTED" in proc.stdout
+
+
+def test_a_refused_suite_leaves_the_milestone_ungraded_not_failed(tmp_path: Path) -> None:
+    harness = Harness(tmp_path)
+    harness.implement()
+    harness.author("import pytest\n\n@pytest.mark.parametrize('a, b', [(1, 2, 3)])\ndef test_broken(a, b):\n    assert a\n")
+    assert harness.custody().returncode == 0
+    code, report = harness.run()
+    assert code == 0
+    assert Harness.stage(report, "spec_tests") is None   # ungraded, and the gate still passes on structure

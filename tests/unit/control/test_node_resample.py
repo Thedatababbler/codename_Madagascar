@@ -133,3 +133,12 @@ def test_refuses_zero_commit_over_a_committed_base():
     assert refuse(ctl, sub, NS(behaviour_score=0.0, behaviour_total=0), state) is None    # nothing graded
     assert refuse(ctl, NS(spec=NS(dependencies=[])), zero, state) is None                 # first milestone
     assert refuse(NS(refuse_zero_commit_over_base=False), sub, zero, state) is None       # knob off
+
+
+def test_suite_refusal_sidecar_is_read_from_the_graph(tmp_path):
+    from orchestra.control.ready_scheduler import _suite_refusal
+    from orchestra.control.fast_loop.node_resample import frozen_spec_dir, with_spec_dir
+    g = with_spec_dir(_graph(), str(tmp_path / "m1.spec_tests"))
+    assert _suite_refusal(g) is None
+    (tmp_path / "m1.spec_tests.refused.json").write_text(json.dumps({"files": ["t.py: SyntaxError"], "tail": "x"}))
+    assert _suite_refusal(g)["files"] == ["t.py: SyntaxError"]

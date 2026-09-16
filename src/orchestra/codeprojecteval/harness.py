@@ -841,16 +841,25 @@ def main() -> int:
                 root, frozen, project=[*packages, *[m.split(".")[0] for m in modules]], timeout=300
             )
             if hard:
+                # Refusal is not a failed gate. Exiting non-zero here (09-11 to
+                # 09-15) made the milestone either commit ungraded (tenacity) or
+                # poisoned the failure search's feedback and took the whole
+                # task down (python-jose). Instead: discard the copy, leave a
+                # sidecar the controller reads to arm a re-author of the suite,
+                # and let the structural stages decide the commit.
                 _discard_frozen(frozen)
+                refusal = {
+                    "files": hard,
+                    "reason": "the authored suite cannot be collected on the task interpreter",
+                    "tail": tail[-1500:],
+                }
+                Path(str(frozen) + ".refused.json").write_text(json.dumps(refusal), encoding="utf-8")
                 print(
-                    "FAIL custody refused: " + str(len(hard)) + " file(s) of the authored suite cannot be collected "
-                    "on the task interpreter (" + "; ".join(hard)[:600] + "). A file that does not collect grades "
-                    "nothing for the whole milestone. Make every file collect (run pytest --collect-only with the "
-                    "task interpreter; a project package that does not exist yet must be imported inside the "
-                    "tests, not at module level), then hand the suite over again.\\n" + tail,
-                    file=sys.stderr,
+                    "CUSTODY REFUSED " + spec_dir_rel + ": " + str(len(hard)) + " file(s) cannot be collected on the "
+                    "task interpreter (" + "; ".join(hard)[:600] + "); the copy is discarded and the milestone "
+                    "runs ungraded until the suite is re-authored"
                 )
-                return 2
+                return 0
             print(
                 "CUSTODY " + spec_dir_rel + " -> " + str(args.spec_tests)
                 + " (" + str(kept) + " file(s), " + str(collected) + " case(s) collect"

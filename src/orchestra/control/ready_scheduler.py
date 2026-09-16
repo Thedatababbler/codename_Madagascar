@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import asyncio
 import hashlib
 import os
@@ -225,6 +227,21 @@ def _with_prompt_prelude(graph: OrchestraGraph, prelude: str) -> OrchestraGraph:
         for node in graph.nodes
     ]
     return graph.model_copy(update={"nodes": nodes})
+
+
+def _suite_refusal(graph) -> dict | None:
+    """The custody refusal sidecar beside this graph's frozen suite, if custody wrote one."""
+    try:
+        from orchestra.control.fast_loop.node_resample import frozen_spec_dir
+        spec = frozen_spec_dir(graph)
+        if not spec:
+            return None
+        side = Path(str(spec) + ".refused.json")
+        if not side.is_file():
+            return None
+        return json.loads(side.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
 
 
 class ReadySubtaskScheduler:
@@ -1630,7 +1647,14 @@ class ReadySubtaskScheduler:
             sub.failure_message = None
             sub.attempts[-1].error = None
             local_state.subtasks[subtask_id] = sub
-            if not self.quality_trigger.fires(
+            refusal = _suite_refusal(graph)
+            if refusal is not None:
+                # custody refused the authored suite (see harness --take-custody):
+                # the gate passed on structure alone, so search anyway, with the
+                # refusal on the incumbent so the controller re-authors the suite
+                # instead of probing an ungraded milestone
+                sub.attempts[-1].metadata["suite_refused"] = refusal
+            if refusal is None and not self.quality_trigger.fires(
                 gate_passed=True, behaviour_score=milestone_behaviour
             ):
                 return await self._finalize_worker_result(
@@ -1658,6 +1682,8 @@ class ReadySubtaskScheduler:
                 furthest_stage=furthest_stage or "",
                 cost=initial_cost,
             )
+            if refusal is not None:
+                incumbent.metadata["suite_refused"] = refusal
             incumbent_artifact = final_artifact
         else:
             incumbent = None

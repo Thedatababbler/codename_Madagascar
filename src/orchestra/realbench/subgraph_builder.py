@@ -75,6 +75,13 @@ _INTEGRATION_SUITE_BREADTH = (
     "identifier allocation, persistence round-trips and reopen.\n"
     "Every case still quotes the sentence it enforces. Prefer many small cases "
     "to a few long scenarios.\n"
+    "Use the library exactly as its user would: import it and call the "
+    "documented API. Do not call registration, bootstrap, setup or "
+    "initialisation helpers from the tests (register_builtins, load_plugins, "
+    "configure, _init...) unless the documents tell the user to call them "
+    "first; if the documented behaviour only works after such a call, that "
+    "is the defect this suite exists to catch. Fixtures may create data, not "
+    "prime the library.\n"
 )
 
 
