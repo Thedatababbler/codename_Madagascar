@@ -3261,6 +3261,12 @@ larger than this task:
    this candidate" since the 09-11 widening (aiofiles M2, tablib,
    python-hl7, imapclient) was this. Fixed: the gate command is taken.
 
+**tenacity, second pass: 0.903** (run `cpe-20260916T122536Z-nl2_tenacity`,
+88 min; first pass 0.919, v9 0.847). 4/4 committed; milestone 1 went
+0.55 -> 0.82 (probe) -> 0.91 (continuation committed). The author did not
+write `import tomllib` this time, so the refusal-to-re-author path was not
+exercised here; the -0.016 against the first pass is within noise.
+
 Consequence for the record: the 09-15 NL2Repo sample and all earlier
 pathspec / tablib internal-gate readings are contaminated; their held-out
 numbers stand. tablib and pathspec are queued to rerun on clean
