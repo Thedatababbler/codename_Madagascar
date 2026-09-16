@@ -3228,6 +3228,45 @@ the commit. Separately, tablib's registry seam argues for a rule in the
 integration brief: the suite may not call registration or bootstrap
 helpers that a user of the documented public API would not call.
 
+**NL2Repo sample, second pass with the two fixes (09-16). tablib 0.485** (run
+`cpe-20260916T083207Z-nl2_tablib`, 231 min; first pass 0.249, 2-milestone
+0.526). The package now registers its formats on import (`Dataset().csv`
+exists), the re-author route fired and committed a replacement suite on
+milestone 4 (s0 8 gradable / 0.88 chosen), and the continuation committed
+milestone 3 at 0.94. Remaining held-out misses are breadth (formula
+escaping, `add_formatter`, dbf edge cases). But milestones 1 and 2 ran
+**ungraded**: "collected 15, vacuous 15". Tracing that found two defects
+larger than this task:
+
+1. **Environment contamination.** `python -c "import tablib"` in the
+   tablib env resolved to a candidate workspace of this very run (an
+   editable install an agent made, `__editable__.tablib-0.0.0.pth`), and
+   the pathspec env resolved `import pathspec` to
+   `/root/codex-benchmarks/nl2repo/upstream/python-pathspec` (a `.pth`
+   left when its tests were reconstructed on 09-08). With the package
+   importable without the workspace, the vacuous baseline passes every
+   case and the gate grades nothing; on pathspec the *gradable* set had
+   been exactly the cases that fail on the reference -- the regex-text
+   assertions -- which explains the inverted internal signal of
+   EXP-20260910-01. Held-out evaluation puts `src` first and was never
+   affected; internal gates and searches on those two tasks were. The
+   other seven envs are clean. Fix `<next commit>`: the harness shadows
+   the task's top-level packages after cwd/src (ModuleNotFoundError), the
+   runner purges .pth / egg-link / dist-info for the task's packages
+   before and after each task; both envs cleaned.
+2. **Continuation never graded on review_then_fix / chain shapes.** The
+   recompiled continuation copied the first harness node's command, which
+   on those shapes is custody's (`--take-custody`): the candidate took the
+   suite and produced no gate result. Every "no gate result recorded for
+   this candidate" since the 09-11 widening (aiofiles M2, tablib,
+   python-hl7, imapclient) was this. Fixed: the gate command is taken.
+
+Consequence for the record: the 09-15 NL2Repo sample and all earlier
+pathspec / tablib internal-gate readings are contaminated; their held-out
+numbers stand. tablib and pathspec are queued to rerun on clean
+environments after the current chain (tenacity, python-jose, both on
+clean envs).
+
 Known risks, recorded before the data: more milestones = more frozen
 seams with no cross-milestone repair (tinydb class); the gate reruns only
 the milestone's own frozen suite, so regressions of earlier milestones'
