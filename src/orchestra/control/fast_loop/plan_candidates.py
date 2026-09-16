@@ -405,10 +405,17 @@ def _harness_command(graph: OrchestraGraph) -> list[str]:
     candidate be scored against a different suite than its parent, and the
     comparison between them would mean nothing.
     """
-    for node in _harness_nodes(graph):
-        command = list(getattr(node, "command", None) or [])
-        if command:
+    # Skip the custody node's command: it takes the suite and grades nothing,
+    # and on shapes where it precedes the gate (review_then_fix, chain) it was
+    # what every recompiled continuation ran -- "no gate result recorded",
+    # aiofiles/tablib/python-hl7/imapclient 2026-09-14..16.
+    commands = [list(getattr(node, "command", None) or []) for node in _harness_nodes(graph)]
+    for command in commands:
+        if command and "--take-custody" not in command:
             return command
+    for command in commands:
+        if command:
+            return [a for a in command if a != "--take-custody"]
     raise PlanRecompileError(f"graph {graph.graph_id!r} has no harness command")
 
 

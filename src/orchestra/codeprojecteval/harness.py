@@ -473,9 +473,35 @@ def _pytest_env(cwd, import_root=None):
     # by name, and the package lives under src/, not at the repository root.
     if (Path(cwd) / "src").is_dir():
         roots.append(str(Path(cwd) / "src"))
+    # After the repository, before site-packages: a shadow of the task's own
+    # top-level packages that raises ModuleNotFoundError. Without it an import
+    # the repository cannot satisfy falls through to whatever the environment
+    # holds -- the upstream reference (python-pathspec, a .pth left by the env
+    # build) or an editable install an agent made during the run (tablib,
+    # 2026-09-16) -- and the vacuous baseline then passes every case, so the
+    # gate grades nothing (tablib M1/M2 "collected 15, vacuous 15").
+    shadow = os.environ.get("ADAMAS_PACKAGE_SHADOW")
+    if shadow:
+        roots.append(shadow)
     existing = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = os.pathsep.join([p for p in roots + [existing] if p])
     return env
+
+
+def _write_package_shadow(base_dir, packages):
+    """<base>/shadow/<pkg>/__init__.py raising ModuleNotFoundError, one per package."""
+    root = Path(base_dir) / "package_shadow"
+    for pkg in packages:
+        name = str(pkg).split(".")[0]
+        if not name or not name.isidentifier():
+            continue
+        d = root / name
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "__init__.py").write_text(
+            "raise ModuleNotFoundError(\\"No module named '" + name + "'\\")  # adamas shadow: not built in this workspace\\n",
+            encoding="utf-8",
+        )
+    return str(root)
 
 
 def _collect_only(cwd, frozen, *, project, timeout):
@@ -813,6 +839,8 @@ def main() -> int:
         return 2
     modules = list(manifest.get("expected_modules") or [])
     packages = list(manifest.get("top_level_packages") or [])
+    if packages:
+        os.environ["ADAMAS_PACKAGE_SHADOW"] = _write_package_shadow(Path(args.manifest).parent, packages)
     check_dir = str(manifest.get("check_tests_dir") or "check_tests")
     spec_dir_rel = str(manifest.get("spec_tests_dir") or "spec_tests")
 

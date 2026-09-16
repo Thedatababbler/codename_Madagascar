@@ -187,6 +187,9 @@ def build_cpe_task_plan(
     effective_contracts_dir = str(generated_contracts_dir(generated_root))
     manifest = materialize_check_harness(task, harness_dir=harness_dir)
     env_python = Path(manifest.env_python)
+    purged = purge_task_packages(env_python, manifest.top_level_packages)
+    if purged:
+        print(f"env: removed foreign installs of the task package before the run: {purged}", flush=True)
     if not env_python.is_file():
         raise SystemExit(
             f"missing environment for {task_id}: {env_python}. Run "
@@ -430,6 +433,45 @@ def _fast_loop_budget(candidates: int, plan: TaskPlan) -> FastLoopBudget:
         max_wall_time_seconds=int(max(slowest * (candidates + 1), 600.0)),
         max_attempts_per_subtask=candidates + 1,
     )
+
+
+def purge_task_packages(env_python: Path, packages: list[str]) -> list[str]:
+    """Remove any install of the task's own packages from the task environment.
+
+    The environments are shared across runs, and two ways of polluting them
+    were found on 2026-09-16: a .pth left by the env build pointing at the
+    upstream reference (python-pathspec), and an editable install an agent
+    made during a run (tablib). Either makes the package importable without
+    the workspace, so the vacuous baseline passes every case and the gate
+    grades nothing, and an agent's own test run may exercise code it did not
+    write. Removes .pth / egg-link entries and dist-info for those names.
+    """
+    removed: list[str] = []
+    try:
+        import subprocess as _sp
+        site = _sp.run([str(env_python), "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"],
+                       capture_output=True, text=True, check=False).stdout.strip()
+    except Exception:  # noqa: BLE001
+        return removed
+    if not site or not Path(site).is_dir():
+        return removed
+    names = {str(p).split(".")[0].lower().replace("-", "_") for p in packages if p}
+    for entry in Path(site).iterdir():
+        stem = entry.name.lower().replace("-", "_")
+        hit = any(stem == n or stem.startswith(n + ".") or stem.startswith(n + "_") or stem.startswith("__editable__." + n)
+                  or stem.startswith("__editable___" + n) for n in names)
+        if not hit:
+            continue
+        if entry.suffix in (".pth", ".egg_link", ".egg-link") or entry.name.endswith(".dist-info") or entry.name.endswith(".egg-info") or entry.name.endswith(".egg-link"):
+            try:
+                if entry.is_dir():
+                    shutil.rmtree(entry)
+                else:
+                    entry.unlink()
+                removed.append(entry.name)
+            except OSError:
+                pass
+    return removed
 
 
 async def _run_one(
@@ -844,6 +886,9 @@ async def _run_one(
     }
     _write_json(run_dir / "summary.json", summary)
     _write_trace_md(run_dir=run_dir, plan=plan, state=state, summary=summary)
+    left = purge_task_packages(env_python, manifest.top_level_packages)
+    if left:
+        print(f"env: removed installs of the task package left behind by the run: {left}", flush=True)
     return summary
 
 

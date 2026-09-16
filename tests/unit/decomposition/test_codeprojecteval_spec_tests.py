@@ -784,3 +784,19 @@ def test_a_refused_suite_leaves_the_milestone_ungraded_not_failed(tmp_path: Path
     code, report = harness.run()
     assert code == 0
     assert Harness.stage(report, "spec_tests") is None   # ungraded, and the gate still passes on structure
+
+
+def test_the_gate_never_imports_the_package_from_outside_the_workspace(tmp_path: Path, monkeypatch) -> None:
+    """A globally importable copy of the package must not make the suite vacuous or pass the gate."""
+    outside = tmp_path / "outside"; (outside / "demo_pkg").mkdir(parents=True)
+    (outside / "demo_pkg" / "__init__.py").write_text("from demo_pkg.core import Widget\n")
+    (outside / "demo_pkg" / "core.py").write_text(REFERENCE)
+    monkeypatch.setenv("PYTHONPATH", str(outside))
+    harness = Harness(tmp_path)          # workspace has no implementation
+    harness.author()
+    harness.custody()
+    _, report = harness.run()
+    spec = Harness.stage(report, "spec_tests")
+    assert spec is not None, report.get("stdout", "")[-600:]
+    assert spec["passed_units"] == 0 and spec["total_units"] > 0
+    assert "nothing gradable" not in report.get("stdout", "")

@@ -142,3 +142,22 @@ def test_suite_refusal_sidecar_is_read_from_the_graph(tmp_path):
     assert _suite_refusal(g) is None
     (tmp_path / "m1.spec_tests.refused.json").write_text(json.dumps({"files": ["t.py: SyntaxError"], "tail": "x"}))
     assert _suite_refusal(g)["files"] == ["t.py: SyntaxError"]
+
+
+def test_continuation_harness_command_skips_the_custody_node():
+    from orchestra.control.fast_loop.plan_candidates import _harness_command
+    g = _graph()
+    cmd = _harness_command(g)
+    assert "--take-custody" not in cmd and "--spec-tests" in cmd
+
+
+def test_purge_task_packages_removes_pth_and_dist_info(tmp_path):
+    import subprocess, sys
+    from orchestra.cli.run_codeprojecteval_decomp import purge_task_packages
+    site = tmp_path / "site"; site.mkdir()
+    for name in ("pathspec.pth", "pathspec-0.12.1.dist-info", "__editable__.tablib-0.0.0.pth", "tablib-0.0.0.dist-info", "pytest-cov.pth", "other-1.0.dist-info"):
+        (site / name).mkdir() if name.endswith(".dist-info") else (site / name).write_text("x")
+    py = tmp_path / "python"; py.write_text("#!/bin/sh\necho " + str(site) + "\n"); py.chmod(0o755)
+    removed = purge_task_packages(py, ["pathspec", "tablib"])
+    assert sorted(removed) == sorted(["pathspec.pth", "pathspec-0.12.1.dist-info", "__editable__.tablib-0.0.0.pth", "tablib-0.0.0.dist-info"])
+    assert (site / "pytest-cov.pth").exists() and (site / "other-1.0.dist-info").exists()
