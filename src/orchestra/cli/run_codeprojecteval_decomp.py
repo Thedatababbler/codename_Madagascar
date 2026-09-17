@@ -886,9 +886,15 @@ async def _run_one(
     }
     _write_json(run_dir / "summary.json", summary)
     _write_trace_md(run_dir=run_dir, plan=plan, state=state, summary=summary)
-    left = purge_task_packages(env_python, manifest.top_level_packages)
-    if left:
-        print(f"env: removed installs of the task package left behind by the run: {left}", flush=True)
+    try:
+        # env_python and the package list live in the harness manifest written
+        # by build_cpe_task_plan; _run_one has only the directory
+        man = json.loads((harness_dir / "adamas_cpe_harness.json").read_text(encoding="utf-8"))
+        left = purge_task_packages(Path(man.get("env_python") or ""), list(man.get("top_level_packages") or []))
+        if left:
+            print(f"env: removed installs of the task package left behind by the run: {left}", flush=True)
+    except Exception as exc:  # noqa: BLE001 -- the purge is hygiene, never the run's verdict
+        print(f"env: post-run purge skipped ({exc})", flush=True)
     return summary
 
 
