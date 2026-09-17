@@ -1,0 +1,17 @@
+template_id: author_only
+title: Test author alone (suite-quality probe)
+# Not a planner choice. One slot, the test author, nothing after it: the
+# milestone is compiled and run only to obtain the authored suite for offline
+# auditing (scripts/author_probe.py). The gate runs on the unimplemented
+# repository, freezes the suite and fails on structure; no search follows
+# when the probe yaml disables it, so the cost is one author call.
+planner_selectable: false
+when_to_use: >
+  Never selected by the planner. Used by the suite-quality probe to obtain an
+  authored suite without running an implementation.
+slots:
+  - id: test_author
+    default_role: test_author
+    allowed_roles:
+      - test_author
+edges: []

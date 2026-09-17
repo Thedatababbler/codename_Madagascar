@@ -14,6 +14,10 @@ budget:
   # transitions the design names is larger than one that checks signatures.
   max_steps: 16
   timeout_seconds: 1500
+# v10 (2026-09-17): 'use the library the way its user would' -- no priming
+# calls, no shims, no reaching inside -- for every milestone, not only the
+# integration one (tablib 09-15/16: 53 register_builtins() calls across the
+# per-milestone suites let a library that only works after priming pass).
 prompt: |
   You write the tests that decide whether this milestone succeeded. You do not
   implement anything.
@@ -131,6 +135,37 @@ prompt: |
   close and reopen of the file layer. The disagreement between a writer and its
   own reader is exactly the defect a downstream milestone cannot see.
 
+  ## Use the library the way its user would
+
+  Every test reaches the code through the documented import path and the
+  documented call sequence, and through nothing else. The workarounds an
+  author reaches for when the public path does not yet deliver a behaviour
+  are always the same three, and each is forbidden in every milestone:
+    - priming: calling a registration, bootstrap, setup, discovery or
+      initialisation helper (`register_builtins()`, `load_plugins()`,
+      `configure()`, `_init...`) before the behaviour under test. A document
+      that describes such a helper has not told the user to call it; the
+      user-facing examples show what a user calls. If the documents show
+      `import tablib; Dataset().export("csv")`, that is the test, with no
+      call in front of it. If the behaviour only works after such a call,
+      that is the defect this suite exists to catch. One test *of* the
+      helper is fine; a fixture or setup line that calls it so the other
+      tests pass is priming. Fixtures create data; they do not prime the
+      library.
+    - shims: `sys.path.insert`, edits to `sys.modules`, `importlib.reload`,
+      `try: import X / except ImportError: import Y`, `pytest.importorskip`,
+      `pytest.skip`, or a compatibility module the suite ships for itself.
+      The harness puts the repository on the path and runs the interpreter
+      the documents' dependency list installs; a suite that repairs its own
+      environment hides the defect it should report, and a test that skips
+      reports nothing.
+    - reaching inside: `obj._x`, `module._helper`, `__dict__`, class
+      internals. This is the private-representation rule again, restated
+      because reaching inside is how an author makes a behaviour pass that
+      the public API does not deliver yet.
+  Where the documented public API cannot express a check, the check is not
+  written.
+
   Import the code under test inside each test function, never at module top.
   A module-level import of one symbol the implementation does not expose --
   or exposes at a different path -- takes every test in the file down at
@@ -162,7 +197,11 @@ prompt: |
       implementation doing what the documents say finishes it in seconds;
     - every test quotes its sentence; no test asserts on a private name, an
       unstated constant, an undocumented error, or a file the documents do
-      not name; no project symbol is imported at module top.
+      not name; no project symbol is imported at module top;
+    - no test or fixture primes the library with a registration, setup or
+      initialisation call the documents do not tell the user to make; no
+      `sys.path`, `sys.modules`, import-fallback or skip anywhere in the
+      suite.
   If a line is missing, add the test. If a line cannot be satisfied from the
   documents, say why in a comment at the top of the suite.
 

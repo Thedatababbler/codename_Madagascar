@@ -75,13 +75,9 @@ _INTEGRATION_SUITE_BREADTH = (
     "identifier allocation, persistence round-trips and reopen.\n"
     "Every case still quotes the sentence it enforces. Prefer many small cases "
     "to a few long scenarios.\n"
-    "Use the library exactly as its user would: import it and call the "
-    "documented API. Do not call registration, bootstrap, setup or "
-    "initialisation helpers from the tests (register_builtins, load_plugins, "
-    "configure, _init...) unless the documents tell the user to call them "
-    "first; if the documented behaviour only works after such a call, that "
-    "is the defect this suite exists to catch. Fixtures may create data, not "
-    "prime the library.\n"
+    "The rule about using the library the way its user would -- no priming "
+    "call, no shim, no reaching inside -- binds here with full force: this "
+    "is the only suite that runs on the finished library.\n"
 )
 
 
@@ -272,7 +268,13 @@ def _system_prompt(
     edits = role is None or role.edits_repository
     shipping = profile.shipping if edits else ""
     suite = _AUTHORED_SUITE_EXPECTED if edits and agent.role == "test_author" else ""
-    if suite and milestone.gate_level == "integration" and milestone.depends_on:
+    # Feature-first plans always end in an integration milestone with
+    # dependencies; the split_reason clause exists for the suite-quality probe
+    # (scripts/author_probe.py), which replays that milestone alone and must
+    # hand its author the same brief the real run did.
+    if suite and milestone.gate_level == "integration" and (
+        milestone.depends_on or milestone.split_reason == "feature_module"
+    ):
         suite = suite + _INTEGRATION_SUITE_BREADTH
     return (
         f"You are the {title} on milestone `{milestone.milestone_id}` of a "

@@ -1,0 +1,64 @@
+# author probe: one milestone at a time, test_author only, no search -- obtains authored suites for offline auditing
+# Every search is off and the gate is run once, on the unimplemented repository,
+# only to freeze the suite. Driven by scripts/author_probe.py.
+experiment:
+  name: author_probe
+  benchmark: codeprojecteval
+  agent_backend: codex_sdk
+  dataset_root: /root/codex-benchmarks/projectgen/datasets/CodeProjectEval/python-subset
+  contracts_dir: configs/contracts
+  output_root: outputs/author_probe
+  harness_timeout_seconds: 900
+  seed: 20260814
+
+  tuning:
+    playbook_search: false
+    design_search: false
+    persistence_search: false
+    persistence_probe_samples: 2
+    node_resample_n: 0
+    persistence_after_recovery: false
+    refuse_zero_commit_over_base: false
+    fast_loop_candidates: 0
+    diagnosis:
+      mode: deterministic
+      min_confidence: 0.5
+      # model: (unset) -- follows DIAGNOSIS_MODEL / CODEX_MODEL; a literal pin here outlived gpt-5.4 by four days
+    quality_trigger:
+      enabled: false
+      min_score: 0.9
+    pareto:
+      rule: quality_first
+      epsilon:
+        quality: 0.02
+        cost: 0.08
+        stability: 0.0
+      require_gate_pass: true
+    gate_weight: 1.0
+    harness_weight: 0.5
+    token_weight: 0.05
+    token_reference: 1000000
+    allow_cost_to_outrank_gate: false
+
+decomposition:
+  dynamic_planner: true
+  min_subtasks: 1
+  max_subtasks: 5
+  split_policy: feature
+  max_dependency_depth: 6
+  require_public_keystone_harness: true
+
+runtime:
+  max_parallel_nodes_per_task: 2
+
+pareto:
+  enabled: false
+
+slow_loop:
+  enabled: false
+
+fast_loop:
+  max_candidates: 0
+
+logging:
+  level: INFO
