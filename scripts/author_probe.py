@@ -276,7 +276,17 @@ def run_probe(task: str, milestone_id: str, *, tag: str, plans_dir: Path, config
     with (log_dir / f"{task}.{milestone_id}.log").open("w") as log:
         proc = subprocess.run(cmd, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, text=True)
     suite = OUTPUT_ROOT / run_id / task / "harness" / f"{milestone_id}.spec_tests"
-    return (suite if suite.is_dir() else None), f"{run_id} rc={proc.returncode}"
+    note = f"{run_id} rc={proc.returncode}"
+    summary = OUTPUT_ROOT / run_id / task / "summary.json"
+    if summary.is_file():
+        objectives = json.loads(summary.read_text()).get("milestone_objectives") or []
+        tokens = sum(int(o.get("prompt_tokens") or 0) for o in objectives)
+        note += f" prompt_tokens={tokens}"
+        if tokens == 0:
+            # The author never answered: an exhausted account window fails the
+            # call upstream (HTTP 400 invalid_prompt) and the run ends clean.
+            note += " NO MODEL CALL (account window?)"
+    return (suite if suite.is_dir() else None), note
 
 
 COLUMNS = ["label", "task", "milestone", "cases", "cited_ratio", "priming_tests", "priming_fixtures",
@@ -315,7 +325,7 @@ def main() -> None:
         for f in args.files:
             data = json.loads(f.read_text())
             for r in data:
-                suite = Path(r["suite_path"]) if r.get("suite_path") else None
+                suite = Path(r["suite_path"]) if str(r.get("suite_path") or "").endswith(".spec_tests") else None
                 if suite is None or not suite.is_dir():
                     root = OUTPUT_ROOT if r["run"].startswith("author-") else ROOT / "outputs" / "cpe_milestones"
                     suite = root / r["run"] / r["task"] / "harness" / f"{r['milestone']}.spec_tests"

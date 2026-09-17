@@ -3541,3 +3541,125 @@ came back empty on pathspec (parser), so ownership fell to the last
 writer; fix the parser and log frames per failure. The blame rule itself
 was never wrong in this trial: first editing node three times (correct
 for a first-pass defect), author once (correct, confirmed by the 0.929).
+
+## EXP-20260917-01 -- test_author v10: no priming, no shims, no reaching inside, in every milestone; judged with an author-only probe
+
+**Status:** canonical for the suite-quality question; no task-level held-out
+numbers in this entry. Branch `milestones` (465e7995 + this entry's commit).
+Channel: gpt-5.5 via the local proxy, account qandy (Plus).
+
+### Why
+
+The NL2Repo sample (EXP-20260912-01, 09-15/16) showed per-milestone suites
+that primed the library before testing it -- tablib's `register_builtins()`
+called in 18 of 20 tests of one milestone's suite -- so a package that only
+worked after priming passed its gates and lost on the held-out. The rule
+against it lived only in the integration milestone's brief. The user asked
+for the rule in every milestone's author, iterated on suite quality alone
+("不用跑题目全部，就看出题是否高质量").
+
+### What changed
+
+- `configs/roles/test_author.yaml` v10: a section "Use the library the way
+  its user would" naming the three workarounds as forbidden -- priming
+  (registration/bootstrap/setup/initialisation calls before the behaviour
+  under test; one test *of* the helper is fine, a fixture or setup line that
+  calls it is not), shims (`sys.path`, `sys.modules`, import fallbacks,
+  `importorskip`, `skip`, compatibility modules) and reaching inside
+  (`obj._x`) -- plus two checklist lines. The integration brief keeps only
+  the breadth part.
+- v10.1 (same day): module-top imports limited to pytest and the universal
+  standard library; anything the documents' dependency list does not
+  guarantee goes inside the one test that needs it (see the pathspec finding).
+- Author-only probe: `configs/subgraph_templates/author_only.yaml` (one
+  test_author slot, never planner-selectable), `configs/experiments/
+  author_probe.yaml` (every search off), `scripts/author_probe.py` (replays
+  one milestone of a frozen feature plan on the pristine repository -- one
+  author call, 3-5 min, ~1 point of the Plus weekly -- then audits the frozen
+  suite offline: priming tests, shims, private access, broad raises,
+  module-top project imports, citation ratio; and validity on the dataset's
+  reference implementation with the suite copied in as `spec_tests/`),
+  `scripts/author_probe_compare.py`. An implementation milestone is probed
+  with a trailing copy of the plan's last milestone (skipped as blocked),
+  because the parser promotes the last milestone of any plan to integration.
+- `subgraph_builder._system_prompt`: the breadth brief also attaches to an
+  integration milestone without dependencies when `split_reason` is
+  `feature_module` (only the probe produces that shape).
+
+### Design of the comparison
+
+Three sources, same static audit:
+1. `v9-run-earlier` / `v9-run`: the 32 suites of the six real NL2Repo runs
+   of 09-15/16 (v9 prompt, authored against implemented earlier milestones).
+2. `v9probe`: the v9 prompt replayed through the probe (pristine repository,
+   `ORCHESTRA_ROLE_POOL_DIR` copy of the old role file) on the same
+   milestones as v10 -- the like-for-like control.
+3. `v10`: the new prompt through the probe.
+Milestones: tablib (shared_contracts_and_registry, text_dataframe_formats
+x2, public_api_cli_packaging_integration), tenacity (strategy_primitives,
+public_api_packaging_integration), python-jose (shared_contracts_and_
+utilities, jwe_and_public_integration), pathspec (shared_contracts_and_
+utilities, gitignore_and_public_api_integration). v9probe lost three of
+nine to the exhausted 5-hour window (a probe with 0 prompt tokens ends
+clean with no suite; the runner now says so).
+
+### Results (`outputs/author_probe/compare_final.txt`)
+
+| label | suites | cases | priming tests | suites w/ priming | shim lines | suites w/ shims | private-access tests | validity on reference | collection errors |
+|---|---|---|---|---|---|---|---|---|---|
+| v9-run-earlier (09-15, 09-16 08:32) | 14 | 243 | 30 | 4 | 7 | 2 | 0 | 0.68 | 0 |
+| v9-run (latest of each task) | 18 | 221 | 0 | 0 | 4 | 3 | 0 | 0.65 | 0 |
+| v9probe (control, same milestones) | 6 | 104 | 0 | 0 | 4 | 2 | 0 | 0.71 | 1 |
+| v10 (probe) | 10 | 185 | 0 | 0 | 0 | 0 | 0 | 0.70 | 1 |
+
+Read with these caveats:
+- Priming is bursty under v9: 30 primed tests in the 09-15 tablib run, 0 in
+  the next two runs of the same prompt on the same task. A handful of
+  single-sample probes cannot measure a rate that varies like that; what
+  they can show is that v10 produced none in 10 suites while v9 produced
+  shims in 2 of 6 and, in the real runs, priming in 4 of 32.
+- The v9 shims are of one kind: a module-top block that inserts the
+  repository into `sys.path` and evicts any already-imported copy of the
+  package, plus `_assert_module_from_workspace` guards on `__file__`
+  (tenacity, python-jose, tablib). They exist to defend against the
+  environment contamination of 09-15/16 (editable installs, upstream
+  `.pth`), which the package shadow now handles; under v10 they are gone.
+- The single v10 hard collection error is the finding of this round:
+  pathspec's integration suite did `import tomllib` at module top to read
+  `pyproject.toml`, and the pathspec environment is Python 3.10 (as are
+  tenacity's and python-jose's), so the whole suite fails to collect. The
+  v9 suite for the same milestone carried the `try: tomllib / except:
+  tomli` fallback the v10 rule forbids, and collected. In a real run the
+  custody check would have refused the v10 suite as a hard error and
+  re-authored (one wasted author call); v10.1 closes it at the source.
+  Re-probe of that milestone under v10.1: 14 cases, 0 collection errors,
+  no `tomllib` anywhere, 0 priming / shims / private access, validity on
+  the reference 0.71 (`outputs/author_probe/v10.1.audit.json`).
+- Validity on the reference is not a quality score on these tasks (see
+  EXP-20260904-04: the references contradict their own documents), and the
+  v9 probe's 0.0 rows are the workspace guards failing off-workspace. Cases
+  per suite: v10 18.5 vs v9probe 17.3 -- breadth did not shrink.
+- Remaining v10 hits by hand: every `register_builtins()` sits in the one
+  test named for it; `Path(__file__).parents[1]` is used only to find the
+  repository's `pyproject.toml`. Private names the audit flags are filtered
+  when the documents use them (`tablib._vendor`, `_formats` -- the latter is
+  planner acceptance text quoting the PRD).
+
+### Cost
+
+15 author probes + 1 pending: qandy Plus weekly 75% -> 91%. Eleven probes
+launched at once (two batches of jobs=3) took the 5-hour window from 29%
+to 100% in ten minutes and silently failed the last five; keep concurrent
+probes to two or three.
+
+### Not done / next
+
+- Task-level effect of v10 (held-out on the NL2Repo sample and CPE) is not
+  measured here; the user asked for suite quality only. The v10 rule can
+  make suites stricter than the reference (a library that needs priming
+  fails its own gate now), which is the intended direction but must be seen
+  on held-out before replacing v9 everywhere.
+- Implementer side: the tomllib shim shipped by an implementer (python-jose
+  09-16) is a different role and is untouched.
+- Open: contracts stage gating on underscore-private names that the planner
+  copies from the PRD.

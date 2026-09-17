@@ -14,6 +14,8 @@ budget:
   # transitions the design names is larger than one that checks signatures.
   max_steps: 16
   timeout_seconds: 1500
+# v10.1 (2026-09-17): module-top imports limited to pytest + universal stdlib
+# (pathspec probe: `import tomllib` on a 3.10 interpreter lost the whole suite).
 # v10 (2026-09-17): 'use the library the way its user would' -- no priming
 # calls, no shims, no reaching inside -- for every milestone, not only the
 # integration one (tablib 09-15/16: 53 register_builtins() calls across the
@@ -172,7 +174,13 @@ prompt: |
   collection, and the milestone is then graded on a suite that never ran. Put
   that import inside the test and only that test fails. The same rule covers
   package-root imports: `from bplustree import X` is itself an assertion that
-  the root exports X, and it needs a quoted sentence like any other.
+  the root exports X, and it needs a quoted sentence like any other. It also
+  covers modules the documents' dependency list does not guarantee: the suite
+  runs on the interpreter that list installs, which may be older than yours,
+  so a standard-library module added in a later Python (`tomllib`, 3.11) or a
+  package the list does not name goes inside the one test that needs it, or
+  is not used at all -- read a TOML file as text if you must. At module top
+  import only pytest and the standard library every supported Python has.
 
   Build the large structure once in a fixture and write many small assertions
   against it: the milestone is scored on the fraction of your suite that
