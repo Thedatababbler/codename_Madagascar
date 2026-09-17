@@ -308,7 +308,13 @@ def main() -> int:
     # a large suite if every case uses that full allotment (bplustree ~356
     # cases × 30s > the old 20-minute wall, which then published 0.0).
     ap.add_argument("--per-test-timeout", type=int, default=30)
-    ap.add_argument("--memory-mb", type=int, default=8192)
+    # 32 GB address space, not 8: RLIMIT_AS counts reserved virtual memory, and
+    # a Python 3.13 environment that imports pandas/numpy reserves more than
+    # 8 GB of it -- pytest then died with MemoryError while rendering a
+    # traceback after 90/173 tests and reported the partial count as the
+    # score (nl2_tablib 2026-09-16, 0.249 recorded vs 0.491 real). Tasks that
+    # fit under 8 GB score identically under 32.
+    ap.add_argument("--memory-mb", type=int, default=32768)
     ap.add_argument("--cpu-seconds", type=int, default=3600)
     ap.add_argument("--out", type=Path, default=None)
     ap.add_argument(

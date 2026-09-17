@@ -3267,6 +3267,28 @@ larger than this task:
 write `import tomllib` this time, so the refusal-to-re-author path was not
 exercised here; the -0.016 against the first pass is within noise.
 
+**python-jose, second pass: 0.445** (run `cpe-20260916T135414Z-nl2_python-jose`,
+128 min; first pass 0.0, v9/v0 0.106, best baseline 0.579). **All five
+milestones committed** (1.00 / 1.00 / 1.00 / 1.00 / 0.94). Milestone 1's
+gate failure (the missing `JWE_SIZE_LIMIT` constant of the first pass)
+recurred on the first pass and was repaired by the plan-layer row
+`pb_rtf_second_angle` (a second-angle review_then_fix recompile) at 1.00;
+the integration milestone's first pass failed its gate and `cand_feedback`
+recovered it at 1.00. Custody refused nothing this time. Remaining
+held-out misses (263/470) are behaviour breadth across jws/jwe/jwt, not a
+structural failure. Every 09-16 run ended with a NameError in the new
+post-run purge (fixed `c86d964f`); milestones and held-out were complete
+before it, batch_summary.json was not written.
+
+**tablib, third pass on the cleaned environment: 0.491** (run
+`cpe-20260916T160528Z-nl2_tablib`, 5/5 committed, node resample committed
+milestone 1 at 1.00 -- its first commit on NL2Repo -- and the continuation
+milestone 5). The evaluator first recorded 0.249: pytest died with a
+MemoryError under the 8 GB address-space cap after 90/173 cases (Python
+3.13 + pandas reserve more), and the partial count was taken as the score.
+Rerun at 32 GB: 85/173. The earlier tablib evaluations were not affected
+(their tails are clean). Evaluator default raised to 32 GB.
+
 Consequence for the record: the 09-15 NL2Repo sample and all earlier
 pathspec / tablib internal-gate readings are contaminated; their held-out
 numbers stand. tablib and pathspec are queued to rerun on clean
