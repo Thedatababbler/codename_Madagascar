@@ -3289,6 +3289,39 @@ MemoryError under the 8 GB address-space cap after 90/173 cases (Python
 Rerun at 32 GB: 85/173. The earlier tablib evaluations were not affected
 (their tails are clean). Evaluator default raised to 32 GB.
 
+**python-pathspec on the cleaned environment: 0.723** (run
+`cpe-20260916T184425Z-nl2_python-pathspec`, 4/4 committed at 0.86 / 1.00 /
+1.00 / 0.91; the last milestone's first pass died on the zqin30 weekly
+limit and was resumed on qandy). First evaluated as 0.580: with the stray
+.pth gone, the held-out module `test_01_util.py` (`from tests.util import`,
+the upstream test-directory name) no longer collected, and its 18 cases
+counted as lost -- every earlier pathspec number, ours and the five
+baselines', had silently borrowed `tests` from the upstream checkout that
+.pth put on the path. Fixed in the dataset: `unit_tests/conftest.py`
+aliases `tests` to `unit_tests` (also added to nl2_databases; nl2_gitingest
+already shipped a conftest). Re-evaluated: this run 86/119 = 0.723, the v9
+run 90/119 = 0.756 (unchanged, so the old numbers stand as fair), baselines
+unchanged. Per-test against v9: 13 new failures (bytes matching, a `**`
+regex equivalence, absolute/current-dir path handling, three gitignore
+issue cases), 9 recovered (absolute/relative anchoring, prefix/postfix
+wildcards). One smell: milestone 1's implementer shipped a `tomllib.py`
+shim (re-exporting tomli) at the package root -- a workaround for the
+authored suite's `import tomllib` on 3.10 rather than a fix of the suite.
+
+**NL2Repo sample, all passes (held-out, clean environments, fair pathspec):**
+
+| task | 2-milestone v9 | feature 1st pass | + custody re-author, no-bootstrap brief | clean env | best baseline |
+|---|---|---|---|---|---|
+| tablib | 0.526 | 0.249 | 0.485 | **0.491** | 0.578 |
+| tenacity | 0.847 | 0.919 | **0.903** | (clean already) | 0.871 |
+| python-jose | 0.106 | 0.000 | **0.445** | (clean already) | 0.579 |
+| python-pathspec | 0.756 | -- | -- | **0.723** | 0.773 |
+
+Net after the fixes: two of four above the 2-milestone run (tenacity
++0.056, python-jose +0.339), two below (tablib -0.035, pathspec -0.033,
+both about one to four cases). The 09-15 collapse is gone; what remains
+on NL2Repo is breadth, the same limit as on CPE.
+
 Consequence for the record: the 09-15 NL2Repo sample and all earlier
 pathspec / tablib internal-gate readings are contaminated; their held-out
 numbers stand. tablib and pathspec are queued to rerun on clean
