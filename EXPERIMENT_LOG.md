@@ -3975,3 +3975,24 @@ Deviation to note: the evolver uses the chat-completions route of the
 milestone planner rather than `backends/codex_sdk.py`, which needs a git
 workspace and a sandboxed agent thread; temperature 0 and on-disk prompts
 are kept.
+
+## EXP-20260930-07 -- self-evolution experiment, step 1: baseline on the training tasks (branch `rsi`)
+
+**Status:** OPEN, started 2026-09-30 18:20 UTC. Channel: CLIProxyAPI, account zqin30 (prolite, weekly 0% at start), model gpt-5.5.
+
+Spec §11 first experiment, step 1: the milestones arm unchanged (F0 first
+pass, old playbook, every evolution block absent) on the 12 CPE training
+tasks of `configs/datasets/evolution_split.yaml`, with the frozen feature
+plans `configs/datasets/cpe_feature_plans/<task>.plan.json` so later arms
+pair against the same plans. Config
+`configs/experiments/codeprojecteval_evolution_baseline.yaml` (a copy of
+the milestones yaml with `output_root: outputs/cpe_evolution_baseline`).
+Two lanes in parallel, each task resumed across windows and scored on
+held-out right after (`scripts/eval_codeprojecteval.py`; bplustree with
+the long CPU budget). Supervisor: scratchpad `evo/baseline_lane.sh`, log
+`evo/baseline.out`.
+
+- lane A: bplustree, tinydb, imapclient, flask, csvs-to-sqlite, voluptuous
+- lane B: cookiecutter, deprecated, djangorestframework-simplejwt, python-hl7, rsa, zxcvbn
+
+Results are appended below when the lanes finish.
