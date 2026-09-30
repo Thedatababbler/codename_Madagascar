@@ -175,6 +175,8 @@ def build_cpe_task_plan(
     harness_timeout: int = DEFAULT_HARNESS_TIMEOUT,
     plan_file: Path | None = None,
     tuning_evolution: EvolutionConfig | None = None,
+    only_milestone: str | None = None,
+    inherit_harness: str | None = None,
 ) -> tuple[TaskPlan, str]:
     """Plan milestones and bind each to a real-test acceptance gate.
 
@@ -188,6 +190,8 @@ def build_cpe_task_plan(
     )
     effective_contracts_dir = str(generated_contracts_dir(generated_root))
     manifest = materialize_check_harness(task, harness_dir=harness_dir)
+    if inherit_harness:
+        inherit_harness_sidecars(Path(inherit_harness), harness_dir)
     env_python = Path(manifest.env_python)
     purged = purge_task_packages(env_python, manifest.top_level_packages)
     if purged:
@@ -216,6 +220,17 @@ def build_cpe_task_plan(
             f"risk-first planner unavailable for {task_id}; refusing to fall back "
             "to template segmentation"
         )
+    if only_milestone:
+        # A re-run keeps the frozen suite it inherited as the fixed evaluator
+        # (§7.1 item 3): the author slot would only write a suite custody
+        # then discards, so it is dropped when that suite is already there.
+        from dataclasses import replace as _replace
+
+        if spec_tests_path_for(harness_dir, only_milestone).is_dir():
+            draft = _replace(draft, milestones=[
+                _replace(m, agents=[a for a in m.agents if a.role != "test_author"]) if m.milestone_id == only_milestone else m
+                for m in draft.milestones
+            ])
     if blind:
         from dataclasses import replace as _replace
 
@@ -505,6 +520,62 @@ def purge_task_packages(env_python: Path, packages: list[str]) -> list[str]:
     return removed
 
 
+def overlay_snapshot(workspace: Path, spec: str) -> None:
+    """Replace the workspace's tree with ``REPO@REVISION`` from a canonical repository (re-runs, §7)."""
+    import subprocess as _sp
+
+    repo, _, rev = str(spec).partition("@")
+    if not repo or not rev or not Path(repo).is_dir():
+        raise SystemExit(f"--base-snapshot must be REPO@REVISION with an existing repo, got {spec!r}")
+    archive = _sp.run(["git", "archive", "--format=tar", rev], cwd=repo, capture_output=True, check=True)
+    for child in Path(workspace).iterdir():
+        if child.name == ".git":
+            continue
+        shutil.rmtree(child) if child.is_dir() else child.unlink()
+    _sp.run(["tar", "-x", "-C", str(workspace)], input=archive.stdout, check=True)
+    _sp.run(["git", "add", "-A"], cwd=workspace, check=True)
+    _sp.run(["git", "-c", "user.email=adamas@local", "-c", "user.name=adamas", "commit", "-q", "-m",
+             f"snapshot {rev[:12]} from {repo}", "--allow-empty"], cwd=workspace, check=True)
+
+
+def inherit_harness_sidecars(source: Path, dest: Path) -> list[str]:
+    """Copy frozen suites, contracts and committed-case records of a previous run into this harness dir."""
+    copied: list[str] = []
+    if not source.is_dir():
+        return copied
+    for item in sorted(source.iterdir()):
+        name = item.name
+        if name.endswith(".spec_tests") and item.is_dir():
+            target = dest / name
+            if not target.exists():
+                shutil.copytree(item, target, ignore=shutil.ignore_patterns("__pycache__"))
+                copied.append(name)
+        elif any(name.endswith(suffix) for suffix in (".contracts.json", ".committed_cases.json", ".spec_tests.baseline.json", ".spec_tests.size.json")):
+            target = dest / name
+            if not target.exists():
+                shutil.copy2(item, target)
+                copied.append(name)
+    return copied
+
+
+def restrict_to_milestone(state: TaskExecutionState, milestone_id: str) -> None:
+    """Run one milestone: predecessors count as committed (the snapshot holds their state), later ones are skipped."""
+    from orchestra.control.task_state import SubtaskStatus as _SS
+
+    order = list(state.subtasks)
+    if milestone_id not in order:
+        raise SystemExit(f"--only-milestone {milestone_id!r} is not a milestone of this plan: {order}")
+    cut = order.index(milestone_id)
+    for i, sid in enumerate(order):
+        sub = state.subtasks[sid]
+        if i < cut:
+            sub.status = _SS.COMMITTED
+        elif i > cut:
+            sub.status = _SS.SKIPPED
+            sub.failure_message = "not part of this re-run"
+    state.mark_ready_from_dependencies()
+
+
 async def _run_one(
     *,
     task_id: str,
@@ -519,6 +590,9 @@ async def _run_one(
     arm: str = "planner",
     resume: bool = False,
     resume_from: str | None = None,
+    only_milestone: str | None = None,
+    base_snapshot: str | None = None,
+    inherit_harness: str | None = None,
 ) -> dict[str, Any]:
     started_at = datetime.now(UTC)
     wall_started = time.perf_counter()
@@ -538,6 +612,8 @@ async def _run_one(
     (logs_dir / "02_runtime").mkdir(parents=True, exist_ok=True)
     task = load_task(task_id, dataset_root=dataset_root)
     source_repo = build_agent_workspace(task, batch_dir / "workspaces" / task_id)
+    if base_snapshot:
+        overlay_snapshot(source_repo, base_snapshot)
     harness_dir = run_dir / "harness"
     plan_path = run_dir / "plan.yaml"
 
@@ -553,6 +629,8 @@ async def _run_one(
         harness_timeout=harness_timeout,
         plan_file=plan_file,
         tuning_evolution=tuning.evolution,
+        only_milestone=only_milestone,
+        inherit_harness=inherit_harness,
     )
     problem = _build_problem(
         task_id,
@@ -758,6 +836,8 @@ async def _run_one(
         plan, artifact_store_ref=str(run_dir / "artifacts")
     )
     state.pareto_state = None
+    if only_milestone:
+        restrict_to_milestone(state, only_milestone)
     if resume:
         # Continue an interrupted run (same --run-id, same plan): committed
         # milestones and the canonical workspace are kept, failed / skipped /
@@ -1001,6 +1081,9 @@ async def _run(args: argparse.Namespace) -> int:
             arm=str(args.arm),
             resume=bool(getattr(args, "resume", False)) or bool(getattr(args, "resume_from", None)),
             resume_from=getattr(args, "resume_from", None),
+            only_milestone=getattr(args, "only_milestone", None),
+            base_snapshot=getattr(args, "base_snapshot", None),
+            inherit_harness=getattr(args, "inherit_harness", None),
         )
         results.append(summary)
         print(json.dumps(summary, indent=2, sort_keys=True, ensure_ascii=False))
@@ -1063,6 +1146,14 @@ def main() -> int:
     )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--allow-config-drift", action="store_true")
+    # Re-runs from the bank (self-evolution §7): one milestone, from a
+    # canonical snapshot, graded by the suite it was frozen with.
+    parser.add_argument("--only-milestone", default=None,
+                        help="Run this milestone alone: earlier ones count as committed (their state comes from --base-snapshot), later ones are skipped.")
+    parser.add_argument("--base-snapshot", default=None,
+                        help="REPO@REVISION: start the task workspace from this canonical git revision instead of the dataset inputs.")
+    parser.add_argument("--inherit-harness", default=None,
+                        help="A previous run's harness directory whose frozen suites, contracts and committed-case records are copied in.")
     args = parser.parse_args()
     return asyncio.run(_run(args))
 

@@ -3860,3 +3860,53 @@ Tests: `tests/unit/control/test_first_pass_designer.py` (6): features,
 triggers per entry, F0 identity, applied shapes valid against the templates,
 combination not applied until validated / seeded trial draw, interface
 rule. Full unit suite green.
+
+## EXP-20260930-05 -- self-evolving milestone search, stage 5: bank, re-runs, sealed tripwire (branch `rsi`)
+
+**Status:** implementation record; no paid run yet.
+
+- `control/evolution/bank.py` (§6): one entry per finished milestone
+  (frozen suite ref + content hash, predecessor snapshot repo@revision from
+  the workspace commit records, persistent failures with their classes,
+  first-pass features, outcome). Admission: training tasks only (split
+  file), failures and low scores always, successes sampled at the policy
+  rate (seeded), a newer run of the same milestone supersedes the old
+  entry (archived, not deleted). `mark_suite_stale` / `invalidate_task`
+  exclude entries without dropping their records. `scripts/bank_admit.py`.
+- `control/evolution/rerun.py` (§7): plans for row re-runs (variant row vs
+  the R0 control, ≥5 paired checkpoints, 2 reps each, budget cap) and F
+  entry re-runs (F vs F0 on matching milestones, 30% success entries);
+  each job is a CLI command with `--only-milestone`, `--base-snapshot
+  REPO@REV`, `--inherit-harness DIR`, `--arm rerun` and the forcing
+  variables `ADAMAS_FORCE_ROW=<milestone>=<row>` / `ADAMAS_FORCE_F=<F>`.
+  Paired case statistics (stable fixes / stable regressions / flaky
+  excluded), `f_entry_verdict` with the four §7.3 conditions, ledger merge
+  with `source="rerun"`.
+- CLI re-run flags: the workspace is rebuilt from the dataset inputs and
+  then replaced by the canonical revision (one commit on top, so the
+  custody diff and zero-commit refusal still work); predecessors' frozen
+  suites, contracts and committed-case records are copied in; earlier
+  milestones start COMMITTED, later ones SKIPPED; the re-run milestone's
+  test author is dropped when its frozen suite was inherited (§7.1 fixed
+  evaluator). Controller honours the forced row (state and draw ignored,
+  preconditions still checked); the designer honours the forced F entry.
+- `control/evolution/tripwire.py` + `scripts/heldout_tripwire_record.py`
+  (§5.4): the writer runs the attributed held-out subset on the retained
+  candidate workspaces of a *training* task in a scratch copy and seals
+  `{record_id, pass rate}` into `outputs/evolution/sealed/`; the checker
+  fires only when the gate says the promotion won and the sealed rate is
+  lower than the baseline group by more than the tolerance. A grep test
+  guarantees no other module under `src/orchestra` names the sealed file.
+  `scripts/heldout_attribution.py` maps held-out cases to milestones by
+  symbol / focus stem, without running them.
+- Dry run (tinydb, 09-14 plan, `--only-milestone query_language_and_operations`,
+  snapshot of that run's workspace, its harness inherited, `ADAMAS_FORCE_ROW`
+  set): workspace = dataset inputs + snapshot commit; 12 harness sidecars
+  inherited; the re-run milestone's roster is implementer + contract_critic +
+  gate_repairer, other milestones keep their author.
+
+Tests: `tests/unit/control/test_bank_rerun_tripwire.py` (8): test tasks
+never admitted, success sampling and supersession, stale exclusion and
+invalidation, re-run plans and forcing, paired statistics and the F
+verdict, tripwire semantics, sealed-file readers, suite hashing, CLI
+helpers (overlay / inherit / restrict). Full unit suite green.

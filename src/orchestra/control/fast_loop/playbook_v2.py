@@ -481,6 +481,10 @@ def to_playbook(row: PlaybookRow, *, facts: RowFacts, instructions_dir: Path = I
     return None
 
 
+def replace_row_state(row: PlaybookRow, state: str) -> PlaybookRow:
+    return replace(row, state=state)  # type: ignore[arg-type]
+
+
 # --------------------------------------------------------------------------- state machine (§3.4)
 
 
@@ -501,7 +505,7 @@ def transition(row: PlaybookRow, event: str) -> PlaybookRow:
 
 __all__ = [
     "BudgetDelta", "E9_ALTERNATIVES", "INSTRUCTIONS_DIR", "MERGED_INTO_R0", "PlaybookRow", "Precondition",
-    "REPAIR_TABLE_PATH", "RowFacts", "Selection", "SlotEdit", "compose", "default_legacy_rows",
+    "REPAIR_TABLE_PATH", "RowFacts", "Selection", "SlotEdit", "compose", "replace_row_state", "default_legacy_rows",
     "default_repair_rows", "instruction_text", "load_repair_table", "precondition_holds", "save_repair_table",
     "select_rows", "table_version", "to_playbook", "transition",
 ]

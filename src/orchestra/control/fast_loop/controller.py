@@ -54,12 +54,14 @@ from orchestra.control.fast_loop.playbook_generator import PlaybookCandidateGene
 from orchestra.control.fast_loop.playbook_v2 import (
     RowFacts,
     load_repair_table,
+    replace_row_state,
     select_rows,
     table_version,
     to_playbook,
 )
 from orchestra.control.fast_loop.playbooks import context_for, template_id_of
 from orchestra.control.evolution.ledger import write_search_ledger
+from orchestra.control.evolution.rerun import forced_row_for
 from orchestra.control.fast_loop.quality_trigger import quality_search_diagnosis
 from orchestra.roles.pool import default_role_pool
 from orchestra.control.fast_loop.repair_evidence import build_repair_evidence, resolve_failure
@@ -730,11 +732,24 @@ class FastLoopController:
             tried_rows=tried,
             templates_tried=templates_tried,
         )
-        selection = select_rows(
-            load_repair_table(), classes=list(error_classes), facts=facts, row_slots=max(1, row_slots),
-            trial_prob=self.evolution.trial_prob, max_trial_concurrent=2, trials_running=0,
-            ranking=None, seed=(state.task_id, sub.spec.subtask_id, str(len(fl_state.candidates))),
-        )
+        forced = forced_row_for(sub.spec.subtask_id)
+        table = load_repair_table()
+        if forced:
+            # A bank re-run (§7.2): the row under test runs regardless of its
+            # state and the trial draw; preconditions and shape validity still apply.
+            rows = [r for r in table if r.row_id == forced]
+            facts.tried_rows = ()
+            selection = select_rows(
+                [replace_row_state(r, "active") for r in rows], classes=list(r.error_classes for r in rows)[0] if rows else [],
+                facts=facts, row_slots=1, trial_prob=0.0, max_trial_concurrent=2, trials_running=0,
+            )
+            fl_state.notes.append(f"v2: forced row {forced} ({'selected' if selection.rows else 'not applicable'})")
+        else:
+            selection = select_rows(
+                table, classes=list(error_classes), facts=facts, row_slots=max(1, row_slots),
+                trial_prob=self.evolution.trial_prob, max_trial_concurrent=2, trials_running=0,
+                ranking=None, seed=(state.task_id, sub.spec.subtask_id, str(len(fl_state.candidates))),
+            )
         for rid, why in selection.filtered.items():
             fl_state.notes.append(f"v2 filtered {rid}: {why}")
         fl_state.notes.extend(f"v2: {n}" for n in selection.notes)

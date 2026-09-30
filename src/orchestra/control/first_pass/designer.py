@@ -14,6 +14,7 @@ unvalidated combination of entries is never applied (§4.5).
 from __future__ import annotations
 
 import hashlib
+import os
 import random
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field, replace
@@ -28,6 +29,7 @@ from orchestra.realbench.milestone_planner import AgentDraft, MilestoneDraft, Mi
 ROOT = Path(__file__).resolve().parents[4]
 FIRST_PASS_TABLE_PATH = ROOT / "configs" / "playbook_v2" / "first_pass.yaml"
 INSTRUCTIONS_DIR = ROOT / "configs" / "playbook_v2" / "instructions"
+FORCE_F_ENV = "ADAMAS_FORCE_F"
 READ_ONLY = ("contract_critic", "spec_auditor", "behaviour_critic")
 EDITING_DEFAULT = ("implementer", "test_driven_implementer", "contract_author", "integrator")
 #: templates whose last slot is a writer, or that accept an appended repairer (§4.4 rule 1)
@@ -295,6 +297,25 @@ def design_milestone(
     entries = list(table)
     features = milestone_features(m, index=index, total=total, docs_text=docs_text)
     matched = matched_entries(features, entries, thresholds)
+    forced = os.environ.get(FORCE_F_ENV, "").strip()
+    if forced:
+        # A bank re-run (§7.3): this entry (or F0) regardless of state or draw.
+        mid, _, entry_id = forced.partition("=") if "=" in forced else ("", "", forced)
+        if not mid or mid == m.milestone_id:
+            chosen = next((e for e in entries if e.entry_id == entry_id), None)
+            decision = {
+                "milestone_id": m.milestone_id, "features": features, "matched": [e.entry_id for e in matched],
+                "applied": [entry_id], "assignment": "forced", "predicted_error_classes": [],
+                "template_before": m.template_id, "template_after": m.template_id, "notes": [f"forced {entry_id}"],
+            }
+            if chosen is None or entry_id == "F0":
+                decision["applied"] = ["F0"]
+                return m, decision
+            designed, notes = apply_entry(m, chosen, features=features, thresholds=thresholds, instructions_dir=instructions_dir)
+            decision["notes"].extend(notes)
+            decision["predicted_error_classes"] = list(chosen.predicted_error_classes)
+            decision["template_after"] = designed.template_id
+            return designed, decision
     decision: dict[str, Any] = {
         "milestone_id": m.milestone_id, "features": features, "matched": [e.entry_id for e in matched],
         "applied": [], "assignment": "deterministic", "predicted_error_classes": [],
