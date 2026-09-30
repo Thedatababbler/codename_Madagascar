@@ -193,6 +193,9 @@ class FailureDiagnosis(BaseModel):
     #: >1 when ``behaviour_failures`` is the intersection over that many samples
     #: of one design, i.e. the persistent set rather than one attempt's list.
     persistence_samples: int = 0
+    #: E1-E9 (self-evolution §2.2.3), main classes in order; empty before the
+    #: routing diagnosis ran. ``failure_class`` above stays the coarse legacy key.
+    error_classes: list[str] = Field(default_factory=list)
 
 
 class CostRecord(BaseModel):
@@ -438,6 +441,9 @@ class FastLoopState(BaseModel):
     #: Case keys the routing diagnosis marked ``suite_suspect``; the unified
     #: acceptance rule leaves them out of its fixed / regressed counts.
     suite_suspect: list[str] = Field(default_factory=list)
+    #: The routing diagnosis (§2.2.2) and error classes (§2.2.3) of this search.
+    routing: dict[str, Any] = Field(default_factory=dict)
+    error_classes: dict[str, Any] = Field(default_factory=dict)
     started_monotonic: float | None = None
     # Persistence search only: the probe samples and their failure intersection.
     persistence: dict[str, Any] | None = None

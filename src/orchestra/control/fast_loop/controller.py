@@ -25,7 +25,14 @@ from orchestra.control.fast_loop.acceptance import (
     judge_all,
 )
 from orchestra.control.fast_loop.committed_cases import write_committed_cases
+from orchestra.control.fast_loop.error_classes import CaseFacts, classify_persistent
 from orchestra.control.fast_loop.evolution_config import EvolutionConfig
+from orchestra.control.fast_loop.routing import (
+    Predecessor,
+    citation_ok,
+    docs_text_of,
+    route_persistent,
+)
 from orchestra.control.fast_loop.prior_suites import prior_suite_report, prior_suites_for
 from orchestra.control.fast_loop.budget import (
     FastLoopBudgetTracker,
@@ -46,7 +53,7 @@ from orchestra.control.fast_loop.plan_candidates import register_new_contracts
 from orchestra.control.fast_loop.playbook_generator import PlaybookCandidateGenerator
 from orchestra.control.fast_loop.quality_trigger import quality_search_diagnosis
 from orchestra.roles.pool import default_role_pool
-from orchestra.control.fast_loop.repair_evidence import build_repair_evidence
+from orchestra.control.fast_loop.repair_evidence import build_repair_evidence, resolve_failure
 from orchestra.control.fast_loop import node_resample as nr
 from orchestra.control.fast_loop.persistence import (
     apply_role_floor,
@@ -104,6 +111,43 @@ from orchestra.storage.artifacts import ArtifactStore
 from orchestra.workspaces.base import WorkspaceRef
 
 logger = logging.getLogger(__name__)
+
+
+def _split_pytest_output(text: str) -> dict[str, str]:
+    """pytest's per-failure sections, keyed by the test function name."""
+    sections: dict[str, str] = {}
+    current: str | None = None
+    for line in (text or "").splitlines():
+        m = _SECTION_RE.match(line)
+        if m:
+            current = m.group(1).split("[", 1)[0].split(".")[-1]
+            sections[current] = ""
+            continue
+        if current is not None:
+            sections[current] += line + "\n"
+    return sections
+
+
+_SECTION_RE = __import__("re").compile(r"^_{3,}\s+(.+?)\s+_{3,}$")
+
+
+def _test_source(path: Path, test_id: str) -> str:
+    """The source of one test function with the comment lines above it, or ""."""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+        tree = __import__("ast").parse(text)
+    except (OSError, SyntaxError, ValueError):
+        return ""
+    base = test_id.split("[", 1)[0].split("::")[-1]
+    lines = text.splitlines()
+    for node in __import__("ast").walk(tree):
+        if getattr(node, "name", None) == base and hasattr(node, "lineno"):
+            start = min([node.lineno] + [d.lineno for d in getattr(node, "decorator_list", [])]) - 1
+            while start > 0 and lines[start - 1].strip().startswith("#"):
+                start -= 1
+            end = getattr(node, "end_lineno", node.lineno)
+            return "\n".join(lines[start:end])
+    return ""
 
 
 def candidate_task_id(task_id: str, subtask_id: str, candidate_id: str) -> str:
@@ -387,6 +431,7 @@ class FastLoopController:
         incumbent_artifact: str | None = None,
         graph_result: Any = None,
         slots: int | None = None,
+        source_repo: str | None = None,
     ) -> None:
         """Intersect the probe samples, diagnose the persistent set, spend the rest.
 
@@ -438,11 +483,25 @@ class FastLoopController:
         else:
             remaining = slots if slots else max(1, self.budget.max_candidates - len(probes))
         picked: list = []
-        if summary.persistent and not collects_nothing:
+        repair_list: list[str] = list(summary.persistent)
+        error_classes: list[str] = []
+        if summary.persistent and not collects_nothing and self.evolution.enabled:
+            # P2 (§2.2): route out what is not this milestone's to fix, then
+            # classify what stays. Diagnosis only: pytest on the incumbent, no
+            # model call.
+            repair_list, error_classes = await self._route_and_classify(
+                state=state, fl_state=fl_state, sub=sub, subtask_id=subtask_id,
+                base_graph=base_graph, summary=summary, source_repo=source_repo, base_ws=base_ws,
+                context=context,
+            )
+        if summary.persistent and not collects_nothing and not repair_list:
+            fl_state.notes.append("routing: every persistent failure was routed away; nothing for this milestone to repair")
+        if summary.persistent and not collects_nothing and repair_list:
             diagnosis = fl_state.diagnosis.model_copy(
                 update={
-                    "behaviour_failures": list(summary.persistent),
+                    "behaviour_failures": list(repair_list),
                     "persistence_samples": summary.samples,
+                    "error_classes": list(error_classes),
                 }
             )
             diagnosis = self._settle_roles(
@@ -538,7 +597,8 @@ class FastLoopController:
             record.metadata.update(
                 {
                     "persistence_phase": 2,
-                    "persistent_failures": list(summary.persistent),
+                    "persistent_failures": list(repair_list),
+                    "error_classes": list(error_classes),
                     "recommended_role": diagnosis.recommended_role,
                     "recommended_reviewer": diagnosis.recommended_reviewer,
                     "role_source": diagnosis.role_source,
@@ -619,6 +679,114 @@ class FastLoopController:
             )
             if record.status is CandidateStatus.REJECTED:
                 break
+
+    async def _route_and_classify(
+        self, *, state, fl_state, sub, subtask_id, base_graph, summary, source_repo, base_ws, context=None,
+    ) -> tuple[list[str], list[str]]:
+        """P2: routing (§2.2.2) and error classes (§2.2.3) for the persistent set.
+
+        Returns the list the repairer is given (kept cases plus the
+        predecessor cases the incumbent regressed, spelled with their frozen
+        path so the repair evidence can find them) and the main error classes.
+        """
+        repo = Path(source_repo) if source_repo else (Path(base_ws.path) if base_ws is not None else None)
+        persistent = list(summary.persistent)
+        if repo is None or not repo.is_dir():
+            return persistent, []
+        docs = docs_text_of(repo)
+        index = nr.repo_symbol_index(repo)
+        flaky_keys = {failure_key(f) for f in summary.flaky}
+        # the persistent tests' output on the incumbent (one pytest run)
+        outputs: dict[str, str] = {}
+        evidence = await asyncio.to_thread(build_repair_evidence, repo, persistent)
+        if evidence is not None:
+            try:
+                outputs = _split_pytest_output((Path(evidence) / "failures.md").read_text(encoding="utf-8"))
+            except OSError:
+                outputs = {}
+        facts: list[CaseFacts] = []
+        for case in persistent:
+            key = failure_key(case)
+            name = key.split("::")[-1]
+            source, files = "", set()
+            resolved = resolve_failure(repo, case)
+            if resolved is not None:
+                root, rel, tid = resolved
+                source = _test_source(root / rel, tid)
+                files = {index[n] for n in nr.symbols_in_test(root / rel, tid) if n in index}
+            out = outputs.get(name.split("[", 1)[0], "")
+            facts.append(CaseFacts(
+                case_id=case, key=key, name=name, source=source, symbol_files=files, output=out,
+                timed_out=any(t in out for t in ("Timeout", "TIMED OUT", "timed out")),
+                flaky=key in flaky_keys, citation_ok=citation_ok(source, docs) if source else None,
+            ))
+        priors = prior_suites_for(state, subtask_id)
+        predecessors: list[Predecessor] = []
+        for prior in priors:
+            spec_dir = prior.spec_dir
+            pred_sub = state.subtasks.get(prior.milestone_id)
+            focus = tuple((getattr(getattr(pred_sub, "spec", None), "metadata", None) or {}).get("focus_paths") or [])
+
+            def case_files(key: str, _spec: str = spec_dir) -> set[str]:
+                file_part, _, tid = key.partition("::")
+                return {index[n] for n in nr.symbols_in_test(Path(_spec) / file_part, tid) if n in index}
+
+            predecessors.append(Predecessor(
+                milestone_id=prior.milestone_id, focus_paths=focus,
+                committed_failed=prior.committed_failed, committed_passed=prior.committed_passed,
+                case_files=case_files,
+            ))
+        incumbent_regressions: dict[str, list[str]] = {}
+        spec_of = {p.milestone_id: p.spec_dir for p in priors}
+        if priors and self.evolution.prior_suite_check:
+            command, timeout = self._harness_command(base_graph)
+            report = await prior_suite_report(
+                workspace_path=str(repo), command=command, priors=priors, timeout_seconds=timeout,
+            )
+            fl_state.routing["incumbent_prior_suites"] = report
+            for mid, entry in report.items():
+                if entry.get("regressions"):
+                    incumbent_regressions[mid] = [f"{spec_of[mid]}/{k}" for k in entry["regressions"]]
+        current_focus = list((getattr(sub.spec, "metadata", None) or {}).get("focus_paths") or [])
+        routing = route_persistent(
+            facts, current_focus=current_focus, predecessors=predecessors,
+            incumbent_prior_regressions=incumbent_regressions,
+        )
+        kept_facts = [f for f in facts if f.case_id in set(routing.kept)]
+        classification = classify_persistent(
+            kept_facts,
+            furthest_stage=str(fl_state.diagnosis.furthest_stage or ""),
+            agent_truncated=(fl_state.diagnosis.failure_class == "budget"),
+            stuck=self._rows_without_progress(fl_state) >= 2,
+        )
+        fl_state.routing.update(routing.to_dict())
+        fl_state.error_classes = classification.to_dict()
+        fl_state.suite_suspect = list(routing.suite_suspect)
+        if routing.routed:
+            fl_state.notes.append(
+                "routing: " + ", ".join(f"{r.route}={sum(1 for x in routing.routed if x.route == r.route)}"
+                                        for r in {x.route: x for x in routing.routed}.values())
+            )
+            self._write_routing_records(
+                getattr(context, "run_dir", None), state.task_id, subtask_id,
+                [r.to_dict() for r in routing.routed],
+            )
+        if classification.classes:
+            fl_state.notes.append(f"error classes: {list(classification.classes)} ({classification.note})")
+        repair = list(routing.kept) + list(routing.regressions)
+        return repair, list(classification.classes)
+
+    @staticmethod
+    def _rows_without_progress(fl_state: FastLoopState) -> int:
+        """Phase-two rows on this milestone whose ledger fixed nothing (E9's second trigger)."""
+        n = 0
+        for c in fl_state.candidates:
+            if c.metadata.get("persistence_phase") != 2:
+                continue
+            ledger = c.metadata.get("persistence_ledger") or {}
+            if ledger.get("scored") and not ledger.get("persistent_fixed_count"):
+                n += 1
+        return n
 
     async def _unified_acceptance(
         self, *, state, fl_state, subtask_id, base_graph, incumbent, context=None,
@@ -1296,6 +1464,7 @@ class FastLoopController:
                 base_ws=base_ws,
                 incumbent_artifact=self._final_change_artifact(graph_result),
                 graph_result=graph_result,
+                source_repo=source_repo,
             )
 
         if incumbent is not None and self.evolution.enabled:

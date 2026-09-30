@@ -3744,3 +3744,40 @@ committed-cases round trip. Full unit suite green.
 Not done in stage 1: the after-recovery hop (`_persistence_after_recovery`)
 still draws its probes the old way; the incumbent's own prior-suite report
 (needed for `regression_by_current` routing) is stage 2.
+
+## EXP-20260930-02 -- self-evolving milestone search, stage 2: routing diagnosis and error classes (branch `rsi`)
+
+**Status:** implementation record; no paid run yet.
+
+- `control/fast_loop/error_classes.py`: E1-E9 by rules on per-case facts
+  (test name, test source, symbol files, the case's pytest output on the
+  incumbent, timeouts); `@pytest.mark.error_class("E5")` wins when present;
+  mixing rule (>= 2/3 one class; two classes both taken; >= 3 -> E9; the same
+  class twice without progress -> E9); legacy budget/functional/design map
+  to E1/E3/E9.
+- `control/fast_loop/routing.py`: `regression_by_current` (a committed
+  predecessor's case that passed at commit and fails on the incumbent, found
+  by running the predecessor suites on the incumbent's repository; kept in
+  the milestone and handed to the repairer with the frozen path),
+  `inherited.committed_with_failure` / `.uncovered` / `.boundary` (symbols
+  of the case all inside a predecessor's focus paths and none inside ours,
+  sub-type by what the predecessor's committed cases touched),
+  `suite_suspect` (the quoted sentence is not in the documents, or flaky and
+  timing out), `environment` (package shadow / outside import in the
+  output). Records go to `<run>/routing_records.jsonl`; routed cases leave
+  the repair list; `suite_suspect` keys reach the acceptance rule.
+- Controller: `_route_and_classify` runs in the persistence phase before the
+  roles are settled; the repairer's list becomes kept + regressions; the
+  diagnosis carries `error_classes`; per-candidate metadata records them.
+- `scripts/error_class_distribution.py` (§8.1) over every recorded run: 85
+  searched milestones with a persistent set; E2 31, E3 131, E4 60, E5 37,
+  E6 27, E7 60 cases; E1 and E8 0 because their rules need the failure
+  output (truncation, timeouts) which the offline pass does not have; E9
+  main class in 16 milestones (scattered). Recommendation: keep all nine
+  classes, revisit E1/E8 after the first evolution run records outputs.
+  Report: `docs/reports/error_class_distribution.md`.
+
+Tests: `tests/unit/control/test_routing_and_error_classes.py` (6): one
+sample per class, marker override, mixing rule, the three inherited kinds,
+suite_suspect / environment, routed cases leave the repair list and
+regressions join it. Full unit suite green.
