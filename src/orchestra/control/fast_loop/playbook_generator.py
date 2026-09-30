@@ -150,6 +150,35 @@ class PlaybookCandidateGenerator:
         accepted, rejected = filter_compatible_candidates(built, capabilities)
         return [*accepted, *rejected]
 
+    def generate_rows(
+        self,
+        *,
+        graph: OrchestraGraph,
+        diagnosis: FailureDiagnosis,
+        playbooks: list[Playbook],
+        budget: FastLoopBudget,
+        capabilities: Mapping[str, BackendCapabilities],
+        search_reason: SearchReason | str = SearchReason.QUALITY,
+    ) -> list[LocalCandidate]:
+        """Candidates for an explicit list of rows (playbook v2 selection), in order."""
+        if diagnosis.infrastructure_related or not diagnosis.retryable:
+            return []
+        agent_id = _target_agent_id(graph, diagnosis)
+        if agent_id is None:
+            return []
+        reason = SearchReason(search_reason)
+        ctx = context_for(
+            graph=graph, diagnosis=diagnosis, anchor_node_id=agent_id, pool=self.role_pool, search_reason=reason,
+        )
+        parent_hash = graph.content_hash
+        preamble: list[LocalEdit] = [
+            PromptFeedbackEdit(node_id=agent_id, feedback=diagnosis.concise_feedback),
+            SessionPolicyEdit(node_id=agent_id, policy=SessionPolicy.FRESH),
+        ]
+        built = [self._from_playbook(pb, ctx, preamble, parent_hash, budget) for pb in playbooks]
+        accepted, rejected = filter_compatible_candidates(built, capabilities)
+        return [*accepted, *rejected]
+
     def _anchor(
         self,
         graph: OrchestraGraph,
@@ -248,7 +277,9 @@ class PlaybookCandidateGenerator:
     ) -> LocalCandidate:
         if cand.compatibility_rejected:
             return cand
-        if not playbook.include_failure_list and not playbook.extra_prompt:
+        if not playbook.include_failure_list and not playbook.extra_prompt and not (
+            playbook.steps_delta or playbook.timeout_delta
+        ):
             return cand
         new_anchor = _target_agent_id(cand.graph, ctx.diagnosis) or ctx.anchor_node_id
         new_ctx = context_for(

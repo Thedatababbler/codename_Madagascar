@@ -1,0 +1,27 @@
+template_id: continuation_chain
+title: Two writers in sequence on the incumbent's work
+# Playbook v2 row E1-T1 (unfinished, many focus files): the work is split into
+# a contract pass and an implementation pass, both on the incumbent's state.
+planner_selectable: false
+when_to_use: >
+  An unfinished milestone whose focus spans many files: the first writer
+  settles the shared substrate (bases, protocols, exception types), the
+  second implements against it.
+slots:
+  - id: first
+    default_role: contract_author
+    allowed_roles:
+      - contract_author
+      - implementer
+      - integrator
+  - id: improver
+    default_role: implementer
+    allowed_roles:
+      - dependency_resolver
+      - edge_case_hardener
+      - gate_repairer
+      - implementer
+      - integrator
+edges:
+  - from: first
+    to: improver

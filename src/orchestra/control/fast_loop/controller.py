@@ -51,6 +51,15 @@ from orchestra.control.fast_loop.llm_diagnosis import DiagnosisConfig, refine_di
 from orchestra.control.fast_loop.pareto import ParetoSelectionConfig
 from orchestra.control.fast_loop.plan_candidates import register_new_contracts
 from orchestra.control.fast_loop.playbook_generator import PlaybookCandidateGenerator
+from orchestra.control.fast_loop.playbook_v2 import (
+    RowFacts,
+    load_repair_table,
+    select_rows,
+    table_version,
+    to_playbook,
+)
+from orchestra.control.fast_loop.playbooks import context_for, template_id_of
+from orchestra.control.evolution.ledger import write_search_ledger
 from orchestra.control.fast_loop.quality_trigger import quality_search_diagnosis
 from orchestra.roles.pool import default_role_pool
 from orchestra.control.fast_loop.repair_evidence import build_repair_evidence, resolve_failure
@@ -527,6 +536,16 @@ class FastLoopController:
                 history=self._playbook_history(fl_state),
             )
             picked = [c for c in generated if c.playbook_id]
+            if self.evolution.enabled:
+                # Playbook v2 (§3): R0 from the continuation row, the rest of
+                # the slots from the class-keyed table.
+                r0_only = [c for c in picked if getattr(c, "continue_from_incumbent", False)
+                           or "continue" in (c.playbook_id or "")][:1]
+                picked = r0_only + self._v2_row_candidates(
+                    state=state, fl_state=fl_state, sub=sub, base_graph=base_graph, diagnosis=diagnosis,
+                    caps=caps, incumbent=incumbent, summary=summary, error_classes=error_classes,
+                    row_slots=remaining,
+                )
         else:
             diagnosis = fl_state.diagnosis
         resample_record = None
@@ -590,10 +609,15 @@ class FastLoopController:
             state.state_version += 1
             await self._save_checkpoint(state)
             return
+        v2_rows = fl_state.routing.get("v2_rows") or {}
         for cand in picked:
             record = self._record_from_local(cand, attempt_id=fl_state.base_attempt_id + 1)
             if cand.candidate_id == "cand_R0":
                 record.metadata["candidate_kind"] = "R0"
+            elif cand.candidate_id in v2_rows:
+                record.metadata["candidate_kind"] = "row"
+                record.metadata["v2_row"] = v2_rows[cand.candidate_id]["row_id"]
+                record.metadata["v2_row_state"] = v2_rows[cand.candidate_id]["state"]
             record.metadata.update(
                 {
                     "persistence_phase": 2,
@@ -679,6 +703,84 @@ class FastLoopController:
             )
             if record.status is CandidateStatus.REJECTED:
                 break
+
+    def _v2_row_candidates(
+        self, *, state, fl_state, sub, base_graph, diagnosis, caps, incumbent, summary, error_classes, row_slots,
+    ) -> list:
+        """§3.7: select rows for the main class(es) and turn them into candidates."""
+        try:
+            ctx = context_for(graph=base_graph, diagnosis=diagnosis, anchor_node_id=diagnosis.focus_node_id or "", pool=default_role_pool())
+            roles_by_slot = dict(ctx.roles_by_slot)
+        except Exception:  # noqa: BLE001
+            roles_by_slot = {}
+        tried = tuple(str((c.metadata or {}).get("v2_row") or "") for c in fl_state.candidates if (c.metadata or {}).get("v2_row"))
+        templates_tried = tuple(
+            str(getattr(c.plan_recompile, "template_id", "") or "") for c in fl_state.candidates if c.plan_recompile is not None
+        )
+        facts = RowFacts(
+            template_id=template_id_of(base_graph),
+            roles_by_slot=roles_by_slot,
+            high_variance=len(summary.flaky) >= nr.FLAKY_MIN and self.node_resample_n > 0,
+            n_focus_files=len(list((getattr(sub.spec, "metadata", None) or {}).get("focus_paths") or [])),
+            writer_hit_cap=(diagnosis.failure_class == "budget") or (diagnosis.reason is SubtaskFailureReason.TIMEOUT),
+            gate_failed=(fl_state.search_reason != "quality") or incumbent.status is not CandidateStatus.VALID,
+            stuck=self._rows_without_progress(fl_state) >= 2,
+            blamed_before_repairer=bool(diagnosis.primary_failed_node_id)
+            and diagnosis.primary_failed_node_id != diagnosis.focus_node_id,
+            tried_rows=tried,
+            templates_tried=templates_tried,
+        )
+        selection = select_rows(
+            load_repair_table(), classes=list(error_classes), facts=facts, row_slots=max(1, row_slots),
+            trial_prob=self.evolution.trial_prob, max_trial_concurrent=2, trials_running=0,
+            ranking=None, seed=(state.task_id, sub.spec.subtask_id, str(len(fl_state.candidates))),
+        )
+        for rid, why in selection.filtered.items():
+            fl_state.notes.append(f"v2 filtered {rid}: {why}")
+        fl_state.notes.extend(f"v2: {n}" for n in selection.notes)
+        playbooks = []
+        chosen_meta: dict[str, dict[str, str]] = {}
+        for row in selection.rows:
+            if row.action == "N":
+                continue  # U-N1 is the controller's node resample, armed below
+            pb = to_playbook(row, facts=facts)
+            if pb is None:
+                fl_state.notes.append(f"v2 filtered {row.row_id}: no shape left to switch to")
+                continue
+            playbooks.append(pb)
+            chosen_meta[f"cand_{pb.playbook_id}"] = {"row_id": row.row_id, "state": row.state}
+        if not playbooks:
+            return []
+        generated = self.generator.generate_rows(
+            graph=base_graph, diagnosis=diagnosis, playbooks=playbooks, budget=self.budget,
+            capabilities=caps, search_reason="quality",
+        )
+        v2_rows = dict(fl_state.routing.get("v2_rows") or {})
+        for cand in generated:
+            if cand.candidate_id in chosen_meta:
+                v2_rows[cand.candidate_id] = chosen_meta[cand.candidate_id]
+            if getattr(cand, "compatibility_rejected", False):
+                why = getattr(cand, "compatibility_reason", None) or getattr(cand, "rejection_message", None) or "template validation failed"
+                fl_state.notes.append(f"v2 filtered {chosen_meta.get(cand.candidate_id, {}).get('row_id', cand.candidate_id)}: {why}")
+        fl_state.routing["v2_rows"] = v2_rows
+        fl_state.notes.append("v2 rows selected: " + ", ".join(m["row_id"] for m in chosen_meta.values()))
+        return [c for c in generated if not getattr(c, "compatibility_rejected", False)]
+
+    def _write_ledger(self, state, subtask_id: str, context) -> None:
+        """§5: the search's records, once, when the search ends."""
+        fl_state = state.fast_loop_states.get(subtask_id)
+        if fl_state is None or fl_state.routing.get("ledger_written"):
+            return
+        sub = state.subtasks.get(subtask_id)
+        try:
+            write_search_ledger(
+                fl_state, task_id=state.task_id, milestone_id=subtask_id, playbook_version=table_version(),
+                run_dir=str(getattr(context, "run_dir", "") or ""),
+                final_status=str(getattr(getattr(sub, "status", None), "value", "") or ""),
+            )
+            fl_state.routing["ledger_written"] = True
+        except Exception as exc:  # noqa: BLE001 -- the ledger never fails a search
+            fl_state.notes.append(f"ledger: not written ({str(exc)[:120]})")
 
     async def _route_and_classify(
         self, *, state, fl_state, sub, subtask_id, base_graph, summary, source_repo, base_ws, context=None,
@@ -1196,6 +1298,30 @@ class FastLoopController:
         return diagnosis
 
     async def run(
+        self,
+        *,
+        state: TaskExecutionState,
+        subtask_id: str,
+        context: RunContext,
+        initial_artifacts: ArtifactBundle,
+        source_repo: str | None = None,
+        graph: OrchestraGraph | None = None,
+        graph_result: GraphExecutionResult | None = None,
+        initial_execution_cost: CostRecord | None = None,
+        base_workspace: WorkspaceRef | None = None,
+        incumbent: CandidateRecord | None = None,
+    ) -> TaskExecutionState:
+        try:
+            return await self._run_search(
+                state=state, subtask_id=subtask_id, context=context, initial_artifacts=initial_artifacts,
+                source_repo=source_repo, graph=graph, graph_result=graph_result,
+                initial_execution_cost=initial_execution_cost, base_workspace=base_workspace, incumbent=incumbent,
+            )
+        finally:
+            if self.evolution.enabled:
+                self._write_ledger(state, subtask_id, context)
+
+    async def _run_search(
         self,
         *,
         state: TaskExecutionState,

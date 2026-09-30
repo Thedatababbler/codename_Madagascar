@@ -1,0 +1,30 @@
+template_id: continuation_reviewed
+title: A read-only reviewer, then one specialist continues on the incumbent's work
+# Playbook v2 "R" rows (self-evolution §3.3): the row inserts a read-only role
+# in front of the repairer. Like `continuation`, the candidate workspace holds
+# the incumbent's change set before the graph runs; no test_author, the frozen
+# suite stays the yardstick.
+planner_selectable: false
+when_to_use: >
+  A quality search whose persistent failures a reviewer can read for -- a
+  contract critic for interface and exception-hierarchy failures, a spec
+  auditor for state-machine failures, a behaviour critic for boundary and
+  protocol failures -- before the specialist edits.
+slots:
+  - id: reviewer
+    default_role: contract_critic
+    allowed_roles:
+      - contract_critic
+      - spec_auditor
+      - behaviour_critic
+  - id: improver
+    default_role: gate_repairer
+    allowed_roles:
+      - dependency_resolver
+      - edge_case_hardener
+      - gate_repairer
+      - implementer
+      - integrator
+edges:
+  - from: reviewer
+    to: improver

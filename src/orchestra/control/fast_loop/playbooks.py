@@ -456,7 +456,9 @@ def bind_recompile_feedback(playbook: Playbook, ctx: PlaybookContext) -> list[Lo
     slots = playbook.feedback_slots or ((playbook.target,) if playbook.target else ())
     if not slots:
         return []
-    if not playbook.include_failure_list and not playbook.extra_prompt:
+    if not playbook.include_failure_list and not playbook.extra_prompt and not (
+        playbook.steps_delta or playbook.timeout_delta
+    ):
         return []
     edits: list[LocalEdit] = []
     formatter = (
@@ -480,6 +482,18 @@ def bind_recompile_feedback(playbook: Playbook, ctx: PlaybookContext) -> list[Lo
             )
         if playbook.extra_prompt:
             edits.append(PromptFeedbackEdit(node_id=node_id, feedback=playbook.extra_prompt))
+    # Playbook v2 "B" rows ride on a recompiled continuation: the budget
+    # change lands on the target slot of the *new* graph.
+    if (playbook.steps_delta or playbook.timeout_delta) and playbook.target:
+        node_id = ctx.node_for(playbook.target)
+        if node_id is not None:
+            edits.append(
+                BudgetAdjustmentEdit(
+                    node_id=node_id,
+                    max_steps_delta=playbook.steps_delta,
+                    timeout_seconds_delta=playbook.timeout_delta,
+                )
+            )
     return edits
 
 

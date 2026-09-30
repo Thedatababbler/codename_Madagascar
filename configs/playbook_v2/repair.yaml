@@ -1,0 +1,632 @@
+version: v1
+rows:
+- row_id: U-N1
+  table: repair
+  error_classes:
+  - '*'
+  action: N
+  target_template: null
+  slot_edits: []
+  instruction: null
+  evidence_routing:
+  - improver
+  budget_delta: null
+  preconditions:
+  - kind: high_variance
+    value: ''
+  from_incumbent: true
+  preventive_variant: null
+  source_rows: []
+  origin: pb_q_node_resample
+  intent: flaky failures made deterministic by re-sampling the node that owns them
+  state: active
+  legacy_id: pb_q_node_resample
+- row_id: U-S1
+  table: repair
+  error_classes:
+  - '*'
+  action: S
+  target_template: null
+  slot_edits: []
+  instruction: null
+  evidence_routing:
+  - upstream
+  budget_delta: null
+  preconditions:
+  - kind: blamed_before_repairer
+    value: ''
+  from_incumbent: true
+  preventive_variant: null
+  source_rows: []
+  origin: pb_failures_to_agent
+  intent: the upstream writer, not the repairer, fixes what it caused
+  state: candidate
+  legacy_id: ''
+- row_id: U-B1
+  table: repair
+  error_classes:
+  - '*'
+  action: B
+  target_template: null
+  slot_edits: []
+  instruction: null
+  evidence_routing:
+  - improver
+  budget_delta:
+    steps: 2
+    seconds: 30
+  preconditions:
+  - kind: writer_hit_cap
+    value: ''
+  from_incumbent: true
+  preventive_variant: null
+  source_rows: []
+  origin: pb_budget_steps_time_small
+  intent: a writer that hit its cap reaches a later stage
+  state: active
+  legacy_id: ''
+- row_id: E1-B2
+  table: repair
+  error_classes:
+  - E1
+  action: B
+  target_template: null
+  slot_edits: []
+  instruction: Reach a minimum passing implementation first. Do not polish, refactor,
+    or add features the gate did not name.
+  evidence_routing:
+  - improver
+  budget_delta:
+    steps: 8
+    seconds: 300
+  preconditions: []
+  from_incumbent: true
+  preventive_variant: null
+  source_rows: []
+  origin: pb_budget_steps_time_large
+  intent: a minimum passing implementation is reached before polish
+  state: active
+  legacy_id: ''
+- row_id: E1-T1
+  table: repair
+  error_classes:
+  - E1
+  action: T
+  target_template: continuation_chain
+  slot_edits:
+  - slot: first
+    role: contract_author
+    mode: insert
+    read_only: false
+  instruction: null
+  evidence_routing:
+  - first
+  - improver
+  budget_delta: null
+  preconditions:
+  - kind: focus_files_min
+    value: '6'
+  from_incumbent: true
+  preventive_variant: F5
+  source_rows: []
+  origin: chain
+  intent: contract pass then implementation pass finish what one writer could not
+  state: candidate
+  legacy_id: ''
+- row_id: E1-T2
+  table: repair
+  error_classes:
+  - E1
+  action: T
+  target_template: continuation
+  slot_edits: []
+  instruction: null
+  evidence_routing:
+  - improver
+  budget_delta:
+    steps: 4
+    seconds: 120
+  preconditions:
+  - kind: has_readonly_role
+    value: ''
+  from_incumbent: true
+  preventive_variant: null
+  source_rows: []
+  origin: pb_rtf_drop_reviewer
+  intent: the reviewer's budget goes to the writer
+  state: candidate
+  legacy_id: ''
+- row_id: E2-S1
+  table: repair
+  error_classes:
+  - E2
+  action: S
+  target_template: null
+  slot_edits: []
+  instruction: null
+  evidence_routing:
+  - improver
+  budget_delta: null
+  preconditions: []
+  from_incumbent: true
+  preventive_variant: null
+  source_rows: []
+  origin: new
+  intent: interface checklist first, then the fix
+  state: candidate
+  legacy_id: ''
+- row_id: E2-R1
+  table: repair
+  error_classes:
+  - E2
+  action: R
+  target_template: continuation_reviewed
+  slot_edits:
+  - slot: reviewer
+    role: contract_critic
+    mode: insert
+    read_only: true
+  instruction: null
+  evidence_routing:
+  - reviewer
+  - improver
+  budget_delta: null
+  preconditions:
+  - kind: lacks_role
+    value: contract_critic
+  from_incumbent: true
+  preventive_variant: F1
+  source_rows: []
+  origin: pb_tf_diagnose_before_repair
+  intent: a contract reading raises the repair's fix rate on interface failures
+  state: active
+  legacy_id: ''
+- row_id: E3-S1
+  table: repair
+  error_classes:
+  - E3
+  action: S
+  target_template: null
+  slot_edits: []
+  instruction: null
+  evidence_routing:
+  - improver
+  budget_delta: null
+  preconditions: []
+  from_incumbent: true
+  preventive_variant: null
+  source_rows: []
+  origin: new
+  intent: a reproduction before every fix
+  state: candidate
+  legacy_id: ''
+- row_id: E3-R1
+  table: repair
+  error_classes:
+  - E3
+  action: R
+  target_template: continuation_reviewed
+  slot_edits:
+  - slot: reviewer
+    role: behaviour_critic
+    mode: insert
+    read_only: true
+  instruction: null
+  evidence_routing:
+  - reviewer
+  - improver
+  budget_delta: null
+  preconditions:
+  - kind: lacks_role
+    value: behaviour_critic
+  from_incumbent: true
+  preventive_variant: null
+  source_rows: []
+  origin: test_first_diagnosed
+  intent: a behaviour reading raises the repair's fix rate
+  state: candidate
+  legacy_id: ''
+- row_id: E3-T1
+  table: repair
+  error_classes:
+  - E3
+  action: T
+  target_template: continuation_double
+  slot_edits: []
+  instruction: null
+  evidence_routing:
+  - improver
+  - second_improver
+  budget_delta: null
+  preconditions: []
+  from_incumbent: true
+  preventive_variant: null
+  source_rows: []
+  origin: pb_tf_second_repairer
+  intent: what the first round leaves, the second fixes
+  state: active
+  legacy_id: ''
+- row_id: E4-S1
+  table: repair
+  error_classes:
+  - E4
+  action: S
+  target_template: null
+  slot_edits: []
+  instruction: null
+  evidence_routing:
+  - improver
+  budget_delta: null
+  preconditions: []
+  from_incumbent: true
+  preventive_variant: F3
+  source_rows: []
+  origin: new
+  intent: the documented state machine as a checklist
+  state: candidate
+  legacy_id: ''
+- row_id: E4-R1
+  table: repair
+  error_classes:
+  - E4
+  action: R
+  target_template: continuation_reviewed
+  slot_edits:
+  - slot: reviewer
+    role: spec_auditor
+    mode: insert
+    read_only: true
+  instruction: null
+  evidence_routing:
+  - reviewer
+  - improver
+  budget_delta: null
+  preconditions:
+  - kind: lacks_role
+    value: spec_auditor
+  from_incumbent: true
+  preventive_variant: F3
+  source_rows: []
+  origin: new
+  intent: a spec reading of the state machine before the fix
+  state: candidate
+  legacy_id: ''
+- row_id: E5-S1
+  table: repair
+  error_classes:
+  - E5
+  action: S
+  target_template: null
+  slot_edits: []
+  instruction: null
+  evidence_routing:
+  - improver
+  budget_delta: null
+  preconditions: []
+  from_incumbent: true
+  preventive_variant: F2
+  source_rows: []
+  origin: new
+  intent: the documented exception list drives the fix
+  state: candidate
+  legacy_id: ''
+- row_id: E5-R1
+  table: repair
+  error_classes:
+  - E5
+  action: R
+  target_template: continuation_reviewed
+  slot_edits:
+  - slot: reviewer
+    role: contract_critic
+    mode: insert
+    read_only: true
+  instruction: null
+  evidence_routing:
+  - reviewer
+  - improver
+  budget_delta: null
+  preconditions:
+  - kind: lacks_role
+    value: contract_critic
+  from_incumbent: true
+  preventive_variant: F1
+  source_rows: []
+  origin: new
+  intent: exception hierarchy checked against the base milestone's definitions
+  state: candidate
+  legacy_id: ''
+- row_id: E6-S1
+  table: repair
+  error_classes:
+  - E6
+  action: S
+  target_template: null
+  slot_edits: []
+  instruction: null
+  evidence_routing:
+  - improver
+  budget_delta: null
+  preconditions: []
+  from_incumbent: true
+  preventive_variant: F6
+  source_rows: []
+  origin: new
+  intent: the object protocol checked item by item
+  state: candidate
+  legacy_id: ''
+- row_id: E6-R1
+  table: repair
+  error_classes:
+  - E6
+  action: R
+  target_template: continuation_reviewed
+  slot_edits:
+  - slot: reviewer
+    role: behaviour_critic
+    mode: insert
+    read_only: true
+  instruction: null
+  evidence_routing:
+  - reviewer
+  - improver
+  budget_delta: null
+  preconditions:
+  - kind: lacks_role
+    value: behaviour_critic
+  from_incumbent: true
+  preventive_variant: null
+  source_rows: []
+  origin: new
+  intent: a boundary-focused reading before the fix
+  state: candidate
+  legacy_id: ''
+- row_id: E7-T1
+  table: repair
+  error_classes:
+  - E7
+  action: T
+  target_template: continuation_audited
+  slot_edits: []
+  instruction: null
+  evidence_routing:
+  - spec_review
+  - contract_review
+  - improver
+  budget_delta: null
+  preconditions: []
+  from_incumbent: true
+  preventive_variant: F4
+  source_rows: []
+  origin: parallel_audit / pb_rtf_second_angle
+  intent: two angles surface the cross-module defect one reviewer misses
+  state: active
+  legacy_id: ''
+- row_id: E7-R1
+  table: repair
+  error_classes:
+  - E7
+  action: R
+  target_template: continuation_reviewed
+  slot_edits:
+  - slot: improver
+    role: integrator
+    mode: replace
+    read_only: false
+  instruction: null
+  evidence_routing:
+  - improver
+  budget_delta: null
+  preconditions:
+  - kind: lacks_role
+    value: integrator
+  from_incumbent: true
+  preventive_variant: null
+  source_rows: []
+  origin: pb_chain_fill_third
+  intent: an integrator wires the modules together
+  state: candidate
+  legacy_id: ''
+- row_id: E7-S1
+  table: repair
+  error_classes:
+  - E7
+  action: S
+  target_template: null
+  slot_edits: []
+  instruction: null
+  evidence_routing:
+  - improver
+  budget_delta: null
+  preconditions: []
+  from_incumbent: true
+  preventive_variant: null
+  source_rows: []
+  origin: new
+  intent: the call chain traced module by module
+  state: candidate
+  legacy_id: ''
+- row_id: E8-S1
+  table: repair
+  error_classes:
+  - E8
+  action: S
+  target_template: null
+  slot_edits: []
+  instruction: null
+  evidence_routing:
+  - improver
+  budget_delta: null
+  preconditions: []
+  from_incumbent: true
+  preventive_variant: null
+  source_rows: []
+  origin: new
+  intent: the hot spot found and its complexity fixed
+  state: candidate
+  legacy_id: ''
+- row_id: E8-B1
+  table: repair
+  error_classes:
+  - E8
+  action: B
+  target_template: null
+  slot_edits: []
+  instruction: null
+  evidence_routing:
+  - improver
+  budget_delta:
+    steps: 0
+    seconds: 300
+  preconditions: []
+  from_incumbent: true
+  preventive_variant: null
+  source_rows: []
+  origin: new
+  intent: the repairer gets the clock a profiling pass needs
+  state: candidate
+  legacy_id: ''
+- row_id: E9-T2
+  table: repair
+  error_classes:
+  - E9
+  action: T
+  target_template: continuation_reviewed
+  slot_edits:
+  - slot: reviewer
+    role: contract_critic
+    mode: insert
+    read_only: true
+  instruction: null
+  evidence_routing:
+  - reviewer
+  - improver
+  budget_delta: null
+  preconditions:
+  - kind: writers_min
+    value: '2'
+  from_incumbent: true
+  preventive_variant: null
+  source_rows: []
+  origin: pb_chain_to_review_fix
+  intent: a reader between the writers converts findings into fixes
+  state: candidate
+  legacy_id: ''
+- row_id: E9-S1
+  table: repair
+  error_classes:
+  - E9
+  action: S
+  target_template: null
+  slot_edits: []
+  instruction: null
+  evidence_routing:
+  - improver
+  budget_delta: null
+  preconditions: []
+  from_incumbent: true
+  preventive_variant: null
+  source_rows: []
+  origin: new
+  intent: the largest cluster fixed this round, the rest left
+  state: candidate
+  legacy_id: ''
+- row_id: E9-T1
+  table: repair
+  error_classes:
+  - E9
+  action: T
+  target_template: null
+  slot_edits: []
+  instruction: null
+  evidence_routing:
+  - improver
+  budget_delta: null
+  preconditions:
+  - kind: gate_failed
+    value: ''
+  - kind: stuck
+    value: ''
+  from_incumbent: false
+  preventive_variant: null
+  source_rows: []
+  origin: pb_solo_* generalised
+  intent: a different first-pass shape reaches what this one cannot
+  state: active
+  legacy_id: ''
+- row_id: pb_solo_to_gate_repair
+  table: legacy
+  error_classes:
+  - '*'
+  action: T
+  target_template: null
+  slot_edits: []
+  instruction: null
+  evidence_routing:
+  - improver
+  budget_delta: null
+  preconditions: []
+  from_incumbent: true
+  preventive_variant: null
+  source_rows: []
+  origin: pb_solo_to_gate_repair
+  intent: ''
+  state: active
+  legacy_id: pb_solo_to_gate_repair
+- row_id: pb_solo_to_review_fix
+  table: legacy
+  error_classes:
+  - '*'
+  action: T
+  target_template: null
+  slot_edits: []
+  instruction: null
+  evidence_routing:
+  - improver
+  budget_delta: null
+  preconditions: []
+  from_incumbent: true
+  preventive_variant: null
+  source_rows: []
+  origin: pb_solo_to_review_fix
+  intent: ''
+  state: active
+  legacy_id: pb_solo_to_review_fix
+- row_id: pb_solo_specialist
+  table: legacy
+  error_classes:
+  - '*'
+  action: T
+  target_template: null
+  slot_edits: []
+  instruction: null
+  evidence_routing:
+  - improver
+  budget_delta: null
+  preconditions: []
+  from_incumbent: true
+  preventive_variant: null
+  source_rows: []
+  origin: pb_solo_specialist
+  intent: ''
+  state: active
+  legacy_id: pb_solo_specialist
+- row_id: pb_solo_budget
+  table: legacy
+  error_classes:
+  - '*'
+  action: T
+  target_template: null
+  slot_edits: []
+  instruction: null
+  evidence_routing:
+  - improver
+  budget_delta: null
+  preconditions: []
+  from_incumbent: true
+  preventive_variant: null
+  source_rows: []
+  origin: pb_solo_budget
+  intent: ''
+  state: active
+  legacy_id: pb_solo_budget

@@ -1,0 +1,33 @@
+template_id: continuation_audited
+title: Two read-only auditors in parallel, then one specialist continues on the incumbent's work
+# Playbook v2 row E7-T1 (cross-module integration): a spec auditor and a
+# contract critic read the incumbent's result at the same time, one fixer
+# acts on both reports. Single-writer invariant kept: the two parallel slots
+# are read-only.
+planner_selectable: false
+when_to_use: >
+  Persistent failures that reference symbols from two or more modules, where
+  one reviewer would plausibly miss either the document side or the frozen
+  contract side.
+slots:
+  - id: spec_review
+    default_role: spec_auditor
+    allowed_roles:
+      - spec_auditor
+  - id: contract_review
+    default_role: contract_critic
+    allowed_roles:
+      - contract_critic
+  - id: improver
+    default_role: gate_repairer
+    allowed_roles:
+      - dependency_resolver
+      - edge_case_hardener
+      - gate_repairer
+      - implementer
+      - integrator
+edges:
+  - from: spec_review
+    to: improver
+  - from: contract_review
+    to: improver

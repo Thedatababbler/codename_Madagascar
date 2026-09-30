@@ -1,0 +1,32 @@
+template_id: continuation_double
+title: Two repair rounds on the incumbent's work, gated between them
+# Playbook v2 row E3-T1: repairer -> gate -> repairer. The second repairer is
+# wired behind the early gate, so a first round that already fixed everything
+# costs no second turn.
+planner_selectable: false
+when_to_use: >
+  Main-path behaviour failures that one repair round tends to leave partly
+  fixed: the gate after the first round names what is left, the second round
+  acts on that.
+slots:
+  - id: improver
+    default_role: gate_repairer
+    allowed_roles:
+      - dependency_resolver
+      - edge_case_hardener
+      - gate_repairer
+      - implementer
+      - integrator
+  - id: second_improver
+    default_role: gate_repairer
+    allowed_roles:
+      - dependency_resolver
+      - edge_case_hardener
+      - gate_repairer
+      - implementer
+      - integrator
+    runs_if_gate_failed: true
+edges:
+  - from: improver
+    to: second_improver
+early_gate_after: improver

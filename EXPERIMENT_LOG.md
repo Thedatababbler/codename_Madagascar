@@ -3781,3 +3781,48 @@ Tests: `tests/unit/control/test_routing_and_error_classes.py` (6): one
 sample per class, marker override, mixing rule, the three inherited kinds,
 suite_suspect / environment, routed cases leave the repair list and
 regressions join it. Full unit suite green.
+
+## EXP-20260930-03 -- self-evolving milestone search, stage 3: playbook table v2 and the ledger (branch `rsi`)
+
+**Status:** implementation record; no paid run yet.
+
+- `control/fast_loop/playbook_v2.py`: `PlaybookRow` (§3.1), the 25 rows of
+  §3.2-3.3 with their initial states (7 active: U-N1, U-B1, E1-B2, E2-R1,
+  E3-T1, E7-T1, E9-T1) plus the four `pb_solo_*` legacy rows; published as
+  `configs/playbook_v2/repair.yaml` (version v1) and loaded from there;
+  S-row texts in `configs/playbook_v2/instructions/<row>.md` (8 files);
+  preconditions (high_variance, focus_files_min, has_readonly_role,
+  lacks_role, writers_min, writer_hit_cap, gate_failed, stuck,
+  blamed_before_repairer); the composition rule (a read-only role already in
+  the shape becomes a swap-angle variant `<row>~swap`, or the row is skipped
+  when every angle is present); selection (§3.7: class rows + universal rows,
+  filtered by precondition / composition / already tried, U-N1 first under
+  high variance, active rows by ranking, a trial slot with probability
+  `trial.prob` under the global concurrency cap, seeded so a run replays);
+  the state machine (§3.4); `to_playbook` maps each row onto the existing
+  binding machinery.
+- Rows run on the incumbent through four new non-selectable templates:
+  `continuation_reviewed` (reviewer -> improver, R rows), `continuation_double`
+  (improver -> gate -> second improver, E3-T1), `continuation_audited`
+  (spec_review || contract_review -> improver, E7-T1), `continuation_chain`
+  (first writer -> improver, E1-T1). S and B rows ride on `continuation`
+  (plan-layer rows now carry budget deltas onto the recompiled graph). E9-T1
+  is the one row not from the incumbent: it recompiles the milestone in a
+  first-pass shape not yet tried (gate_then_repair / review_then_fix).
+- Controller: after R0 the row slots are filled from the v2 table
+  (`_v2_row_candidates`), filtered rows and their reasons go to the notes,
+  candidates carry `v2_row` / `v2_row_state`; the legacy quality table is no
+  longer consulted for rows when evolution is on.
+- `control/evolution/ledger.py` (§5): candidate records (per-case results,
+  persistent / flaky / stable-pass sets, fixed / regressed / net fix, the
+  pairing with R0 and `delta_vs_R0`, cost, `workspace_ref`, the row and its
+  state) and milestone records, appended under
+  `outputs/evolution/ledger/<playbook_version>/`; the split comes from
+  `configs/datasets/evolution_split.yaml`; written once when a search ends
+  (`FastLoopController.run` wraps `_run_search`).
+
+Tests: `tests/unit/control/test_playbook_v2.py` (8): table vs spec and yaml
+round trip, every row maps onto an existing template and role, composition
+rule, E9-T1 not from the incumbent and running out of shapes, selection
+filters and records reasons, trial probability and global cap (seeded),
+state machine, ledger pairing and workspace_ref. Full unit suite green.
