@@ -246,6 +246,26 @@ def load_repair_table(path: Path | None = None) -> tuple[PlaybookRow, ...]:
     return tuple(PlaybookRow.from_dict(d) for d in (data.get("rows") or []))
 
 
+RANKING_PATH = V2_DIR / "ranking.json"
+
+
+def load_ranking(path: Path | None = None) -> dict[str, dict[str, float]] | None:
+    """The published per-class row ranking (design cycle §9.2 step 1), or None before the first cycle."""
+    import json
+
+    p = Path(path) if path else RANKING_PATH
+    if not p.is_file():
+        return None
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except ValueError:
+        return None
+    scores = data.get("scores") if isinstance(data, dict) and "scores" in data else data
+    if not isinstance(scores, dict):
+        return None
+    return {str(c): {str(r): float(v) for r, v in (rows or {}).items()} for c, rows in scores.items()}
+
+
 def table_version(path: Path | None = None) -> str:
     p = Path(path) if path else REPAIR_TABLE_PATH
     if not p.is_file():
@@ -505,7 +525,7 @@ def transition(row: PlaybookRow, event: str) -> PlaybookRow:
 
 __all__ = [
     "BudgetDelta", "E9_ALTERNATIVES", "INSTRUCTIONS_DIR", "MERGED_INTO_R0", "PlaybookRow", "Precondition",
-    "REPAIR_TABLE_PATH", "RowFacts", "Selection", "SlotEdit", "compose", "replace_row_state", "default_legacy_rows",
-    "default_repair_rows", "instruction_text", "load_repair_table", "precondition_holds", "save_repair_table",
+    "RANKING_PATH", "REPAIR_TABLE_PATH", "RowFacts", "Selection", "SlotEdit", "compose", "replace_row_state", "default_legacy_rows",
+    "default_repair_rows", "instruction_text", "load_ranking", "load_repair_table", "precondition_holds", "save_repair_table",
     "select_rows", "table_version", "to_playbook", "transition",
 ]

@@ -16,13 +16,11 @@ verdict (§7.4). The launcher is the only part that spends a model call.
 
 from __future__ import annotations
 
-import json
 import os
 import subprocess
 import sys
-from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -69,7 +67,7 @@ def plan_row_reruns(
             if len(jobs) >= max_runs:
                 skipped[e.entry_id] = "max_runs_per_cycle"
                 break
-            stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+            stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
             jobs.append(RerunJob(
                 entry_id=e.entry_id, task_id=e.task_id, milestone_id=e.milestone_id, kind="row", variant=row_id,
                 control="R0", rep=rep, run_id=f"rerun-{row_id.replace('~', '_')}-{stamp}-{e.task_id}-{e.milestone_id}-r{rep}"[:120],
@@ -97,7 +95,7 @@ def plan_f_reruns(
                 if len(jobs) >= max_runs:
                     skipped[e.entry_id] = "max_runs_per_cycle"
                     break
-                stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+                stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
                 jobs.append(RerunJob(
                     entry_id=e.entry_id, task_id=e.task_id, milestone_id=e.milestone_id, kind="f_entry", variant=version,
                     control="F0", rep=rep, run_id=f"rerun-{version}-{stamp}-{e.task_id}-{e.milestone_id}-r{rep}"[:120],

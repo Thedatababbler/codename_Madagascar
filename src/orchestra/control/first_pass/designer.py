@@ -248,7 +248,8 @@ def apply_entry(m: MilestoneDraft, entry: FEntry, *, features: Mapping[str, Any]
         if kind == "add_reviewer":
             m, note = add_reviewer(m, str(action.get("role")))
         elif kind == "instruction":
-            m, note = add_instruction(m, _instruction(str(action.get("file")), instructions_dir))
+            text = str(action.get("text") or "").strip() or _instruction(str(action.get("file") or ""), instructions_dir)
+            m, note = add_instruction(m, text)
         elif kind == "template":
             m, note = set_template(m, str(action.get("template_id")))
         elif kind == "budget":

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import re
 from pathlib import Path
 
 from orchestra.control.evolution.bank import AdmissionPolicy, Bank, BankEntry, suite_version_of
@@ -154,13 +152,17 @@ def test_cli_rerun_helpers_overlay_inherit_and_restrict(tmp_path) -> None:
 
     canon = tmp_path / "canon"
     canon.mkdir()
-    git = lambda *a: subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", *a], cwd=canon, check=True, capture_output=True, text=True)
+    def git(*a):
+        return subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", *a], cwd=canon, check=True, capture_output=True, text=True)
+
     git("init", "-q")
     (canon / "pkg.py").write_text("VERSION = 1\n")
-    git("add", "-A"); git("commit", "-q", "-m", "one")
+    git("add", "-A")
+    git("commit", "-q", "-m", "one")
     rev = git("rev-parse", "HEAD").stdout.strip()
     (canon / "pkg.py").write_text("VERSION = 2\n")
-    git("add", "-A"); git("commit", "-q", "-m", "two")
+    git("add", "-A")
+    git("commit", "-q", "-m", "two")
 
     ws = tmp_path / "ws"
     ws.mkdir()

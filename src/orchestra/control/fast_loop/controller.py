@@ -53,6 +53,7 @@ from orchestra.control.fast_loop.plan_candidates import register_new_contracts
 from orchestra.control.fast_loop.playbook_generator import PlaybookCandidateGenerator
 from orchestra.control.fast_loop.playbook_v2 import (
     RowFacts,
+    load_ranking,
     load_repair_table,
     replace_row_state,
     select_rows,
@@ -748,7 +749,7 @@ class FastLoopController:
             selection = select_rows(
                 table, classes=list(error_classes), facts=facts, row_slots=max(1, row_slots),
                 trial_prob=self.evolution.trial_prob, max_trial_concurrent=2, trials_running=0,
-                ranking=None, seed=(state.task_id, sub.spec.subtask_id, str(len(fl_state.candidates))),
+                ranking=load_ranking(), seed=(state.task_id, sub.spec.subtask_id, str(len(fl_state.candidates))),
             )
         for rid, why in selection.filtered.items():
             fl_state.notes.append(f"v2 filtered {rid}: {why}")

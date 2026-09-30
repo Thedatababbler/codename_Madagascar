@@ -3910,3 +3910,68 @@ never admitted, success sampling and supersession, stale exclusion and
 invalidation, re-run plans and forcing, paired statistics and the F
 verdict, tripwire semantics, sealed-file readers, suite hashing, CLI
 helpers (overlay / inherit / restrict). Full unit suite green.
+
+## EXP-20260930-06 -- self-evolving milestone search, stage 6: design cycle, evolver, memory replay, versions (branch `rsi`)
+
+**Status:** implementation record; no paid run yet. Report-only cycle exercised on the empty ledger.
+
+- `control/evolution/memory_replay.py` (§8): class distribution with merge
+  advice (E6 -> E3, E8 -> E1) below `replay.min_class_samples`; shrinkage
+  score `n/(n+n0)*mean(delta_vs_R0)` from row x class pairs (training
+  records only, online + re-run alike, swap-angle suffix stripped);
+  ranking simulation on the historical searches where the row the new
+  rule picks actually ran, "insufficient evidence" below a 30% comparable
+  share; first-pass calibration (target-class rate on triggered vs
+  untriggered milestones, reported apart from the preventive effect);
+  ledger rebuild as an interface with an injected scorer (§8.4).
+- `control/evolution/validators.py` (§9.4 constraints): roles from
+  `configs/roles`, templates from `configs/subgraph_templates`, action and
+  class vocabularies, read-only roles never writers, S rows need text, T
+  rows need a template, F entries need `source_rows` and a trigger over
+  the known features, and instruction/intent text may not contain
+  training identifiers (task, milestone, module stems, case names, with
+  and without the `test_` prefix).
+- `control/evolution/evolver.py`: prompt from ranking + statistics +
+  unresolved pool (persistent failures no tried row fixed, clustered by
+  class) + row x milestone-kind combinations + both tables + role pool +
+  templates + invariants; one call at temperature 0 through the planner's
+  route (chat completions on the same proxy, `ADAMAS_EVOLVER_MODEL` /
+  `CODEX_MODEL`); prompt, reply and verdicts written beside the cycle;
+  accepted items tagged `origin: evolver:<cycle_id>`, state candidate,
+  capped at `evolver.max_proposals`.
+- `control/evolution/design_cycle.py` (§9): trigger (batch of training
+  tasks or bank buffer); statistics update; row transitions per §9.2
+  (trial -> active needs >= m pairs, score > 0 and mean regressions <= R0's;
+  trial -> candidate on the first failed trial, retired on the second;
+  active -> candidate when the last 2m pairs score < 0; candidates fill
+  free trial slots per class, newest evolver origin first, within
+  `trial.max_concurrent`); memory replay when the ranking changed; re-run
+  plans for trial rows short of m pairs and trial F entries short of m_f
+  checkpoints (launched only with `--launch-reruns`); F verdicts per §7.4
+  from paired F0/F runs; tripwire on this cycle's promotions with the
+  sealed file only (fired -> back to candidate + a `suite_suspect` routing
+  record); publish = immutable `configs/playbook_v2/versions/v<N>/`
+  {repair.yaml, first_pass.yaml, ranking.json, changes.json}, live tables
+  and `current` pointer updated; `rollback(vK)` republishes vK as a new
+  version with the rows/entries promoted since vK demoted to candidate;
+  `batch_regressed` for the §9.3 trigger. The controller now reads the
+  published `ranking.json` for row ordering.
+- `scripts/run_design_cycle.py`: report-only unless `--publish`; `--force`
+  to bypass the trigger; `--rollback vN`. Dry run on the empty ledger:
+  report + proposed tables under `outputs/evolution/cycles/`, nothing
+  under `configs/playbook_v2` changed.
+
+Tests: `tests/unit/control/test_design_cycle.py` (9): trial boundaries
+(m-1 not judged, m with regressions above R0 fails, second failure
+retires, active demotion), candidates into trial slots newest first,
+shrinkage/replay evidence rule and test-split exclusion, evolver rejects
+training identifiers / unknown role / unknown template / writer as
+reviewer / missing source_rows / duplicate ids, unresolved pool, publish
+immutability + rollback demotion, report-only vs publish cycle with the
+tripwire reverting a promotion, F entry pairing, trigger and batch
+regression. Full unit suite green.
+
+Deviation to note: the evolver uses the chat-completions route of the
+milestone planner rather than `backends/codex_sdk.py`, which needs a git
+workspace and a sandboxed agent thread; temperature 0 and on-disk prompts
+are kept.
