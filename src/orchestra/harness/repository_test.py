@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 
 from orchestra.harness.env_redaction import build_harness_env
-from orchestra.harness.progress import parse_progress
+from orchestra.harness.progress import behaviour_failed_count, parse_progress
 from orchestra.ir.artifacts import ArtifactEnvelope, create_artifact
 from orchestra.ir.nodes import HarnessNodeSpec
 from orchestra.runtime.backend import RunContext
@@ -151,6 +151,7 @@ class RepositoryTestHarnessExecutor:
             score=score,
             stages=stages,
             furthest_stage=furthest,
+            behaviour_failed_count=behaviour_failed_count(stages),
         )
         output_slot = next(iter(node.output_slots))
         artifact = create_artifact(

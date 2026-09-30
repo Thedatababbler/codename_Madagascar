@@ -100,6 +100,7 @@ def build_incumbent_record(
     furthest_stage: str = "",
     cost: CostRecord | None = None,
     latency_ms: int | None = None,
+    behaviour_passed: list[str] | None = None,
 ) -> CandidateRecord:
     """The first-pass result, expressed as a candidate so it can win.
 
@@ -127,6 +128,7 @@ def build_incumbent_record(
         # outside it: a search that cannot compare its own starting point against the
         # alternatives on the same terms cannot conclude that none of them is better.
         behaviour_failures=list(behaviour_failures or []),
+        behaviour_passed=list(behaviour_passed or []),
         behaviour_total=behaviour_total,
         furthest_stage=furthest_stage,
         cost=cost or CostRecord(),

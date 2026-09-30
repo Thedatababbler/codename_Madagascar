@@ -362,6 +362,9 @@ class CandidateRecord(BaseModel):
     #: candidates of one search: all candidates in a search are graded against one
     #: frozen suite, and the tests they all pass or all fail contribute a constant.
     behaviour_failures: list[str] = Field(default_factory=list)
+    #: Which behavioural tests this candidate passed (empty on records made
+    #: before 2026-09-30, which carried failures only).
+    behaviour_passed: list[str] = Field(default_factory=list)
     behaviour_total: int | None = None
     #: Quality as the selector compared it, once the constant tests were removed.
     #: Derived from the pool, so it is meaningful only within its own search and is

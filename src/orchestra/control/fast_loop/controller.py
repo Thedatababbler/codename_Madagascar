@@ -18,6 +18,7 @@ from orchestra.backends.catalog import capabilities_for
 from orchestra.cli.validate_graph import build_compiler
 from orchestra.control.backend_usage import append_usage_records
 from orchestra.control.failure import classify_subtask_outcome
+from orchestra.control.fast_loop.committed_cases import write_committed_cases
 from orchestra.control.fast_loop.budget import (
     FastLoopBudgetTracker,
     add_costs,
@@ -77,6 +78,7 @@ from orchestra.control.task_state import (
 from orchestra.harness.command_runner import run_authoritative_harness_command
 from orchestra.harness.progress import (
     behaviour_failures,
+    behaviour_passed,
     behaviour_score,
     behaviour_total,
     best_harness_progress,
@@ -1542,6 +1544,7 @@ class FastLoopController:
         )
         record.behaviour_score = behaviour_score(stages)
         record.behaviour_failures = behaviour_failures(stages)
+        record.behaviour_passed = behaviour_passed(stages)
         record.behaviour_total = behaviour_total(stages)
         if status is SubtaskStatus.COMMITTED and record.harness_score is None:
             # The graph finished but no gate ran for this candidate (seen on
@@ -1997,6 +2000,13 @@ class FastLoopController:
         fl_state.selected_candidate_id = winner.candidate_id
         fl_state.selected_execution_cost = winner.cost
         winner.status = CandidateStatus.COMMITTED
+        write_committed_cases(
+            nr.frozen_spec_dir(base_graph),
+            passed=list(winner.behaviour_passed),
+            failed=list(winner.behaviour_failures),
+            source=winner.candidate_id,
+            milestone_id=subtask_id,
+        )
         for cand in fl_state.candidates:
             if cand.candidate_id == winner.candidate_id:
                 continue

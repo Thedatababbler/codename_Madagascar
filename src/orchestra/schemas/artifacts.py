@@ -145,6 +145,9 @@ class HarnessStageResult(BaseModel):
     #: either nothing failed or the stage does not report identities, so it cannot
     #: be read as "all tests passed" -- only as "no failure is named here".
     failed_tests: list[str] = Field(default_factory=list)
+    #: Which tests passed, for the same stages. Together with ``failed_tests``
+    #: this is the per-case record the unified acceptance rule reads.
+    passed_tests: list[str] = Field(default_factory=list)
 
     @property
     def ratio(self) -> float:
@@ -173,6 +176,11 @@ class RepositoryHarnessResultArtifact(VersionedArtifact):
     score: float | None = None
     stages: list[HarnessStageResult] = Field(default_factory=list)
     furthest_stage: str = ""
+    #: How many behavioural cases failed, or None when no behavioural stage
+    #: ran. A top-level field because an edge condition can only read one
+    #: field: the repair slot is gated on this being above zero rather than on
+    #: ``passed`` being false (adamas_milestone_self_evolution_prompt.md §2.4).
+    behaviour_failed_count: int | None = None
 
 
 class ArtifactProvenance(VersionedArtifact):

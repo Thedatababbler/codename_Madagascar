@@ -488,6 +488,9 @@ def test_behaviour_is_reported_even_when_a_structural_stage_failed(
     assert contract_stage is not None
     assert contract_stage["passed_units"] < contract_stage["total_units"]
     spec = Harness.stage(report, "spec_tests")
+    # Since 2026-09-30 the stage also names the cases that passed (the
+    # unified acceptance rule reads them); the counts are unchanged.
+    assert len(spec.pop("passed_tests")) == 4
     assert spec == {
         "stage": "spec_tests",
         "passed_units": 4,
@@ -684,7 +687,7 @@ def test_a_suite_that_imports_itself_survives_being_frozen(tmp_path: Path) -> No
     repo.mkdir()
 
     root = mod._spec_import_root(str(frozen))
-    passed, collected, ran, _tail, _failed = mod._run_pytest(
+    passed, collected, ran, _tail, _failed, _passed_ids = mod._run_pytest(
         str(repo), str(frozen), timeout=120, import_root=root
     )
 

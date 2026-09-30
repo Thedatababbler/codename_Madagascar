@@ -207,7 +207,7 @@ class Progress:
         self.spec_tests = False
         self.stages = [e for e in self.stages if e["stage"] != "spec_tests"]
 
-    def record(self, stage, passed_units, total_units, failed_tests=None):
+    def record(self, stage, passed_units, total_units, failed_tests=None, passed_tests=None):
         if stage not in self.weights:
             return
         entry = {
@@ -215,6 +215,13 @@ class Progress:
             "passed_units": int(passed_units),
             "total_units": int(total_units),
         }
+        # The passing ids too (2026-09-30): the unified acceptance rule needs
+        # the set of cases that pass in the incumbent and every probe -- the
+        # "stable pass" set a candidate must not break -- and a failed list
+        # alone cannot give it (a case absent from it may have passed or may
+        # never have been collected).
+        if passed_tests:
+            entry["passed_tests"] = sorted({str(t) for t in passed_tests})
         # Which tests failed, not just how many. A tuning loop comparing designs
         # against one frozen suite needs to know which tests *moved*: a test every
         # candidate fails and a test every candidate passes both carry a constant,
@@ -580,7 +587,7 @@ def _collect_ids(cwd, target, env, *, timeout=180):
 
 
 def _run_pytest(cwd, target, *, timeout, import_root=None):
-    """Run one suite: (passed, total, ran, tail, failed_ids). Never raises.
+    """Run one suite: (passed, total, ran, tail, failed_ids, passed_ids). Never raises.
 
     A suite that runs out of the stage budget used to come back as
     (0, 0, 0, "timed out", set()): no names, so the grade read "N not
@@ -652,7 +659,7 @@ def _run_pytest(cwd, target, *, timeout, import_root=None):
             head + ": " + str(len(seen_pass) + len(seen_fail)) + "/" + str(len(known))
             + " cases finished; every unfinished case is counted as failed (a hang is a failure)\\n" + out[-1500:]
         )
-        return len(seen_pass), len(known), len(seen_pass) + len(seen_fail), tail, failed
+        return len(seen_pass), len(known), len(seen_pass) + len(seen_fail), tail, failed, seen_pass
 
     return (
         passed,
@@ -660,6 +667,7 @@ def _run_pytest(cwd, target, *, timeout, import_root=None):
         ran,
         (out or "")[-2000:],
         _failed_test_ids(out),
+        set(re.findall(r"^(\\S+::\\S+) PASSED", out, re.M)),
     )
 
 
@@ -728,7 +736,7 @@ def _vacuous_count(frozen_dir, pristine_repo, timeout):
         )
     except OSError:
         return 0
-    passed, total, _ran, _tail, _failed = _run_pytest(
+    passed, total, _ran, _tail, _failed, _passed_ids = _run_pytest(
         scratch, frozen, timeout=timeout, import_root=_spec_import_root(frozen)
     )
     shutil.rmtree(scratch, ignore_errors=True)
@@ -928,7 +936,7 @@ def main() -> int:
             vacuous = _vacuous_count(
                 spec_frozen, manifest.get("pristine_repo") or "", args.timeout
             )
-            passed, collected, ran, tail, failed = _run_pytest(
+            passed, collected, ran, tail, failed, passed_ids = _run_pytest(
                 root,
                 spec_frozen,
                 timeout=args.timeout,
@@ -944,7 +952,7 @@ def main() -> int:
                 progress.drop_spec_stage()
             else:
                 progress.record(
-                    "spec_tests", max(0, passed - vacuous), gradable, failed
+                    "spec_tests", max(0, passed - vacuous), gradable, failed, passed_ids
                 )
                 # Counts only. This stdout becomes the failure feedback attached
                 # to the next candidate's prompt, so printing the pytest tail

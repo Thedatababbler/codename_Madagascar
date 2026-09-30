@@ -105,6 +105,7 @@ def parse_progress(stdout: str) -> tuple[float | None, list[HarnessStageResult],
                 total_units=int(entry.get("total_units") or 0),
                 weight=float(entry.get("weight") or 0.0),
                 failed_tests=[str(t) for t in (entry.get("failed_tests") or [])],
+                passed_tests=[str(t) for t in (entry.get("passed_tests") or [])],
             )
             for entry in (payload.get("stages") or [])
         ]
@@ -171,7 +172,7 @@ def behaviour_score(stages: Any) -> float | None:
     stage = _behavioural_stage(stages)
     if stage is None:
         return None
-    _passed, total, _failed = stage
+    _passed, total, _failed, _passed_ids = stage
     # A stage that collected nothing measured nothing. Reporting 0/0 as 0.0 would
     # make an empty suite the worst possible design.
     if total <= 0:
@@ -197,22 +198,44 @@ def behaviour_total(stages: Any) -> int | None:
     return stage[1] if stage is not None else None
 
 
-def _behavioural_stage(stages: Any) -> tuple[int, int, list[str]] | None:
-    """``(passed, total, failed_ids)`` for the stage that measures behaviour."""
-    by_stage: dict[str, tuple[int, int, list[str]]] = {}
+def behaviour_passed(stages: Any) -> list[str]:
+    """Which tests the behavioural stage named as passing.
+
+    Empty when the harness predates per-case recording (2026-09-30) as much
+    as when nothing passed; callers that need the distinction check the
+    counts, exactly as for ``behaviour_failures``.
+    """
+    stage = _behavioural_stage(stages)
+    return list(stage[3]) if stage is not None else []
+
+
+def behaviour_failed_count(stages: Any) -> int | None:
+    """Failed behavioural cases: ``total - passed`` of the behavioural stage."""
+    stage = _behavioural_stage(stages)
+    if stage is None:
+        return None
+    passed, total, _failed, _passed_ids = stage
+    return max(0, total - passed)
+
+
+def _behavioural_stage(stages: Any) -> tuple[int, int, list[str], list[str]] | None:
+    """``(passed, total, failed_ids, passed_ids)`` for the stage that measures behaviour."""
+    by_stage: dict[str, tuple[int, int, list[str], list[str]]] = {}
     for entry in stages or []:
         if isinstance(entry, Mapping):
             name = str(entry.get("stage") or "")
             passed = int(entry.get("passed_units") or 0)
             total = int(entry.get("total_units") or 0)
             failed = [str(t) for t in (entry.get("failed_tests") or [])]
+            passed_ids = [str(t) for t in (entry.get("passed_tests") or [])]
         else:
             name = str(getattr(entry, "stage", "") or "")
             passed = int(getattr(entry, "passed_units", 0) or 0)
             total = int(getattr(entry, "total_units", 0) or 0)
             failed = [str(t) for t in (getattr(entry, "failed_tests", None) or [])]
+            passed_ids = [str(t) for t in (getattr(entry, "passed_tests", None) or [])]
         if name:
-            by_stage[name] = (passed, total, failed)
+            by_stage[name] = (passed, total, failed, passed_ids)
     for name in BEHAVIOUR_STAGES:
         if name in by_stage:
             return by_stage[name]

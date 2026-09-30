@@ -32,6 +32,7 @@ from orchestra.control.failure import classify_subtask_outcome
 from orchestra.control.fast_loop.controller import FastLoopController
 from orchestra.control.fast_loop.llm_diagnosis import DiagnosisConfig
 from orchestra.control.fast_loop.pareto import ParetoSelectionConfig
+from orchestra.control.fast_loop.committed_cases import write_committed_cases
 from orchestra.control.fast_loop.quality_trigger import (
     QualityTrigger,
     build_incumbent_record,
@@ -75,6 +76,7 @@ from orchestra.control.task_state import (
 from orchestra.decomposition.schemas import TaskPlan
 from orchestra.harness.progress import (
     behaviour_failures,
+    behaviour_passed,
     behaviour_score,
     behaviour_total,
     best_harness_progress,
@@ -1648,6 +1650,16 @@ class ReadySubtaskScheduler:
             sub.attempts[-1].error = None
             local_state.subtasks[subtask_id] = sub
             refusal = _suite_refusal(graph)
+            if refusal is None:
+                from orchestra.control.fast_loop.node_resample import frozen_spec_dir
+
+                write_committed_cases(
+                    frozen_spec_dir(graph),
+                    passed=behaviour_passed(harness_stages),
+                    failed=behaviour_failures(harness_stages),
+                    source="first_pass",
+                    milestone_id=subtask_id,
+                )
             if refusal is not None:
                 # custody refused the authored suite (see harness --take-custody):
                 # the gate passed on structure alone, so search anyway, with the
@@ -1678,6 +1690,7 @@ class ReadySubtaskScheduler:
                 harness_score=harness_score,
                 behaviour_score=milestone_behaviour,
                 behaviour_failures=behaviour_failures(harness_stages),
+                behaviour_passed=behaviour_passed(harness_stages),
                 behaviour_total=behaviour_total(harness_stages),
                 furthest_stage=furthest_stage or "",
                 cost=initial_cost,
