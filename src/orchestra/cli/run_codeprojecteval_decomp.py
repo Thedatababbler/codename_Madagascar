@@ -174,6 +174,7 @@ def build_cpe_task_plan(
     contracts_dir: str = "configs/contracts",
     harness_timeout: int = DEFAULT_HARNESS_TIMEOUT,
     plan_file: Path | None = None,
+    tuning_evolution: EvolutionConfig | None = None,
 ) -> tuple[TaskPlan, str]:
     """Plan milestones and bind each to a real-test acceptance gate.
 
@@ -240,6 +241,16 @@ def build_cpe_task_plan(
                 for milestone in draft.milestones
             ],
         )
+    if tuning_evolution is not None and tuning_evolution.enabled and not blind:
+        # First-pass designer (§4): preventive design layered on the planner's
+        # choice, recorded beside the run, never written back to the plan file.
+        from orchestra.control.first_pass.designer import design_plan
+
+        docs_text = "\n\n".join(text for _name, text in cpe_brief(task).documents)
+        draft, decisions = design_plan(
+            draft, docs_text=docs_text, thresholds=tuning_evolution.thr, seed=task_id,
+        )
+        _write_json(plan_path.parent / "first_pass_decision.json", decisions)
     _write_json(plan_path.parent / "milestone_plan_draft.json", draft.to_dict())
 
     def bind(milestone: Any) -> list[str]:
@@ -541,6 +552,7 @@ async def _run_one(
         contracts_dir=contracts_dir,
         harness_timeout=harness_timeout,
         plan_file=plan_file,
+        tuning_evolution=tuning.evolution,
     )
     problem = _build_problem(
         task_id,

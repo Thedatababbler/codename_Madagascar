@@ -772,11 +772,22 @@ class FastLoopController:
         if fl_state is None or fl_state.routing.get("ledger_written"):
             return
         sub = state.subtasks.get(subtask_id)
+        run_dir = str(getattr(context, "run_dir", "") or "")
+        decision: dict = {}
+        try:
+            path = Path(run_dir) / "first_pass_decision.json"
+            if run_dir and path.is_file():
+                decision = next((d for d in json.loads(path.read_text(encoding="utf-8")) if d.get("milestone_id") == subtask_id), {})
+        except (OSError, ValueError):
+            decision = {}
         try:
             write_search_ledger(
                 fl_state, task_id=state.task_id, milestone_id=subtask_id, playbook_version=table_version(),
-                run_dir=str(getattr(context, "run_dir", "") or ""),
+                run_dir=run_dir,
                 final_status=str(getattr(getattr(sub, "status", None), "value", "") or ""),
+                features={**(decision.get("features") or {}), "predicted_error_classes": decision.get("predicted_error_classes") or []},
+                f_entries_applied=list(decision.get("applied") or []),
+                assignment=str(decision.get("assignment") or "deterministic"),
             )
             fl_state.routing["ledger_written"] = True
         except Exception as exc:  # noqa: BLE001 -- the ledger never fails a search

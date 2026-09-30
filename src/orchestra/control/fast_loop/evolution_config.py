@@ -49,6 +49,12 @@ class EvolutionConfig:
     #: The repair slot runs when the early gate reports failures ("failures")
     #: or only when it fails outright ("gate", the historical behaviour).
     repair_trigger: str = "failures"
+    #: The `thr` block: first-pass triggers and row preconditions (§10).
+    thresholds: tuple[tuple[str, float], ...] = ()
+
+    @property
+    def thr(self) -> dict[str, float]:
+        return dict(self.thresholds)
 
     @classmethod
     def from_config(cls, config: Mapping[str, Any] | None) -> EvolutionConfig:
@@ -80,6 +86,7 @@ class EvolutionConfig:
             unified_acceptance=bool(acceptance.get("unified", True)),
             prior_suite_check=bool(acceptance.get("prior_suite_check", True)),
             repair_trigger=trigger,
+            thresholds=tuple((str(k), float(v)) for k, v in dict(cfg.get("thr") or {}).items()),
         )
 
     @property

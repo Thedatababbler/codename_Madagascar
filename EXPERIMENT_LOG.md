@@ -3826,3 +3826,37 @@ round trip, every row maps onto an existing template and role, composition
 rule, E9-T1 not from the incumbent and running out of shapes, selection
 filters and records reasons, trial probability and global cap (seeded),
 state machine, ledger pairing and workspace_ref. Full unit suite green.
+
+## EXP-20260930-04 -- self-evolving milestone search, stage 4: the first-pass designer (branch `rsi`)
+
+**Status:** implementation record; no paid run yet.
+
+- `control/first_pass/features.py` (§4.2): kind (foundation / middle /
+  integration), focus files, public symbols, documented exceptions (with
+  and without the Error/Exception suffix: "raises X", "X is raised"), state
+  transitions, public classes, dependency depth; computed from the
+  milestone's own text plus the document paragraphs that mention a focus
+  file stem. Deterministic, no model.
+- `control/first_pass/designer.py` (§4.3-4.6): the compatibility table
+  (`configs/playbook_v2/first_pass.yaml`, F0-F6 with the spec's states: F0
+  and F4 active, F1 trial, the rest candidate), entries as triggers plus
+  actions (add_reviewer -> review_then_fix with that angle; instruction
+  appended to the writer's mandate from `instructions/F2|F3|F6.md`;
+  template parallel_audit / chain; budget on the writers); one entry per
+  milestone unless a validated combination entry exists (§4.5); trial
+  entries drawn with probability 0.5, seeded on task + milestone (§4.6);
+  the interface rule (the shape must end in a writer or accept a repairer)
+  rejects an entry after application; F0 leaves the draft byte-identical.
+- CLI: runs between planning and compilation when evolution is on; writes
+  `first_pass_decision.json` (features, matched, applied, assignment,
+  predicted classes, template before/after); the plan file is untouched.
+  The ledger joins the decision into each candidate record.
+- Dry run on tinydb's 4-milestone plan: features computed; F1 drawn on one
+  foundation milestone (test_first -> review_then_fix with contract_critic),
+  F4 a no-op where the planner already chose parallel_audit, candidate
+  entries matched but not applied.
+
+Tests: `tests/unit/control/test_first_pass_designer.py` (6): features,
+triggers per entry, F0 identity, applied shapes valid against the templates,
+combination not applied until validated / seeded trial draw, interface
+rule. Full unit suite green.
