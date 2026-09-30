@@ -59,6 +59,7 @@ from orchestra.control.fast_loop.objectives import (
     milestone_objectives,
 )
 from orchestra.control.fast_loop.pareto import ParetoSelectionConfig
+from orchestra.control.fast_loop.evolution_config import REPAIR_TRIGGER_ENV, EvolutionConfig
 from orchestra.control.fast_loop.quality_trigger import QualityTrigger
 from orchestra.control.fast_loop.schemas import FastLoopBudget
 from orchestra.control.fast_loop.selector import DeterministicCandidateSelector
@@ -347,6 +348,7 @@ class TuningConfig:
     diagnosis: DiagnosisConfig
     pareto: ParetoSelectionConfig
     quality_trigger: QualityTrigger
+    evolution: EvolutionConfig
 
 
 def read_tuning_config(config: dict[str, Any]) -> TuningConfig:
@@ -396,6 +398,9 @@ def read_tuning_config(config: dict[str, Any]) -> TuningConfig:
         diagnosis=DiagnosisConfig.from_mapping(tuning.get("diagnosis")),
         pareto=ParetoSelectionConfig.from_mapping(tuning.get("pareto")),
         quality_trigger=QualityTrigger.from_mapping(tuning.get("quality_trigger")),
+        # Top-level blocks (evolution / probes / budget / acceptance), off unless
+        # evolution.enabled is set.
+        evolution=EvolutionConfig.from_config(config),
     )
 
 
@@ -409,7 +414,9 @@ def _agent_count(graph_template: str) -> int:
     return max(count, 1)
 
 
-def _fast_loop_budget(candidates: int, plan: TaskPlan) -> FastLoopBudget:
+def _fast_loop_budget(
+    candidates: int, plan: TaskPlan, evolution: EvolutionConfig | None = None
+) -> FastLoopBudget:
     """Size the loop's ceilings off the plan, not off constants.
 
     Every ceiling here is capable of truncating a tuning run silently, and the
@@ -426,6 +433,19 @@ def _fast_loop_budget(candidates: int, plan: TaskPlan) -> FastLoopBudget:
     slowest = max(
         (float(sub.budget.timeout_seconds or 0) for sub in plan.subtasks), default=0.0
     )
+    evo = evolution or EvolutionConfig()
+    if evo.enabled and evo.probes_separate:
+        # Probes are budgeted apart from the row slots (§2.1): the slots are
+        # R0 + the rows, and the call / clock ceilings make room for the probes.
+        rows = 1 + evo.row_slots
+        probes = evo.max_probes
+        return FastLoopBudget(
+            max_candidates=rows,
+            max_total_backend_calls=(rows + probes) * widest + widest,
+            max_wall_time_seconds=int(max(slowest * (rows + probes + 1), 600.0)),
+            max_attempts_per_subtask=rows + 1,
+            probes_separate=True,
+        )
     # +1 attempt: the original run, then one retry per candidate.
     return FastLoopBudget(
         max_candidates=candidates,
@@ -495,6 +515,10 @@ async def _run_one(
     contracts_dir = experiment.get("contracts_dir", "configs/contracts")
     harness_timeout = int(experiment.get("harness_timeout_seconds", DEFAULT_HARNESS_TIMEOUT))
     tuning = read_tuning_config(config)
+    if tuning.evolution.enabled:
+        # The subgraph builder reads the repair slot's trigger from the
+        # environment (it is called from three places); one setting per run.
+        os.environ[REPAIR_TRIGGER_ENV] = tuning.evolution.repair_trigger
     fast_loop_candidates = tuning.candidates
     tuning_weights = tuning.weights
 
@@ -669,7 +693,7 @@ async def _run_one(
     # Off by default: the A/B arms measure what decomposition buys, and a repair
     # loop that fires in one arm and not the other would be measured as part of
     # the arm. Turn it on deliberately, for tuning runs.
-    fast_loop_budget = _fast_loop_budget(fast_loop_candidates, plan)
+    fast_loop_budget = _fast_loop_budget(fast_loop_candidates, plan, tuning.evolution)
     scheduler = ReadySubtaskScheduler(
         runtime=runtime,
         artifact_store=artifact_store,
@@ -700,6 +724,7 @@ async def _run_one(
         refuse_zero_commit_over_base=tuning.refuse_zero_commit_over_base,
         diagnosis_config=tuning.diagnosis,
         quality_trigger=tuning.quality_trigger,
+        evolution=tuning.evolution,
         slow_loop=SlowLoopController(
             config=slow_loop_config, checkpoint_store=task_checkpoint_store
         ),

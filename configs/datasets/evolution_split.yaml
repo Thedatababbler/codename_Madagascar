@@ -1,0 +1,37 @@
+# Fixed train / test split for the self-evolving loop (§0.3 item 2, §10).
+# Test-task checkpoints never enter the bank; nothing is replayed or re-run on
+# them. Roughly 2:1 within each benchmark, with every task family represented
+# on both sides (a web framework, a crypto library, a data structure, a parser).
+train:
+  codeprojecteval:
+    - bplustree
+    - cookiecutter
+    - csvs-to-sqlite
+    - deprecated
+    - djangorestframework-simplejwt
+    - flask
+    - imapclient
+    - python-hl7
+    - rsa
+    - tinydb
+    - voluptuous
+    - zxcvbn
+  nl2repo:
+    - nl2_aiofiles
+    - nl2_ftfy
+    - nl2_python-jose
+    - nl2_python-pathspec
+    - nl2_tablib
+    - nl2_tenacity
+test:
+  codeprojecteval:
+    - parsel
+    - portalocker
+    - pyjwt
+    - simpy
+    - trailscraper
+    - xmnlp
+  nl2repo:
+    - nl2_emoji
+    - nl2_python-dotenv
+    - nl2_voluptuous

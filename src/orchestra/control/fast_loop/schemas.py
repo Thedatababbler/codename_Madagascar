@@ -221,6 +221,9 @@ class FastLoopBudget(BaseModel):
     max_total_tokens: int | None = None
     max_wall_time_seconds: int = 600
     max_attempts_per_subtask: int = 4
+    #: Probe records (metadata ``probe``) do not occupy candidate slots or
+    #: attempts when true; their calls, cost and tokens still count.
+    probes_separate: bool = False
 
 
 class BackendModelPool(BaseModel):
@@ -432,6 +435,9 @@ class FastLoopState(BaseModel):
     initial_execution_cost: CostRecord = Field(default_factory=CostRecord)
     selected_execution_cost: CostRecord = Field(default_factory=CostRecord)
     infra_retries_used: int = 0
+    #: Case keys the routing diagnosis marked ``suite_suspect``; the unified
+    #: acceptance rule leaves them out of its fixed / regressed counts.
+    suite_suspect: list[str] = Field(default_factory=list)
     started_monotonic: float | None = None
     # Persistence search only: the probe samples and their failure intersection.
     persistence: dict[str, Any] | None = None

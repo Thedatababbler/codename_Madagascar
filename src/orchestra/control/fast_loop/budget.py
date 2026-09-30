@@ -34,6 +34,11 @@ def spent_from_state(state: FastLoopState) -> CostRecord:
     return add_costs(sum_candidate_costs(state.candidates), state.control_plane_cost)
 
 
+def _probe_outside_slots(budget: FastLoopBudget, cand: CandidateRecord) -> bool:
+    """A probe that the budget counts apart from the candidate slots."""
+    return bool(budget.probes_separate and cand.metadata.get("probe"))
+
+
 def remaining_budget(
     budget: FastLoopBudget,
     state: FastLoopState,
@@ -42,9 +47,12 @@ def remaining_budget(
     launched = [
         c
         for c in state.candidates
-        if c.status
-        not in {CandidateStatus.REJECTED, CandidateStatus.PENDING, CandidateStatus.DISCARDED}
-        or c.cost.backend_calls > 0
+        if (
+            c.status
+            not in {CandidateStatus.REJECTED, CandidateStatus.PENDING, CandidateStatus.DISCARDED}
+            or c.cost.backend_calls > 0
+        )
+        and not _probe_outside_slots(budget, c)
     ]
     return {
         "backend_calls": budget.max_total_backend_calls - spent.backend_calls,
@@ -101,6 +109,8 @@ class FastLoopBudgetTracker:
             # two, the third rejected as "max_attempts_per_subtask exhausted".
             if cand.metadata.get("incumbent"):
                 continue
+            if _probe_outside_slots(self.budget, cand):
+                continue
             used += 1
         return used
 
@@ -115,7 +125,10 @@ class FastLoopBudgetTracker:
                 CandidateRejectionReason.BUDGET_EXCEEDED,
             )
         pending_slots = self.budget.max_candidates - len(
-            [c for c in state.candidates if c.status is not CandidateStatus.REJECTED]
+            [
+                c for c in state.candidates
+                if c.status is not CandidateStatus.REJECTED and not _probe_outside_slots(self.budget, c)
+            ]
         )
         if pending_slots <= 0 and state.candidates:
             return False, "max_candidates exhausted", CandidateRejectionReason.BUDGET_EXCEEDED

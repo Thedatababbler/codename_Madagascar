@@ -25,6 +25,7 @@ import yaml
 from orchestra.ir.graph import OrchestraGraph
 from orchestra.ir.graph_invariants import assert_graph_invariants
 from orchestra.realbench.milestone_planner import AgentDraft, MilestoneDraft
+from orchestra.control.fast_loop.evolution_config import repair_trigger_from_env
 from orchestra.roles.pool import RolePool, default_role_pool
 from orchestra.roles.templates import (
     FALLBACK_TEMPLATE_ID,
@@ -79,6 +80,18 @@ _INTEGRATION_SUITE_BREADTH = (
     "call, no shim, no reaching inside -- binds here with full force: this "
     "is the only suite that runs on the finished library.\n"
 )
+
+
+def repair_edge_condition(trigger: str | None = None) -> dict[str, Any]:
+    """The edge condition that lets a repair slot run.
+
+    ``gate``: the probe failed (historical). ``failures``: the probe named at
+    least one failing behavioural case, whether or not it failed outright.
+    """
+    mode = trigger or repair_trigger_from_env()
+    if mode == "failures":
+        return {"source_field": "behaviour_failed_count", "operator": "greater_than", "value": 0}
+    return {"source_field": "passed", "operator": "is_false"}
 
 
 _AUTHORED_SUITE_EXPECTED = (
@@ -526,7 +539,11 @@ def build_milestone_graph(
             )
         if slot.runs_if_gate_failed and early_slot:
             # The only input that cannot resolve unless the probe failed, which
-            # is what keeps this node out of the run on the happy path.
+            # is what keeps this node out of the run on the happy path. Under
+            # the "failures" trigger (self-evolution §2.4) the slot also runs
+            # when the probe passed but named failing cases: a gate that passes
+            # on structure with a poor behaviour score is exactly the milestone
+            # a repairer exists for, and the search's R0 is the same slot.
             input_slots["gate_report"] = "RepositoryHarnessResultArtifact"
             edges.append(
                 {
@@ -535,7 +552,7 @@ def build_milestone_graph(
                     "source_output": "result",
                     "destination_node": node_id,
                     "destination_input": "gate_report",
-                    "condition": {"source_field": "passed", "operator": "is_false"},
+                    "condition": repair_edge_condition(),
                 }
             )
         backend = _backend_block(

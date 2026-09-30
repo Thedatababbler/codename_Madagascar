@@ -24,6 +24,8 @@ once, and are named with stable ids so a rejection message can be grepped.
 
 from __future__ import annotations
 
+from typing import Any
+
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
@@ -193,6 +195,21 @@ def _check_final_output_reachable(
 # --- 3. an early gate has something waiting on failure ----------------------
 
 
+def _is_failure_condition(condition: Any) -> bool:
+    """A condition that resolves only when the gate reported trouble.
+
+    Either the historical ``passed is_false`` or the self-evolution trigger
+    ``behaviour_failed_count > 0`` (a gate that passed on structure but named
+    failing cases still routes to the repair slot).
+    """
+    if condition.operator == "is_false":
+        return True
+    return (
+        condition.operator == "greater_than"
+        and condition.source_field == "behaviour_failed_count"
+    )
+
+
 def _check_early_gate_has_consumer(
     graph: OrchestraGraph, nodes: Mapping[str, NodeSpec]
 ) -> list[InvariantViolation]:
@@ -208,7 +225,7 @@ def _check_early_gate_has_consumer(
     failure_gated = [
         edge
         for edge in graph.edges
-        if edge.condition is not None and edge.condition.operator == "is_false"
+        if edge.condition is not None and _is_failure_condition(edge.condition)
     ]
     if len(graded) > 1 and not failure_gated:
         out.append(

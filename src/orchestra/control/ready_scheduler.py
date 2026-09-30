@@ -33,6 +33,7 @@ from orchestra.control.fast_loop.controller import FastLoopController
 from orchestra.control.fast_loop.llm_diagnosis import DiagnosisConfig
 from orchestra.control.fast_loop.pareto import ParetoSelectionConfig
 from orchestra.control.fast_loop.committed_cases import write_committed_cases
+from orchestra.control.fast_loop.evolution_config import EvolutionConfig
 from orchestra.control.fast_loop.quality_trigger import (
     QualityTrigger,
     build_incumbent_record,
@@ -272,6 +273,7 @@ class ReadySubtaskScheduler:
         refuse_zero_commit_over_base: bool = False,
         diagnosis_config: DiagnosisConfig | None = None,
         quality_trigger: QualityTrigger | None = None,
+        evolution: EvolutionConfig | None = None,
         allow_concurrent_subtasks: bool = False,
         slow_loop: SlowLoopController | None = None,
         slow_loop_config: SlowLoopConfig | None = None,
@@ -308,6 +310,7 @@ class ReadySubtaskScheduler:
             persistence_after_recovery=persistence_after_recovery,
             refuse_zero_commit_over_base=refuse_zero_commit_over_base,
             diagnosis_config=diagnosis_config,
+            evolution=evolution,
             workspace_manager=self._candidate_ws,
             persist_checkpoints=False,
         )

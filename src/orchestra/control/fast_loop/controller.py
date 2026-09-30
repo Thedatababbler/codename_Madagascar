@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import shutil
 
@@ -18,7 +19,14 @@ from orchestra.backends.catalog import capabilities_for
 from orchestra.cli.validate_graph import build_compiler
 from orchestra.control.backend_usage import append_usage_records
 from orchestra.control.failure import classify_subtask_outcome
+from orchestra.control.fast_loop.acceptance import (
+    PRIOR_SUITES_KEY,
+    UnifiedAcceptanceSelector,
+    judge_all,
+)
 from orchestra.control.fast_loop.committed_cases import write_committed_cases
+from orchestra.control.fast_loop.evolution_config import EvolutionConfig
+from orchestra.control.fast_loop.prior_suites import prior_suite_report, prior_suites_for
 from orchestra.control.fast_loop.budget import (
     FastLoopBudgetTracker,
     add_costs,
@@ -43,6 +51,7 @@ from orchestra.control.fast_loop import node_resample as nr
 from orchestra.control.fast_loop.persistence import (
     apply_role_floor,
     default_role,
+    failure_key,
     persistence_ledger,
     persistent_failures,
 )
@@ -138,8 +147,13 @@ class FastLoopController:
         diagnosis_config: DiagnosisConfig | None = None,
         clock=None,
         persist_checkpoints: bool = True,
+        evolution: EvolutionConfig | None = None,
     ) -> None:
         self.runtime = runtime
+        # The standard procedure of the self-evolving loop (probes budgeted
+        # apart and adaptive, R0 always run, unified per-case acceptance).
+        # Off by default: every flag below then behaves as before.
+        self.evolution = evolution or EvolutionConfig()
         self.artifact_store = artifact_store
         self.task_checkpoint_store = task_checkpoint_store
         self.contracts_dir = contracts_dir
@@ -184,7 +198,12 @@ class FastLoopController:
                 compiler=self.compiler,
                 contracts_dir=contracts_dir,
             )
-            self.selector = selector or ParetoCandidateSelector(pareto)
+            if selector is not None:
+                self.selector = selector
+            elif self.evolution.enabled and self.evolution.unified_acceptance:
+                self.selector = UnifiedAcceptanceSelector()
+            else:
+                self.selector = ParetoCandidateSelector(pareto)
         elif anchor_search:
             # The playbook table's control arm: identical anchors resampled,
             # judged by the same Pareto selector, so the only variable against
@@ -412,7 +431,12 @@ class FastLoopController:
         # many run and the Pareto selector judges afterwards. No slot is taken
         # by force (the v1/v2 trials let the resample displace the
         # continuation, which then never ran: EXP-20260910-01).
-        remaining = slots if slots else max(1, self.budget.max_candidates - len(probes))
+        if self.evolution.enabled:
+            # R0 is a standard step and does not occupy a slot (§2.4); the
+            # rows and the resample compete for `row_slots` (§3.7).
+            remaining = slots if slots else self.evolution.row_slots
+        else:
+            remaining = slots if slots else max(1, self.budget.max_candidates - len(probes))
         picked: list = []
         if summary.persistent and not collects_nothing:
             diagnosis = fl_state.diagnosis.model_copy(
@@ -479,10 +503,22 @@ class FastLoopController:
             ordered.append(resample_record)
         cont = [c for c in picked if getattr(c, "continue_from_incumbent", False) or "continue" in (c.playbook_id or "")]
         rest = [c for c in picked if c not in cont]
-        ordered.extend(cont)
-        if resample_record is not None and summary.persistent and not author_route:
-            ordered.append(resample_record)
-        ordered.extend(rest)
+        if self.evolution.enabled and cont and summary.persistent and not collects_nothing:
+            # R0: the first continuation row, always run, outside the slots.
+            r0 = cont[0]
+            r0.candidate_id = "cand_R0"
+            others = list(ordered)  # an author-route resample outranks everything
+            if resample_record is not None and summary.persistent and not author_route:
+                others.append(resample_record)
+            others.extend(cont[1:])
+            others.extend(rest)
+            ordered = [r0, *others]
+            remaining = remaining + 1
+        else:
+            ordered.extend(cont)
+            if resample_record is not None and summary.persistent and not author_route:
+                ordered.append(resample_record)
+            ordered.extend(rest)
         chosen_rows = ordered[:remaining]
         dropped_rows = [getattr(r, "playbook_id", None) or getattr(r, "candidate_id", "?") for r in ordered[remaining:]]
         if dropped_rows:
@@ -497,6 +533,8 @@ class FastLoopController:
             return
         for cand in picked:
             record = self._record_from_local(cand, attempt_id=fl_state.base_attempt_id + 1)
+            if cand.candidate_id == "cand_R0":
+                record.metadata["candidate_kind"] = "R0"
             record.metadata.update(
                 {
                     "persistence_phase": 2,
@@ -536,6 +574,140 @@ class FastLoopController:
             base_ws=base_ws,
         )
         self._score_persistence(fl_state)
+
+    async def _run_adaptive_probes(
+        self, *, state, fl_state, base_graph, diagnosis, incumbent, caps, context,
+        initial_artifacts, base_ws,
+    ) -> None:
+        """P1 of the standard procedure: resample the incumbent design, adaptively.
+
+        One probe at a time. After the first, stop if its failure set is the
+        incumbent's exactly (nothing is flaky, a second sample would say the
+        same); after ``probes_default``, add a third only when the flaky set
+        has reached ``flaky_extra_threshold``. Resumable: probes already on
+        the record are counted, not re-run.
+        """
+        evo = self.evolution
+        while True:
+            probes = [c for c in fl_state.candidates if c.metadata.get("persistence_phase") == 1]
+            n = len(probes)
+            more, why = self._more_probes_wanted(evo, incumbent, probes)
+            if why not in ("first", "default", "fixed", "cap", "default reached"):
+                fl_state.notes.append(f"probes: {why}")
+            if not more:
+                break
+            generated = self.probe_generator.generate(
+                graph=base_graph, diagnosis=diagnosis,
+                budget=self.budget.model_copy(update={"max_candidates": 1}),
+                capabilities=caps, search_reason="quality",
+            )
+            if not generated:
+                break
+            record = self._record_from_local(generated[0], attempt_id=fl_state.base_attempt_id + 1)
+            if n:
+                record.candidate_id = f"cand_feedback_r{n + 1}"
+            record.metadata["persistence_phase"] = 1
+            record.metadata["probe"] = True
+            record.metadata["candidate_kind"] = "probe"
+            fl_state.candidates.append(record)
+            self.budget_tracker.mark_started(fl_state)
+            state.state_version += 1
+            await self._save_checkpoint(state)
+            await self._run_pending_candidates(
+                state=state, fl_state=fl_state, context=context,
+                initial_artifacts=initial_artifacts, base_ws=base_ws,
+            )
+            if record.status is CandidateStatus.REJECTED:
+                break
+
+    async def _unified_acceptance(
+        self, *, state, fl_state, subtask_id, base_graph, incumbent, context=None,
+    ) -> None:
+        """P4: judge every executed candidate by the per-case rule (§2.5).
+
+        Runs the committed predecessors' frozen suites on each candidate's
+        repository first (diagnosis only), so condition 3 has evidence.
+        """
+        probes = [c for c in fl_state.candidates if c.metadata.get("persistence_phase") == 1]
+        executed = [
+            c for c in fl_state.candidates
+            if not c.metadata.get("incumbent") and c.status in (CandidateStatus.VALID, CandidateStatus.HARNESS_FAILED)
+        ]
+        if self.evolution.prior_suite_check:
+            priors = prior_suites_for(state, subtask_id)
+            if priors:
+                command, timeout = self._harness_command(base_graph)
+                for cand in executed:
+                    if cand.workspace_ref is None or PRIOR_SUITES_KEY in cand.metadata:
+                        continue
+                    cand.metadata[PRIOR_SUITES_KEY] = await prior_suite_report(
+                        workspace_path=cand.workspace_ref.path, command=command,
+                        priors=priors, timeout_seconds=timeout,
+                    )
+        r0 = next((c.candidate_id for c in executed if c.metadata.get("candidate_kind") == "R0"), "")
+        # `suite_suspect` cases come from the routing diagnosis (stage 2); until
+        # then nothing is excluded.
+        suspect: list[str] = list(fl_state.suite_suspect)
+        verdicts, conflicts = judge_all(executed, incumbent, probes, r0_id=r0, suspect=suspect)
+        accepted = [v.candidate_id for v in verdicts.values() if v.accepted]
+        fl_state.notes.append(
+            f"acceptance: {len(accepted)}/{len(verdicts)} candidate(s) accepted"
+            + (f" ({', '.join(accepted)})" if accepted else "")
+        )
+        if conflicts:
+            fl_state.notes.append(
+                "acceptance: suite conflicts excluded and routed to the author: "
+                + "; ".join(f"{a} <-> {b}" for a, b in conflicts[:6])
+            )
+            self._write_routing_records(
+                getattr(context, "run_dir", None), state.task_id, subtask_id,
+                [{"case_id": a, "route": "suite_conflict", "conflicts_with": b} for a, b in conflicts],
+            )
+        state.state_version += 1
+        await self._save_checkpoint(state)
+
+    @staticmethod
+    def _write_routing_records(run_dir, task_id: str, subtask_id: str, records: list[dict]) -> None:
+        """Append routing records (§5.3) beside the run; failures to write are ignored."""
+        if not run_dir:
+            return
+        try:
+            path = Path(str(run_dir)) / "routing_records.jsonl"
+            with path.open("a", encoding="utf-8") as handle:
+                for rec in records:
+                    rec = {"task_id": task_id, "milestone_id": subtask_id, **rec}
+                    handle.write(json.dumps(rec) + "\n")
+        except OSError:
+            pass
+
+    @staticmethod
+    def _more_probes_wanted(evo: EvolutionConfig, incumbent, probes: list) -> tuple[bool, str]:
+        """Whether P1 should draw another probe, and why (§2.1).
+
+        Stop at one when the first probe reproduced the incumbent's failure
+        set exactly; stop at ``probes_default`` unless the flaky set has
+        reached ``flaky_extra_threshold``, in which case a third is drawn.
+        """
+        n = len(probes)
+        if n >= evo.max_probes:
+            return False, "cap"
+        if n == 0:
+            return True, "first"
+        if not evo.probes_adaptive:
+            return (n < evo.probes_default), "fixed"
+        if n == 1:
+            first = probes[0]
+            if first.behaviour_score is not None and (
+                {failure_key(x) for x in first.behaviour_failures}
+                == {failure_key(x) for x in incumbent.behaviour_failures}
+            ):
+                return False, "first probe reproduced the incumbent's failure set exactly; 1 probe"
+        if n < evo.probes_default:
+            return True, "default"
+        summary = persistent_failures([incumbent, *probes])
+        if len(summary.flaky) >= evo.flaky_extra_threshold and n < 3:
+            return True, f"{len(summary.flaky)} flaky failures >= {evo.flaky_extra_threshold}; a third probe"
+        return False, "default reached"
 
     async def _persistence_after_recovery(
         self, *, state, fl_state, sub, subtask_id, context, initial_artifacts, base_ws
@@ -1032,7 +1204,22 @@ class FastLoopController:
                 and incumbent is not None
                 and self.probe_generator is not None
             )
-            if probing:
+            if probing and self.evolution.enabled:
+                # Self-evolution §2.1: probes are run one at a time and their
+                # number adapts to what they show; they never occupy a row slot.
+                base_ws = base_workspace
+                if base_ws is None and source_repo:
+                    base_ws = await self.workspace_manager.prepare_base_snapshot(
+                        source_repo=source_repo, run_dir=str(context.run_dir),
+                        task_id=state.task_id, subtask_id=subtask_id)
+                    sub.workspace_ref = base_ws.path
+                await self._run_adaptive_probes(
+                    state=state, fl_state=fl_state, base_graph=base_graph, diagnosis=diagnosis,
+                    incumbent=incumbent, caps=caps, context=context,
+                    initial_artifacts=initial_artifacts, base_ws=base_ws,
+                )
+                generated = []
+            elif probing:
                 probes = min(self.persistence_probe_samples, self.budget.max_candidates)
                 generated = self.probe_generator.generate(
                     graph=base_graph,
@@ -1111,6 +1298,11 @@ class FastLoopController:
                 graph_result=graph_result,
             )
 
+        if incumbent is not None and self.evolution.enabled:
+            await self._unified_acceptance(
+                state=state, fl_state=fl_state, subtask_id=subtask_id,
+                base_graph=base_graph, incumbent=incumbent, context=context,
+            )
         winner = self.selector.select(fl_state.candidates, self.budget)
         # Recorded whether or not a winner emerged: a search that ended with an
         # empty frontier is a different failure from one that found points and

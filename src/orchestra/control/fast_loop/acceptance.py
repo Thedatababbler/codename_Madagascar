@@ -1,0 +1,264 @@
+"""Unified acceptance: one commit rule for probes, R0, playbook rows and resamples.
+
+adamas_milestone_self_evolution_prompt.md §2.5. A candidate replaces the
+incumbent only if it
+
+1. fixes at least one persistent failure (failed in the incumbent and every
+   probe, passes in the candidate);
+2. fails none of the cases that passed stably (in the incumbent and every
+   probe);
+3. adds no failure to any committed predecessor's frozen suite;
+4. does not lower the gate state (an incumbent that passed its gate is only
+   replaced by a candidate that passes it).
+
+Cases tagged ``suite_suspect`` are left out of 1 and 2. When R0 and at least
+one other candidate both fix A while breaking a stably passing B, (A, B) is a
+suite conflict: routed to the author and excluded from this milestone's
+verdicts. Among accepted candidates the highest net fix wins, then the lowest
+cost. The old ε quality threshold is kept as a log field only.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass, field
+
+from orchestra.control.fast_loop.persistence import failure_key
+from orchestra.control.fast_loop.schemas import (
+    CandidateRecord,
+    CandidateStatus,
+    FastLoopBudget,
+)
+
+ACCEPTANCE_KEY = "acceptance"
+PRIOR_SUITES_KEY = "prior_suites"
+_SCORED = {CandidateStatus.VALID, CandidateStatus.COMMITTED, CandidateStatus.DISCARDED}
+
+
+def _keys(names: Iterable[str] | None) -> set[str]:
+    return {failure_key(n) for n in (names or [])}
+
+
+def _scored(record: CandidateRecord) -> bool:
+    return (
+        record.status in _SCORED
+        and record.behaviour_score is not None
+        and not (record.behaviour_score == 0 and not record.behaviour_failures)
+    )
+
+
+@dataclass(frozen=True)
+class CaseSets:
+    """The three populations the rule is written in terms of, as failure keys."""
+
+    persistent: frozenset[str]
+    flaky: frozenset[str]
+    #: Passed in the incumbent and every probe. ``None`` when no sample carries
+    #: passing ids (records from before 2026-09-30): condition 2 then falls
+    #: back to "not failed in any sample", which is the same set whenever every
+    #: case was collected everywhere.
+    stable_pass: frozenset[str] | None
+    samples: int
+
+
+def case_sets(incumbent: CandidateRecord, probes: Sequence[CandidateRecord]) -> CaseSets:
+    samples = [r for r in (incumbent, *probes) if _scored(r)]
+    if not samples:
+        return CaseSets(frozenset(), frozenset(), None, 0)
+    failed = [_keys(r.behaviour_failures) for r in samples]
+    persistent = frozenset(set.intersection(*failed))
+    flaky = frozenset(set.union(*failed) - persistent)
+    passed = [_keys(r.behaviour_passed) for r in samples]
+    stable = frozenset(set.intersection(*passed)) if all(passed) else None
+    return CaseSets(persistent=persistent, flaky=flaky, stable_pass=stable, samples=len(samples))
+
+
+@dataclass
+class Verdict:
+    candidate_id: str
+    accepted: bool
+    fixed: list[str] = field(default_factory=list)
+    regressed: list[str] = field(default_factory=list)
+    prior_regressions: list[str] = field(default_factory=list)
+    gate_ok: bool = True
+    reasons: list[str] = field(default_factory=list)
+    excluded: list[str] = field(default_factory=list)
+
+    @property
+    def net_fix(self) -> int:
+        return len(self.fixed) - len(self.regressed)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "accepted": self.accepted,
+            "fixed": list(self.fixed),
+            "regressed": list(self.regressed),
+            "prior_regressions": list(self.prior_regressions),
+            "net_fix": self.net_fix,
+            "gate_ok": self.gate_ok,
+            "reasons": list(self.reasons),
+            "excluded": list(self.excluded),
+        }
+
+
+def judge(
+    candidate: CandidateRecord,
+    sets: CaseSets,
+    incumbent: CandidateRecord,
+    *,
+    prior_regressions: Iterable[str] = (),
+    suspect: Iterable[str] = (),
+) -> Verdict:
+    """Apply the four conditions to one candidate. Never raises."""
+    excluded = _keys(suspect)
+    v = Verdict(candidate_id=candidate.candidate_id, accepted=False, excluded=sorted(excluded))
+    if candidate.metadata.get("incumbent"):
+        v.reasons.append("incumbent")
+        return v
+    if not _scored(candidate):
+        v.gate_ok = False
+        v.reasons.append("not scored (no gate result or an empty zero)")
+        return v
+    cand_failed = _keys(candidate.behaviour_failures)
+    cand_passed = _keys(candidate.behaviour_passed)
+    persistent = sets.persistent - excluded
+    # 1. fixed persistent failures
+    if cand_passed:
+        fixed = persistent & cand_passed
+    else:
+        fixed = {k for k in persistent if k not in cand_failed}
+    v.fixed = sorted(fixed)
+    # 2. stably passing cases the candidate fails
+    if sets.stable_pass is not None:
+        stable = sets.stable_pass - excluded
+        regressed = cand_failed & stable
+    else:
+        sampled_failures = sets.persistent | sets.flaky
+        regressed = {k for k in cand_failed if k not in sampled_failures and k not in excluded}
+    v.regressed = sorted(regressed)
+    # 3. predecessors' frozen suites
+    v.prior_regressions = sorted(_keys(prior_regressions))
+    # 4. gate state
+    incumbent_gate = incumbent.status in (CandidateStatus.VALID, CandidateStatus.COMMITTED)
+    cand_gate = candidate.status in (CandidateStatus.VALID, CandidateStatus.COMMITTED)
+    v.gate_ok = cand_gate or not incumbent_gate
+    if not v.fixed:
+        v.reasons.append("fixes no persistent failure")
+    if v.regressed:
+        v.reasons.append(f"fails {len(v.regressed)} stably passing case(s)")
+    if v.prior_regressions:
+        v.reasons.append(f"breaks {len(v.prior_regressions)} case(s) of a committed predecessor")
+    if not v.gate_ok:
+        v.reasons.append("gate state below the incumbent's")
+    v.accepted = bool(v.fixed) and not v.regressed and not v.prior_regressions and v.gate_ok
+    return v
+
+
+def suite_conflicts(verdicts: Sequence[Verdict], r0_id: str) -> list[tuple[str, str]]:
+    """(A, B) pairs where fixing A costs stably-passing B in R0 *and* another candidate."""
+    r0 = next((v for v in verdicts if v.candidate_id == r0_id), None)
+    if r0 is None:
+        return []
+    pairs: list[tuple[str, str]] = []
+    others = [v for v in verdicts if v.candidate_id != r0_id]
+    for a in r0.fixed:
+        for b in r0.regressed:
+            if any(a in o.fixed and b in o.regressed for o in others):
+                pairs.append((a, b))
+    return pairs
+
+
+def judge_all(
+    candidates: Sequence[CandidateRecord],
+    incumbent: CandidateRecord,
+    probes: Sequence[CandidateRecord],
+    *,
+    r0_id: str = "",
+    suspect: Iterable[str] = (),
+) -> tuple[dict[str, Verdict], list[tuple[str, str]]]:
+    """Judge every executed candidate, then re-judge with suite conflicts excluded.
+
+    Prior-suite regressions are read from ``record.metadata["prior_suites"]``
+    (written by the controller's diagnostic re-run) so this stays pure.
+    """
+    sets = case_sets(incumbent, probes)
+    exclude = set(_keys(suspect))
+    probe_ids = {p.candidate_id for p in probes}
+
+    def sets_for(c: CandidateRecord) -> CaseSets:
+        # A probe is judged against the incumbent and the *other* probes: it is
+        # one of the samples the persistent set is intersected over, so judged
+        # against sets that include itself it could never fix anything, and
+        # §2.1 says a probe that beats the incumbent becomes the incumbent.
+        if c.candidate_id in probe_ids:
+            return case_sets(incumbent, [p for p in probes if p.candidate_id != c.candidate_id])
+        return sets
+
+    def run(excl: set[str]) -> dict[str, Verdict]:
+        out: dict[str, Verdict] = {}
+        for c in candidates:
+            prior = []
+            for entry in (c.metadata.get(PRIOR_SUITES_KEY) or {}).values():
+                prior.extend(entry.get("regressions") or [])
+            out[c.candidate_id] = judge(c, sets_for(c), incumbent, prior_regressions=prior, suspect=excl)
+        return out
+
+    verdicts = run(exclude)
+    conflicts = suite_conflicts(list(verdicts.values()), r0_id) if r0_id else []
+    if conflicts:
+        for a, b in conflicts:
+            exclude.update((a, b))
+        verdicts = run(exclude)
+    for c in candidates:
+        v = verdicts.get(c.candidate_id)
+        if v is not None:
+            c.metadata[ACCEPTANCE_KEY] = v.to_dict()
+    return verdicts, conflicts
+
+
+class UnifiedAcceptanceSelector:
+    """Pick the accepted candidate with the largest net fix, else the incumbent.
+
+    Reads the verdicts ``judge_all`` stored on each record; a record without
+    one (never judged) is not selectable. Returning the incumbent is how the
+    controller learns the search declined, exactly as with the Pareto selector.
+    """
+
+    def __init__(self) -> None:
+        self.last_frontier: list[str] = []
+        self.last_rule: str = "unified_acceptance"
+
+    def select(
+        self, candidates: Sequence[CandidateRecord], budget: FastLoopBudget
+    ) -> CandidateRecord | None:
+        del budget
+        accepted = [
+            c for c in candidates
+            if (c.metadata.get(ACCEPTANCE_KEY) or {}).get("accepted")
+            and c.status is CandidateStatus.VALID
+        ]
+        self.last_frontier = [c.candidate_id for c in accepted]
+        if accepted:
+            accepted.sort(
+                key=lambda c: (
+                    -int((c.metadata.get(ACCEPTANCE_KEY) or {}).get("net_fix") or 0),
+                    float(c.cost.estimated_cost_usd or 0.0),
+                    c.candidate_id,
+                )
+            )
+            return accepted[0]
+        incumbent = next((c for c in candidates if c.metadata.get("incumbent")), None)
+        return incumbent
+
+
+__all__ = [
+    "ACCEPTANCE_KEY",
+    "PRIOR_SUITES_KEY",
+    "CaseSets",
+    "UnifiedAcceptanceSelector",
+    "Verdict",
+    "case_sets",
+    "judge",
+    "judge_all",
+    "suite_conflicts",
+]

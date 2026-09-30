@@ -3663,3 +3663,84 @@ probes to two or three.
   09-16) is a different role and is untouched.
 - Open: contracts stage gating on underscore-private names that the planner
   copies from the PRD.
+
+## EXP-20260930-01 -- self-evolving milestone search, stages 0-1 (branch `rsi`)
+
+**Status:** implementation record; no paid run yet. Spec:
+`docs/adamas_milestone_self_evolution_prompt.md`. Branch `rsi` from
+`milestones` a70a8d56.
+
+### Stage 0 -- ledger audit (docs/reports/playbook_audit.md, force-added)
+
+Over every `task_execution.json` under `outputs/` (373 files, 175 searched
+milestones): 271 anchor/probe records, 125 incumbents, 143 playbook-row runs
+(continuation 50, failures_to_agent 16, rtf_swap_angle 13, rtf_second_angle
+13, node_resample 11, chain_fill_third 8, chain_to_review_fix 8,
+tf_q_improve_after_gate 7, the deleted tf_q_failures_to_builder 5, and 1-4
+each for six more); 11 rows never ran. The one recording gap: stages kept
+counts and failed names only. Answers to the spec's §12: per-case results at
+commit had failed names but no passed names (fixed below); frozen suites and
+contracts are kept and the gate script takes `--spec-tests` / `--contracts`
+for any milestone; candidate workspaces are kept whole (discarded ones get a
+marker); the repair slot's trigger is `runs_if_gate_failed` in the template
+YAML + the `passed is_false` edge in `subgraph_builder`; plans carry no
+alternative template (E9-T1 falls back per §12.5).
+
+### Stage 0 recording capability (67e606f6)
+
+- gate script: `spec_tests` stage records `passed_tests` (from the `-v` log
+  it already streams); `HarnessStageResult.passed_tests`,
+  `CandidateRecord.behaviour_passed`, `behaviour_passed()` /
+  `behaviour_failed_count()` in `harness/progress.py`;
+- harness artifact: `behaviour_failed_count` (an edge condition can read one
+  top-level field);
+- `<milestone>.committed_cases.json` beside the frozen suite on every commit
+  (first pass in the scheduler, winner in the controller).
+
+### Stage 1 -- the standard procedure (this commit)
+
+- `control/fast_loop/evolution_config.py`: top-level `evolution` /
+  `probes` / `budget` / `acceptance` blocks; everything off unless
+  `evolution.enabled`, in which case the old flags behave as before.
+- P1 probes (`_run_adaptive_probes`, `_more_probes_wanted`): one at a time,
+  stop at one when the first reproduces the incumbent's failure set, add a
+  third when the flaky set reaches `flaky_extra_threshold`; probe records
+  (`metadata.probe`) sit outside the candidate slots
+  (`FastLoopBudget.probes_separate`); probes are judged like any candidate
+  (against the incumbent and the other probes) so a better probe can commit.
+- P3 R0: the first continuation row is renamed `cand_R0`, always run when
+  the persistent set is non-empty, outside the row slots; row slots come
+  from `budget.mode` (B: 1, A: 2).
+- P4 unified acceptance (`acceptance.py`): fixed >= 1 persistent, zero
+  failures on the stable-pass set, zero new failures on committed
+  predecessors' frozen suites, gate state not below the incumbent;
+  `suite_suspect` exclusion hook; suite-conflict detection (R0 + another
+  candidate trade A for B) with both cases excluded and a
+  `routing_records.jsonl` line; `UnifiedAcceptanceSelector` picks the largest
+  net fix then the lowest cost and returns the incumbent when nothing is
+  accepted. Records from before per-case passing ids fall back to "not
+  failed in any sample".
+- Prior suites (`prior_suites.py`): committed transitive predecessors'
+  frozen suites re-run on each executed candidate's repository through the
+  current gate command with `--spec-tests` / `--contracts` / `--level`
+  rewritten and `--take-custody` dropped; regressions = committed-passed
+  cases that fail now.
+- Repair slot trigger: `repair_edge_condition()` in the builder emits
+  `behaviour_failed_count > 0` under `ADAMAS_REPAIR_TRIGGER=failures` (set by
+  the CLI from `evolution.repair_trigger`); `graph_invariants` accepts it as
+  a failure-gated edge.
+- Config files: `configs/experiments/codeprojecteval_milestones_evolution.yaml`
+  (output_root `outputs/cpe_evolution`), `configs/datasets/evolution_split.yaml`
+  (CPE 12/6, NL2Repo 6/3).
+
+Tests: `tests/unit/control/test_unified_acceptance.py` (10) and
+`test_evolution_stage1.py` (7): probe committable, fix-3-break-3 refused,
+flaky not a regression, predecessor regression blocks, gate state, suite
+conflict routed, selector order, config parsing, adaptive probe count, probes
+outside slots, repair trigger evaluation, `test_first` compiles under the
+failures trigger and keeps the invariants, prior-suite command rewrite,
+committed-cases round trip. Full unit suite green.
+
+Not done in stage 1: the after-recovery hop (`_persistence_after_recovery`)
+still draws its probes the old way; the incumbent's own prior-suite report
+(needed for `regression_by_current` routing) is stage 2.
