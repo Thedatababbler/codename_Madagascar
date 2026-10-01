@@ -4128,3 +4128,20 @@ improver by `edge_case_hardener` on `continuation_reviewed`) rejected by the
 validator because an R row may not set `target_template`. No F entry
 proposed. Proposed tables sit in the cycle's `proposed/` directory; the
 live tables are unchanged pending a decision to publish.
+
+**Per-case held-out diff of the four dropped tasks** (`scripts/heldout_case_diff.py`,
+the committed repositories re-scored with `-rA`; reports under
+`outputs/evolution/cycles/cycle-01-20261001/heldout_diff/`):
+
+| task | lost / gained | where the lost cases live | the milestone's history in the evolution arm |
+|---|---|---|---|
+| tinydb | 18 / 6 | test_queries (5), test_tinydb doc-id handling (9), test_tables query cache (2), test_storages read_once (1), middlewares (1) | query_language M2: first pass 0.96, F1 applied, no search; table M3: first pass 1.0, no search; storage M1: probe committed (explains at most the 1 read_once case) |
+| deprecated | 12 / 0 | class/metaclass deprecation (5, M1), sphinx adapter line_length + sphinx class/metaclass (7, M2) | M1 first pass 1.0 both arms; M2 first pass 0.889, R0 to 1.0 on the authored suite |
+| simplejwt | 34 / 19 | views + integration lost; serializers + tokens gained | every milestone first-pass 1.0 in both arms; the two packages are simply strong in different places |
+| imapclient | 19 / 12 | parse_fetch_response (15) lost; folder/capability ops (10) gained | M2 first pass 0.54, R0 repaired to 1.0 on an authored suite that names FETCH parsing in 5 of 13 cases, held-out FETCH still lost |
+
+Reading: in all four tasks the lost cases sit in milestones that were either
+committed on their first pass in both arms (sampling), or repaired to 1.0 on
+the authored suite without the held-out cases moving (suite coverage). No
+lost case traces to a candidate the new acceptance rule committed over a
+better one, except tinydb's single read_once case.
