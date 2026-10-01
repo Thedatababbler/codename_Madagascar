@@ -14,13 +14,19 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-SEALED_ROOT = Path("outputs") / "evolution" / "sealed"
+SEALED_ROOT = Path("outputs") / "evolution" / "sealed"  # historical default; see sealed_file()
 SEALED_FILE = SEALED_ROOT / "heldout_tripwire.jsonl"
+
+
+def sealed_file() -> Path:
+    from orchestra.control.evolution.ledger import evolution_root
+
+    return evolution_root() / "sealed" / "heldout_tripwire.jsonl"
 
 
 def record_tripwire(records: Iterable[dict[str, Any]], path: Path | None = None) -> Path:
     """Append ``{record_id, heldout_attributed_subset_pass_rate}`` rows. Writer side only."""
-    p = Path(path) if path else SEALED_FILE
+    p = Path(path) if path else sealed_file()
     p.parent.mkdir(parents=True, exist_ok=True)
     with p.open("a", encoding="utf-8") as h:
         for r in records:
@@ -30,7 +36,7 @@ def record_tripwire(records: Iterable[dict[str, Any]], path: Path | None = None)
 
 
 def _read(path: Path | None) -> dict[str, float]:
-    p = Path(path) if path else SEALED_FILE
+    p = Path(path) if path else sealed_file()
     out: dict[str, float] = {}
     if not p.is_file():
         return out

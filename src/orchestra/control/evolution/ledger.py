@@ -10,6 +10,7 @@ changes; nothing here is read inside a search.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +26,21 @@ def failure_key(name: str) -> str:
     return str(name or "").strip().rsplit("/", 1)[-1]
 
 
-LEDGER_ROOT = Path("outputs") / "evolution" / "ledger"
+#: Every evolution artefact (ledger, bank, cycles, re-runs, sealed file) lives
+#: under one root so a series on another model or benchmark can keep its own
+#: statistics: ``ADAMAS_EVOLUTION_ROOT`` (default ``outputs/evolution``).
+EVOLUTION_ROOT_ENV = "ADAMAS_EVOLUTION_ROOT"
+
+
+def evolution_root() -> Path:
+    return Path(os.environ.get(EVOLUTION_ROOT_ENV) or (Path("outputs") / "evolution"))
+
+
+def ledger_root_default() -> Path:
+    return evolution_root() / "ledger"
+
+
+LEDGER_ROOT = Path("outputs") / "evolution" / "ledger"  # historical default; prefer ledger_root_default()
 SPLIT_FILE = Path("configs") / "datasets" / "evolution_split.yaml"
 
 
@@ -216,7 +231,7 @@ def write_search_ledger(
     assignment: str = "deterministic",
     final_status: str = "",
 ) -> tuple[Path, Path]:
-    root = Path(ledger_root) if ledger_root else LEDGER_ROOT
+    root = Path(ledger_root) if ledger_root else ledger_root_default()
     split = split_of(task_id, split_file)
     version_dir = root / playbook_version
     cands = candidate_records(
@@ -248,6 +263,6 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 __all__ = [
-    "LEDGER_ROOT", "SPLIT_FILE", "append_jsonl", "candidate_kind", "candidate_records", "milestone_record",
+    "EVOLUTION_ROOT_ENV", "LEDGER_ROOT", "SPLIT_FILE", "evolution_root", "ledger_root_default", "append_jsonl", "candidate_kind", "candidate_records", "milestone_record",
     "read_jsonl", "split_of", "write_search_ledger",
 ]

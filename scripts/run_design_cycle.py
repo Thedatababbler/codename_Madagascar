@@ -38,7 +38,7 @@ def main() -> None:
     ap.add_argument("--launch-reruns", action="store_true", help="actually launch the planned bank re-runs (paid)")
     ap.add_argument("--evolver", action="store_true", help="ask the evolver agent for proposals (paid)")
     ap.add_argument("--force", action="store_true", help="run even when the §9.1 trigger is not met")
-    ap.add_argument("--seen-tasks", type=Path, default=Path("outputs/evolution/cycles/seen_tasks.json"))
+    ap.add_argument("--seen-tasks", type=Path, default=None, help="default: <evolution root>/cycles/seen_tasks.json")
     ap.add_argument("--new-failures", type=int, default=0, help="failed milestones added to the bank since the last cycle")
     ap.add_argument("--rollback", default=None, metavar="vN")
     ap.add_argument("--reason", default="")
@@ -51,6 +51,9 @@ def main() -> None:
         print(f"rolled back {changes['rollback_of']} -> {changes['restored']} as {version}; demoted rows {changes['demoted_rows']}")
         return
 
+    from orchestra.control.evolution.ledger import evolution_root
+
+    args.seen_tasks = args.seen_tasks or evolution_root() / "cycles" / "seen_tasks.json"
     seen = json.loads(args.seen_tasks.read_text(encoding="utf-8")) if args.seen_tasks.is_file() else []
     miles = load_milestone_records()
     ok, why = should_trigger(miles, seen_tasks=seen, new_failures=args.new_failures, cfg=cfg)

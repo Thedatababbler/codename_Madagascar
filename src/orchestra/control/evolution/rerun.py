@@ -25,11 +25,15 @@ from pathlib import Path
 from typing import Any
 
 from orchestra.control.evolution.bank import BankEntry
-from orchestra.control.evolution.ledger import read_jsonl
+from orchestra.control.evolution.ledger import evolution_root, ledger_root_default, read_jsonl
 
 FORCE_ROW_ENV = "ADAMAS_FORCE_ROW"
 FORCE_F_ENV = "ADAMAS_FORCE_F"
-RERUN_ROOT = Path("outputs") / "evolution" / "reruns"
+RERUN_ROOT = Path("outputs") / "evolution" / "reruns"  # historical default; see rerun_root()
+
+
+def rerun_root() -> Path:
+    return evolution_root() / "reruns"
 
 
 @dataclass(frozen=True)
@@ -124,7 +128,7 @@ def cli_command(job: RerunJob, entry: BankEntry, *, config: str, output_root: Pa
 def launch(jobs: list[RerunJob], entries: dict[str, BankEntry], *, config: str, output_root: Path | None = None,
            dataset_root: str | None = None, concurrency: int = 2, dry_run: bool = False) -> list[dict[str, Any]]:
     """Run the jobs ``concurrency`` at a time; returns one result dict per job."""
-    root = Path(output_root) if output_root else RERUN_ROOT
+    root = Path(output_root) if output_root else rerun_root()
     root.mkdir(parents=True, exist_ok=True)
     results: list[dict[str, Any]] = []
     pending = list(jobs)
@@ -159,7 +163,7 @@ def launch(jobs: list[RerunJob], entries: dict[str, BankEntry], *, config: str, 
 
 def ledger_records_of(run_dir: Path, *, ledger_root: Path | None = None) -> list[dict[str, Any]]:
     """Candidate records a re-run wrote (any version directory), tagged ``source=rerun``."""
-    root = Path(ledger_root) if ledger_root else Path("outputs") / "evolution" / "ledger"
+    root = Path(ledger_root) if ledger_root else ledger_root_default()
     out = []
     for p in root.glob("*/candidates.jsonl"):
         for rec in read_jsonl(p):

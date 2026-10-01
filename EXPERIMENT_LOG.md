@@ -4145,3 +4145,23 @@ committed on their first pass in both arms (sampling), or repaired to 1.0 on
 the authored suite without the held-out cases moving (suite coverage). No
 lost case traces to a candidate the new acceptance rule committed over a
 better one, except tinydb's single read_once case.
+
+## EXP-20261001-03 -- NL2Repo series on gpt-5.6-sol: baseline -> standard procedure -> cycle with re-runs (branch `rsi`)
+
+**Status:** OPEN, started 2026-10-01 ~17:45 UTC. zqin30, model gpt-5.6-sol (its own window,
+0% at start; the gpt-5.5 window is at 96%). Three NL2Repo training tasks: nl2_tablib,
+nl2_tenacity, nl2_python-jose (frozen plans `configs/datasets/nl2repo_feature_plans/`).
+
+Series state kept apart from the CPE gpt-5.5 series through the new
+`ADAMAS_EVOLUTION_ROOT=outputs/nl2sol_evolution_state` (ledger, bank, cycles,
+re-runs, sealed file all derive from it; the playbook tables and versions stay
+global). Configs: `nl2repo_evolution_baseline.yaml` (output
+`outputs/nl2sol_evolution_baseline`) and `nl2repo_milestones_evolution.yaml`
+(output `outputs/nl2sol_evolution`, `rerun.max_runs_per_cycle: 12`).
+
+Steps, one chain (scratchpad `evo/nl2sol_chain.sh`, log `evo/nl2sol.out`):
+1. baseline arm on the three tasks (old procedure, F0, old playbook);
+2. evolution arm, stages 1-4, no re-runs; each task held-out scored, admitted
+   to the series bank, first-pass milestones backfilled into the ledger;
+3. design cycle with bank re-runs (cap 12) and the evolver, publish, then
+   the three tasks again under the published tables.

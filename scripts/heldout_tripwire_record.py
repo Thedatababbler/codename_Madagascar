@@ -63,14 +63,16 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", required=True, type=Path)
     ap.add_argument("--attribution", required=True, type=Path)
-    ap.add_argument("--ledger", type=Path, default=Path("outputs/evolution/ledger"))
+    ap.add_argument("--ledger", type=Path, default=None)
     args = ap.parse_args()
     task_id = args.run.name
     if split_of(task_id) != "train":
         raise SystemExit(f"{task_id} is not a training task; the tripwire is recorded on training tasks only")
     attribution = json.loads(args.attribution.read_text(encoding="utf-8")).get("attribution") or {}
     rows = []
-    for cand_file in args.ledger.glob("*/candidates.jsonl"):
+    from orchestra.control.evolution.ledger import ledger_root_default
+
+    for cand_file in (args.ledger or ledger_root_default()).glob("*/candidates.jsonl"):
         for rec in read_jsonl(cand_file):
             if str(rec.get("run_dir") or "") != str(args.run) or not rec.get("workspace_ref"):
                 continue

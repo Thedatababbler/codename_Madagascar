@@ -29,7 +29,7 @@ from orchestra.control.evolution.evolver import (
     render_prompt,
     unresolved_pool,
 )
-from orchestra.control.evolution.ledger import LEDGER_ROOT, read_jsonl
+from orchestra.control.evolution.ledger import evolution_root, ledger_root_default, read_jsonl
 from orchestra.control.evolution.memory_replay import (
     RowClassStats,
     class_distribution,
@@ -74,8 +74,16 @@ from orchestra.control.first_pass.designer import (
 
 VERSIONS_DIR = V2_DIR / "versions"
 CURRENT_FILE = VERSIONS_DIR / "current"
-CYCLES_ROOT = Path("outputs") / "evolution" / "cycles"
+CYCLES_ROOT = Path("outputs") / "evolution" / "cycles"  # historical defaults; the live ones follow ADAMAS_EVOLUTION_ROOT
 ROUTING_RECORDS = Path("outputs") / "evolution" / "routing_records.jsonl"
+
+
+def cycles_root_default() -> Path:
+    return evolution_root() / "cycles"
+
+
+def routing_records_path() -> Path:
+    return evolution_root() / "routing_records.jsonl"
 
 
 # --------------------------------------------------------------------------- configuration (§10)
@@ -221,9 +229,9 @@ def batch_regressed(prev_records: Iterable[Mapping[str, Any]], new_records: Iter
 # --------------------------------------------------------------------------- ledger access
 
 
-def load_candidate_records(ledger_root: Path = LEDGER_ROOT) -> list[dict[str, Any]]:
+def load_candidate_records(ledger_root: Path | None = None) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    for f in sorted(Path(ledger_root).glob("*/candidates.jsonl")):
+    for f in sorted(Path(ledger_root or ledger_root_default()).glob("*/candidates.jsonl")):
         for r in read_jsonl(f):
             r = dict(r)
             r.setdefault("source", "rerun" if str(r.get("run_dir") or "").startswith(str(RERUN_ROOT)) else "online")
@@ -231,9 +239,9 @@ def load_candidate_records(ledger_root: Path = LEDGER_ROOT) -> list[dict[str, An
     return out
 
 
-def load_milestone_records(ledger_root: Path = LEDGER_ROOT) -> list[dict[str, Any]]:
+def load_milestone_records(ledger_root: Path | None = None) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    for f in sorted(Path(ledger_root).glob("*/milestones.jsonl")):
+    for f in sorted(Path(ledger_root or ledger_root_default()).glob("*/milestones.jsonl")):
         out.extend(dict(r) for r in read_jsonl(f))
     return out
 
@@ -405,14 +413,16 @@ def _write_routing_record(record: Mapping[str, Any], path: Path = ROUTING_RECORD
 
 
 def run_cycle(
-    cfg: CycleConfig, *, cycle_id: str | None = None, ledger_root: Path = LEDGER_ROOT, bank_root: Path | None = None,
-    versions_dir: Path = VERSIONS_DIR, cycles_root: Path = CYCLES_ROOT, publish: bool = False, launch_reruns: bool = False,
+    cfg: CycleConfig, *, cycle_id: str | None = None, ledger_root: Path | None = None, bank_root: Path | None = None,
+    versions_dir: Path = VERSIONS_DIR, cycles_root: Path | None = None, publish: bool = False, launch_reruns: bool = False,
     run_evolver: bool = False, evolver_call: Callable[[str, str], str] | None = None, rerun_config: str = "",
-    sealed_path: Path | None = None, routing_path: Path = ROUTING_RECORDS, seen_tasks: Iterable[str] = (),
+    sealed_path: Path | None = None, routing_path: Path | None = None, seen_tasks: Iterable[str] = (),
     table_paths: Mapping[str, Path] | None = None,
 ) -> CycleResult:
     cycle_id = cycle_id or datetime.now(UTC).strftime("cycle-%Y%m%dT%H%M%SZ")
-    out_dir = Path(cycles_root) / cycle_id
+    ledger_root = Path(ledger_root) if ledger_root else ledger_root_default()
+    routing_path = Path(routing_path) if routing_path else routing_records_path()
+    out_dir = Path(cycles_root or cycles_root_default()) / cycle_id
     out_dir.mkdir(parents=True, exist_ok=True)
     paths = dict(table_paths or {})
     rows_before = load_repair_table(paths.get("repair_path"))

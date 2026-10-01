@@ -22,9 +22,9 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from orchestra.control.evolution.ledger import split_of
+from orchestra.control.evolution.ledger import evolution_root, split_of
 
-BANK_ROOT = Path("outputs") / "evolution" / "bank"
+BANK_ROOT = Path("outputs") / "evolution" / "bank"  # historical default; the root follows ADAMAS_EVOLUTION_ROOT
 
 
 @dataclass
@@ -178,7 +178,7 @@ class AdmissionPolicy:
 
 class Bank:
     def __init__(self, root: Path | None = None) -> None:
-        self.root = Path(root) if root else BANK_ROOT
+        self.root = Path(root) if root else evolution_root() / "bank"
         self.entries_dir = self.root / "entries"
         self.archive_dir = self.root / "archive"
 

@@ -19,7 +19,12 @@ import argparse
 import json
 from pathlib import Path
 
-from orchestra.control.evolution.ledger import LEDGER_ROOT, append_jsonl, read_jsonl, split_of
+from orchestra.control.evolution.ledger import (
+    append_jsonl,
+    ledger_root_default,
+    read_jsonl,
+    split_of,
+)
 from orchestra.control.fast_loop.playbook_v2 import table_version
 
 
@@ -87,11 +92,11 @@ def records_for_run(run_dir: Path, *, existing: set[tuple[str, str, str]], versi
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("run_dirs", nargs="+", type=Path)
-    ap.add_argument("--ledger", type=Path, default=LEDGER_ROOT)
+    ap.add_argument("--ledger", type=Path, default=None)
     ap.add_argument("--version", default=None, help="ledger version directory (default: the live table version)")
     args = ap.parse_args()
     version = args.version or table_version()
-    vdir = args.ledger / version
+    vdir = (args.ledger or ledger_root_default()) / version
     existing = {(str(r.get("task_id")), str(r.get("milestone_id")), str(r.get("final_status")))
                 for r in read_jsonl(vdir / "milestones.jsonl")}
     for run in args.run_dirs:
