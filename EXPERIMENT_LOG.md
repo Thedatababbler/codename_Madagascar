@@ -4117,3 +4117,14 @@ Cycle `cycle-01-20261001` on 83 candidate / 36 milestone records, bank 19:
 - re-runs planned: 28 (U-S1 vs R0 on the bank's E3/E6/E4 entries, 2 reps),
   not launched (quota).
 - evolver: run once below.
+
+Evolver (one call, gpt-5.5 via the proxy, temperature 0; prompt 17.6 kB,
+prompt/reply/verdicts under `outputs/evolution/cycles/cycle-01-20261001/`):
+two proposals for the E3 cluster. `E3-S2` (S row: reconstruct the observable
+rule from the failing assertions, enumerate accepted input forms and the
+no-transform boundary, handle mixed literal/predicate inputs) accepted as a
+candidate with `origin: evolver:cycle-01-20261001`; `E3-R2` (replace the
+improver by `edge_case_hardener` on `continuation_reviewed`) rejected by the
+validator because an R row may not set `target_template`. No F entry
+proposed. Proposed tables sit in the cycle's `proposed/` directory; the
+live tables are unchanged pending a decision to publish.
