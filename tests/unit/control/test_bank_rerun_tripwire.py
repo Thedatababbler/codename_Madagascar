@@ -194,3 +194,11 @@ def test_cli_rerun_helpers_overlay_inherit_and_restrict(tmp_path) -> None:
     assert state.subtasks["m1"].status == SubtaskStatus.COMMITTED
     assert state.subtasks["m2"].status == SubtaskStatus.READY
     assert state.subtasks["m3"].status == SubtaskStatus.SKIPPED
+
+
+def test_split_of_accepts_the_scheduler_task_prefix() -> None:
+    """Live ledger records carry ``rb_<task>``; they must still count as training records."""
+    from orchestra.control.evolution.ledger import split_of
+
+    assert split_of("rb_tinydb", SPLIT) == "train" and split_of("tinydb", SPLIT) == "train"
+    assert split_of("rb_pyjwt", SPLIT) == "test" and split_of("rb_nothing", SPLIT) == "unknown"

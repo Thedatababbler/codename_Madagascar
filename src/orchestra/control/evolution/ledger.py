@@ -36,9 +36,11 @@ def split_of(task_id: str, split_file: Path | None = None) -> str:
         data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
     except (OSError, yaml.YAMLError):
         return "unknown"
+    # The scheduler names a CPE task ``rb_<task>``; the split file lists ``<task>``.
+    bare = task_id[3:] if str(task_id).startswith("rb_") else str(task_id)
     for side in ("train", "test"):
         for names in (data.get(side) or {}).values():
-            if task_id in (names or []):
+            if task_id in (names or []) or bare in (names or []):
                 return side
     return "unknown"
 

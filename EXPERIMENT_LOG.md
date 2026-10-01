@@ -4096,3 +4096,24 @@ Three defects found and fixed during the run (ranking, failure-search
 acceptance, Django imports stage) plus the bank outcome/case mapping and the
 ledger backfill. Bank: 19 entries (E3 7, E6 3, E4 1 persistent cases
 classified). Ledger: 36 milestone records, 83 candidate records.
+
+## EXP-20261001-02 -- self-evolution experiment, step 3: first design cycle, report only (branch `rsi`)
+
+**Status:** report only; nothing published. Ledger fixed first: live records carried
+`split: unknown` because the scheduler's task id is `rb_<task>` and `split_of`
+matched the bare name only (83 candidate / 36 milestone records rewritten to
+`train`; `split_of` now strips the prefix).
+
+Cycle `cycle-01-20261001` on 83 candidate / 36 milestone records, bank 19:
+- §8.1 distribution: E3 7, E6 3, E4 1 persistent cases classified; E6 and E4
+  below `min_class_samples` (advice: E6 -> E3, not applied).
+- ranking: E3-T1 scored 0.0 on E3 and E6 (two pairs, both tied with R0 at a
+  full fix); every other row has no pair yet.
+- row states: U-S1 (generic, candidate) drawn into the free trial slot; no
+  promotion or demotion possible at < m pairs.
+- F1 (trial): 0 paired F/F0 checkpoints, so no verdict; the online randomised
+  assignment gave 20 triggered milestones but F1 was applied on 5 and never
+  on the same milestone as F0 (pairs come from re-runs only).
+- re-runs planned: 28 (U-S1 vs R0 on the bank's E3/E6/E4 entries, 2 reps),
+  not launched (quota).
+- evolver: run once below.
