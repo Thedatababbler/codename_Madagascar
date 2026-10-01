@@ -4068,3 +4068,31 @@ level). Non-Django environments are untouched. Not one of the §0.2 guard
 mechanisms; it makes the gate passable by the reference, the same principle as
 the earlier "validity on reference" work. Test:
 `tests/unit/decomposition/test_gate_django_configure.py`.
+
+**Step 2 stopped 2026-10-01 11:30 UTC (zqin30 gpt-5.5 window at 90%, 96% after the last two tasks).**
+Seven of the twelve training tasks ran; flask, csvs-to-sqlite, voluptuous, rsa,
+zxcvbn did not start. Held-out, evolution arm vs the 09-30 baseline (same plans,
+same model, same account):
+
+| task | baseline | evolution | passed (base / evo) | what the search did in the evolution arm |
+|---|---|---|---|---|
+| bplustree | 0.904 | 0.899 | 5/5 both | M4: 2 E4 persistent, R0 fixed both, committed; integration needed a resume (empty implementer diff) |
+| tinydb | 0.907 | 0.848 | 185 / 173 of 204 | M1: a probe (0.958, one case failing) committed over R0 (1.0) -- the ranking bug, fixed |
+| imapclient | 0.434 | 0.408 | 116 / 109 of 267 | R0 committed on 3 milestones (E6, E3, E3; all to 1.0), node resample on one; M3 resumed after the declined-candidate bug |
+| deprecated | 0.597 | 0.534 | 105 / 94 of 176 | M2 first pass 0.889 (E6), R0 to 1.0, committed; the rest first-pass; difference = first-pass draws |
+| djangorestframework-simplejwt | 0.702 | 0.623 | 134 / 119 of 191 | all first-pass 1.0 after the Django gate fix (two resumes); F1 drawn on M1 |
+| python-hl7 | 0.550 | 0.540 | 55 / 54 of 100 | M3: E3-T1 row committed (net 2, 0 failures left) over R0 |
+| cookiecutter (unscored, observed) | 0.246 | 0.289 | 86 / 101 | M1, M2: 7 E3 persistent fixed (E3-T1 row once, R0 + resample once); integration = dataset ceiling in both arms |
+
+Reading: within noise on bplustree, imapclient, python-hl7; cookiecutter up;
+tinydb down through a selector bug (fixed mid-run); deprecated and simplejwt
+down with every milestone first-pass or search-clean, i.e. first-pass
+sampling (both had scored higher and lower on the same plans before). The
+searches themselves never committed a regression: every committed search
+candidate left 0 failures on its frozen suite except tinydb's probe (1).
+Playbook v2 rows that ran: E3-T1 (committed twice), pb_rtf_swap_angle
+(legacy, failure searches), node resample; R0 committed five times.
+Three defects found and fixed during the run (ranking, failure-search
+acceptance, Django imports stage) plus the bank outcome/case mapping and the
+ledger backfill. Bank: 19 entries (E3 7, E6 3, E4 1 persistent cases
+classified). Ledger: 36 milestone records, 83 candidate records.
