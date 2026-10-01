@@ -72,13 +72,24 @@ def suite_version_of(frozen_dir: str | Path) -> str:
     return h.hexdigest()[:16]
 
 
-def _outcome(incumbent: dict[str, Any] | None, final_status: str) -> str:
-    if incumbent is None or str(incumbent.get("status")) not in ("valid", "committed", "discarded"):
-        return "gate_failed"
-    score = incumbent.get("behaviour_score")
+def _outcome(incumbent: dict[str, Any] | None, final_status: str, first_attempt: dict[str, Any] | None = None) -> str:
+    """The first run's outcome: the search incumbent when a search ran, else the first attempt's gate result."""
+    if incumbent is not None:
+        if str(incumbent.get("status")) not in ("valid", "committed", "discarded"):
+            return "gate_failed"
+        score = incumbent.get("behaviour_score")
+    else:
+        attempt = first_attempt or {}
+        if str(attempt.get("status") or final_status) != "committed":
+            return "gate_failed"
+        score = (attempt.get("metadata") or {}).get("behaviour_score")
     if score is not None and float(score) < 0.9:
         return "low_score"
     return "success"
+
+
+def _case_name(node_id: str) -> str:
+    return str(node_id).split(".spec_tests/", 1)[-1].rsplit("/", 1)[-1]
 
 
 def entries_from_run(run_dir: str | Path, *, split_file: Path | None = None) -> list[BankEntry]:
@@ -110,9 +121,15 @@ def entries_from_run(run_dir: str | Path, *, split_file: Path | None = None) -> 
         commit = commits.get(mid)
         base_rev = str((commit or {}).get("expected_base_revision") or sub.get("base_task_revision") or "")
         frozen = run / "harness" / f"{mid}.spec_tests"
-        by_case = ((fl.get("error_classes") or {}).get("by_case")) or {}
-        persistent = {k: by_case.get(k, "") for k in ((fl.get("persistence") or {}).get("persistent") or [])}
-        persistent = {k.rsplit("/", 1)[-1]: v for k, v in persistent.items()}
+        by_case = {_case_name(k): v for k, v in (((fl.get("error_classes") or {}).get("by_case")) or {}).items()}
+        persistent = {_case_name(k): by_case.get(_case_name(k), "")
+                      for k in ((fl.get("persistence") or {}).get("persistent") or [])}
+        if not persistent and not fl:
+            # no search ran: the first attempt's failed gate cases are the persistent set, unclassified
+            attempts = sub.get("attempts") or []
+            stages = ((attempts[0].get("metadata") or {}).get("harness_stages") or []) if attempts else []
+            spec_stage = next((st for st in stages if st.get("stage") == "spec_tests"), {})
+            persistent = {_case_name(k): "" for k in (spec_stage.get("failed_tests") or [])}
         inc_ws = ""
         for c in cands:
             if (c.get("metadata") or {}).get("incumbent"):
@@ -145,7 +162,7 @@ def entries_from_run(run_dir: str | Path, *, split_file: Path | None = None) -> 
             incumbent_workspace_ref=inc_ws or str(sub.get("workspace_ref") or ""),
             persistent_failures=persistent,
             original_records=[f"{task_id}:{mid}:{c.get('candidate_id')}" for c in cands],
-            outcome=_outcome(incumbent, str(sub.get("status") or "")),
+            outcome=_outcome(incumbent, str(sub.get("status") or ""), (sub.get("attempts") or [None])[0]),
             run_dir=str(run),
         )
         out.append(entry)
