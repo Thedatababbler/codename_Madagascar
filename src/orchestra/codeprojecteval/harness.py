@@ -363,6 +363,57 @@ def _internal_from_imports(root, packages):
     return found
 
 
+def _configure_django_if_present(root):
+    """Give Django app modules the settings they read at import time.
+
+    A Django package (djangorestframework-simplejwt) reads ``settings.SIMPLE_JWT``
+    and ``AUTH_USER_MODEL`` while its modules import; the dataset's own
+    reference does, so a bare interpreter cannot import it and the imports
+    stage would grade the reference as broken. This is the minimal
+    ``settings.configure()`` every consumer of such a package performs, done
+    once before the imports and cross-imports stages; non-Django tasks are
+    untouched because ``django`` is not installed in their environments.
+    """
+    import importlib.util as _ilu
+
+    if _ilu.find_spec("django") is None:
+        return
+    try:
+        import django
+        from django.conf import settings as _dj_settings
+
+        if _dj_settings.configured:
+            return
+        apps = ["django.contrib.contenttypes", "django.contrib.auth", "django.contrib.sessions",
+                "django.contrib.messages", "django.contrib.admin"]
+        if _ilu.find_spec("rest_framework") is not None:
+            apps.append("rest_framework")
+        # The repository's own Django apps (a package holding models.py or
+        # apps.py): their models stay abstract until the app is installed.
+        base = Path(root)
+        src = base / "src"
+        for marker in ("models.py", "apps.py"):
+            for path in sorted(base.rglob(marker)):
+                if any(part in ("tests", "test", "docs", "unit_tests", "check_tests", "spec_tests") or part.startswith(".") for part in path.parts):
+                    continue
+                pkg_dir = path.parent
+                top = src if src.is_dir() and src in pkg_dir.parents else base
+                if not (pkg_dir / "__init__.py").is_file():
+                    continue
+                dotted = ".".join(pkg_dir.relative_to(top).parts)
+                if dotted and dotted not in apps:
+                    apps.append(dotted)
+        _dj_settings.configure(
+            SECRET_KEY="adamas-gate-imports",
+            INSTALLED_APPS=apps,
+            DATABASES={"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}},
+            USE_TZ=True,
+        )
+        django.setup()
+    except Exception as exc:  # noqa: BLE001
+        print("WARN django settings not configured for the imports stage: " + type(exc).__name__ + ": " + str(exc), file=sys.stderr)
+
+
 def _check_cross_imports(root, packages):
     """(checked, dangling) for internal ``from X import Y`` pairs."""
     import importlib as _il
@@ -1005,6 +1056,7 @@ def main() -> int:
     if (root / "src").is_dir():
         # src-layout repositories import their package from src/, not the root.
         sys.path.insert(0, str(root / "src"))
+    _configure_django_if_present(root)
     skipped_deps = set()
     failed_imports = []
     for mod in modules:

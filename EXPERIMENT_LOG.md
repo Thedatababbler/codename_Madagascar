@@ -4053,3 +4053,18 @@ fix when the incumbent's own gate failed. The milestone is being resumed by
 the lane under the fixed code. Tasks run before this fix: bplustree,
 cookiecutter, tinydb, deprecated (no failure search reached a VALID
 candidate in those), imapclient (in flight, old code).
+
+**Gate fix (2026-10-01 08:12 UTC): Django settings for the imports stage.** simplejwt's
+first milestone failed the imports stage twice in the evolution arm
+(`settings.SIMPLE_JWT` / `AUTH_USER_MODEL` read at import time). The dataset
+reference does exactly that, so the stage could not be passed by a
+reference-faithful implementation; the baseline passed it only because its
+implementer happened to make every settings access lazy. The check script now
+calls `settings.configure()` with the contrib apps, rest_framework and the
+repository's own Django apps (packages holding models.py / apps.py) before the
+imports and cross-imports stages, when `django` is importable; verified on the
+reference (imports 30/30, cross-imports 48/48, score 1.0 at implementation
+level). Non-Django environments are untouched. Not one of the §0.2 guard
+mechanisms; it makes the gate passable by the reference, the same principle as
+the earlier "validity on reference" work. Test:
+`tests/unit/decomposition/test_gate_django_configure.py`.
