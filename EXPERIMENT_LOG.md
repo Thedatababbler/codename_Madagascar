@@ -3996,3 +3996,33 @@ the long CPU budget). Supervisor: scratchpad `evo/baseline_lane.sh`, log
 - lane B: cookiecutter, deprecated, djangorestframework-simplejwt, python-hl7, rsa, zxcvbn
 
 Results are appended below when the lanes finish.
+
+**Step 1 stopped 2026-10-01 02:10 UTC on the user's call** (the 09-14/15 feature-plan
+runs already serve as the baseline; the seven tasks re-run here landed within noise
+of them, which is the only thing the re-run needed to show). flask and rsa were cut
+mid-run and have no score. Baseline rows for this experiment:
+
+| task | milestones | held-out 09-30 (this entry) | held-out 09-14/15 (same plans) |
+|---|---|---|---|
+| bplustree | 5/5 | 0.904 | 0.902 |
+| tinydb | 4/4 | 0.907 | 0.868 |
+| imapclient | 5/5 | 0.434 | 0.412 |
+| djangorestframework-simplejwt | 5/5 | 0.702 | 0.759 |
+| python-hl7 | 4/5 | 0.550 | 0.530 |
+| deprecated | 3/3 | 0.597 | -- |
+| cookiecutter | 4/5 (integration gate failed) | unscored (static module), observed 0.246 | 0.25* |
+| flask | cut | -- | 0.763 |
+| csvs-to-sqlite, voluptuous, rsa, zxcvbn | not run | -- | -- |
+
+## EXP-20261001-01 -- self-evolution experiment, step 2: stages 1-4 on the training tasks (branch `rsi`)
+
+**Status:** OPEN, started 2026-10-01 02:18 UTC, zqin30 / gpt-5.5, 5h window at ~45% when started.
+
+Same 12 tasks, same plan files and lane order as EXP-20260930-07, config
+`configs/experiments/codeprojecteval_milestones_evolution.yaml` (probes,
+unified per-case acceptance, repair on any early-gate failure, routing +
+error classes, R0 + one row slot from playbook v2, first-pass designer
+with F1 in trial). After each task: held-out eval, then
+`scripts/bank_admit.py` on the run. Supervisor: scratchpad
+`evo/evolution_lane.sh`, log `evo/evolution.out`. Ledger lands under
+`outputs/evolution/ledger/`, bank under `outputs/evolution/bank/`.
