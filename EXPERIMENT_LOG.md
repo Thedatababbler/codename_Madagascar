@@ -4039,3 +4039,17 @@ their own remaining failure count on the frozen suite first, then
 bplustree, cookiecutter, tinydb, and (started before the fix loaded)
 imapclient and deprecated. Processes load the code at task start, so every
 later task uses the fixed ranking.
+
+**Second selector fix (2026-10-01 07:05 UTC).** simplejwt's first milestone failed
+its gate on the imports stage (behaviour suite 26/26, modules import Django
+settings at import time) and the failure search produced a VALID 0.96
+candidate -- which was declined: a failure search has no incumbent record,
+`_unified_acceptance` never ran, and `UnifiedAcceptanceSelector` only picks
+judged candidates. With evolution on, no failure search could commit
+anything. Now: with nothing judged the selector takes the gate-passing
+candidate with the fewest remaining failures (rule
+`unified_acceptance:gate_recovery`), and `judge` counts a passing gate as the
+fix when the incumbent's own gate failed. The milestone is being resumed by
+the lane under the fixed code. Tasks run before this fix: bplustree,
+cookiecutter, tinydb, deprecated (no failure search reached a VALID
+candidate in those), imapclient (in flight, old code).

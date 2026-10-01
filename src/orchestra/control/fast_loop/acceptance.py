@@ -142,6 +142,12 @@ def judge(
     incumbent_gate = incumbent.status in (CandidateStatus.VALID, CandidateStatus.COMMITTED)
     cand_gate = candidate.status in (CandidateStatus.VALID, CandidateStatus.COMMITTED)
     v.gate_ok = cand_gate or not incumbent_gate
+    if not incumbent_gate and cand_gate and not v.fixed:
+        # The incumbent failed its gate on a stage the behaviour suite does not
+        # see (imports, contracts, the dataset's check tests): a candidate that
+        # passes the whole gate is the fix, even with no persistent case to name.
+        v.fixed = ["<gate recovered>"]
+        v.reasons.append("gate recovered")
     if not v.fixed:
         v.reasons.append("fixes no persistent failure")
     if v.regressed:
@@ -238,6 +244,21 @@ class UnifiedAcceptanceSelector:
         self, candidates: Sequence[CandidateRecord], budget: FastLoopBudget
     ) -> CandidateRecord | None:
         del budget
+        judged = [c for c in candidates if ACCEPTANCE_KEY in c.metadata]
+        if not judged:
+            # No incumbent record (the first pass failed its gate, so there is
+            # nothing to judge against): a candidate that passes the gate is the
+            # improvement. Fewest remaining failures, then score, then cost.
+            # (simplejwt 2026-10-01: a 0.96 gate-passing candidate was declined.)
+            valid = [c for c in candidates if c.status is CandidateStatus.VALID and not c.metadata.get("incumbent")]
+            self.last_rule = "unified_acceptance:gate_recovery"
+            self.last_frontier = [c.candidate_id for c in valid]
+            if not valid:
+                return next((c for c in candidates if c.metadata.get("incumbent")), None)
+            valid.sort(key=lambda c: (len(_keys(c.behaviour_failures)), -float(c.behaviour_score or 0.0),
+                                      float(c.cost.estimated_cost_usd or 0.0), c.candidate_id))
+            return valid[0]
+        self.last_rule = "unified_acceptance"
         accepted = [
             c for c in candidates
             if (c.metadata.get(ACCEPTANCE_KEY) or {}).get("accepted")

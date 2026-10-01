@@ -148,3 +148,20 @@ def test_selector_prefers_the_candidate_with_fewest_remaining_failures() -> None
     assert r0.metadata[ACCEPTANCE_KEY]["net_fix"] < p3.metadata[ACCEPTANCE_KEY]["net_fix"]
     winner = UnifiedAcceptanceSelector().select([inc, p1, p3, r0], FastLoopBudget())
     assert winner is r0 and r0.metadata[ACCEPTANCE_KEY]["remaining_failures"] == 0
+
+
+def test_failure_search_without_incumbent_commits_the_gate_passing_candidate() -> None:
+    """A failed first pass has no incumbent record; an unjudged VALID candidate is the recovery."""
+    bad = _rec("bad", failed=[A], status=CandidateStatus.HARNESS_FAILED, score=0.9)
+    good = _rec("good", failed=[B], score=0.96, cost=2.0)
+    better = _rec("better", failed=[], score=1.0, cost=5.0)
+    sel = UnifiedAcceptanceSelector()
+    assert sel.select([bad, good, better], FastLoopBudget()) is better and sel.last_rule.endswith("gate_recovery")
+    assert sel.select([bad], FastLoopBudget()) is None
+
+
+def test_gate_recovery_counts_as_a_fix_when_the_incumbent_failed_its_gate() -> None:
+    inc = _rec("inc", failed=[], status=CandidateStatus.HARNESS_FAILED, score=1.0, incumbent=True)
+    cand = _rec("cand", failed=[], score=1.0)
+    verdicts, _ = judge_all([cand], inc, [])
+    assert verdicts["cand"].accepted and "gate recovered" in verdicts["cand"].reasons
