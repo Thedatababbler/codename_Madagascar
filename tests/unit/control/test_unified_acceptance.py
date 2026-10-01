@@ -136,3 +136,15 @@ def test_records_without_passing_ids_fall_back_to_the_failure_union() -> None:
     bad = judge(_rec("cand2", failed=[B], passed=[]), sets, inc)
     assert good.accepted and good.regressed == []
     assert not bad.accepted and bad.regressed == ["test_a.py::test_b"]
+
+
+def test_selector_prefers_the_candidate_with_fewest_remaining_failures() -> None:
+    """A probe's leave-one-out net fix is larger than R0's for the same package; the suite result decides."""
+    inc = _rec("inc", failed=[A, B, C], score=0.875, incumbent=True)
+    p1 = _rec("p1", failed=[A, B, C], score=0.875, probe=True)
+    p3 = _rec("p3", failed=[C], score=0.958, probe=True)      # judged against inc+p1: fixes A, B
+    r0 = _rec("r0", failed=[], score=1.0, cost=3.0)           # judged against all samples: fixes C only
+    judge_all([p1, p3, r0], inc, [p1, p3], r0_id="r0")
+    assert r0.metadata[ACCEPTANCE_KEY]["net_fix"] < p3.metadata[ACCEPTANCE_KEY]["net_fix"]
+    winner = UnifiedAcceptanceSelector().select([inc, p1, p3, r0], FastLoopBudget())
+    assert winner is r0 and r0.metadata[ACCEPTANCE_KEY]["remaining_failures"] == 0

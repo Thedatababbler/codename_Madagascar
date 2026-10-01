@@ -217,11 +217,17 @@ def judge_all(
 
 
 class UnifiedAcceptanceSelector:
-    """Pick the accepted candidate with the largest net fix, else the incumbent.
+    """Pick the accepted candidate that leaves the fewest failures, else the incumbent.
 
     Reads the verdicts ``judge_all`` stored on each record; a record without
-    one (never judged) is not selectable. Returning the incumbent is how the
-    controller learns the search declined, exactly as with the Pareto selector.
+    one (never judged) is not selectable. ``net_fix`` is not comparable across
+    candidates: a probe is judged leave-one-out against a larger persistent
+    set than a repair candidate, so its count comes out higher for the same
+    package. The common yardstick is the candidate's own remaining failure
+    count on the frozen suite; ``net_fix`` breaks ties, then cost. (tinydb
+    2026-10-01: a probe failing one case outranked R0 passing every case.)
+    Returning the incumbent is how the controller learns the search declined,
+    exactly as with the Pareto selector.
     """
 
     def __init__(self) -> None:
@@ -241,11 +247,14 @@ class UnifiedAcceptanceSelector:
         if accepted:
             accepted.sort(
                 key=lambda c: (
+                    len(_keys(c.behaviour_failures)),
                     -int((c.metadata.get(ACCEPTANCE_KEY) or {}).get("net_fix") or 0),
                     float(c.cost.estimated_cost_usd or 0.0),
                     c.candidate_id,
                 )
             )
+            for c in accepted:
+                (c.metadata.get(ACCEPTANCE_KEY) or {})["remaining_failures"] = len(_keys(c.behaviour_failures))
             return accepted[0]
         incumbent = next((c for c in candidates if c.metadata.get("incumbent")), None)
         return incumbent

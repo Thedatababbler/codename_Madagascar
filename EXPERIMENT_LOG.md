@@ -4026,3 +4026,16 @@ with F1 in trial). After each task: held-out eval, then
 `scripts/bank_admit.py` on the run. Supervisor: scratchpad
 `evo/evolution_lane.sh`, log `evo/evolution.out`. Ledger lands under
 `outputs/evolution/ledger/`, bank under `outputs/evolution/bank/`.
+
+**Selector fix during the run (2026-10-01 06:05 UTC).** tinydb's first milestone
+(first pass 0.875) committed the third probe (0.958, one case still failing)
+over R0 (1.000): probes are judged leave-one-out against the incumbent and
+the other probes, so the probe's `fixed` count (2) came from a larger
+persistent set than R0's (1) and the two `net_fix` values were not
+comparable. `UnifiedAcceptanceSelector` now ranks accepted candidates by
+their own remaining failure count on the frozen suite first, then
+`net_fix`, then cost. Held-out: tinydb evolution 0.848 vs baseline 0.907
+(173 vs 185 passed of 204). Tasks that ran under the old ranking:
+bplustree, cookiecutter, tinydb, and (started before the fix loaded)
+imapclient and deprecated. Processes load the code at task start, so every
+later task uses the fixed ranking.
