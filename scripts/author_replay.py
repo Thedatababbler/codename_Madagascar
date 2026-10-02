@@ -163,13 +163,27 @@ def score(args) -> None:
         raise SystemExit(f"suite dir missing: {suite_dir}")
     attribution = json.loads(Path(args.attribution).read_text(encoding="utf-8")).get("attribution") or {}
     cases = list(attribution.get(args.milestone) or [])
+    # A suite case the dataset's own reference fails is not evidence against
+    # an implementation: it is a doc-vs-reference gap or an invention. The
+    # verdict counts only cases the reference passes ("valid" failures).
+    ref_failed: set[str] = set()
+    if args.reference:
+        task = load_task(task_id, dataset_root=DATASET_ROOT)
+        with tempfile.TemporaryDirectory() as tmp:
+            ref = Path(tmp) / task_id
+            shutil.copytree(task.repo_root, ref, ignore=shutil.ignore_patterns("__pycache__", ".git", "unit_tests", "check_tests"))
+            subprocess.run(["git", "init", "-q"], cwd=ref, check=False, capture_output=True)
+            ref_failed = {k for k, v in suite_cases(ref, command, suite_dir, timeout).items() if v == "fail"}
+        print(f"{task_id} {args.milestone[:30]} reference: suite fails {len(ref_failed)} case(s) there -> excluded from verdicts")
     rows = []
     for name, ws in workspaces_of(run_dir, args.milestone, final_only=args.final).items():
         suite = suite_cases(ws, command, suite_dir, timeout)
+        valid = {k: v for k, v in suite.items() if k not in ref_failed}
         held = heldout_cases(task_id, ws, cases)
         rows.append({
-            "workspace": name, "path": str(ws), "cell": cell(suite, held),
-            "suite_failed": sorted(k for k, v in suite.items() if v == "fail"), "suite_total": len(suite),
+            "workspace": name, "path": str(ws), "cell": cell(valid, held),
+            "suite_failed": sorted(k for k, v in valid.items() if v == "fail"), "suite_total": len(valid),
+            "suite_failed_reference_too": sorted(k for k, v in suite.items() if v == "fail" and k in ref_failed),
             "heldout_failed": sorted(k for k, v in held.items() if v == "fail"), "heldout_total": len(held),
         })
         print(f"{task_id} {args.milestone[:30]} {name:22s} suite {len(rows[-1]['suite_failed'])}/{len(suite)} failed | held-out {len(rows[-1]['heldout_failed'])}/{len(held)} failed -> {rows[-1]['cell']}")
@@ -215,6 +229,7 @@ def main() -> None:
     s.add_argument("--suite", default=None, help="suite directory (default: the run's frozen suite)")
     s.add_argument("--label", default="current")
     s.add_argument("--final", action="store_true", help="score the committed final repository only (all milestones present)")
+    s.add_argument("--reference", action="store_true", help="also run the suite on the dataset reference; cases it fails there are excluded")
     s.add_argument("--attribution", required=True)
     s.add_argument("--out", required=True)
     s.set_defaults(fn=score)
