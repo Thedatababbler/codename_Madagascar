@@ -469,10 +469,15 @@ def to_playbook(row: PlaybookRow, *, facts: RowFacts, instructions_dir: Path = I
     if row.action == "N":
         return None
     if row.action == "S" and "upstream" in row.evidence_routing:
+        # The failures go back to the kind of writer the ownership blame named:
+        # a continuation on the incumbent's workspace whose improver slot takes
+        # that writer's role (the controller puts it in the diagnosis's
+        # ``recommended_role``), with the failure list and evidence.
         return Playbook(
             playbook_id=pid, reason=row.intent, classes=frozenset(), intent=row.intent,
-            target="", include_failure_list=True, extra_prompt=(text + " " + guard).strip(),
-            search_reasons=quality,
+            target="improver", include_failure_list=True, extra_prompt=(text + " " + guard).strip(),
+            switch_template="continuation", role_from_diagnosis="improver",
+            continue_from_incumbent=True, search_reasons=quality,
         )
     if row.action in ("S", "B") or (row.action == "T" and row.target_template == "continuation"):
         bd = row.budget_delta or BudgetDelta()

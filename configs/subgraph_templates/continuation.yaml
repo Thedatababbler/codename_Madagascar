@@ -19,6 +19,7 @@ slots:
   - id: improver
     default_role: implementer
     allowed_roles:
+      - contract_author
       - dependency_resolver
       - edge_case_hardener
       - gate_repairer

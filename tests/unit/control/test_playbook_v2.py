@@ -169,3 +169,17 @@ def test_ledger_records_pair_rows_with_r0_and_require_a_workspace(tmp_path) -> N
     first = json.loads(cand_path.read_text().splitlines()[0])
     assert first["split"] == "train" and "workspace_ref" in first
     assert split_of("pyjwt") == "test" and split_of("nl2_tablib") == "train" and split_of("nope") == "unknown"
+
+
+def test_upstream_row_is_a_continuation_whose_improver_takes_the_blamed_role() -> None:
+    """U-S1 hands the failures back to the kind of writer the ownership blame named (EXP-20261002-01)."""
+    row = next(r for r in ROWS if r.row_id == "U-S1")
+    pb = to_playbook(row, facts=_facts(blamed_before_repairer=True))
+    assert pb is not None and pb.switch_template == "continuation" and pb.role_from_diagnosis == "improver"
+    assert pb.continue_from_incumbent and pb.include_failure_list
+    sel = select_rows(ROWS, classes=["E3"], facts=_facts(blamed_before_repairer=False), row_slots=1, trial_prob=0.0,
+                      max_trial_concurrent=2, trials_running=0)
+    assert sel.filtered.get("U-S1", "").startswith("precondition")
+    from orchestra.roles.templates import load_templates
+    improver = load_templates()["continuation"].slot("improver")
+    assert improver.accepts("contract_author") and improver.accepts("implementer")

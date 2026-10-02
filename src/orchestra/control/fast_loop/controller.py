@@ -509,13 +509,23 @@ class FastLoopController:
         if summary.persistent and not collects_nothing and not repair_list:
             fl_state.notes.append("routing: every persistent failure was routed away; nothing for this milestone to repair")
         if summary.persistent and not collects_nothing and repair_list:
-            diagnosis = fl_state.diagnosis.model_copy(
-                update={
-                    "behaviour_failures": list(repair_list),
-                    "persistence_samples": summary.samples,
-                    "error_classes": list(error_classes),
-                }
-            )
+            update = {
+                "behaviour_failures": list(repair_list),
+                "persistence_samples": summary.samples,
+                "error_classes": list(error_classes),
+            }
+            if self.evolution.enabled:
+                # P2 blame: the writer whose files the persistent failures land
+                # in. A quality search has no failed node, so without this the
+                # diagnosis names the gate-feeding repairer and "hand it back to
+                # the upstream writer" can never fire (EXP-20261002-01).
+                blamed, position, why = await self._blame_persistent(
+                    state=state, fl_state=fl_state, base_graph=base_graph, graph_result=graph_result,
+                    context=context, base_ws=base_ws, targets=list(repair_list),
+                )
+                fl_state.notes.append(f"blame: {blamed or 'none'} ({position}): {why}")
+                fl_state.routing["blame"] = {"node_id": blamed, "position": position, "reason": why}
+            diagnosis = fl_state.diagnosis.model_copy(update=update)
             diagnosis = self._settle_roles(
                 diagnosis,
                 graph=base_graph,
@@ -717,9 +727,11 @@ class FastLoopController:
         self, *, state, fl_state, sub, base_graph, diagnosis, caps, incumbent, summary, error_classes, row_slots,
     ) -> list:
         """§3.7: select rows for the main class(es) and turn them into candidates."""
+        nodes_by_slot: dict[str, str] = {}
         try:
             ctx = context_for(graph=base_graph, diagnosis=diagnosis, anchor_node_id=diagnosis.focus_node_id or "", pool=default_role_pool())
             roles_by_slot = dict(ctx.roles_by_slot)
+            nodes_by_slot = dict(ctx.nodes_by_slot)
         except Exception:  # noqa: BLE001
             roles_by_slot = {}
         tried = tuple(str((c.metadata or {}).get("v2_row") or "") for c in fl_state.candidates if (c.metadata or {}).get("v2_row"))
@@ -734,8 +746,9 @@ class FastLoopController:
             writer_hit_cap=(diagnosis.failure_class == "budget") or (diagnosis.reason is SubtaskFailureReason.TIMEOUT),
             gate_failed=(fl_state.search_reason != "quality") or incumbent.status is not CandidateStatus.VALID,
             stuck=self._rows_without_progress(fl_state) >= 2,
-            blamed_before_repairer=bool(diagnosis.primary_failed_node_id)
-            and diagnosis.primary_failed_node_id != diagnosis.focus_node_id,
+            # the persistent failures land in files an earlier writer owns
+            # (ownership blame, not the gate-feeding node)
+            blamed_before_repairer=(fl_state.routing.get("blame") or {}).get("position") in ("first", "middle"),
             tried_rows=tried,
             templates_tried=templates_tried,
         )
@@ -763,6 +776,7 @@ class FastLoopController:
         fl_state.notes.extend(f"v2: {n}" for n in selection.notes)
         playbooks = []
         chosen_meta: dict[str, dict[str, str]] = {}
+        upstream_ids: set[str] = set()
         for row in selection.rows:
             if row.action == "N":
                 continue  # U-N1 is the controller's node resample, armed below
@@ -772,12 +786,32 @@ class FastLoopController:
                 continue
             playbooks.append(pb)
             chosen_meta[f"cand_{pb.playbook_id}"] = {"row_id": row.row_id, "state": row.state}
+            if "upstream" in row.evidence_routing:
+                upstream_ids.add(pb.playbook_id)
         if not playbooks:
             return []
-        generated = self.generator.generate_rows(
-            graph=base_graph, diagnosis=diagnosis, playbooks=playbooks, budget=self.budget,
-            capabilities=caps, search_reason="quality",
-        )
+        generated = []
+        regular = [pb for pb in playbooks if pb.playbook_id not in upstream_ids]
+        if regular:
+            generated += self.generator.generate_rows(
+                graph=base_graph, diagnosis=diagnosis, playbooks=regular, budget=self.budget,
+                capabilities=caps, search_reason="quality",
+            )
+        upstream = [pb for pb in playbooks if pb.playbook_id in upstream_ids]
+        if upstream:
+            # The upstream row hands the failures to the writer the ownership
+            # blame named: its role fills the continuation's improver slot, so
+            # the same kind of writer continues its own change on the
+            # incumbent's workspace rather than the gate repairer.
+            blame = fl_state.routing.get("blame") or {}
+            slot = next((sl for sl, nid in nodes_by_slot.items() if nid == blame.get("node_id")), "")
+            role = roles_by_slot.get(slot, "")
+            up_diag = diagnosis.model_copy(update={"recommended_role": role}) if role else diagnosis
+            fl_state.notes.append(f"v2 upstream row: improver takes the blamed writer's role {role or '?'} (node {blame.get('node_id')})")
+            generated += self.generator.generate_rows(
+                graph=base_graph, diagnosis=up_diag, playbooks=upstream, budget=self.budget,
+                capabilities=caps, search_reason="quality",
+            )
         v2_rows = dict(fl_state.routing.get("v2_rows") or {})
         for cand in generated:
             if cand.candidate_id in chosen_meta:
@@ -2098,18 +2132,18 @@ class FastLoopController:
             summary_path = Path(cand_ws.path).parent / "candidate_result.json"
             summary_path.write_text(record.model_dump_json(indent=2), encoding="utf-8")
 
-    async def _arm_node_resample(
-        self, *, state, fl_state, base_graph, incumbent, probes, summary, graph_result, context, base_ws,
-        targets: list[str] | None = None, mode: str = "flaky", extra_feedback: str = "",
-    ) -> CandidateRecord | None:
-        """Arm a best-of-N record at the editing node that owns `targets`.
+    async def _writer_ownership(
+        self, *, state, fl_state, base_graph, graph_result, context, base_ws, targets: list[str],
+        candidate_id: str = "node_resample_blame",
+    ) -> tuple[list, dict[str, str], Any]:
+        """Who wrote the code each of ``targets`` lands in.
 
-        mode="flaky": the row's precondition -- at least FLAKY_SHARE of the
-        targets owned by one node -- else declined. mode="author": every
-        sample scored 0.0 on the persistent set -> re-author the suite.
-        Ownership: last writer of the file the failure lands in (traceback
-        frame, else the symbol the test refers to)."""
-        targets = list(targets if targets is not None else summary.persistent)
+        Returns ``(writer steps in graph order, failure -> file, evidence dir)``.
+        Ownership is the last writer of the file a failure's traceback (or the
+        symbol under test) points at. Shared by the node resample and the
+        persistent-failure diagnosis, so a repair row that hands the failures
+        back to the upstream writer sees the same blame the resample does.
+        """
         outputs = getattr(getattr(graph_result, "state", None), "node_outputs", None) or {}
         changes: dict[str, tuple[str, str]] = {}
         for node_id, outs in outputs.items():
@@ -2124,32 +2158,70 @@ class FastLoopController:
             changes[node_id] = (str(art_id), patch)
         steps = nr.writer_steps(base_graph, changes)
         code_steps = [st for st in steps if not st.is_author]
+        frames: dict[str, str] = {}
+        evidence_dir = None
+        if code_steps and targets:
+            try:
+                scratch = await self.workspace_manager.fork_candidate_workspace(
+                    base=base_ws, run_dir=str(context.run_dir), task_id=state.task_id,
+                    subtask_id=fl_state.subtask_id, candidate_id=candidate_id,
+                )
+                await self.workspace_manager.apply_patch(scratch, code_steps[-1].patch)
+                python = self._task_python(base_graph)
+                frames = await asyncio.to_thread(nr.traceback_frames, Path(scratch.path), targets, python)
+                # assertion-only failures have no repository frame (and a flaky one
+                # may pass on the incumbent): own them by the symbol under test
+                sym = await asyncio.to_thread(nr.symbol_frames, Path(scratch.path), targets)
+                for k, v in sym.items():
+                    frames.setdefault(k, v)
+                evidence_dir = await asyncio.to_thread(build_repair_evidence, Path(scratch.path), targets)
+            except Exception as exc:  # noqa: BLE001
+                evidence_dir = None
+                fl_state.notes.append(f"ownership: traceback frames unavailable ({exc}); ownership by last writer")
+        return steps, frames, evidence_dir
+
+    async def _blame_persistent(
+        self, *, state, fl_state, base_graph, graph_result, context, base_ws, targets: list[str],
+    ) -> tuple[str | None, str, str]:
+        """The editing node to hand the persistent failures back to (§2.2 blame).
+
+        ``(node_id, position, reason)``: the earliest writer owning them, as
+        the resample's v1 rule; ``position`` is "first" / "middle" / "last"
+        among the editing nodes, "none" when nothing can be attributed. A
+        failure the harness reported but no writer touched belongs to the
+        last writer, which is the repairer, so "last" means "nothing upstream".
+        """
+        if graph_result is None or not targets:
+            return None, "none", "no graph result or no persistent failure"
+        steps, frames, _ = await self._writer_ownership(
+            state=state, fl_state=fl_state, base_graph=base_graph, graph_result=graph_result,
+            context=context, base_ws=base_ws, targets=list(targets), candidate_id="persistent_blame",
+        )
+        blame = nr.blame_v1(list(targets), frames, steps)
+        if blame.position == "author" or not blame.node_id:
+            return None, blame.position, blame.reason
+        return blame.node_id, blame.position, blame.reason
+
+    async def _arm_node_resample(
+        self, *, state, fl_state, base_graph, incumbent, probes, summary, graph_result, context, base_ws,
+        targets: list[str] | None = None, mode: str = "flaky", extra_feedback: str = "",
+    ) -> CandidateRecord | None:
+        """Arm a best-of-N record at the editing node that owns `targets`.
+
+        mode="flaky": the row's precondition -- at least FLAKY_SHARE of the
+        targets owned by one node -- else declined. mode="author": every
+        sample scored 0.0 on the persistent set -> re-author the suite.
+        Ownership: last writer of the file the failure lands in (traceback
+        frame, else the symbol the test refers to)."""
+        targets = list(targets if targets is not None else summary.persistent)
+        steps, frames, evidence_dir = await self._writer_ownership(
+            state=state, fl_state=fl_state, base_graph=base_graph, graph_result=graph_result,
+            context=context, base_ws=base_ws, targets=targets,
+        )
+        code_steps = [st for st in steps if not st.is_author]
         if not code_steps and mode != "author":
             fl_state.notes.append("node_resample: no editing node produced a change; declined")
             return None
-        frames: dict[str, str] = {}
-        evidence_dir = None
-        try:
-            scratch = await self.workspace_manager.fork_candidate_workspace(
-                base=base_ws, run_dir=str(context.run_dir), task_id=state.task_id,
-                subtask_id=fl_state.subtask_id, candidate_id="node_resample_blame",
-            )
-            await self.workspace_manager.apply_patch(scratch, code_steps[-1].patch)
-            python = self._task_python(base_graph)
-            frames = await asyncio.to_thread(
-                nr.traceback_frames, Path(scratch.path), targets, python
-            )
-            # assertion-only failures have no repository frame (and a flaky one
-            # may pass on the incumbent): own them by the symbol under test
-            sym = await asyncio.to_thread(nr.symbol_frames, Path(scratch.path), targets)
-            for k, v in sym.items():
-                frames.setdefault(k, v)
-            evidence_dir = await asyncio.to_thread(
-                build_repair_evidence, Path(scratch.path), targets
-            )
-        except Exception as exc:  # noqa: BLE001
-            evidence_dir = None
-            fl_state.notes.append(f"node_resample: traceback frames unavailable ({exc}); ownership by last writer")
         if mode == "author":
             blame = nr.blame_v1(targets, frames, steps, suite_collected_zero=True)
         else:
