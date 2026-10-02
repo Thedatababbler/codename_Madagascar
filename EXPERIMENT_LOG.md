@@ -4318,3 +4318,36 @@ distribution over 85 older milestones had E2 31 / E5 37, so the classifier
 can produce them; this batch's suites and first passes simply did not. The
 F table's predictions (E2/E5 on foundations, E4 on state machines, E1 on
 large scopes, E7 on integrations) are therefore untested rather than wrong.
+
+## EXP-20261002-04 -- slow loop first: the author's miss rate by memory replay (branch `rsi`)
+
+**Status:** baseline measured (no model calls); author pilot running.
+
+`scripts/author_replay.py score --final`: on each training run's committed
+repository, the milestone's frozen suite and the held-out cases attributed
+to that milestone, as a 2x2 per milestone. 34 milestone runs (12 tasks):
+
+| cell | count |
+|---|---|
+| suite all-pass, held-out all-pass (agree) | 3 |
+| suite fails, held-out fails (agree) | 6 |
+| suite all-pass, held-out fails (**miss**) | 25 |
+| suite fails, held-out all-pass (false alarm) | 0 |
+
+Miss rate 25/31 = 0.81: on four milestones out of five whose held-out
+subset fails on the final repository, the authored suite passes
+everything. False alarms 0/6: when the suite fails, held-out fails too.
+This is the step-2 picture made precise: the gate is never too strict and
+almost always too lenient. The largest uncovered pockets: deprecated's
+warning behaviours on every decorated form (44/59 cases, suite 13/13
+green), simplejwt settings/views (61/135), imapclient transport (124/208),
+cookiecutter template resolution (37/61), voluptuous humanize (46/159).
+
+Pilot (zqin30 gpt-5.5, 2 probes at a time): v11 author prompt (coverage
+ledger: one test per documented sentence per public symbol; every
+documented input form, option, error path, round trip; breadth before
+depth) and an independent verifier prompt (breadth-first measuring stick,
+sealed) on bplustree serialization, cookiecutter template_source_resolution,
+deprecated classic_runtime_deprecation, tinydb query_language. Each new
+suite is scored on the same final repositories; the comparison is
+suite-to-suite on identical workspaces.
