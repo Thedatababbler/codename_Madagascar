@@ -202,3 +202,13 @@ def test_split_of_accepts_the_scheduler_task_prefix() -> None:
 
     assert split_of("rb_tinydb", SPLIT) == "train" and split_of("tinydb", SPLIT) == "train"
     assert split_of("rb_pyjwt", SPLIT) == "test" and split_of("rb_nothing", SPLIT) == "unknown"
+
+
+def test_f_verdict_when_the_target_class_never_occurred() -> None:
+    """Decision of 2026-10-02: no opponent, no preventive claim; only net > 0 promotes, as a general change."""
+    never_zero = f_entry_verdict(net_effect=0, cost_variant=0.9, cost_control=1.0, target_before=0, target_after=0, checkpoints=5)
+    assert not never_zero.promote and not never_zero.target_applicable and any("prediction mismatched" in r for r in never_zero.reasons)
+    never_pos = f_entry_verdict(net_effect=2, cost_variant=0.9, cost_control=1.0, target_before=0, target_after=0, checkpoints=5)
+    assert never_pos.promote and not never_pos.as_preventive and not never_pos.target_applicable
+    seen = f_entry_verdict(net_effect=0, cost_variant=1.0, cost_control=1.0, target_before=3, target_after=1, checkpoints=5)
+    assert seen.promote and seen.as_preventive and seen.target_applicable

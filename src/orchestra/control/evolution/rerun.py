@@ -206,27 +206,48 @@ class FVerdict:
     cost_ratio: float
     target_class_drop: bool
     checkpoints: int
+    #: False when the target classes never occurred in the F0 group: the
+    #: preventive claim could not be tested (condition 3 "not applicable")
+    target_applicable: bool = True
+    #: True when the entry is promoted as what it claims to be; False when it
+    #: is promoted only as a general change that happened to help (net > 0)
+    as_preventive: bool = True
 
 
 def f_entry_verdict(
     *, net_effect: int, cost_variant: float, cost_control: float, target_before: int, target_after: int,
     checkpoints: int, m_f: int = 5, cost_tolerance: float = 0.15, tripwire_fired: bool = False,
 ) -> FVerdict:
-    """§7.4: every condition must hold for trial -> active."""
+    """§7.4: every condition must hold for trial -> active.
+
+    Condition 3 (the target classes fell) needs an opponent: when the F0
+    group never showed the target classes over the paired checkpoints, the
+    condition is not applicable rather than failed, the entry cannot be
+    promoted as a preventive measure, and only a strictly positive net
+    effect promotes it as a general change (decision of 2026-10-02).
+    """
     reasons = []
     ratio = (cost_variant / cost_control) if cost_control > 0 else (1.0 if cost_variant == 0 else float("inf"))
     if net_effect < 0:
         reasons.append(f"net effect {net_effect} < 0")
     if ratio > 1.0 + cost_tolerance:
         reasons.append(f"cost ratio {ratio:.2f} > {1 + cost_tolerance:.2f}")
+    applicable = target_before > 0
     drop = target_after < target_before
-    if not drop:
-        reasons.append("target-class persistent failures did not fall")
+    as_preventive = True
+    if applicable:
+        if not drop:
+            reasons.append("target-class persistent failures did not fall")
+    else:
+        as_preventive = False
+        if net_effect <= 0:
+            reasons.append("prediction mismatched data: target classes never occurred in the F0 group and net effect is not > 0")
     if checkpoints < m_f:
         reasons.append(f"{checkpoints} checkpoints < m_f={m_f}")
     if tripwire_fired:
         reasons.append("held-out tripwire fired")
-    return FVerdict(promote=not reasons, reasons=reasons, net=net_effect, cost_ratio=ratio, target_class_drop=drop, checkpoints=checkpoints)
+    return FVerdict(promote=not reasons, reasons=reasons, net=net_effect, cost_ratio=ratio, target_class_drop=drop,
+                    checkpoints=checkpoints, target_applicable=applicable, as_preventive=as_preventive if not reasons else False)
 
 
 def merge_rerun_records(online: list[dict[str, Any]], rerun: list[dict[str, Any]]) -> list[dict[str, Any]]:

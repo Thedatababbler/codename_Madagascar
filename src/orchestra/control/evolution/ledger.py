@@ -152,6 +152,7 @@ def candidate_records(
             "prior_regressions": list(verdict.get("prior_regressions") or []),
             "net_fix": verdict.get("net_fix"),
             "accepted": bool(verdict.get("accepted")),
+            "accept_path": str(verdict.get("accept_path") or ""),
             "paired_R0_record_id": f"{task_id}:{milestone_id}:{r0.candidate_id}" if r0 is not None and c is not r0 else "",
             "delta_vs_R0": (
                 (verdict.get("net_fix") - r0_net)

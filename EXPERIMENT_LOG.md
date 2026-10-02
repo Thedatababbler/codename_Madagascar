@@ -4277,3 +4277,44 @@ in, earliest owner blamed) now runs on the routed persistent set after P2
 (`routing["blame"]`), the row's precondition reads it, and the row runs as
 a continuation on the incumbent whose improver slot takes the blamed
 writer's role (contract_author added to that slot's allowed roles).
+
+## EXP-20261002-03 -- two acceptance decisions implemented (branch `rsi`)
+
+**Status:** implementation record; unit suite green; no paid run yet.
+
+1. **Flaky-only searches may commit a probe, after an agent-free re-check.**
+   When the persistent set is empty and the incumbent and probes disagree
+   only on flaky cases, a candidate that fails strictly fewer of the sampled
+   cases than the incumbent gets `accept_path = flaky_resolution` pending
+   confirmation: the frozen suite is re-run `acceptance.flaky_reverify_runs`
+   (2) more times on its workspace, no agent; every run must fail fewer
+   cases than the incumbent, none of the incumbent's stably passing cases,
+   and none of the cases counted as resolved. Confirmed -> accepted with
+   the resolved cases as its fix; not confirmed -> refused and the flipping
+   cases routed `suite_suspect` to the author. The ledger records
+   `accept_path` (`persistent_fix` / `gate_recovery` / `flaky_resolution`)
+   so row-vs-R0 statistics can keep these apart (rows pair only with R0, so
+   the pairing is untouched by construction). flask M2 of 10-02 would now
+   commit the 1.0 probe if the re-check holds.
+2. **F entries whose target classes never occurred.** `f_entry_verdict`:
+   condition 3 is "not applicable" when the F0 group showed the target
+   classes zero times (`target_before == 0`); the entry then cannot be
+   promoted as preventive, promotes only on net effect strictly > 0 as a
+   general change (`as_preventive=False`), and otherwise goes back to
+   candidate with `#mismatch` on its origin (never re-drawn into trial).
+   Pre-trial check (memory replay): an entry enters or keeps a trial slot
+   only when its target classes occurred on >= `trial.f_min_target_rate`
+   (10%) of the ledger's milestones matching its trigger, given at least
+   m_f such milestones; otherwise it is left to calibration (§8.3). On the
+   current ledger every entry fails this check: F1 0/42, F2 0/19, F3 2/27,
+   F4 0/13, F5 0/41, F6 2/40. F1's verdict now reads "prediction mismatched
+   data" (4 pairs, net 0); at the fifth pair it returns to candidate.
+
+Error-class distribution over the ledger's first-pass records (training,
+one per milestone run): foundation 38 milestones -> E3 34, E6 7, E4 4;
+middle 15 -> E6 1; integration 9 -> E3 3. E2 (interface surface) and E5
+(error path) never occur in this batch, although the offline 09-30
+distribution over 85 older milestones had E2 31 / E5 37, so the classifier
+can produce them; this batch's suites and first passes simply did not. The
+F table's predictions (E2/E5 on foundations, E4 on state machines, E1 on
+large scopes, E7 on integrations) are therefore untested rather than wrong.

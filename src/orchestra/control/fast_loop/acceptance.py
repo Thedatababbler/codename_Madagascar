@@ -83,6 +83,11 @@ class Verdict:
     gate_ok: bool = True
     reasons: list[str] = field(default_factory=list)
     excluded: list[str] = field(default_factory=list)
+    #: how the candidate was (or could be) accepted: ``persistent_fix``,
+    #: ``gate_recovery``, ``flaky_resolution`` (pending the suite re-check) or ``""``
+    accept_path: str = ""
+    #: flaky cases the candidate passes; the re-check must confirm them
+    flaky_resolved: list[str] = field(default_factory=list)
 
     @property
     def net_fix(self) -> int:
@@ -98,6 +103,8 @@ class Verdict:
             "gate_ok": self.gate_ok,
             "reasons": list(self.reasons),
             "excluded": list(self.excluded),
+            "accept_path": self.accept_path,
+            "flaky_resolved": list(self.flaky_resolved),
         }
 
 
@@ -147,7 +154,22 @@ def judge(
         # see (imports, contracts, the dataset's check tests): a candidate that
         # passes the whole gate is the fix, even with no persistent case to name.
         v.fixed = ["<gate recovered>"]
+        v.accept_path = "gate_recovery"
         v.reasons.append("gate recovered")
+    elif v.fixed:
+        v.accept_path = "persistent_fix"
+    if not v.fixed and not persistent and sets.flaky:
+        # Nothing persistent to fix: the incumbent and the probes disagree only
+        # on flaky cases. Two samples of one design are a best-of-N, so a
+        # candidate that fails strictly fewer of the sampled failures than the
+        # incumbent may still be the better package -- if a suite re-check
+        # (no agent) confirms that the cases are stable on it, not lucky.
+        inc_failed = _keys(incumbent.behaviour_failures)
+        resolved = sorted((sets.flaky - excluded) & inc_failed - cand_failed)
+        if resolved and len(cand_failed - excluded) < len(inc_failed - excluded):
+            v.flaky_resolved = resolved
+            v.accept_path = "flaky_resolution"
+            v.reasons.append(f"flaky only: resolves {len(resolved)} flaky case(s); suite re-check required")
     if not v.fixed:
         v.reasons.append("fixes no persistent failure")
     if v.regressed:
@@ -157,7 +179,40 @@ def judge(
     if not v.gate_ok:
         v.reasons.append("gate state below the incumbent's")
     v.accepted = bool(v.fixed) and not v.regressed and not v.prior_regressions and v.gate_ok
+    if not v.accepted and v.accept_path != "flaky_resolution":
+        v.accept_path = ""
     return v
+
+
+def confirm_flaky_resolution(verdict: Verdict, runs: Sequence[Iterable[str]], *, incumbent_failed: Iterable[str],
+                             stable_pass: Iterable[str] | None) -> tuple[bool, list[str]]:
+    """Settle a ``flaky_resolution`` verdict from the re-check runs' failure sets.
+
+    Every run must fail strictly fewer of the sampled cases than the incumbent
+    did, never one of the incumbent's stably passing cases, and must pass every
+    case the verdict counts as resolved. Returns ``(confirmed, suspect)``: the
+    cases that still flipped go to the author as ``suite_suspect``.
+    """
+    inc_failed = _keys(incumbent_failed)
+    stable = _keys(stable_pass) if stable_pass is not None else set()
+    resolved = set(verdict.flaky_resolved)
+    suspect: set[str] = set()
+    ok = bool(runs)
+    for run in runs:
+        failed = _keys(run)
+        if len(failed) >= len(inc_failed) or (failed & stable) or (failed & resolved):
+            ok = False
+            suspect |= (failed & resolved)
+    if ok:
+        verdict.accepted = not verdict.regressed and not verdict.prior_regressions and verdict.gate_ok
+        verdict.fixed = sorted(resolved)
+        verdict.reasons = [r for r in verdict.reasons if not r.startswith("fixes no persistent") and not r.startswith("flaky only")]
+        verdict.reasons.append(f"flaky resolution confirmed by {len(runs)} suite re-run(s)")
+    else:
+        verdict.accepted = False
+        verdict.accept_path = ""
+        verdict.reasons.append("flaky resolution not confirmed: the cases flip on the candidate too")
+    return ok, sorted(suspect)
 
 
 def suite_conflicts(verdicts: Sequence[Verdict], r0_id: str) -> list[tuple[str, str]]:
@@ -288,6 +343,7 @@ __all__ = [
     "UnifiedAcceptanceSelector",
     "Verdict",
     "case_sets",
+    "confirm_flaky_resolution",
     "judge",
     "judge_all",
     "suite_conflicts",

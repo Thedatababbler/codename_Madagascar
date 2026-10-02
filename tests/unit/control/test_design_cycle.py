@@ -255,3 +255,16 @@ def test_should_trigger_and_batch_regression() -> None:
     new = [{"committed": True, "net_fix": 0, "features": {"kind": "middle"}} for _ in range(5)]
     fired, detail = dc.batch_regressed(prev, new, m=5)
     assert fired and detail["middle"]["prev"] == 2.0
+
+
+def test_pretrial_check_keeps_entries_with_no_target_history_out_of_trial() -> None:
+    entry = next(e for e in default_first_pass_entries() if e.entry_id == "F1")  # foundation -> E2/E5
+    miles = [{"features": {"kind": "foundation"}, "error_classes": ["E3"]} for _ in range(6)]
+    hist = dc.f_entry_history(entry, miles, thresholds=dc.DEFAULT_THRESHOLDS)
+    assert hist["matched"] == 6 and hist["with_target"] == 0
+    ok, why = dc.trial_eligible(entry, hist, cfg=dc.CycleConfig(m_f=5))
+    assert not ok and "calibration" in why
+    short = dc.f_entry_history(entry, miles[:3], thresholds=dc.DEFAULT_THRESHOLDS)
+    assert dc.trial_eligible(entry, short, cfg=dc.CycleConfig(m_f=5))[0]
+    seen = [{"features": {"kind": "foundation"}, "error_classes": ["E5"]}] * 2 + miles[:4]
+    assert dc.trial_eligible(entry, dc.f_entry_history(entry, seen, thresholds=dc.DEFAULT_THRESHOLDS), cfg=dc.CycleConfig(m_f=5))[0]

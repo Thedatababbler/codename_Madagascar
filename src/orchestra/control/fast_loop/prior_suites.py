@@ -149,6 +149,40 @@ async def run_prior_suite(
     }
 
 
+def recheck_command(command: list[str]) -> list[str]:
+    """The gate command for this milestone's own frozen suite, without custody."""
+    out: list[str] = []
+    for tok in command:
+        if tok == "--take-custody":
+            continue
+        out.append(tok)
+    return out
+
+
+async def rerun_own_suite(*, workspace_path: str, command: list[str], timeout_seconds: float, times: int = 2) -> list[dict[str, Any]]:
+    """Run the milestone's frozen suite ``times`` more times on a workspace (no agent).
+
+    One ``{"failed": [...], "passed_count": n, "ran": bool}`` per run, as
+    the flaky-resolution re-check (§2.5 addendum) consumes it.
+    """
+    cmd = recheck_command(command)
+    out: list[dict[str, Any]] = []
+    for _ in range(max(1, times)):
+        try:
+            _passed, _code, stdout, _stderr = await run_authoritative_harness_command(
+                cwd=workspace_path, command=cmd, timeout_seconds=timeout_seconds
+            )
+            _score, stages, _furthest = parse_progress(stdout)
+            if not stages:
+                out.append({"failed": [], "passed_count": 0, "ran": False})
+                continue
+            out.append({"failed": sorted(failure_key(n) for n in behaviour_failures(stages)),
+                        "passed_count": len(behaviour_passed(stages)), "ran": True})
+        except Exception as exc:  # noqa: BLE001 -- diagnosis must never fail a search
+            out.append({"failed": [], "passed_count": 0, "ran": False, "error": str(exc)[:200]})
+    return out
+
+
 async def prior_suite_report(
     *, workspace_path: str, command: list[str], priors: list[PriorSuite], timeout_seconds: float
 ) -> dict[str, dict[str, Any]]:
@@ -168,6 +202,8 @@ __all__ = [
     "gate_command_of",
     "prior_suite_report",
     "prior_suites_for",
+    "recheck_command",
+    "rerun_own_suite",
     "rewrite_command",
     "run_prior_suite",
 ]

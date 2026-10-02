@@ -87,9 +87,11 @@ budget:
 acceptance:
   unified: true
   prior_suite_check: true
+  flaky_reverify_runs: 2       # flaky-only searches: agent-free suite re-runs a probe must pass to be committed
 trial:
   prob: 0.3
   max_concurrent: 2
+  f_min_target_rate: 0.1       # an F entry enters trial only if its target classes occur this often on matching milestones
 ranking:
   n0: 3
 promotion:

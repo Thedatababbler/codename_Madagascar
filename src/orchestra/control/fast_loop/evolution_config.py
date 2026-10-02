@@ -46,6 +46,9 @@ class EvolutionConfig:
     #: Diagnostic re-run of every committed predecessor's frozen suite on each
     #: candidate, for the zero-new-regressions condition.
     prior_suite_check: bool = True
+    #: Flaky-only searches: how many agent-free re-runs of the frozen suite a
+    #: candidate must pass to be committed as a ``flaky_resolution`` (0 = never).
+    flaky_reverify_runs: int = 2
     #: The repair slot runs when the early gate reports failures ("failures")
     #: or only when it fails outright ("gate", the historical behaviour).
     repair_trigger: str = "failures"
@@ -85,6 +88,7 @@ class EvolutionConfig:
             trial_prob=float(cfg.get("trial", {}).get("prob", 0.3) if isinstance(cfg.get("trial"), Mapping) else 0.3),
             unified_acceptance=bool(acceptance.get("unified", True)),
             prior_suite_check=bool(acceptance.get("prior_suite_check", True)),
+            flaky_reverify_runs=int(acceptance.get("flaky_reverify_runs", 2)),
             repair_trigger=trigger,
             thresholds=tuple((str(k), float(v)) for k, v in dict(cfg.get("thr") or {}).items()),
         )

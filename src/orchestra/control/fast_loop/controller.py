@@ -20,7 +20,10 @@ from orchestra.cli.validate_graph import build_compiler
 from orchestra.control.backend_usage import append_usage_records
 from orchestra.control.failure import classify_subtask_outcome
 from orchestra.control.fast_loop.acceptance import (
+    ACCEPTANCE_KEY,
     PRIOR_SUITES_KEY,
+    case_sets,
+    confirm_flaky_resolution,
     UnifiedAcceptanceSelector,
     judge_all,
 )
@@ -33,7 +36,7 @@ from orchestra.control.fast_loop.routing import (
     docs_text_of,
     route_persistent,
 )
-from orchestra.control.fast_loop.prior_suites import prior_suite_report, prior_suites_for
+from orchestra.control.fast_loop.prior_suites import prior_suite_report, prior_suites_for, rerun_own_suite
 from orchestra.control.fast_loop.budget import (
     FastLoopBudgetTracker,
     add_costs,
@@ -987,6 +990,41 @@ class FastLoopController:
         # then nothing is excluded.
         suspect: list[str] = list(fl_state.suite_suspect)
         verdicts, conflicts = judge_all(executed, incumbent, probes, r0_id=r0, suspect=suspect)
+        # Flaky-only searches (§2.5 addendum, 2026-10-02): a candidate that
+        # fails fewer of the flaky cases than the incumbent is re-checked on
+        # its own workspace, agent-free, before it may be committed; cases
+        # that flip on it too are the suite's and go to the author.
+        pending = [c for c in executed if verdicts.get(c.candidate_id) and verdicts[c.candidate_id].accept_path == "flaky_resolution"
+                   and c.status is CandidateStatus.VALID and c.workspace_ref is not None]
+        if pending and self.evolution.flaky_reverify_runs > 0:
+            command, timeout = self._harness_command(base_graph)
+            sets = case_sets(incumbent, probes)
+            new_suspects: set[str] = set()
+            for cand in pending:
+                runs = await rerun_own_suite(workspace_path=cand.workspace_ref.path, command=command,
+                                             timeout_seconds=timeout, times=self.evolution.flaky_reverify_runs)
+                failures = [r.get("failed") or [] for r in runs if r.get("ran")]
+                confirmed, suspects = confirm_flaky_resolution(
+                    verdicts[cand.candidate_id], failures if len(failures) == len(runs) else [],
+                    incumbent_failed=incumbent.behaviour_failures, stable_pass=sets.stable_pass,
+                )
+                cand.metadata[ACCEPTANCE_KEY] = verdicts[cand.candidate_id].to_dict()
+                cand.metadata["flaky_recheck"] = runs
+                fl_state.notes.append(
+                    f"acceptance: flaky re-check on {cand.candidate_id}: "
+                    + ("confirmed" if confirmed else "not confirmed") + f" over {len(runs)} run(s)"
+                )
+                new_suspects.update(suspects)
+            if new_suspects:
+                fl_state.suite_suspect = sorted(set(fl_state.suite_suspect) | new_suspects)
+                self._write_routing_records(
+                    getattr(context, "run_dir", None), state.task_id, subtask_id,
+                    [{"case_id": c, "route": "suite_suspect", "reason": "flips under agent-free re-runs"} for c in sorted(new_suspects)],
+                )
+        elif pending:
+            for cand in pending:
+                verdicts[cand.candidate_id].accept_path = ""
+                cand.metadata[ACCEPTANCE_KEY] = verdicts[cand.candidate_id].to_dict()
         accepted = [v.candidate_id for v in verdicts.values() if v.accepted]
         fl_state.notes.append(
             f"acceptance: {len(accepted)}/{len(verdicts)} candidate(s) accepted"

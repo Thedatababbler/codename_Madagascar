@@ -165,3 +165,36 @@ def test_gate_recovery_counts_as_a_fix_when_the_incumbent_failed_its_gate() -> N
     cand = _rec("cand", failed=[], score=1.0)
     verdicts, _ = judge_all([cand], inc, [])
     assert verdicts["cand"].accepted and "gate recovered" in verdicts["cand"].reasons
+
+
+def test_flaky_only_search_needs_the_suite_recheck_before_a_probe_can_win() -> None:
+    """Decision of 2026-10-02: with no persistent failure, a candidate failing fewer flaky cases is a
+    best-of-N pick -- committed only when agent-free re-runs confirm the cases are stable on it."""
+    from orchestra.control.fast_loop.acceptance import confirm_flaky_resolution
+
+    # the incumbent fails one case both probes pass (flask M2, 2026-10-02): no persistent set
+    inc = _rec("inc", failed=[F], passed=[A, B], score=0.9, incumbent=True)
+    p1 = _rec("p1", failed=[], passed=[A, B, F], score=1.0, probe=True)
+    p2 = _rec("p2", failed=[], passed=[A, B, F], score=1.0, probe=True)
+    verdicts, _ = judge_all([p1, p2], inc, [p1, p2])
+    v = verdicts["p1"]
+    FK = "test_a.py::test_flaky"  # verdicts carry normalised keys
+    assert not v.accepted and v.accept_path == "flaky_resolution" and v.flaky_resolved == [FK]
+    # a probe that fails the same case as the incumbent resolves nothing
+    p3 = _rec("p3", failed=[F], passed=[A, B], score=0.9, probe=True)
+    verdicts3, _ = judge_all([p1, p3], inc, [p1, p3])
+    assert verdicts3["p3"].accept_path == "" and not verdicts3["p3"].accepted
+    # the re-check confirms: no run fails F, none fails a stable case
+    ok, suspect = confirm_flaky_resolution(v, [[], []], incumbent_failed=[F], stable_pass=[A, B])
+    assert ok and v.accepted and v.fixed == [FK] and suspect == []
+    # ... or it does not: F flips on the candidate as well -> suite_suspect, not accepted
+    v2 = verdicts["p1"]
+    v2.accepted = False
+    v2.accept_path = "flaky_resolution"
+    v2.flaky_resolved = [FK]
+    ok, suspect = confirm_flaky_resolution(v2, [[], [F]], incumbent_failed=[F], stable_pass=[A, B])
+    assert not ok and not v2.accepted and suspect == [FK]
+    # a persistent fix keeps its own path
+    inc2 = _incumbent([A])
+    cand = _rec("cand", failed=[])
+    assert judge(cand, case_sets(inc2, [_rec("q", failed=[A])]), inc2).accept_path == "persistent_fix"

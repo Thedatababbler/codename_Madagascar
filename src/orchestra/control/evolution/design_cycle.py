@@ -103,6 +103,11 @@ class CycleConfig:
     batch_tasks: int = 6
     buffer_failures: int = 12
     max_proposals: int = 3
+    #: An F entry enters trial only when, on the ledger's milestones matching
+    #: its trigger, its target classes occurred at least this often (and the
+    #: history is at least m_f milestones long); otherwise it goes to
+    #: calibration instead of costing re-runs.
+    f_min_target_rate: float = 0.1
     tripwire_tolerance: float = 2.0
     min_class_samples: int = 5
     thresholds: tuple[tuple[str, float], ...] = tuple(DEFAULT_THRESHOLDS.items())
@@ -126,6 +131,7 @@ class CycleConfig:
             cost_tolerance=float(g("rerun", "cost_tolerance", 0.15)), m_f=int(g("rerun", "m_f", 5)),
             batch_tasks=int(g("cycle", "batch_tasks", 6)), buffer_failures=int(g("cycle", "buffer_failures", 12)),
             max_proposals=int(g("evolver", "max_proposals", 3)), tripwire_tolerance=float(g("tripwire", "tolerance", 2.0)),
+            f_min_target_rate=float(g("trial", "f_min_target_rate", 0.1)),
             min_class_samples=int(g("replay", "min_class_samples", 5)),
             thresholds=tuple(thr.items()), split_file=str(g("evolution", "split_file", "") or ""),
         )
@@ -348,6 +354,33 @@ def _final_record(records: list[Mapping[str, Any]]) -> Mapping[str, Any] | None:
     return inc[-1] if inc else (records[-1] if records else None)
 
 
+def f_entry_history(entry: FEntry, milestone_records: Iterable[Mapping[str, Any]], *, thresholds: Mapping[str, Any]) -> dict[str, Any]:
+    """Memory replay for the pre-trial check: how often the entry's target classes
+    occurred on past milestones that match its trigger (first-pass records only)."""
+    targets = set(entry.predicted_error_classes)
+    matched = hit = 0
+    for r in milestone_records:
+        feats = r.get("features") or {}
+        if not feats or not matched_entries(feats, [entry], thresholds):
+            continue
+        matched += 1
+        if targets & set(r.get("error_classes") or ()):
+            hit += 1
+    return {"entry_id": entry.entry_id, "matched": matched, "with_target": hit, "rate": (hit / matched) if matched else None}
+
+
+def trial_eligible(entry: FEntry, history: Mapping[str, Any], *, cfg: CycleConfig) -> tuple[bool, str]:
+    """Whether an F entry may (stay in / enter) trial given its target-class history."""
+    if not entry.predicted_error_classes or entry.entry_id == "F0":
+        return True, "no target class"
+    n, rate = int(history.get("matched") or 0), history.get("rate")
+    if n < cfg.m_f or rate is None:
+        return True, f"history too short ({n} matched milestones < m_f={cfg.m_f})"
+    if rate < cfg.f_min_target_rate:
+        return False, f"target classes occur on {rate:.0%} of {n} matched milestones (< {cfg.f_min_target_rate:.0%}); to calibration"
+    return True, f"target classes occur on {rate:.0%} of {n} matched milestones"
+
+
 def evaluate_f_entry(
     entry: FEntry, candidate_records: Iterable[Mapping[str, Any]], *, cfg: CycleConfig, tripwire_fired: bool = False,
 ) -> tuple[FVerdict, dict[str, Any]]:
@@ -506,19 +539,42 @@ def run_cycle(
         rows, row_changes = update_row_states(rows_before, stats, cfg=cfg)
         lines += ["re-runs launched; statistics and row states recomputed:"] + [f"- {c.row_id}: {c.before} -> {c.after} ({c.reason})" for c in row_changes] + [""]
     entries = list(entries_before)
+    # pre-trial check (memory replay, no model call): an entry whose target
+    # classes never show up on the milestones it triggers on does not spend
+    # re-runs; it goes to calibration (§8.3)
+    histories = {e.entry_id: f_entry_history(e, miles, thresholds=cfg.thr) for e in entries if e.entry_id != "F0"}
+    pretrial = {eid: trial_eligible(next(e for e in entries if e.entry_id == eid), h, cfg=cfg) for eid, h in histories.items()}
     for i, e in enumerate(entries):
         if e.state != "trial":
             continue
         verdict, detail = evaluate_f_entry(e, cand, cfg=cfg)
+        detail["as_preventive"] = verdict.as_preventive
+        detail["target_applicable"] = verdict.target_applicable
         if verdict.promote:
             entries[i] = replace(e, state="active")
             entry_changes.append({"entry_id": e.entry_id, "before": "trial", "after": "active", **detail})
         elif verdict.checkpoints >= cfg.m_f:
+            note = "" if verdict.target_applicable else "#mismatch"
             entries[i] = replace(e, state="candidate" if not e.origin.endswith("#trial2") else "retired",
-                                 origin=e.origin if e.origin.endswith("#trial2") else e.origin + "#trial2")
+                                 origin=(e.origin if e.origin.endswith("#trial2") else e.origin + "#trial2") + note)
             entry_changes.append({"entry_id": e.entry_id, "before": "trial", "after": entries[i].state, "reasons": verdict.reasons, **detail})
         else:
             entry_changes.append({"entry_id": e.entry_id, "before": "trial", "after": "trial", "reasons": verdict.reasons, **detail})
+    # candidates into free F trial slots, newest origin first, only when the pre-trial check passes
+    f_trials = sum(1 for e in entries if e.state == "trial")
+    for i, e in sorted(enumerate(entries), key=lambda ie: (-_evolver_cycle(ie[1].origin), ie[1].entry_id)):
+        if f_trials >= cfg.max_trial_concurrent:
+            break
+        if e.state != "candidate" or e.entry_id == "F0" or e.origin.endswith("#trial2") or "#mismatch" in e.origin:
+            continue
+        ok, why = pretrial.get(e.entry_id, (True, ""))
+        if not ok:
+            continue
+        entries[i] = replace(e, state="trial")
+        f_trials += 1
+        entry_changes.append({"entry_id": e.entry_id, "before": "candidate", "after": "trial", "reasons": [why]})
+    lines += ["## F entry pre-trial check (target-class history on matching milestones)"]
+    lines += [f"- {eid}: {h['with_target']}/{h['matched']} matched milestones show a target class; {pretrial[eid][1]}" for eid, h in histories.items()] + [""]
     lines += ["## F entry verdicts (§7.4)"] + ([f"- {c}" for c in entry_changes] or ["- none in trial"]) + [""]
 
     # 5. evolver proposals
@@ -613,5 +669,6 @@ def run_cycle(
 __all__ = [
     "CURRENT_FILE", "CYCLES_ROOT", "CycleConfig", "CycleResult", "ROUTING_RECORDS", "RowChange", "VERSIONS_DIR",
     "batch_regressed", "current_version", "evaluate_f_entry", "load_candidate_records", "load_milestone_records",
-    "load_version", "next_version", "publish_version", "rollback", "run_cycle", "should_trigger", "update_row_states",
+    "f_entry_history", "load_version", "next_version", "publish_version", "rollback", "run_cycle", "should_trigger",
+    "trial_eligible", "update_row_states",
 ]
