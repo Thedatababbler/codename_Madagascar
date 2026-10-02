@@ -537,9 +537,17 @@ class GitCandidateWorkspaceManager:
                 f"base revision drifted: expected {expected_base_revision}, got {current}"
             )
         status = self._run_git(base_path, "status", "--porcelain")
-        if status.stdout.strip():
+        # Bytecode and pytest caches are never content: a gate or prior-suite
+        # run that imported the package leaves them behind, and they must not
+        # veto the winner (zxcvbn 2026-10-02: a 0.959 recovery refused over
+        # an untracked zxcvbn/__pycache__/).
+        dirty = [
+            line for line in status.stdout.splitlines()
+            if line.strip() and not any(tag in line for tag in ("__pycache__", ".pytest_cache", ".mypy_cache"))
+        ]
+        if dirty:
             raise CandidateWorkspaceError(
-                "base workspace dirty before winner apply; fail closed"
+                "base workspace dirty before winner apply; fail closed: " + "; ".join(l.strip() for l in dirty[:5])
             )
 
         if change_set.tracked_patch.strip():

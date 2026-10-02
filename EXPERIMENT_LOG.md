@@ -4177,3 +4177,14 @@ re-runs launched (report only; publishing stays a manual decision).
 nl2_tablib baseline 5/5 committed, held-out 0.561 (gpt-5.5 09-16: 0.491).
 The sol window turned out to be the account window (100% at 19:25 UTC);
 chain stopped, the just-started tenacity batch removed.
+
+**Winner-apply guard fix (2026-10-02 06:05 UTC).** zxcvbn's third milestone recovered
+its gate through a probe (0.959, gate-recovery rule) and the apply step refused
+it: the base workspace showed an untracked `zxcvbn/__pycache__/` and the
+"dirty before winner apply" check fails closed on any status line. Bytecode and
+pytest caches are now ignored by that check (the message also names the dirty
+paths). The lane resumes the milestone under the fixed code. Also observed on
+flask M2: first pass 0.889 with one *flaky* failure; both probes scored 1.0 and
+were refused ("fixes no persistent failure"), so the 0.889 incumbent was kept.
+Spec-faithful (nothing persistent to fix) but worth a decision: the old Pareto
+rule would have taken the 1.0 probe.
