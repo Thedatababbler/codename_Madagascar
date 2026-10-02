@@ -4243,3 +4243,37 @@ records, bank 26:
 Next window: the U-S1 pairs (22 jobs ~ one window), one more F1 pair, then
 the test-split evaluation (parsel, portalocker, pyjwt, simpy, trailscraper,
 xmnlp; two runs each under the frozen v1 tables).
+
+## EXP-20261002-02 -- memory replay: R0 against the probes (branch `rsi`)
+
+**Status:** closed 2026-10-02 (no model calls). Script `scripts/replay_r0_vs_probe.py`.
+
+The procedure rests on one assumption: R0 (the repairer continuing on the
+incumbent's workspace with the persistent failures and their evidence) beats
+a probe (the same design re-run). Paired per search on the incumbent's own
+failing and passing cases, 19 searches with an incumbent, probes and an R0
+record carrying per-case results (13 online, 6 re-runs):
+
+| | R0 | best probe | mean probe |
+|---|---|---|---|
+| net fix per search (incumbent fails 3.95 on average) | 3.79 | 1.11 | 0.32 |
+| reaches 1.0 on the frozen suite | 16/19 | 0/19 | -- |
+| regressed a passing case | 1/19 | -- | -- |
+
+R0 minus best probe: +2.68 per search, 19 wins / 0 ties / 0 losses; online
+only +2.62, 13/0/0, and online R0 reached 1.0 in 13/13 with no regression.
+Probes do move (best probe +1.11), which is the same-design resampling gain
+the 08-31 work measured; R0 fixes on average every persistent failure the
+incumbent had. So the assumption holds and the playbook rows' ties with R0
+are ties against a floor that already clears the frozen suite, not evidence
+that repair is resampling. What the rows cannot change is what the suite
+does not cover (held-out), which is where the step 2 losses were.
+
+Also fixed this entry: the upstream row U-S1 (hand the failures back to the
+writer that caused them) could never fire, because the diagnosis's primary
+failed node in a quality search is the gate-feeding repairer. The ownership
+blame the node resample uses (last writer of the file each failure lands
+in, earliest owner blamed) now runs on the routed persistent set after P2
+(`routing["blame"]`), the row's precondition reads it, and the row runs as
+a continuation on the incumbent whose improver slot takes the blamed
+writer's role (contract_author added to that slot's allowed roles).
