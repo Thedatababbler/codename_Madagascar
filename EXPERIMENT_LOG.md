@@ -4351,3 +4351,34 @@ sealed) on bplustree serialization, cookiecutter template_source_resolution,
 deprecated classic_runtime_deprecation, tinydb query_language. Each new
 suite is scored on the same final repositories; the comparison is
 suite-to-suite on identical workspaces.
+
+**Pilot result (2026-10-02 21:30 UTC).** Eight author calls (v11 x4, verifier x4; 180k-800k
+prompt tokens each, about 1 point of the window in total). Each suite scored on the same
+final repositories, with suite cases the dataset reference itself fails excluded from the
+verdict (`--reference`; a doc-vs-reference gap or an invention is not evidence against
+an implementation). Five workspace-milestones (tinydb query_language has two runs):
+
+| suite | miss | agree_fail | false alarm | valid cases | cases the reference fails |
+|---|---|---|---|---|---|
+| current (v10.1) | 5/5 | 0 | 0 | 12-27 per milestone | 0, 12 (cookiecutter), 1, 0, 1 |
+| v11 (coverage ledger) | 2/5 | 3 | 0 | 13-33 | 1, 12, 0, 1, 1 |
+| verifier | 3/5 | 2 | 0 | 15-35 | 2, 7, 0, 1, 1 |
+
+v11's catches are one valid case each: cookiecutter (a clone variant) and tinydb
+(`is_sequence` over iterables, on both runs); the verifier catches the tinydb
+case only. Audits: citation ratio 1.0, no priming / shims / private access in
+any of the eight suites. The v11 tinydb case the evolver had flagged ("all
+accepts literal items and predicates") fails on the final repo *and* on the
+reference, so it is excluded: the documents promise what the reference does
+not do. deprecated and bplustree are missed by all three suites; their
+held-out failures are repr / `__slots__` / serializer-absence behaviours and
+the warning's stack location, none of which the documents state and the first
+of which the citation rule forbids testing. A share of the measured 0.81 miss
+rate is therefore the dataset ceiling, not the author; separating the two
+needs the held-out cases partitioned into documented and undocumented, which
+the sealed rule does not allow from source (name-level heuristics only).
+
+Reading: the slow loop's evaluation now runs end to end for the cost of the
+author calls alone; on this pilot the coverage-ledger prompt lowers the miss
+count (5 -> 2 of 5) without a false alarm, with n too small to call. The
+verifier suite as a yardstick did not separate from v11 here.
