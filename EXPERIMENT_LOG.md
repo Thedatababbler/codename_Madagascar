@@ -4206,3 +4206,40 @@ caches):
 Twelve training tasks done in the evolution arm. Searches committed in this
 batch: R0 x3, probes x2 (gate recovery), node resample x0; no committed
 candidate left a failure on its frozen suite.
+
+## EXP-20261002-01 -- self-evolution experiment, step 3: second design cycle with bank re-runs (branch `rsi`)
+
+**Status:** closed 2026-10-02 15:30 UTC; nothing published. zqin30 gpt-5.5 window 56% at close.
+
+Re-runs are expensive (about 6% of the window per milestone-level job), so
+the 30-job plan (22 U-S1 vs R0, 4 F1/F0 pairs) was cut to the F pairs. Two
+defects surfaced on the first real re-runs and were fixed in place:
+- the forced row never ran: U-S1 was filtered by its `blamed_before_repairer`
+  precondition on one checkpoint and dropped for budget behind the node
+  resample on another, leaving R0-only records. Forced rows now bypass
+  preconditions and take the slot right after R0 (ed585c10). The four
+  U-S1 jobs already run produced no pair; their R0 records stay.
+- re-runs that commit on the first pass wrote no ledger record, and the
+  backfill de-duplicated by (task, milestone, status) so a re-run of a
+  milestone already in the ledger was skipped, while skipped successors
+  and pre-committed predecessors of the re-run were recorded as if they had
+  run. Backfill now keys on the run directory and ignores milestones
+  without attempts; the cycle backfills every re-run it launches; live
+  milestone records carry `run_dir` (f7f9b3cc). Ledger cleaned by hand.
+
+Cycle `cycle-02b-20261002` (report only) on 171 candidate / 73 milestone
+records, bank 26:
+- F1 (contract critic on foundation milestones) after 4 paired F0/F1
+  checkpoints (bplustree serialization + tree_core_operations, cookiecutter
+  foundation + template_source_resolution): net effect 0, cost ratio 0.90
+  (cheaper than F0), target classes E2/E5 absent before and after
+  (0 -> 0), 4 < m_f = 5 -> stays trial. The §7.4 rule "target-class
+  persistent failures fell" cannot hold when the class never occurs; F1's
+  prediction (E2/E5 on foundation milestones) has not matched the data.
+- E3-T1: 3 pairs, all tied with R0 (score 0.0); still active.
+- U-S1 drawn into the trial slot again; 22 U-S1 pairs still planned.
+- no promotion, no tripwire check needed.
+
+Next window: the U-S1 pairs (22 jobs ~ one window), one more F1 pair, then
+the test-split evaluation (parsel, portalocker, pyjwt, simpy, trailscraper,
+xmnlp; two runs each under the frozen v1 tables).
