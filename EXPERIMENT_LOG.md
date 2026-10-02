@@ -4165,3 +4165,15 @@ Steps, one chain (scratchpad `evo/nl2sol_chain.sh`, log `evo/nl2sol.out`):
    to the series bank, first-pass milestones backfilled into the ledger;
 3. design cycle with bank re-runs (cap 12) and the evolver, publish, then
    the three tasks again under the published tables.
+
+**Step 2 resumed 2026-10-02 03:10 UTC** (zqin30 gpt-5.5 window reset to 0%). Lanes
+restarted on the fixed code (ranking, gate-recovery acceptance, Django gate):
+lane A flask, csvs-to-sqlite, voluptuous; lane B rsa, zxcvbn, then a second
+tinydb run under the fixed ranking (paired against the baseline and the
+first evolution run). After the lanes: the design cycle with the bank
+re-runs launched (report only; publishing stays a manual decision).
+
+**NL2Repo gpt-5.6-sol series (EXP-20261001-03) paused** after one task:
+nl2_tablib baseline 5/5 committed, held-out 0.561 (gpt-5.5 09-16: 0.491).
+The sol window turned out to be the account window (100% at 19:25 UTC);
+chain stopped, the just-started tenacity batch removed.
