@@ -379,8 +379,13 @@ def select_rows(
     trials_running: int,
     ranking: Mapping[str, Mapping[str, float]] | None = None,
     seed: Iterable[str] = (),
+    ignore_preconditions: bool = False,
 ) -> Selection:
     """The rows to run this search, in order, within ``row_slots`` (§3.7).
+
+    ``ignore_preconditions`` is for bank re-runs of one forced row (§7.2): the
+    row under test runs on every paired checkpoint, otherwise checkpoints
+    whose blame or shape differs produce an R0-only run and no pair.
 
     1. rows of the main class(es) plus universal rows whose precondition holds;
     2. filtered by precondition, composition, already tried on this milestone;
@@ -401,7 +406,7 @@ def select_rows(
         if row.row_id in facts.tried_rows or row.row_id.split("~", 1)[0] in facts.tried_rows:
             filtered[row.row_id] = "already tried on this milestone"
             continue
-        missing = [p for p in row.preconditions if not precondition_holds(p, facts)]
+        missing = [] if ignore_preconditions else [p for p in row.preconditions if not precondition_holds(p, facts)]
         if missing:
             filtered[row.row_id] = "precondition: " + ", ".join(f"{p.kind} {p.value}".strip() for p in missing)
             continue

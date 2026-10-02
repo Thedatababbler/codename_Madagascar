@@ -589,10 +589,16 @@ class FastLoopController:
             r0 = cont[0]
             r0.candidate_id = "cand_R0"
             others = list(ordered)  # an author-route resample outranks everything
+            forced_row = forced_row_for(sub.spec.subtask_id)
+            forced_cands = [c for c in rest if forced_row and (c.metadata or {}).get("v2_row") == forced_row]
+            if forced_cands:
+                # a bank re-run pairs R0 with the row under test: that row takes
+                # the slot before the resample and the rest of the table
+                others.extend(forced_cands)
             if resample_record is not None and summary.persistent and not author_route:
                 others.append(resample_record)
             others.extend(cont[1:])
-            others.extend(rest)
+            others.extend(c for c in rest if c not in forced_cands)
             ordered = [r0, *others]
             remaining = remaining + 1
         else:
@@ -737,12 +743,13 @@ class FastLoopController:
         table = load_repair_table()
         if forced:
             # A bank re-run (§7.2): the row under test runs regardless of its
-            # state and the trial draw; preconditions and shape validity still apply.
+            # state, the trial draw and its preconditions; shape validity still applies.
             rows = [r for r in table if r.row_id == forced]
             facts.tried_rows = ()
             selection = select_rows(
                 [replace_row_state(r, "active") for r in rows], classes=list(r.error_classes for r in rows)[0] if rows else [],
                 facts=facts, row_slots=1, trial_prob=0.0, max_trial_concurrent=2, trials_running=0,
+                ignore_preconditions=True,
             )
             fl_state.notes.append(f"v2: forced row {forced} ({'selected' if selection.rows else 'not applicable'})")
         else:
