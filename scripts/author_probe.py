@@ -346,7 +346,8 @@ def main() -> None:
     if args.cmd == "run":
         selects = [s.split(":", 1) for s in args.select]
         with ThreadPoolExecutor(max_workers=args.jobs) as ex:
-            futs = {ex.submit(run_probe, t, m, tag=args.tag, plans_dir=args.plans_dir, config=args.config): (t, m)
+            futs = {ex.submit(run_probe, t, m, tag=args.tag, plans_dir=args.plans_dir, config=args.config,
+                              role_pool_dir=args.role_pool_dir): (t, m)
                     for t, m in selects}
             for fut, (t, m) in futs.items():
                 suite, note = fut.result()
