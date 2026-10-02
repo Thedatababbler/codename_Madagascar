@@ -62,8 +62,16 @@ def gate_for(run_dir: Path, milestone: str) -> tuple[list[str], float]:
     return found
 
 
-def workspaces_of(run_dir: Path, milestone: str) -> dict[str, Path]:
+def workspaces_of(run_dir: Path, milestone: str, *, final_only: bool = False) -> dict[str, Path]:
+    """Workspaces to score. ``final_only``: the run's committed repository, where
+    every milestone is present, so a held-out failure cannot be a later
+    milestone's missing work; the default adds the milestone's first-pass
+    and candidate workspaces (intermediate: later milestones absent)."""
     out: dict[str, Path] = {}
+    for canon in run_dir.glob("tasks/rb_*/canonical/repo"):
+        out["final"] = canon
+    if final_only:
+        return out
     for sub in run_dir.glob("tasks/rb_*/"):
         first = sub / "workspaces" / milestone / "repo"
         if first.is_dir():
@@ -106,23 +114,31 @@ def heldout_cases(task_id: str, workspace: Path, cases: list[str], *, per_test_t
         shutil.copytree(workspace, repo, ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", ".git", "spec_tests",
                                                                         "repair_evidence", "unit_tests", "check_tests"))
         shutil.copytree(task.repo_root / task.unit_tests, repo / task.unit_tests)
-        node_ids = [f"{task.unit_tests}/{c}" for c in cases]
+        # attribution keys are ``file::function`` without the class and without
+        # parameters; run the files and keep the reported ids that match
+        files = sorted({f"{task.unit_tests}/{c.split('::', 1)[0]}" for c in cases})
+        wanted = {c for c in cases}
         proc = subprocess.run(
-            [str(python), "-m", "pytest", *node_ids, "-q", "-rA", "--no-header", "-p", "no:cacheprovider", "-o", "addopts=",
+            [str(python), "-m", "pytest", *files, "-q", "-rA", "--no-header", "-p", "no:cacheprovider", "-o", "addopts=",
              "--continue-on-collection-errors", f"--timeout={per_test_timeout}", "--timeout-method=signal"],
             cwd=repo, capture_output=True, text=True, timeout=3600, check=False,
             env={"PYTHONPATH": os.pathsep.join(p for p in [str(repo), str(repo / "src") if (repo / "src").is_dir() else ""] if p),
                  "PATH": f"{python.parent}:/usr/bin:/bin", "HOME": str(repo), "PYTHONDONTWRITEBYTECODE": "1"},
         )
     out: dict[str, str] = {}
+    seen: set[str] = set()
     for line in proc.stdout.splitlines():
         m = _LINE.match(line)
-        if m:
-            out[m.group(2)] = "pass" if m.group(1) in ("PASSED", "XPASS") else "fail"
-    for c in cases:  # cases pytest never reported (collection error) count as failed
-        key = f"{task.unit_tests}/{c}"
-        if not any(k == key or k.startswith(key + "[") for k in out):
-            out[key] = "fail"
+        if not m:
+            continue
+        node = m.group(2)
+        parts = node.split("::")
+        key = f"{parts[0].split('/', 1)[-1]}::{parts[-1].split('[', 1)[0]}" if len(parts) >= 2 else node
+        if key in wanted:
+            seen.add(key)
+            out[node] = "pass" if m.group(1) in ("PASSED", "XPASS") else "fail"
+    for c in wanted - seen:  # never reported (collection error, skipped module): failed
+        out[f"{task.unit_tests}/{c}"] = "fail"
     return out
 
 
@@ -148,7 +164,7 @@ def score(args) -> None:
     attribution = json.loads(Path(args.attribution).read_text(encoding="utf-8")).get("attribution") or {}
     cases = list(attribution.get(args.milestone) or [])
     rows = []
-    for name, ws in workspaces_of(run_dir, args.milestone).items():
+    for name, ws in workspaces_of(run_dir, args.milestone, final_only=args.final).items():
         suite = suite_cases(ws, command, suite_dir, timeout)
         held = heldout_cases(task_id, ws, cases)
         rows.append({
@@ -198,6 +214,7 @@ def main() -> None:
     s.add_argument("--milestone", required=True)
     s.add_argument("--suite", default=None, help="suite directory (default: the run's frozen suite)")
     s.add_argument("--label", default="current")
+    s.add_argument("--final", action="store_true", help="score the committed final repository only (all milestones present)")
     s.add_argument("--attribution", required=True)
     s.add_argument("--out", required=True)
     s.set_defaults(fn=score)
