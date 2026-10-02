@@ -4188,3 +4188,21 @@ flask M2: first pass 0.889 with one *flaky* failure; both probes scored 1.0 and
 were refused ("fixes no persistent failure"), so the 0.889 incumbent was kept.
 Spec-faithful (nothing persistent to fix) but worth a decision: the old Pareto
 rule would have taken the 1.0 probe.
+
+**Step 2 complete 2026-10-02 10:24 UTC.** The five remaining tasks and the tinydb repeat,
+all under the fixed code (zxcvbn needed two resumes: the winner-apply and
+immutable-base checks tripped on an untracked `__pycache__`, both now ignore
+caches):
+
+| task | evolution | reference | notes |
+|---|---|---|---|
+| rsa | 0.820 | 0.700 (09-08, 2 milestones) | 5/5 first pass, no search |
+| flask | 0.800 | 0.763 (09-15, same plan) | M2 kept a 0.889 incumbent over two 1.0 probes (flaky-only failure) |
+| csvs-to-sqlite | 0.720 | 0.720 (09-08) | 4/4 first pass, no search |
+| voluptuous | 0.708 | 0.547 (09-08) | M1 0.75 -> R0 (E3+E6), M2 gate recovered by a probe |
+| zxcvbn (observed) | 0.613 | 0.65* (09-08) | M3 0.816 -> probe 0.959 via gate recovery |
+| tinydb repeat | 0.877 (179/204) | baseline 0.907, first run 0.848 | M1 0.714 -> R0, M2 0.875 -> R0 (fixed ranking) |
+
+Twelve training tasks done in the evolution arm. Searches committed in this
+batch: R0 x3, probes x2 (gate recovery), node resample x0; no committed
+candidate left a failure on its frozen suite.
