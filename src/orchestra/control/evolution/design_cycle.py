@@ -344,7 +344,7 @@ def _final_record(records: list[Mapping[str, Any]]) -> Mapping[str, Any] | None:
     committed = [r for r in records if r.get("committed")]
     if committed:
         return committed[-1]
-    inc = [r for r in records if r.get("candidate_kind") == "incumbent"]
+    inc = [r for r in records if r.get("candidate_kind") in ("incumbent", "first_run")]
     return inc[-1] if inc else (records[-1] if records else None)
 
 
@@ -376,8 +376,8 @@ def evaluate_f_entry(
         variant_cases.append(dict(fv.get("per_case_results") or {}))
         cost_c += sum(float((r.get("cost") or {}).get("usd") or 0.0) for r in runs[(t, m, "F0")])
         cost_v += sum(float((r.get("cost") or {}).get("usd") or 0.0) for r in runs[(t, m, "F")])
-        inc_c = next((r for r in runs[(t, m, "F0")] if r.get("candidate_kind") == "incumbent"), None)
-        inc_v = next((r for r in runs[(t, m, "F")] if r.get("candidate_kind") == "incumbent"), None)
+        inc_c = next((r for r in runs[(t, m, "F0")] if r.get("candidate_kind") in ("incumbent", "first_run")), None)
+        inc_v = next((r for r in runs[(t, m, "F")] if r.get("candidate_kind") in ("incumbent", "first_run")), None)
         before += sum(int(n) for c, n in ((inc_c or {}).get("actual_error_classes") or {}).items() if c in targets)
         after += sum(int(n) for c, n in ((inc_v or {}).get("actual_error_classes") or {}).items() if c in targets)
     stats = paired_case_stats(control_cases, variant_cases) if paired else {"net": 0, "stable_fixes": [], "stable_regressions": []}
@@ -490,6 +490,16 @@ def run_cycle(
         entries_by_id = {e.entry_id: e for e in bank_entries}
         results = launch(jobs, entries_by_id, config=rerun_config, concurrency=cfg.concurrency)
         (out_dir / "rerun_results.json").write_text(json.dumps(results, indent=1), encoding="utf-8")
+        # A re-run that commits on its first pass writes no ledger record by
+        # itself (the controller only writes when a search ran): backfill it,
+        # or the F0/F pairing never sees it.
+        import subprocess as _sp
+        import sys as _sys
+
+        for res in results:
+            run_dir = res.get("run_dir")
+            if run_dir and Path(run_dir).is_dir():
+                _sp.run([_sys.executable, "scripts/ledger_backfill_first_pass.py", str(run_dir)], check=False, capture_output=True)
         cand = load_candidate_records(ledger_root)
         stats = pair_statistics(cand, training_only=True)
         ranking = ranking_from_stats(stats, n0=cfg.n0)

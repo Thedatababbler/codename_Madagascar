@@ -242,6 +242,7 @@ def write_search_ledger(
         fl_state, task_id=task_id, milestone_id=milestone_id, split=split, features=features,
         f_entries_applied=f_entries_applied, final_status=final_status,
     )
+    ms["run_dir"] = run_dir
     return (
         append_jsonl(version_dir / "candidates.jsonl", cands),
         append_jsonl(version_dir / "milestones.jsonl", [ms]),

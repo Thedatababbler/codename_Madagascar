@@ -48,9 +48,13 @@ def records_for_run(run_dir: Path, *, existing: set[tuple[str, str, str]], versi
     cands, miles = [], []
     for mid, sub in (t.get("subtasks") or {}).items():
         status = str(sub.get("status") or "")
-        if status in ("pending", "ready", "running") or (task_id, mid, status) in existing:
-            continue
         attempts = sub.get("attempts") or []
+        # skipped successors and pre-committed predecessors of a re-run never
+        # ran here; one record per run directory, not per milestone
+        if status in ("pending", "ready", "running", "skipped") or not attempts:
+            continue
+        if (task_id, mid, status, str(run_dir)) in existing:
+            continue
         last = attempts[-1] if attempts else {}
         meta = last.get("metadata") or {}
         stages = {s.get("stage"): s for s in (meta.get("harness_stages") or [])}
@@ -63,14 +67,14 @@ def records_for_run(run_dir: Path, *, existing: set[tuple[str, str, str]], versi
         applied = [str(x) for x in (dec.get("applied") or [])]
         score = meta.get("behaviour_score")
         rec_id = f"{task_id}:{mid}:incumbent_first_pass"
-        if status == "committed" and any(r[0] == task_id and r[1] == mid for r in existing):
-            rec_id += "_resumed"
+        if any(r[0] == task_id and r[1] == mid and r[3] != str(run_dir) for r in existing):
+            rec_id += ":" + run_dir.parent.name[-24:]
         cands.append({
             "record_id": rec_id, "task_id": task_id, "milestone_id": mid, "split": split,
             "playbook_version": version, "first_pass_version": "F0", "suite_version": "",
             "features": features, "f_entries_applied": applied, "assignment": str(dec.get("assignment") or "deterministic"),
             "predicted_error_classes": list(dec.get("predicted_error_classes") or []),
-            "actual_error_classes": {}, "error_classes": [], "candidate_kind": "incumbent", "row_id": "",
+            "actual_error_classes": {}, "error_classes": [], "candidate_kind": "first_run", "row_id": "",
             "row_state_at_run": "", "status": status, "behaviour_score": score, "per_case_results": per_case,
             "persistent_before": failed, "flaky_before": [], "stable_pass_before": passed, "fixed": [], "regressed": [],
             "prior_regressions": [], "net_fix": None, "accepted": status == "committed", "paired_R0_record_id": "",
@@ -84,7 +88,7 @@ def records_for_run(run_dir: Path, *, existing: set[tuple[str, str, str]], versi
             "first_run_gate": status, "first_run_behaviour": score, "first_run_persistent": failed, "error_classes": [],
             "routing": {}, "final_status": status, "total_cost": {"calls": 0, "tokens": 0, "usd": 0.0, "cost_quality": "unknown"},
             "rows_tried": [], "committed_record_id": rec_id if status == "committed" else "", "admitted_to_bank": False,
-            "notes": ["backfilled from task_execution.json (no search ran)"], "source": "backfill",
+            "notes": ["backfilled from task_execution.json (no search ran)"], "source": "backfill", "run_dir": str(run_dir),
         })
     return cands, miles
 
@@ -97,14 +101,14 @@ def main() -> None:
     args = ap.parse_args()
     version = args.version or table_version()
     vdir = (args.ledger or ledger_root_default()) / version
-    existing = {(str(r.get("task_id")), str(r.get("milestone_id")), str(r.get("final_status")))
+    existing = {(str(r.get("task_id")), str(r.get("milestone_id")), str(r.get("final_status")), str(r.get("run_dir") or ""))
                 for r in read_jsonl(vdir / "milestones.jsonl")}
     for run in args.run_dirs:
         cands, miles = records_for_run(run, existing=existing, version=version)
         if miles:
             append_jsonl(vdir / "candidates.jsonl", cands)
             append_jsonl(vdir / "milestones.jsonl", miles)
-            existing.update((m["task_id"], m["milestone_id"], m["final_status"]) for m in miles)
+            existing.update((m["task_id"], m["milestone_id"], m["final_status"], str(run)) for m in miles)
         print(f"{run}: {len(miles)} milestone(s) backfilled: {[m['milestone_id'] for m in miles]}")
 
 
