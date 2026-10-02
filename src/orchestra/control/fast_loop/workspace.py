@@ -337,14 +337,21 @@ class GitCandidateWorkspaceManager:
         def _prep() -> WorkspaceRef:
             if not dest.exists():
                 self._ensure_git_repo(dest, source)
+            # Bytecode / pytest caches left by a gate or prior-suite run are
+            # not content; keep them out of git's view of the base for good.
+            write_cache_exclude(dest)
             status = self._run_git(dest, "status", "--porcelain")
             if status.returncode != 0:
                 raise CandidateWorkspaceError(
                     f"git status failed on base: {status.stderr}"
                 )
-            if status.stdout.strip():
+            dirty = [
+                line for line in status.stdout.splitlines()
+                if line.strip() and not any(tag in line for tag in ("__pycache__", ".pytest_cache", ".mypy_cache"))
+            ]
+            if dirty:
                 raise CandidateWorkspaceError(
-                    f"base workspace is dirty (must remain immutable): {dest}"
+                    f"base workspace is dirty (must remain immutable): {dest}: " + "; ".join(l.strip() for l in dirty[:5])
                 )
             rev = self._rev_parse(dest)
             return WorkspaceRef(
