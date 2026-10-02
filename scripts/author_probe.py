@@ -263,7 +263,8 @@ def _single_milestone_plan(plan_path: Path, milestone_id: str, dest: Path) -> Pa
     return dest
 
 
-def run_probe(task: str, milestone_id: str, *, tag: str, plans_dir: Path, config: str) -> tuple[Path | None, str]:
+def run_probe(task: str, milestone_id: str, *, tag: str, plans_dir: Path, config: str,
+              role_pool_dir: str | None = None) -> tuple[Path | None, str]:
     plan = _single_milestone_plan(plans_dir / f"{task}.plan.json", milestone_id,
                                   OUTPUT_ROOT / "plans" / tag / f"{task}.{milestone_id}.plan.json")
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -273,8 +274,11 @@ def run_probe(task: str, milestone_id: str, *, tag: str, plans_dir: Path, config
     cmd = [str(ROOT / ".venv" / "bin" / "python"), "-m", "orchestra.cli.run_codeprojecteval_decomp",
            "--config", config, "--task-id", task, "--plan-file", str(plan), "--arm", "author_probe",
            "--run-id", run_id, "--dataset-root", str(DATASET_ROOT), "--output-root", str(OUTPUT_ROOT)]
+    env = dict(os.environ)
+    if role_pool_dir:
+        env["ORCHESTRA_ROLE_POOL_DIR"] = str(Path(role_pool_dir).resolve())
     with (log_dir / f"{task}.{milestone_id}.log").open("w") as log:
-        proc = subprocess.run(cmd, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, text=True)
+        proc = subprocess.run(cmd, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, text=True, env=env)
     suite = OUTPUT_ROOT / run_id / task / "harness" / f"{milestone_id}.spec_tests"
     note = f"{run_id} rc={proc.returncode}"
     summary = OUTPUT_ROOT / run_id / task / "summary.json"
@@ -310,6 +314,8 @@ def main() -> None:
     r.add_argument("--plans-dir", type=Path, default=ROOT / "configs/datasets/nl2repo_feature_plans")
     r.add_argument("--config", default="configs/experiments/author_probe.yaml")
     r.add_argument("--jobs", type=int, default=3)
+    r.add_argument("--role-pool-dir", default=None,
+                   help="load roles (the author prompt variant) from this directory instead of configs/roles")
     rs = sub.add_parser("reaudit", help="recompute every column of existing audit files in place")
     rs.add_argument("files", nargs="+", type=Path)
     a = sub.add_parser("audit")
