@@ -4382,3 +4382,30 @@ Reading: the slow loop's evaluation now runs end to end for the cost of the
 author calls alone; on this pilot the coverage-ledger prompt lowers the miss
 count (5 -> 2 of 5) without a false alarm, with n too small to call. The
 verifier suite as a yardstick did not separate from v11 here.
+
+## EXP-20261003-01 -- positive control of the design cycle, unsaturated re-runs, F7 (branch `rsi`)
+
+**Status:** closed 2026-10-03 (no model calls).
+
+1. **Positive control** (`scripts/positive_control_cycle.py`, also a unit test):
+   from the 19 searches with incumbent, probes and R0, two synthetic rows are
+   built on the incumbent's cases -- PC-P1 "run a probe" as a trial row with
+   R0 as control, PC-R1 R0 as a trial row with the best probe as control --
+   and pushed through the cycle's shrinkage ranking and promotion rules
+   (m=5, n0=3). E3 14 pairs, E6 6, E4 2. PC-P1: mean delta -3.07, score
+   -2.53 -> trial -> candidate, second trial -> retired. PC-R1: score +2.53,
+   regressions 0.07 <= control 0.14 -> trial -> active. PASS: the mechanism
+   separates a real difference of this size.
+2. **Re-runs only where R0 left room.** `rerun.unsaturated_only` (default on):
+   `r0_headroom` sums the failures R0 left on the frozen suite over its runs
+   per milestone; row re-runs skip milestones with none. On the current
+   ledger only two cookiecutter milestones have headroom (2 and 1); the
+   report-only cycle now plans 6 re-runs instead of 24.
+3. **F7**: a preventive entry for the class foundations actually produce
+   (E3 on 34/38): the documented return-and-boundary checklist handed to the
+   implementer before the first write (`instructions/F7.md`, source row
+   E3-S1, trigger kind == foundation). Added as a candidate; the pre-trial
+   check passes it (target class on 31% of 42 matched milestones) and the
+   report-only cycle draws it into trial. Nothing published; the live
+   designer ignores candidates. Running it needs the F0/F7 re-run pairs
+   (about 30% of a window for five), after the author work as agreed.

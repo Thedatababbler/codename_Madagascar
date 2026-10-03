@@ -114,6 +114,12 @@ def default_first_pass_entries() -> tuple[FEntry, ...]:
         FEntry("F6", (Trigger("n_public_classes", ">=", "thr.f6"),), ("E6",),
                ({"kind": "instruction", "file": "F6.md"},), source_rows=("E6-S1",),
                intent="the object-protocol checklist handed to the implementer up front"),
+        # 2026-10-03: the one class foundations actually produce (E3 on 34 of 38 in
+        # the first batch) had no preventive entry; the documented-behaviour
+        # checklist is E3-S1's reproduction-first idea moved before the first write.
+        FEntry("F7", (Trigger("kind", "==", "foundation"),), ("E3",),
+               ({"kind": "instruction", "file": "F7.md"},), source_rows=("E3-S1",),
+               intent="the documented return-and-boundary checklist handed to the implementer before the first write"),
     )
 
 

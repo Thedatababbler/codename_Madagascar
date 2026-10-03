@@ -125,3 +125,21 @@ entries:
   combination_of: []
   origin: ''
   intent: the object-protocol checklist handed to the implementer up front
+- entry_id: F7
+  triggers:
+  - feature: kind
+    op: ==
+    value: foundation
+  predicted_error_classes:
+  - E3
+  actions:
+  - kind: instruction
+    file: F7.md
+  source_rows:
+  - E3-S1
+  state: candidate
+  any_trigger: true
+  combination_of: []
+  origin: ''
+  intent: the documented return-and-boundary checklist handed to the implementer before
+    the first write

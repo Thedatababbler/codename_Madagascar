@@ -268,3 +268,24 @@ def test_pretrial_check_keeps_entries_with_no_target_history_out_of_trial() -> N
     assert dc.trial_eligible(entry, short, cfg=dc.CycleConfig(m_f=5))[0]
     seen = [{"features": {"kind": "foundation"}, "error_classes": ["E5"]}] * 2 + miles[:4]
     assert dc.trial_eligible(entry, dc.f_entry_history(entry, seen, thresholds=dc.DEFAULT_THRESHOLDS), cfg=dc.CycleConfig(m_f=5))[0]
+
+
+def test_positive_control_probe_row_demoted_and_r0_row_promoted() -> None:
+    """The cycle's statistics must see a difference the ledger shows at 19/0/0 (2026-10-03 positive control)."""
+    import importlib.util, sys
+    spec = importlib.util.spec_from_file_location("pcc", Path("scripts/positive_control_cycle.py"))
+    pcc = importlib.util.module_from_spec(spec); spec.loader.exec_module(pcc)
+    recs = []
+    for i in range(6):
+        t, m = "t", f"m{i}"
+        inc = {"task_id": t, "milestone_id": m, "split": "train", "candidate_kind": "first_run", "per_case_results": {"a": "fail", "b": "fail", "c": "pass"}, "error_classes": ["E3"]}
+        probe = {"task_id": t, "milestone_id": m, "split": "train", "candidate_kind": "probe", "per_case_results": {"a": "fail", "b": "pass", "c": "pass"}}
+        r0 = {"task_id": t, "milestone_id": m, "split": "train", "candidate_kind": "R0", "per_case_results": {"a": "pass", "b": "pass", "c": "pass"}, "error_classes": ["E3"]}
+        recs += [inc, probe, r0]
+    synth = pcc.synthetic_records(recs)
+    stats = pair_statistics(synth, training_only=True)
+    rows = [PlaybookRow(row_id="PC-P1", table="repair", error_classes=("*",), action="S", instruction="p", state="trial"),
+            PlaybookRow(row_id="PC-R1", table="repair", error_classes=("*",), action="S", instruction="r", state="trial")]
+    out, _ = dc.update_row_states(rows, stats, cfg=dc.CycleConfig(m=5, n0=3, max_trial_concurrent=0))
+    by = {r.row_id: r.state for r in out}
+    assert by == {"PC-P1": "candidate", "PC-R1": "active"}

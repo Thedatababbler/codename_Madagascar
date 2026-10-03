@@ -67,7 +67,7 @@ def test_entries_trigger_on_their_features() -> None:
     table = default_first_pass_entries()
     thr = dict(DEFAULT_THRESHOLDS)
     ids = lambda fs: [e.entry_id for e in matched_entries(fs, table, thr)]  # noqa: E731
-    assert ids({"kind": "foundation"}) == ["F1"]
+    assert ids({"kind": "foundation"}) == ["F1", "F7"]  # F7 (2026-10-03): E3 on foundations
     assert ids({"kind": "integration"}) == ["F4"]
     assert ids({"kind": "middle", "n_documented_exceptions": 5}) == ["F2"]
     assert ids({"kind": "middle", "n_state_transitions": 3}) == ["F3"]

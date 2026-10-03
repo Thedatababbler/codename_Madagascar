@@ -47,6 +47,7 @@ from orchestra.control.evolution.rerun import (
     paired_case_stats,
     plan_f_reruns,
     plan_row_reruns,
+    r0_headroom,
 )
 from orchestra.control.evolution.tripwire import check_tripwire
 from orchestra.control.evolution.validators import (
@@ -108,6 +109,8 @@ class CycleConfig:
     #: history is at least m_f milestones long); otherwise it goes to
     #: calibration instead of costing re-runs.
     f_min_target_rate: float = 0.1
+    #: Row re-runs only on milestones where R0 left failures on the frozen suite.
+    unsaturated_only: bool = True
     tripwire_tolerance: float = 2.0
     min_class_samples: int = 5
     thresholds: tuple[tuple[str, float], ...] = tuple(DEFAULT_THRESHOLDS.items())
@@ -132,6 +135,7 @@ class CycleConfig:
             batch_tasks=int(g("cycle", "batch_tasks", 6)), buffer_failures=int(g("cycle", "buffer_failures", 12)),
             max_proposals=int(g("evolver", "max_proposals", 3)), tripwire_tolerance=float(g("tripwire", "tolerance", 2.0)),
             f_min_target_rate=float(g("trial", "f_min_target_rate", 0.1)),
+            unsaturated_only=bool(g("rerun", "unsaturated_only", True)),
             min_class_samples=int(g("replay", "min_class_samples", 5)),
             thresholds=tuple(thr.items()), split_file=str(g("evolution", "split_file", "") or ""),
         )
@@ -494,9 +498,13 @@ def run_cycle(
         lines.append("ranking simulation: insufficient evidence; the new scores are published as statistics, the selection rule is unchanged.")
         lines.append("")
 
-    # 4. re-runs for trial rows and trial F entries
+    # 4. re-runs for trial rows and trial F entries, on milestones where R0
+    #    left something to fix (a row cannot beat a saturated control)
     jobs: list[RerunJob] = []
     budget = cfg.max_runs_per_cycle
+    headroom = r0_headroom(cand)
+    lines += ["## 4a. R0 headroom (failures R0 left on the frozen suite)",
+              ", ".join(f"{k} {v}" for k, v in sorted(headroom.items(), key=lambda kv: -kv[1]) if v) or "none: every searched milestone is saturated", ""]
     for r in rows:
         if r.table != "repair" or r.state != "trial":
             continue
@@ -504,7 +512,8 @@ def run_cycle(
             have = stats[(r.row_id, c)].n if (r.row_id, c) in stats else 0
             if have >= cfg.m or budget <= 0:
                 continue
-            plan = plan_row_reruns(bank_entries, row_id=r.row_id, error_class=c, reps=cfg.reps, needed=cfg.m - have, max_runs=budget)
+            plan = plan_row_reruns(bank_entries, row_id=r.row_id, error_class=c, reps=cfg.reps, needed=cfg.m - have, max_runs=budget,
+                                   headroom=headroom, unsaturated_only=cfg.unsaturated_only)
             jobs += plan.jobs
             budget -= plan.runs
     entry_changes: list[dict[str, Any]] = []

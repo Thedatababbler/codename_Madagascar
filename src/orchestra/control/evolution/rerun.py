@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -61,11 +62,25 @@ class RerunPlan:
 
 def plan_row_reruns(
     entries: list[BankEntry], *, row_id: str, error_class: str, reps: int, needed: int, max_runs: int,
+    headroom: Mapping[str, int] | None = None, unsaturated_only: bool = False,
 ) -> RerunPlan:
-    """§7.2: pair R0 against ``row_id`` on ``needed`` entries of ``error_class`` (each run pairs both)."""
+    """§7.2: pair R0 against ``row_id`` on ``needed`` entries of ``error_class`` (each run pairs both).
+
+    ``headroom`` maps ``task:milestone`` to the failures R0 left on the frozen
+    suite there; entries with headroom come first, and with
+    ``unsaturated_only`` those without any are skipped: a row cannot beat R0
+    where R0 already clears the suite (EXP-20261002-02).
+    """
     jobs: list[RerunJob] = []
     skipped: dict[str, str] = {}
+    hr = dict(headroom or {})
     picked = [e for e in entries if error_class in set(e.persistent_failures.values()) and not e.suite_stale]
+    if hr:
+        picked.sort(key=lambda e: -hr.get(f"{e.task_id}:{e.milestone_id}", 0))
+        if unsaturated_only:
+            for e in [x for x in picked if hr.get(f"{x.task_id}:{x.milestone_id}", 0) <= 0]:
+                skipped[e.entry_id] = "saturated: R0 left no failure on this milestone"
+            picked = [e for e in picked if hr.get(f"{e.task_id}:{e.milestone_id}", 0) > 0]
     for e in picked[:needed]:
         for rep in range(reps):
             if len(jobs) >= max_runs:
@@ -250,6 +265,18 @@ def f_entry_verdict(
                     checkpoints=checkpoints, target_applicable=applicable, as_preventive=as_preventive if not reasons else False)
 
 
+def r0_headroom(candidate_records: Iterable[Mapping[str, Any]]) -> dict[str, int]:
+    """``task:milestone`` -> failures R0 left on the frozen suite there, summed over its
+    runs (0 = R0 cleared the suite every time it ran: saturated)."""
+    left: dict[str, int] = {}
+    for r in candidate_records:
+        if r.get("candidate_kind") != "R0" or not r.get("per_case_results"):
+            continue
+        key = f"{str(r.get('task_id') or '').removeprefix('rb_')}:{r.get('milestone_id')}"
+        left[key] = left.get(key, 0) + sum(1 for v in r["per_case_results"].values() if v == "fail")
+    return left
+
+
 def merge_rerun_records(online: list[dict[str, Any]], rerun: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Online and re-run records side by side; re-run rows keep ``source=rerun``."""
     out = [dict(r, source=r.get("source", "online")) for r in online]
@@ -281,5 +308,5 @@ def forced_f_for(milestone_id: str) -> str | None:
 __all__ = [
     "FORCE_F_ENV", "FORCE_ROW_ENV", "FVerdict", "RERUN_ROOT", "RerunJob", "RerunPlan", "cli_command",
     "f_entry_verdict", "forced_f_for", "forced_row_for", "launch", "ledger_records_of", "merge_rerun_records",
-    "pair_row_records", "paired_case_stats", "plan_f_reruns", "plan_row_reruns",
+    "pair_row_records", "paired_case_stats", "plan_f_reruns", "plan_row_reruns", "r0_headroom",
 ]

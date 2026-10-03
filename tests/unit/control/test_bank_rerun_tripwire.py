@@ -212,3 +212,21 @@ def test_f_verdict_when_the_target_class_never_occurred() -> None:
     assert never_pos.promote and not never_pos.as_preventive and not never_pos.target_applicable
     seen = f_entry_verdict(net_effect=0, cost_variant=1.0, cost_control=1.0, target_before=3, target_after=1, checkpoints=5)
     assert seen.promote and seen.as_preventive and seen.target_applicable
+
+
+def test_row_reruns_prefer_unsaturated_milestones() -> None:
+    """A row cannot beat R0 where R0 already clears the suite: those checkpoints are skipped (2026-10-03)."""
+    from orchestra.control.evolution.rerun import r0_headroom
+
+    entries = [_entry("tinydb", f"m{i}") for i in range(1, 5)]
+    recs = [{"candidate_kind": "R0", "task_id": "rb_tinydb", "milestone_id": "m1", "per_case_results": {"a": "pass"}},
+            {"candidate_kind": "R0", "task_id": "rb_tinydb", "milestone_id": "m2", "per_case_results": {"a": "fail", "b": "fail"}},
+            {"candidate_kind": "R0", "task_id": "rb_tinydb", "milestone_id": "m3", "per_case_results": {"a": "pass"}},
+            {"candidate_kind": "R0", "task_id": "rb_tinydb", "milestone_id": "m3", "per_case_results": {"a": "fail"}}]
+    hr = r0_headroom(recs)
+    assert hr == {"tinydb:m1": 0, "tinydb:m2": 2, "tinydb:m3": 1}
+    plan = plan_row_reruns(entries, row_id="E3-S1", error_class="E3", reps=1, needed=4, max_runs=10, headroom=hr, unsaturated_only=True)
+    assert [j.milestone_id for j in plan.jobs] == ["m2", "m3"]
+    assert plan.skipped["tinydb:m1:abc12345"].startswith("saturated") and "tinydb:m4:abc12345" in plan.skipped
+    loose = plan_row_reruns(entries, row_id="E3-S1", error_class="E3", reps=1, needed=4, max_runs=10, headroom=hr, unsaturated_only=False)
+    assert [j.milestone_id for j in loose.jobs][:2] == ["m2", "m3"] and len(loose.jobs) == 4
