@@ -54,7 +54,7 @@ SHIMS = {
 }
 PRIVATE = re.compile(r"(?<![\w.])[A-Za-z]\w*\._(?!_)[A-Za-z]\w*")
 BROAD_RAISES = re.compile(r"pytest\.raises\(\s*(Exception|BaseException)\s*[,)]")
-CITATION = re.compile(r"#\s*(PRD|Architecture|UML|Directory|Design|README)\b[^\n]*\"")
+CITATION = re.compile(r"#\s*(PRD|Architecture|UML|Directory|Design|README|DOC)\b[^\n]*\"")
 
 
 def _packages(task: str) -> list[str]:
