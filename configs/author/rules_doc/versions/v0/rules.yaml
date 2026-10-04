@@ -1,0 +1,4 @@
+# Author rules document v0 (spec "出题者进化循环 v2" §3.3): empty.
+# Only the fixed rules (configs/roles/test_author/core_rules.md) reach the author.
+version: v0
+rules: []

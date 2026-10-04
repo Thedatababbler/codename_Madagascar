@@ -1,0 +1,7 @@
+# Append-only record of every rules-document change and its held-out gap
+# (spec §4). The author never reads this file; the evolver and people do.
+- version: v0
+  date: 2026-10-04
+  changes: []
+  decision: published
+  note: "empty rules document; the fixed rules alone (= test_author.yaml v10.1)"

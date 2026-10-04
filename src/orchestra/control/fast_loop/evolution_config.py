@@ -27,6 +27,62 @@ def repair_trigger_from_env(default: str = "gate") -> str:
 
 
 @dataclass(frozen=True)
+class AuthorConfig:
+    """``evolution.author`` (author-evolution spec §12). Everything off by default."""
+
+    enabled: bool = False
+    inventory: bool = False
+    publish: bool = False
+    require_human_approval: bool = True
+    confirm_rerun: bool = True
+    max_proposals: int = 2
+    k: int = 2
+    split_file: str = "configs/datasets/author_evolution_split.yaml"
+    coverage_hard_min: float = 1.0
+    coverage_max_rounds: int = 2
+    rules_max_active: int = 15
+    accept_miss_delta: float = 0.05
+    accept_ref_fail_tol: float = 0.02
+    accept_fp_tol: float = 0.02
+    accept_disc_tol: float = 0.05
+    accept_cost_tol: float = 0.3
+    accept_min_milestones: int = 5
+    confirm_n: int = 4
+    confirm_tol: float = 5.0
+
+    @classmethod
+    def from_mapping(cls, payload: Mapping[str, Any] | None) -> AuthorConfig:
+        a = dict(payload or {})
+        if not bool(a.get("enabled", False)):
+            return cls()
+        cov = dict(a.get("coverage") or {})
+        rules = dict(a.get("rules") or {})
+        acc = dict(a.get("accept") or {})
+        conf = dict(a.get("confirm") or {})
+        return cls(
+            enabled=True,
+            inventory=bool(a.get("inventory", False)),
+            publish=bool(a.get("publish", False)),
+            require_human_approval=bool(a.get("require_human_approval", True)),
+            confirm_rerun=bool(a.get("confirm_rerun", True)),
+            max_proposals=int(a.get("max_proposals", 2)),
+            k=int(a.get("k", 2)),
+            split_file=str(a.get("split_file") or cls.split_file),
+            coverage_hard_min=float(cov.get("hard_min", 1.0)),
+            coverage_max_rounds=int(cov.get("max_rounds", 2)),
+            rules_max_active=int(rules.get("max_active", 15)),
+            accept_miss_delta=float(acc.get("miss_delta", 0.05)),
+            accept_ref_fail_tol=float(acc.get("ref_fail_tol", 0.02)),
+            accept_fp_tol=float(acc.get("fp_tol", 0.02)),
+            accept_disc_tol=float(acc.get("disc_tol", 0.05)),
+            accept_cost_tol=float(acc.get("cost_tol", 0.3)),
+            accept_min_milestones=int(acc.get("min_milestones", 5)),
+            confirm_n=int(conf.get("n", 4)),
+            confirm_tol=float(conf.get("tol", 5.0)),
+        )
+
+
+@dataclass(frozen=True)
 class EvolutionConfig:
     enabled: bool = False
     #: Probes: how many resamples of the incumbent design, whether the count
@@ -54,6 +110,8 @@ class EvolutionConfig:
     repair_trigger: str = "failures"
     #: The `thr` block: first-pass triggers and row preconditions (§10).
     thresholds: tuple[tuple[str, float], ...] = ()
+    #: The author's evolvable layer (``evolution.author``), off by default.
+    author: AuthorConfig = AuthorConfig()
 
     @property
     def thr(self) -> dict[str, float]:
@@ -91,6 +149,7 @@ class EvolutionConfig:
             flaky_reverify_runs=int(acceptance.get("flaky_reverify_runs", 2)),
             repair_trigger=trigger,
             thresholds=tuple((str(k), float(v)) for k, v in dict(cfg.get("thr") or {}).items()),
+            author=AuthorConfig.from_mapping(evo.get("author")),
         )
 
     @property
@@ -103,4 +162,4 @@ class EvolutionConfig:
         return max(self.probes_default, 3) if self.probes_adaptive else self.probes_default
 
 
-__all__ = ["EvolutionConfig", "REPAIR_TRIGGERS", "REPAIR_TRIGGER_ENV", "repair_trigger_from_env"]
+__all__ = ["AuthorConfig", "EvolutionConfig", "REPAIR_TRIGGERS", "REPAIR_TRIGGER_ENV", "repair_trigger_from_env"]

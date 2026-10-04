@@ -4451,3 +4451,34 @@ Operational: the scoring driver was corrupted by an in-place edit while
 running (bash reads scripts incrementally) and four milestones lacked
 held-out attribution and were absent from the job list; both fixed, all 12
 scored.
+
+## EXP-20261004-02 -- author-evolution loop v2, stage B0: fixed rules split out, rules document, assembly (branch `rsi`)
+
+**Status:** implemented 2026-10-04, no quota spent. Spec: the user's "出题者进化循环 v2"
+(preflight answers to its §14 in `docs/reports/author_evolution_v2_preflight_20261004.md`,
+untracked by convention; decisions: discrimination report-only this round, 8:4 task split
+with and without tinydb, soft cases in a sibling directory, audit raises-rule in three cases,
+sealed readers in three classes).
+
+Done. `configs/roles/test_author/core_rules.md` is the `test_author.yaml` v10.1 prompt
+verbatim (the yaml itself is untouched, §0.2). `configs/author/rules_doc/` holds
+`versions/v0/rules.yaml` (empty), `current -> versions/v0`, and an append-only
+`CHANGELOG.yaml`. `control/author/rules_doc.py` parses and renders the document (only
+`active` and `trial` entries, only trigger / rule / example); `control/author/assemble.py`
+assembles fixed rules + rendered rules + inventory text. The run's hook is the environment
+variable `ADAMAS_AUTHOR_RULES_DOC` (plus `ADAMAS_AUTHOR_INVENTORY` for stage B3), read in
+the subgraph builder for the `test_author` role only; unset, the role prompt is returned
+untouched without opening a file. `EvolutionConfig.author` (`evolution.author`, spec §12)
+parses every threshold, all off by default.
+
+Deviation from the spec's file layout: the assembler lives in
+`src/orchestra/control/author/assemble.py`, not under `configs/roles/test_author/`, because
+code under `configs/` is not importable from the package; the fixed rules file is where
+the spec puts it.
+
+Tests (`tests/unit/control/test_author_assemble.py`, 8): core_rules.md equals the yaml
+prompt; empty document + no inventory assembles byte for byte to the pool's prompt; the
+rendered system prompt of a test_author node is identical with the variable unset and set
+to v0; rules and inventory are appended after the fixed rules in that order and
+candidate / retired entries never render; bad states and duplicate ids are refused; the
+config defaults off. Whole unit suite green.
