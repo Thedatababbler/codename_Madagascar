@@ -26,7 +26,12 @@ from collections import Counter
 from dataclasses import dataclass, field
 
 CLASSES = ("E1", "E2", "E3", "E4", "E5", "E6", "E7", "E8", "E9")
-MARKER_RE = re.compile(r"error_class\(\s*[\"'](E[1-9])[\"']\s*\)")
+MARKER_RE = re.compile(r"error_class\(\s*[\"']([A-Za-z_0-9]+)[\"']\s*\)")
+#: the verifier prompt's names for the classes (2026-10-04)
+MARKER_NAMES = {
+    "interface": "E2", "main_path": "E3", "state_transition": "E4", "error_path": "E5",
+    "boundary": "E6", "integration": "E7", "performance": "E8", "unfinished": "E1", "scattered": "E9",
+}
 
 _E2_NAME = ("import", "export", "reexport", "re_export", "public_surface", "signature", "is_importable", "package_root", "module_file")
 _E2_OUT = ("ImportError", "ModuleNotFoundError", "AttributeError: module", "has no attribute",
@@ -65,7 +70,12 @@ class CaseFacts:
 
 def marker_in(source: str) -> str | None:
     m = MARKER_RE.search(source or "")
-    return m.group(1) if m else None
+    if not m:
+        return None
+    raw = m.group(1)
+    if re.fullmatch(r"E[1-9]", raw):
+        return raw
+    return MARKER_NAMES.get(raw.lower())
 
 
 def classify_case(
