@@ -111,8 +111,9 @@ def heldout_cases(task_id: str, workspace: Path, cases: list[str], *, per_test_t
         return {}
     with tempfile.TemporaryDirectory() as tmp:
         repo = Path(tmp) / task_id
-        shutil.copytree(workspace, repo, ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", ".git", "spec_tests",
-                                                                        "repair_evidence", "unit_tests", "check_tests"))
+        shutil.copytree(workspace, repo, symlinks=True, ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", ".git", "spec_tests",
+                                                                                       "repair_evidence", "unit_tests", "check_tests",
+                                                                                       "bin", "lib", "lib64", "include", "share", "pyvenv.cfg", ".venv", "venv"))
         shutil.copytree(task.repo_root / task.unit_tests, repo / task.unit_tests)
         # attribution keys are ``file::function`` without the class and without
         # parameters; run the files and keep the reported ids that match
@@ -171,7 +172,7 @@ def score(args) -> None:
         task = load_task(task_id, dataset_root=DATASET_ROOT)
         with tempfile.TemporaryDirectory() as tmp:
             ref = Path(tmp) / task_id
-            shutil.copytree(task.repo_root, ref, ignore=shutil.ignore_patterns("__pycache__", ".git", "unit_tests", "check_tests"))
+            shutil.copytree(task.repo_root, ref, ignore=shutil.ignore_patterns("bin", "lib", "lib64", "include", "share", "pyvenv.cfg", ".venv", "venv", "__pycache__", ".git", "unit_tests", "check_tests"), symlinks=True)
             subprocess.run(["git", "init", "-q"], cwd=ref, check=False, capture_output=True)
             ref_failed = {k for k, v in suite_cases(ref, command, suite_dir, timeout).items() if v == "fail"}
         print(f"{task_id} {args.milestone[:30]} reference: suite fails {len(ref_failed)} case(s) there -> excluded from verdicts")

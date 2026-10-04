@@ -141,8 +141,10 @@ def static_audit(suite: Path, packages: list[str], docs: str = "") -> dict:
 
 def _reference_repo(task: str) -> Path:
     dest = Path(tempfile.mkdtemp(prefix=f"probe_ref_{task}_"))
-    shutil.copytree(DATASET_ROOT / task, dest, dirs_exist_ok=True,
-                    ignore=shutil.ignore_patterns("unit_tests", "check_tests", "__pycache__", ".git"))
+    # a stray virtualenv in a dataset directory (voluptuous: bin/ of dangling symlinks) must not break the copy
+    shutil.copytree(DATASET_ROOT / task, dest, dirs_exist_ok=True, symlinks=True,
+                    ignore=shutil.ignore_patterns("unit_tests", "check_tests", "__pycache__", ".git",
+                                                  "bin", "lib", "lib64", "include", "share", "pyvenv.cfg", ".venv", "venv"))
     return dest
 
 
