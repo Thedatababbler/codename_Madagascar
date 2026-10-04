@@ -50,6 +50,19 @@ def main() -> None:
             if name == "first_pass" or not w.get("suite_total"):
                 continue
             kind, row = kinds.get(w["path"].rstrip("/"), ("?", ""))
+            if kind == "?":
+                # candidate workspaces the ledger did not reference by path: the directory is the candidate id
+                n = name
+                if n == "final":
+                    kind = "final"  # the run's committed repository (the winner, after later milestones)
+                elif n.startswith("cand_feedback"):
+                    kind = "probe"
+                elif n == "cand_R0":
+                    kind = "R0"
+                elif n.startswith("cand_node_resample"):
+                    kind = "resample"
+                elif n.startswith("cand_v2:") or n.startswith("cand_pb_"):
+                    kind, row = "row", n.split("cand_", 1)[-1].replace("v2:", "")
             fail = set(w["suite_failed"])
             fixed = len(inc_fail - fail)
             regressed = len(fail - inc_fail)
