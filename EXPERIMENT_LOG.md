@@ -4409,3 +4409,45 @@ verifier suite as a yardstick did not separate from v11 here.
    report-only cycle draws it into trial. Nothing published; the live
    designer ignores candidates. Running it needs the F0/F7 re-run pairs
    (about 30% of a window for five), after the author work as agreed.
+
+## EXP-20261004-01 -- the user's verification-suite prompt as an independent yardstick (branch `rsi`)
+
+**Status:** closed 2026-10-04. 12 author calls (verifier prompt, `outputs/roles_verify2`,
+zqin30 gpt-5.5, ~1% window), scoring by memory replay only.
+
+The prompt (breadth-first, documents only, `# DOC:` citations, named error-class
+markers now understood by the classifier) ran on the 12 searched milestones
+that have retained R0 workspaces. Audit: 10-29 cases per suite, citation ratio
+0.86-1.0 (deprecated 0.09, imapclient integration 0.46), no priming / shims /
+private access, every case with a timeout mark; validity on the reference 1.0
+down to 0.35 (imapclient transport, integration), reference-failing cases
+excluded from every verdict. Each suite was then run on every retained
+workspace of its milestone (first pass, probes, R0, rows, resample samples,
+the committed repo), `scripts/verifier_compare.py`:
+
+| candidate kind | n | net change vs the first pass | paired vs R0 (better / same / worse) |
+|---|---|---|---|
+| R0 | 13 | +1.00 | -- |
+| probe | 27 | +0.59 | -0.63 (1 / 14 / 12) |
+| node resample | 21 | +0.71 | -0.71 (2 / 8 / 11) |
+| playbook rows (E3-T1 x3, legacy x1) | 4 | +1.00 | 0.00 (0 / 4 / 0) |
+| committed repo | 14 | +1.07 | +0.15 (2 / 11 / 0) |
+
+Reading. (1) R0's advantage over a probe survives the independent yardstick
+but shrinks: +2.7 cases and 19/0/0 on the gate suite become +0.6 and
+12 worse / 14 same / 1 better here; the gate suite overstated it because
+R0 was repaired against that suite. (2) The rows tie R0 exactly on the
+verifier too (0 / 4 / 0): the gate was not the reason they could not
+separate; on these milestones there is nothing left between R0 and the
+documented behaviour the verifier covers. (3) The verifier finds 0-6
+incumbent failures per milestone where the gate suite found 1-7, and on 5
+of 13 milestones it finds none at all, so it is not uniformly a stricter
+gate; where it does fail the incumbent, R0 fixes some of it and never
+regresses. (4) Six of its 12 suites fail the dataset reference on 1-13 cases
+(imapclient transport 13/20), excluded here; as a gate those would be false
+alarms, as a yardstick they are noise removed.
+
+Operational: the scoring driver was corrupted by an in-place edit while
+running (bash reads scripts incrementally) and four milestones lacked
+held-out attribution and were absent from the job list; both fixed, all 12
+scored.
