@@ -126,7 +126,9 @@ class EvolutionConfig:
         acceptance = dict(cfg.get("acceptance") or {})
         enabled = bool(evo.get("enabled", False))
         if not enabled:
-            return cls()
+            # the author's layer is independent of the search procedure: an author-only probe
+            # (author-evolution replay) turns it on without turning the search on
+            return cls(author=AuthorConfig.from_mapping(evo.get("author")))
         mode = str(budget.get("mode", "B")).strip().upper()
         if mode not in ("A", "B"):
             raise ValueError(f"budget.mode must be A or B, got {mode!r}")

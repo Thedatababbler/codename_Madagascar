@@ -4653,3 +4653,44 @@ is and the gap recorded; the split leaves both directories collectable on their 
 hard + soft = before, a mixed case stays hard, fixtures travel; no soft case, no split;
 feature off changes nothing; the node review calls the backend again and sums usage.
 Whole unit suite green.
+
+## EXP-20261005-04 -- author-evolution loop v2, stage B4: evaluation replay and report; group A from cache (branch `rsi`)
+
+**Status:** implemented 2026-10-05; group A scored from cached suites, no model calls.
+
+- `scripts/author_eval.py`: `select` (cycle-0 milestones: the 31 with documented held-out
+  failures + 8 others, seed 20261005), `baseline` (A sample 0 = the frozen gate suites of the
+  main evolution runs), `generate` (author-only runs through `author_probe.run_probe`; group A
+  = configs/roles, B = outputs/roles_v11, C = `configs/experiments/author_probe_inventory.yaml`),
+  `score` (each evaluation suite, hard and soft, on every retained workspace of the milestone
+  and the main run's final repository; suite case symbols from the suite's AST; B1 audit;
+  cost), `metrics` (hands the records to the sealed `heldout_matrix.py metrics`), `report`
+  (evolution / acceptance / acceptance without tinydb, spread across samples).
+- `codeprojecteval/case_symbols.py`: the case-symbol extraction moved out of the sealed
+  attribution script so both sides use one implementation (attribution output byte-identical
+  after the move); chained class calls (`Store().get(k)`) now count. Re-running attribution,
+  labels, census and selection with it changed no label count, no census row and no selected
+  milestone; strict symbol recall 0.70 -> 0.69.
+- `EvolutionConfig.author` is parsed even with `evolution.enabled: false`, so an author-only
+  probe can switch the author layer on without the search procedure.
+
+**Group A sample 0 (cached v10.1 gate suites, 56 milestones):**
+
+| set | milestones | true miss (n) | hard reference-fail rate | false positives (n) | discrimination (n) | audit violations | cases |
+|---|---|---|---|---|---|---|---|
+| evolution | 38 | 0.986 (18) | 0.26 | 0.00 (2) | 0.56 (11) | 146 | 559 |
+| acceptance | 18 | 0.997 (13) | 0.17 | 0.00 (1) | 0.62 (6) | 31 | 282 |
+| acceptance without tinydb | 14 | 0.996 (9) | 0.19 | 0.00 (1) | 0.58 (4) | 26 | 211 |
+
+Reading. These numbers are biased and must not be the baseline B and C are compared with:
+each final repository was repaired against exactly this suite, so it passes almost all of it
+(at most 6 failing cases on any milestone), and a suite that does not fail cannot cover a
+held-out failure -- hence a true-miss rate near 1. The comparison needs a fresh A sample
+written by the same v10.1 prompt on the same milestones (39 author calls). The reference-fail
+rates are real: both reference runners (suite inside or outside the repository copy) agree
+(tinydb table_document_crud 2/18, imapclient transport 20/22 with `AttributeError`, the
+mock-based transport tests). Discrimination computable on 11 / 6 / 4 milestones.
+
+Tests: `tests/unit/control/test_author_eval.py` (3: parametrisations folded and class
+spelling kept; suite case symbols share the result keys and follow fixtures and chained
+calls; report prints every split with the spread across samples). Whole unit suite green.
