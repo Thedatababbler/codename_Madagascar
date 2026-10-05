@@ -4482,3 +4482,44 @@ rendered system prompt of a test_author node is identical with the variable unse
 to v0; rules and inventory are appended after the fixed rules in that order and
 candidate / retired entries never render; bad states and duplicate ids are refused; the
 config defaults off. Whole unit suite green.
+
+## EXP-20261005-01 -- author-evolution loop v2, stage B1: mechanical audit and public symbols (branch `rsi`)
+
+**Status:** implemented 2026-10-05, no quota spent. Report-only: nothing in the run calls the
+audit yet (stage B3 wires it in front of custody).
+
+Done.
+- `codeprojecteval/public_symbols.py` derives the public symbols from the documents alone, by
+  the user's rule: identifier form (architecture bullets under `file.py` headings, mermaid UML
+  classes and `+` members, doc import lines, backticks), no leading underscore, module from
+  the stated heading or `(from pkg.mod)`, else a directory-tree filename match, methods as
+  `Class.method`, the rest unattributed. Strict set (`owned_by`) for coverage and metrics,
+  lenient set (own + earlier milestones in plan order + unattributed) for the audit. Two
+  robustness rules found on real documents: the documents' tree is often rooted at the
+  repository name while focus paths are rooted at the package (simplejwt), and one heading is
+  misspelt (`session.py` for `sessions.py`, flask); both resolved.
+- `codeprojecteval/suite_audit.py`: the six fixed rules of §2.4 as AST checks (citation present
+  and a normalised substring of the documents; no private attribute, `__dict__`, `__slots__`,
+  `vars()`; the user's three-case error-path rule, unnamed error + `raises(Exception)` making
+  the case soft; shims incl. monkeypatching the project and a suite module named like the
+  package; documented-symbol imports and calls; module-top imports only pytest + stdlib present
+  on every interpreter). Names the suite defines itself are exempt from the private rule.
+  `to_author_text()` renders the list handed back to the author.
+- `routing.citations_in` accepts `# DOC:` only when `ADAMAS_AUTHOR_RULES_DOC` is set; unset,
+  the old regex.
+- `scripts/audit_suites_v2.py` runs the audit over frozen suites.
+
+Regression over every frozen suite on disk (80 suites: the evolution runs' gate suites plus
+the v11 / verifier / verifier-2 pilots, 1286 cases): 28 suites clean, 182 cases with at
+least one violation; by rule citation 101, error_path 107, shim 38, symbol 11, private 3.
+The spec expected "the eight clean suites stay at zero"; under the stricter rules they do
+not, and that is the rules, not false alarms: the remaining citation hits are paraphrases
+the documents do not contain, the error-path hits are mostly `raises(SpecificError)` under a
+sentence that names no class (now soft-or-violation by the user's rule), the shims are
+imapclient's `mock.patch("imapclient...")` helpers. Symbol false alarms went from 155 to 11
+after the two document fixes above; the 11 left are real (`voluptuous.util.*` imported in
+the validator milestone, `bplustree.const.MIN_CACHE_NUM` whose module the PRD never states).
+
+Tests: `tests/unit/decomposition/test_public_symbols.py` (6),
+`tests/unit/decomposition/test_suite_audit.py` (10, one violating and one compliant sample
+per rule). Whole unit suite green.

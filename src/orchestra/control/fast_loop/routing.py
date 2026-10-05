@@ -19,6 +19,7 @@ cases that do not belong to this milestone are taken out and written to
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -36,6 +37,14 @@ ROUTES = (
     "environment",
 )
 _CITATION_RE = re.compile(r"#\s*(?:PRD|Architecture|UML|Directory|Design|README)[^\"\n]*\"([^\"\n]{12,})\"")
+#: With the author's evolvable layer on (ADAMAS_AUTHOR_RULES_DOC set, control/author) the
+#: ``# DOC: "..."`` form the verifier prompt uses is a citation too. Off, the regex above
+#: is used unchanged.
+_CITATION_RE_DOC = re.compile(r"#\s*(?:PRD|Architecture|UML|Directory|Design|README|DOC)[^\"\n]*\"([^\"\n]{12,})\"")
+
+
+def _citation_re() -> re.Pattern[str]:
+    return _CITATION_RE_DOC if os.environ.get("ADAMAS_AUTHOR_RULES_DOC") else _CITATION_RE
 _ENV_TOKENS = ("adamas shadow", "not built in this workspace", "site-packages/")
 
 
@@ -83,7 +92,7 @@ class RoutingResult:
 
 def citations_in(source: str) -> list[str]:
     """Sentences quoted in ``# PRD: "..."`` style comments of a test's source."""
-    return [" ".join(m.group(1).split()) for m in _CITATION_RE.finditer(source or "")]
+    return [" ".join(m.group(1).split()) for m in _citation_re().finditer(source or "")]
 
 
 def citation_ok(source: str, docs_text: str) -> bool | None:
