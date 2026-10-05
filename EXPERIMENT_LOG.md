@@ -4603,3 +4603,53 @@ allows sealed ones; overlap check refuses a source window and passes ids and sym
 parametrize ids hashed; on-disk sealed outputs do not overlap source; no held-out reader in
 `src/` or `scripts/` outside sealed + allowlist; inventory-gap rule),
 `tests/unit/control/test_author_metrics.py` (6, hand-built milestones). Whole unit suite green.
+
+## EXP-20261005-03 -- author-evolution loop v2, stage B3: inventory, coverage check, fix rounds, soft split (branch `rsi`)
+
+**Status:** implemented 2026-10-05, no model calls (the extraction prompt has not met a real
+model yet; the first call is cycle 0's).
+
+Switched on by `evolution.author: {enabled: true, inventory: true}`; the run CLI
+(`configure_author_layer`) turns it into environment variables for the subgraph builder and
+the agent executor, as the repair trigger already was. Off, nothing is set and both paths
+are byte-for-byte the old ones.
+
+- **Inventory** (`codeprojecteval/behaviour_inventory.py`): one extraction call at temperature
+  0 per milestone, prompt and reply on disk under `<run>/author_inventory/`, cached by
+  content. The program keeps an item only if its quote, normalised, is a document substring
+  and its symbol is owned by the milestone (strict symbol set), and decides the tier from
+  `configs/author/tier_rules.yaml` (hard = a condition pattern and a result pattern; general
+  promises soft); the extractor's tier is kept as a reference only. Dropped items are listed
+  with the reason. The hard and optional items are appended to the author prompt.
+- **Review in the author node** (`control/author/review.py`, `node_review.py`, hooked in
+  `executors/agent.py`): after the author's call, the B1 audit (lenient symbol set) and the
+  coverage check (a test covers an item when a normalised citation equals the quote or one
+  contains the other); if the audit has violations or hard coverage is below
+  `coverage.hard_min`, the same backend is called again with only the violation list and the
+  uncovered sentences, at most `coverage.max_rounds` times; tokens of every round are added
+  to the node's usage; each round is recorded in `<run>/author_inventory/<milestone>/<tag>.review.json`.
+  Rounds exhausted: the suite is frozen as it is and the record names what stayed uncovered.
+  All of this finishes before the custody node runs; the custody node and the harness are
+  untouched (spec §0.2).
+- **Soft split** (the user's option A): soft cases are those citing soft items only, and
+  unnamed error paths checked with `raises(Exception)` (the user's audit rule); a case citing
+  any hard item stays hard. The split is done on the AST: each file with soft cases is
+  written twice (soft cases removed from `spec_tests/`, hard cases removed from the copy),
+  module-level imports, helpers, fixtures and the non-test modules (conftest, helpers,
+  `__init__`) kept on both sides; the soft directory is moved out of the workspace at once to
+  `<run>/author_inventory/<milestone>/<tag>.spec_tests_soft`. The gate, the vacuous-baseline
+  check, the unified acceptance, the default repair's failure list and the ledger's
+  `per_case_results` therefore see hard cases only, with no change to any of them.
+- **Soft results**: `scripts/run_soft_suites.py <run>` runs each soft suite on the final
+  repository (and with `--candidates` on every retained candidate) and writes
+  `soft_results` to the run and to its ledger milestone records.
+- Audit case keys now follow pytest's spelling for methods (`file::Class::test`).
+
+Tests (`tests/unit/control/test_author_inventory_review.py`, 10): tier rule; a quote not in
+the documents and an unowned symbol are dropped and the program overrides the extractor's
+tier; extraction writes prompt and reply and is cached; an uncovered hard item triggers a
+fix round that receives only the missing sentence; rounds are capped, the suite frozen as
+is and the gap recorded; the split leaves both directories collectable on their own with
+hard + soft = before, a mixed case stays hard, fixtures travel; no soft case, no split;
+feature off changes nothing; the node review calls the backend again and sums usage.
+Whole unit suite green.

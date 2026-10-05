@@ -611,6 +611,7 @@ async def _run_one(
     logs_dir = run_dir / "logs"
     (logs_dir / "02_runtime").mkdir(parents=True, exist_ok=True)
     task = load_task(task_id, dataset_root=dataset_root)
+    configure_author_layer(tuning.evolution.author, task=task, run_dir=run_dir, plan_file=plan_file)
     source_repo = build_agent_workspace(task, batch_dir / "workspaces" / task_id)
     if base_snapshot:
         overlay_snapshot(source_repo, base_snapshot)
@@ -1109,6 +1110,26 @@ async def _run(args: argparse.Namespace) -> int:
     print(json.dumps(batch_summary, indent=2, sort_keys=True, ensure_ascii=False))
     print(f"batch_dir={batch_dir}")
     return 1 if batch_summary["errors"] else 0
+
+
+def configure_author_layer(author, *, task, run_dir: Path, plan_file: str | None) -> None:
+    """``evolution.author`` -> the environment the subgraph builder and the agent executor read
+    (author-evolution spec §2, §12). Off, nothing is set and the author path is unchanged."""
+    from orchestra.control.author import assemble as A
+
+    if not author.enabled:
+        return
+    os.environ[A.RULES_DOC_ENV] = os.environ.get(A.RULES_DOC_ENV) or "configs/author/rules_doc/current"
+    if not author.inventory:
+        return
+    os.environ[A.INVENTORY_DIR_ENV] = str(run_dir / "author_inventory")
+    os.environ[A.DOCS_DIR_ENV] = str(task.repo_root / "docs")
+    os.environ[A.PACKAGES_ENV] = str(task.source_dir or task.task_id).split("/")[0]
+    os.environ[A.TASK_ENV] = task.task_id
+    os.environ[A.HARD_MIN_ENV] = str(author.coverage_hard_min)
+    os.environ[A.MAX_ROUNDS_ENV] = str(author.coverage_max_rounds)
+    plan = plan_file or str(Path("configs/datasets/cpe_feature_plans") / f"{task.task_id.removeprefix('rb_')}.plan.json")
+    os.environ[A.PLAN_FILE_ENV] = plan
 
 
 def main() -> int:

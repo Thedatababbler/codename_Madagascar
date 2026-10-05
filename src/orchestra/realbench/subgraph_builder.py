@@ -26,7 +26,7 @@ from orchestra.ir.graph import OrchestraGraph
 from orchestra.ir.graph_invariants import assert_graph_invariants
 from orchestra.realbench.milestone_planner import AgentDraft, MilestoneDraft
 from orchestra.control.fast_loop.evolution_config import repair_trigger_from_env
-from orchestra.control.author.assemble import author_prompt
+from orchestra.control.author.assemble import author_prompt, record_author_contract
 from orchestra.roles.pool import RolePool, default_role_pool
 from orchestra.roles.templates import (
     FALLBACK_TEMPLATE_ID,
@@ -281,7 +281,7 @@ def _system_prompt(
     if role is not None and agent.role == "test_author":
         # The author's evolvable layer (control/author): identical to the yaml
         # prompt unless ADAMAS_AUTHOR_RULES_DOC is set for this run.
-        role_prompt = author_prompt(role_prompt)
+        role_prompt = author_prompt(role_prompt, milestone=milestone)
     role_block = f"{role_prompt.strip()}\n\n" if role is not None else ""
     title = role.title if role is not None else agent.role_id
     edits = role is None or role.edits_repository
@@ -362,6 +362,9 @@ def materialize_agent_contract(
         f"Execute your mandate for milestone `{milestone.milestone_id}`, then stop. "
         "Do not create subagents."
     )
+    if agent.role == "test_author":
+        # the author node finds its milestone by contract id (stage B3); no-op with the feature off
+        record_author_contract(contract_id, milestone)
     tools = _SMOLAGENTS_TOOLS if agent_backend == "smolagents_code" else _CODEX_TOOLS
     payload = {
         "contract_id": contract_id,

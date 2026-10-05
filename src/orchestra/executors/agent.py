@@ -14,6 +14,7 @@ from orchestra.backends.base import (
 )
 from orchestra.backends.errors import BackendCapabilityError
 from orchestra.backends.registry import AgentBackendRegistry
+from orchestra.control.author.node_review import author_review_dir, run_author_review
 from orchestra.harness.progress import redact_hidden_suite
 from orchestra.ir.artifacts import ArtifactEnvelope
 from orchestra.ir.contracts import AgentContract
@@ -208,6 +209,15 @@ class AgentNodeExecutor:
                 trace_events=result.trace_events,
                 backend_metadata=metadata,
             )
+        review_dir = author_review_dir(request.contract_id)
+        if review_dir is not None:
+            # stage B3 of the author-evolution loop: audit, coverage, fix rounds, soft split --
+            # inside the author node, before the custody node freezes the suite
+            result, review = await run_author_review(
+                review_dir=review_dir, request=request, backend=backend, backend_context=backend_context,
+                first=result, semaphore=context.semaphores.llm,
+            )
+            metadata["author_review"] = review
         output_slot, expected_schema = next(iter(node.output_slots.items()))
         artifact = result.output_artifacts[0]
         if artifact.artifact_type != expected_schema:

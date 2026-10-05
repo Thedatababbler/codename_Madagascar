@@ -1,0 +1,21 @@
+# Hard / soft tiers for documented-behaviour inventory items (author-evolution spec §2.2).
+# Maintained by people; the evolution loop never edits this file.
+# An item is HARD when its quoted sentence names both a concrete input or condition and a
+# concrete expected result; otherwise SOFT. Patterns are case-insensitive regular expressions.
+condition:
+  - '`[A-Za-z_][\w.]*`'                      # a parameter, attribute, state or symbol name in backticks
+  - '\b(when|if|unless|given|whenever|once|after|before|while)\b'
+  - '\b(empty|none|null|zero|negative|missing|absent|invalid|duplicate|existing|non-existent|nonexistent)\b'
+  - '\b(default|defaults|by default)\b'
+  - '"[^"]+"|''[^'']+'''                      # a quoted literal value
+  - '\b\d+\b'                                # a number
+  - '\b[A-Z]\w*(Error|Exception|Warning)\b'  # an exception named as the condition
+result:
+  - '\b(returns?|returning|yields?|produces?|evaluates? to|results? in)\b'
+  - '\b(raises?|raising|throws?|emits?|warns?|logs?)\b'
+  - '\b(becomes?|is set to|sets|stores?|updates?|removes?|deletes?|appends?|inserts?|creates?|writes?)\b'
+  - '\b(equals?|is equal to|is (?:true|false|none)|contains?)\b'
+  - '\b[A-Z]\w*(Error|Exception|Warning)\b'
+# Sentences that are only general promises stay soft even when they match both lists.
+soft_overrides:
+  - '\b(supports?|can be used|allows?|various|multiple|flexible|easy|simple|seamless|works? with|compatible)\b(?!.*\b(returns?|raises?)\b)'

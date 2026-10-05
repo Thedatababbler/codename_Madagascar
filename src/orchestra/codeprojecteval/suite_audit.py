@@ -228,10 +228,12 @@ def audit_file(path: Path, docs: Mapping[str, str], *, packages: Iterable[str], 
                     own_names.add(t.attr)  # self._x = ... inside a stub class
 
     funcs = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    owner = {id(m): c.name for c in tree.body if isinstance(c, ast.ClassDef) for m in c.body}
     for fn in funcs:
         is_test = fn.name.startswith("test")
         case = fn.name if is_test else f"<{fn.name}>"
-        key = f"{fname}::{fn.name}"
+        # pytest's spelling: file::Class::test for a method, file::test for a function
+        key = f"{fname}::{owner[id(fn)]}::{fn.name}" if id(fn) in owner else f"{fname}::{fn.name}"
         quotes: list[str] = []
         raw_quotes: list[str] = []
         if is_test:
