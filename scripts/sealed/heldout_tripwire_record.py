@@ -2,14 +2,14 @@
 """Write the sealed held-out tripwire rows (self-evolution spec §5.4). Training tasks only.
 
 For every candidate record of a run that kept a workspace, run the held-out
-cases attributed to that record's milestone (``scripts/heldout_attribution.py``
+cases attributed to that record's milestone (``scripts/sealed/heldout_attribution.py``
 output) on the candidate's repository, and append
 ``{record_id, heldout_attributed_subset_pass_rate}`` to the sealed file. The
 held-out suite is copied from the dataset into a scratch directory exactly
 as the scorer does; nothing is written into any workspace, and nothing but
 the pass rate leaves this process.
 
-    uv run python scripts/heldout_tripwire_record.py --run outputs/cpe_evolution/<batch>/<task> \\
+    uv run python scripts/sealed/heldout_tripwire_record.py --run outputs/cpe_evolution/<batch>/<task> \\
         --attribution outputs/evolution/sealed/attribution/<task>.json [--ledger outputs/evolution/ledger]
 """
 
@@ -25,15 +25,15 @@ import sys
 import tempfile
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "scripts"))
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _guard import DATASET_ROOT, ENV_ROOT, heldout_dir, reference_root  # noqa: E402
 
 from orchestra.codeprojecteval.dataset import load_task  # noqa: E402
 from orchestra.control.evolution.ledger import read_jsonl, split_of  # noqa: E402
 from orchestra.control.evolution.tripwire import record_tripwire  # noqa: E402
 
-DATASET_ROOT = Path(os.environ.get("CPE_DATASET_ROOT") or "/root/codex-benchmarks/projectgen/datasets/CodeProjectEval/python-subset")
-ENV_ROOT = Path(os.environ.get("CPE_ENV_ROOT") or "/root/codex-benchmarks/cpe_envs")
 
 
 def subset_pass_rate(task_id: str, workspace: Path, cases: list[str], *, timeout: int = 1800) -> float | None:
@@ -44,7 +44,7 @@ def subset_pass_rate(task_id: str, workspace: Path, cases: list[str], *, timeout
     with tempfile.TemporaryDirectory() as tmp:
         repo = Path(tmp) / task_id
         shutil.copytree(workspace, repo, ignore=shutil.ignore_patterns("__pycache__", ".git", "spec_tests", "repair_evidence"))
-        src = task.repo_root / task.unit_tests
+        src = heldout_dir(task_id)
         if src.is_dir():
             shutil.copytree(src, repo / task.unit_tests, dirs_exist_ok=True)
         node_ids = [f"{task.unit_tests}/{c}" for c in cases]

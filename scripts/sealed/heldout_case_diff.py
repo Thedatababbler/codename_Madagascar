@@ -5,11 +5,11 @@ Re-runs the held-out suite the way ``scripts/eval_codeprojecteval.py`` does
 (shipped workspace copied to a scratch directory, the dataset's unit_tests
 copied in, the task's own interpreter), but with ``-rA`` so every case's
 outcome is kept, then diffs the two arms and groups the moved cases by the
-milestone ``scripts/heldout_attribution.py`` assigned them to. Analysis only:
+milestone ``scripts/sealed/heldout_attribution.py`` assigned them to. Analysis only:
 nothing here feeds a search, a selection or a commit, and no workspace is
 touched.
 
-    uv run python scripts/heldout_case_diff.py --task tinydb \\
+    uv run python scripts/sealed/heldout_case_diff.py --task tinydb \\
         --a outputs/cpe_evolution_baseline/<batch> --b outputs/cpe_evolution/<batch> \\
         --attribution outputs/evolution/sealed/attribution/tinydb.json --out <report.md>
 """
@@ -22,14 +22,17 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from collections import defaultdict
 from pathlib import Path
 
 from orchestra.codeprojecteval.dataset import load_task
 
-DATASET_ROOT = Path(os.environ.get("CPE_DATASET_ROOT") or "/root/codex-benchmarks/projectgen/datasets/CodeProjectEval/python-subset")
-ENV_ROOT = Path(os.environ.get("CPE_ENV_ROOT") or "/root/codex-benchmarks/cpe_envs")
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _guard import DATASET_ROOT, ENV_ROOT, heldout_dir, reference_root  # noqa: E402
 _LINE = re.compile(r"^(PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS) (\S+)")
 
 
@@ -45,7 +48,7 @@ def per_case(task_id: str, batch: Path, *, per_test_timeout: int = 30, timeout: 
     with tempfile.TemporaryDirectory() as tmp:
         repo = Path(tmp) / task_id
         shutil.copytree(workspace, repo, ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", ".git", "spec_tests", "repair_evidence", "unit_tests", "check_tests"))
-        src = task.repo_root / task.unit_tests
+        src = heldout_dir(task_id)
         if (repo / task.unit_tests).exists():
             shutil.rmtree(repo / task.unit_tests)
         shutil.copytree(src, repo / task.unit_tests)

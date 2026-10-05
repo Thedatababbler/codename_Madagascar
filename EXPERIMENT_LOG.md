@@ -4523,3 +4523,83 @@ the validator milestone, `bplustree.const.MIN_CACHE_NUM` whose module the PRD ne
 Tests: `tests/unit/decomposition/test_public_symbols.py` (6),
 `tests/unit/decomposition/test_suite_audit.py` (10, one violating and one compliant sample
 per rule). Whole unit suite green.
+
+## EXP-20261005-02 -- author-evolution loop v2, stage B2: sealed readers, held-out cache, labels, census (branch `rsi`)
+
+**Status:** implemented 2026-10-05, no model calls (held-out and reference runs only).
+
+**Sealed directory.** `scripts/sealed/` is now the only place outside the runtime allowlist
+that opens the held-out suite or the reference. `_guard.py` hands out those paths
+(`heldout_dir`, `reference_root`) only when a frame of a `scripts/sealed/` module is on the
+call stack, hashes parametrize ids (`test_x[git+https://...]` -> `test_x[#3fa9c2d1]`; the
+literals in parametrize ids were the one leak path found), and checks every output with
+`assert_no_source_overlap` (no 20-character window of the output, after blanking case ids
+and bare symbol names, occurs in held-out source). The guard stops accidents, not a
+deliberate bypass. Moved in: `heldout_attribution`, `heldout_tripwire_record`,
+`heldout_case_diff`, `author_replay`, `audit_authored_suites`. `author_probe.py` no longer
+copies the reference itself: its reference audit runs in
+`sealed/reference_check.probe_audit_on_reference` and returns the dominant *exception type*
+instead of the pytest error line (same numbers as before on the v11 tinydb suite). Allowlist
+(path users that exclude the held-out directory, official scoring, the dataset converter,
+the environment probe): `codeprojecteval/dataset.py`, `harness.py`, `ceiling.py`,
+`fast_loop/node_resample.py`, `cli/run_codeprojecteval_decomp.py`, `eval_codeprojecteval.py`,
+`nl2repo_to_cpe.py`, `probe_codeprojecteval_env.py`.
+
+**The user's question about author_probe.** It never read the held-out suite; it copied the
+reference to measure suite validity, and its audit JSON carried one pytest error line from
+that run (possible reference values). No model ever read those files: the evolver reads the
+ledger and cycle reports, and the v11 prompt was written by the developer from held-out
+case names and pass/fail, which the earlier spec allowed. Fixed anyway as above.
+
+**Attribution bug found and fixed.** `heldout_attribution` read only `test_*.py`; zxcvbn's
+held-out files are all `*_test.py`, so zxcvbn had no attributed case at all (which is why it
+was never scored) and imapclient's `imapclient_test.py` was skipped. Both patterns are read
+now: zxcvbn gets 28 cases on two milestones; no case of any other task moved milestone
+(old sets are subsets of the new). The file now also writes `case_symbols`: the project
+names each held-out case reaches (imports, `Name.attr`, `x = Cls(); x.attr`, fixtures incl.
+conftest, unittest `self.x = Cls()` across test modules, `from pkg import submodule`).
+114 of 1698 cases reach no project symbol.
+
+**Held-out cache** (`sealed/heldout_results.py`): every retained training workspace and the
+final repository of every run for every milestone of its plan, 290 jobs, per-case pass/fail
+cached under `outputs/evolution/sealed/heldout_results/`, four shards, a few minutes.
+
+**Documentation labels** (`sealed/doc_label.py`, the spec's rule): 1627 attributed cases,
+documented 938, undocumented 550, unknown 139 (no project symbol). The 30-case spot check
+cannot be done by a model under §0.3; `docs/reports/doc_label_audit.md` (untracked) is a
+stratified sheet (seed 20261005) with blank verdict columns for a person.
+
+**Symbol recall** (`sealed/symbol_recall.py`, the user's check on the derivation rule;
+`docs/reports/symbol_recall_20261005.md`): over 35 milestones whose held-out cases reach a
+public name, recall of the derived list is strict 0.70, lenient 0.86, anywhere 0.87.
+simplejwt is the outlier (strict 0.17, anywhere 0.45: what its held-out reaches is mostly
+inherited from Django REST framework -- `is_valid`, `validated_data`, settings keys -- which
+the documents do not list), flask strict 0.44 (members documented on the sansio base
+class), bplustree strict 0.52. Symbol-level coverage must be read with that discount,
+simplejwt's especially.
+
+**Census** (`sealed/heldout_matrix.py census`, `docs/reports/heldout_census_20261005.md`),
+final repositories of the main evolution runs, split fixed in
+`configs/datasets/author_evolution_split.yaml`:
+
+| set | milestones | with documented held-out failures | failures, none documented | no failure | discrimination computable |
+|---|---|---|---|---|---|
+| evolution | 38 | 18 | 2 | 18 | 8 |
+| acceptance | 18 | 13 | 0 | 5 | 4 |
+| acceptance without tinydb | 14 | 9 | 0 | 5 | 2 |
+
+15 of the 18 evolution "no failure" rows have no attributed case at all (the attribution
+heuristic assigns nothing to them), so they cannot be scored by any suite. Acceptance has
+9 milestones with documented failures without tinydb, above the minimum of 5: cycle 0 can
+judge. Discrimination stays report-only (4, or 2 without tinydb, below 5), as decided.
+Cycle 0's author calls go to the 31 milestones with documented failures plus about 8 others.
+
+**Metrics** (`control/author/metrics.py`, pure): every §6 metric from case ids, pass/fail,
+labels and symbol names; `heldout_matrix.py metrics` joins B4's evaluation records with the
+sealed data and reports evolution / acceptance / acceptance-without-tinydb.
+
+Tests: `tests/unit/control/test_sealed_readers.py` (guard refuses non-sealed callers and
+allows sealed ones; overlap check refuses a source window and passes ids and symbol names;
+parametrize ids hashed; on-disk sealed outputs do not overlap source; no held-out reader in
+`src/` or `scripts/` outside sealed + allowlist; inventory-gap rule),
+`tests/unit/control/test_author_metrics.py` (6, hand-built milestones). Whole unit suite green.

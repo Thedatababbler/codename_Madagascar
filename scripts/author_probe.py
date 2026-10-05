@@ -139,82 +139,19 @@ def static_audit(suite: Path, packages: list[str], docs: str = "") -> dict:
     }
 
 
-def _reference_repo(task: str) -> Path:
-    dest = Path(tempfile.mkdtemp(prefix=f"probe_ref_{task}_"))
-    # a stray virtualenv in a dataset directory (voluptuous: bin/ of dangling symlinks) must not break the copy
-    shutil.copytree(DATASET_ROOT / task, dest, dirs_exist_ok=True, symlinks=True,
-                    ignore=shutil.ignore_patterns("unit_tests", "check_tests", "__pycache__", ".git",
-                                                  "bin", "lib", "lib64", "include", "share", "pyvenv.cfg", ".venv", "venv"))
-    return dest
-
-
 def _doc_text(task: str) -> str:
     docs = DATASET_ROOT / task / "docs"
     return " ".join(" ".join(p.read_text(errors="replace").split()) for p in docs.glob("*") if p.is_file())
 
 
 def run_on_reference(task: str, suite: Path) -> dict:
-    py = ENV_ROOT / task / "bin" / "python"
-    repo = _reference_repo(task)
-    # Copied into the repository as `spec_tests/`, where the author wrote it:
-    # `Path(__file__).parents[1]` is then the repository, as in a workspace.
-    holder = repo
-    shutil.copytree(suite, repo / "spec_tests")
-    roots = [str(repo)] + ([str(repo / "src")] if (repo / "src").is_dir() else [])
-    try:
-        proc = subprocess.run(
-            [str(py), "-m", "pytest", str(repo / "spec_tests"), "-q", "-p", "no:cacheprovider",
-             "-o", "addopts=", "--continue-on-collection-errors", "-rfE", "--timeout=120"],
-            cwd=repo, capture_output=True, text=True, timeout=1200,
-            env={**os.environ, "PYTHONPATH": os.pathsep.join(roots)},
-        )
-        out = proc.stdout + proc.stderr
-    except subprocess.TimeoutExpired:
-        out = "TIMEOUT"
-    finally:
-        shutil.rmtree(repo, ignore_errors=True)
-    counts = {k: 0 for k in ("passed", "failed", "error")}
-    for k in counts:
-        m = re.search(rf"(\d+) {k}", out)
-        if m:
-            counts[k] = int(m.group(1))
-    total = sum(counts.values())
-    failing = re.findall(r"(?:FAILED|ERROR) [^ \n]*::(\S+)", out)
-    collection_errors = len(re.findall(r"^ERROR [^:\n]+\.py\s*$", out, re.M))
-    docs = _doc_text(task)
-    backed, unsupported = [], []
-    for name in failing:
-        base = name.split("[")[0].split("::")[-1]
-        quoted = None
-        for path in suite.glob("*.py"):
-            lines = path.read_text(errors="replace").splitlines()
-            for i, line in enumerate(lines):
-                if re.match(rf"\s*(async\s+)?def {re.escape(base)}\(", line):
-                    j, comments = i - 1, []
-                    while j >= 0 and lines[j].strip().startswith("@"):
-                        j -= 1
-                    while j >= 0 and lines[j].strip().startswith("#"):
-                        comments.append(lines[j].strip("# ").strip())
-                        j -= 1
-                    quoted = comments
-                    break
-            if quoted is not None:
-                break
-        quotes = [re.sub(r"^(PRD|Architecture|UML)[^\"]*\"|\"\s*$", "", c).strip('"').strip() for c in (quoted or [])]
-        (backed if any(len(q) > 20 and " ".join(q.split()) in docs for q in quotes) else unsupported).append(base)
-    signatures = Counter(
-        re.sub(r"0x[0-9a-f]+|/tmp/\S+", "…", ln.strip())[:110]
-        for ln in out.splitlines() if ln.startswith("E   ") and not ln.startswith("E    +")
-    )
-    dominant = signatures.most_common(1)[0] if signatures else ("", 0)
-    return {
-        "ref_passed": counts["passed"], "ref_total": total,
-        "ref_validity": round(counts["passed"] / total, 2) if total else None,
-        "ref_collection_errors": collection_errors,
-        "ref_fail_doc_backed": len(set(backed)), "ref_fail_unsupported": len(set(unsupported)),
-        "ref_dominant_error": dominant[0] if dominant[1] >= 3 else "",
-        "ref_unsupported_examples": sorted(set(unsupported))[:5],
-    }
+    """Validity of ``suite`` on the dataset reference, computed by the sealed reference check
+    (scripts/sealed/reference_check.py): the reference is copied there, never here, and only
+    counts, our own case names and an exception type name come back."""
+    sys.path.insert(0, str(ROOT / "scripts" / "sealed"))
+    from reference_check import probe_audit_on_reference
+
+    return probe_audit_on_reference(task, suite, _doc_text(task))
 
 
 def audit_suite(task: str, suite: Path, *, label: str, run: str) -> dict:

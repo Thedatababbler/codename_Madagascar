@@ -125,7 +125,7 @@ def test_only_the_tripwire_module_reads_the_sealed_file() -> None:
         if "heldout_tripwire" in text and p.name != "tripwire.py":
             readers.append(str(p))
     assert readers == [], readers
-    writer_only = Path("scripts/heldout_tripwire_record.py").read_text(encoding="utf-8")
+    writer_only = Path("scripts/sealed/heldout_tripwire_record.py").read_text(encoding="utf-8")
     assert "record_tripwire" in writer_only and "check_tripwire" not in writer_only
 
 

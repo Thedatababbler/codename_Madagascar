@@ -1,0 +1,7 @@
+# Author-evolution split (spec "出题者进化循环 v2" §8.2), fixed 2026-10-04 by the user.
+# Training tasks only. The evolver sees only the evolution set; acceptance is judged only on
+# the acceptance set. tinydb was seen while v11 was designed (EXP-20261002-04 pilot), so every
+# acceptance metric is reported with and without it; when they disagree, without-tinydb wins.
+evolution: [bplustree, cookiecutter, deprecated, djangorestframework-simplejwt, imapclient, python-hl7, voluptuous, zxcvbn]
+acceptance: [flask, tinydb, rsa, csvs-to-sqlite]
+report_without: [tinydb]

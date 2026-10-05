@@ -15,9 +15,9 @@ that is how a new author prompt is evaluated before it earns a single
 implementer run. Training tasks only; the held-out outcomes are read as
 names and pass/fail, never as source.
 
-    uv run python scripts/author_replay.py score --run outputs/cpe_evolution/<batch>/<task> \\
+    uv run python scripts/sealed/author_replay.py score --run outputs/cpe_evolution/<batch>/<task> \\
         --milestone <mid> [--suite <dir>] --attribution outputs/evolution/sealed/attribution/<task>.json --out <json>
-    uv run python scripts/author_replay.py summary <json> [...]
+    uv run python scripts/sealed/author_replay.py summary <json> [...]
 """
 
 from __future__ import annotations
@@ -28,10 +28,15 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from collections import Counter, defaultdict
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _guard import DATASET_ROOT, ENV_ROOT, heldout_dir, reference_root  # noqa: E402
 from orchestra.codeprojecteval.dataset import load_task
 from orchestra.control.evolution.ledger import split_of
 from orchestra.control.fast_loop.persistence import failure_key
@@ -39,8 +44,6 @@ from orchestra.control.fast_loop.prior_suites import PriorSuite, gate_command_of
 from orchestra.harness.progress import behaviour_failures, behaviour_passed, parse_progress
 from orchestra.ir.graph import OrchestraGraph
 
-DATASET_ROOT = Path(os.environ.get("CPE_DATASET_ROOT") or "/root/codex-benchmarks/projectgen/datasets/CodeProjectEval/python-subset")
-ENV_ROOT = Path(os.environ.get("CPE_ENV_ROOT") or "/root/codex-benchmarks/cpe_envs")
 _LINE = re.compile(r"^(PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS) (\S+)")
 SKIP_CANDIDATES = {"node_resample_blame", "persistent_blame"}
 
@@ -114,7 +117,7 @@ def heldout_cases(task_id: str, workspace: Path, cases: list[str], *, per_test_t
         shutil.copytree(workspace, repo, symlinks=True, ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", ".git", "spec_tests",
                                                                                        "repair_evidence", "unit_tests", "check_tests",
                                                                                        "bin", "lib", "lib64", "include", "share", "pyvenv.cfg", ".venv", "venv"))
-        shutil.copytree(task.repo_root / task.unit_tests, repo / task.unit_tests)
+        shutil.copytree(heldout_dir(task_id), repo / task.unit_tests)
         # attribution keys are ``file::function`` without the class and without
         # parameters; run the files and keep the reported ids that match
         files = sorted({f"{task.unit_tests}/{c.split('::', 1)[0]}" for c in cases})
@@ -172,7 +175,7 @@ def score(args) -> None:
         task = load_task(task_id, dataset_root=DATASET_ROOT)
         with tempfile.TemporaryDirectory() as tmp:
             ref = Path(tmp) / task_id
-            shutil.copytree(task.repo_root, ref, ignore=shutil.ignore_patterns("bin", "lib", "lib64", "include", "share", "pyvenv.cfg", ".venv", "venv", "__pycache__", ".git", "unit_tests", "check_tests"), symlinks=True)
+            shutil.copytree(reference_root(task_id), ref, ignore=shutil.ignore_patterns("bin", "lib", "lib64", "include", "share", "pyvenv.cfg", ".venv", "venv", "__pycache__", ".git", "unit_tests", "check_tests"), symlinks=True)
             subprocess.run(["git", "init", "-q"], cwd=ref, check=False, capture_output=True)
             ref_failed = {k for k, v in suite_cases(ref, command, suite_dir, timeout).items() if v == "fail"}
         print(f"{task_id} {args.milestone[:30]} reference: suite fails {len(ref_failed)} case(s) there -> excluded from verdicts")

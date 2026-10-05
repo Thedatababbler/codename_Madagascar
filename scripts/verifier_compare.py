@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Rows, R0 and probes measured on an independent verification suite (memory replay).
 
-Reads the per-workspace suite results `scripts/author_replay.py score` wrote
+Reads the per-workspace suite results `scripts/sealed/author_replay.py score` wrote
 for a verifier suite (one JSON per milestone run, every retained workspace
 of the milestone scored) and the ledger (to know which workspace was the
 incumbent, a probe, R0, a row, a resample). For each search it reports, on

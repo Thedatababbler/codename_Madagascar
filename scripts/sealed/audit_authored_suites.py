@@ -10,7 +10,7 @@ structural transitions, persistence round-trips)? A test that fails on the
 reference asserts behaviour the documents do not specify; a suite with no
 bulk operation cannot see a split-path bug (EXP-20260904-02).
 
-    uv run python scripts/audit_authored_suites.py <batch_dir>/<task> [--task T]
+    uv run python scripts/sealed/audit_authored_suites.py <batch_dir>/<task> [--task T]
 """
 
 from __future__ import annotations
@@ -25,8 +25,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-DATASET = Path("/root/codex-benchmarks/projectgen/datasets/CodeProjectEval/python-subset")
-ENVS = Path("/root/codex-benchmarks/cpe_envs")
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _guard import DATASET_ROOT, ENV_ROOT, heldout_dir, reference_root  # noqa: E402
+DATASET = DATASET_ROOT  # documents only; the reference is reached through reference_root()
+ENVS = ENV_ROOT
 
 DEPTH_PATTERNS = {
     "bulk_loop_max": r"range\((\d+)\)",
@@ -64,7 +68,7 @@ def _run_suite(repo: Path, suite: Path, py: Path) -> tuple[int, int, str]:
 def _reference_repo(task: str) -> Path:
     """The dataset's own implementation, copied without its tests."""
     dest = Path(tempfile.mkdtemp(prefix=f"audit_ref_{task}_"))
-    shutil.copytree(DATASET / task, dest, dirs_exist_ok=True,
+    shutil.copytree(reference_root(task), dest, dirs_exist_ok=True,
                     ignore=shutil.ignore_patterns("unit_tests", "check_tests", "__pycache__", ".git"))
     return dest
 
