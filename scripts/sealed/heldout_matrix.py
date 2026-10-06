@@ -149,6 +149,25 @@ def census(args) -> None:
         args.out.with_suffix(".json").write_text(json.dumps(rows, indent=1), encoding="utf-8")
 
 
+def reference_failures(task: str, suite: Path) -> list[str]:
+    """Cached by suite content: a frozen suite never changes, and the reference run is the slow part."""
+    import hashlib
+    from reference_check import suite_on_reference
+    h = hashlib.sha1()
+    for p in sorted(suite.rglob("*.py")):
+        if "__pycache__" not in p.parts:
+            h.update(p.relative_to(suite).as_posix().encode())
+            h.update(p.read_bytes())
+    cache = EVO / "sealed" / "reference_results" / task / f"{h.hexdigest()[:16]}.json"
+    if cache.is_file():
+        return json.loads(cache.read_text(encoding="utf-8"))["failed"]
+    ref = suite_on_reference(task, suite)
+    failed = sorted(k for k, v in ref.items() if v == "fail")
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_text(json.dumps({"suite": str(suite), "total": len(ref), "failed": failed}), encoding="utf-8")
+    return failed
+
+
 def metrics(args) -> None:
     rows = []
     for f in args.records:
@@ -170,9 +189,7 @@ def metrics(args) -> None:
                     held_results[ws] = per_case(r)
             ref_failed = frozenset(rec.get("reference_failed") or [])
             if rec.get("reference_check", True) and "reference_failed" not in rec and rec.get("suite_dir"):
-                from reference_check import suite_on_reference
-                ref = suite_on_reference(task, Path(rec["suite_dir"]))
-                ref_failed = frozenset(k for k, v in ref.items() if v == "fail")
+                ref_failed = frozenset(reference_failures(task, Path(rec["suite_dir"])))
             m = MilestoneInputs(
                 task=task, milestone=mid, final=rec["final"],
                 suite=[SuiteCase(c["case_id"], c.get("tier", "hard"), frozenset(c.get("symbols") or [])) for c in rec["suite_cases"]],

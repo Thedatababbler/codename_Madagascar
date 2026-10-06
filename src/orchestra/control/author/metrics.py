@@ -85,7 +85,11 @@ def milestone_metrics(m: MilestoneInputs) -> dict:
     fail_syms = set().union(*[by_id[c].symbols for c in sp_fail]) if sp_fail else set()
 
     out: dict = {"task": m.task, "milestone": m.milestone, "suite_cases": len(m.suite), "s_prime": len(sp),
-                 "f_doc": len(f_doc), "f_undoc": len(f_undoc)}
+                 "f_doc": len(f_doc), "f_undoc": len(f_undoc),
+                 # how many valid hard cases fail on the final repository, and whether the suite catches
+                 # the milestone at all where documented held-out cases fail (cell-level miss)
+                 "s_prime_fail_final": len(sp_fail),
+                 "cell_miss": (None if not f_doc else (0.0 if sp_fail else 1.0))}
     # 1-2 symbol coverage and true miss
     doc_syms = _public(set().union(*[h.symbols for h in f_doc])) if f_doc else set()
     if f_doc and doc_syms:
@@ -154,7 +158,7 @@ def aggregate(rows: list[dict], *, exclude_tasks: Iterable[str] = ()) -> dict:
     """Means over milestones (each metric over the milestones where it is defined), plus counts."""
     ex = set(exclude_tasks)
     rs = [r for r in rows if r["task"] not in ex]
-    keys = ["true_miss", "symbol_coverage", "ceiling_share", "ref_fail_rate_hard", "ref_fail_rate_soft",
+    keys = ["true_miss", "cell_miss", "symbol_coverage", "ceiling_share", "ref_fail_rate_hard", "ref_fail_rate_soft",
             "false_positive_rate", "discrimination", "inventory_coverage_hard", "inventory_gap_rate"]
     out: dict = {"milestones": len(rs), "tasks": len({r["task"] for r in rs})}
     for k in keys:

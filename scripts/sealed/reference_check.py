@@ -28,7 +28,16 @@ _LINE = re.compile(r"^(PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS) (\S+)")
 _IGNORE = ("bin", "lib", "lib64", "include", "share", "pyvenv.cfg", ".venv", "venv", "__pycache__", ".git", "unit_tests", "check_tests")
 
 
-def suite_on_reference(task: str, suite: Path, *, per_test_timeout: int = 60, timeout: int = 1800) -> dict[str, str]:
+def _collect(python: Path, suite: Path, cwd: Path) -> list[str]:
+    try:
+        proc = subprocess.run([str(python), "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider", "-o", "addopts=", str(suite)],
+                              cwd=cwd, capture_output=True, text=True, timeout=300, check=False)
+    except subprocess.TimeoutExpired:
+        return []
+    return [ln.strip() for ln in proc.stdout.splitlines() if "::" in ln]
+
+
+def suite_on_reference(task: str, suite: Path, *, per_test_timeout: int = 60, timeout: int = 900) -> dict[str, str]:
     """``{case_id: pass|fail}`` of ``suite`` run on the reference copy (suite mounted as spec_tests)."""
     python = task_python(task)
     if not python.is_file():
@@ -39,15 +48,22 @@ def suite_on_reference(task: str, suite: Path, *, per_test_timeout: int = 60, ti
         holder = Path(tmp) / "specroot"
         holder.mkdir()
         shutil.copytree(suite, holder / "spec_tests", ignore=shutil.ignore_patterns("__pycache__"))
-        proc = subprocess.run(
-            [str(python), "-m", "pytest", str(holder / "spec_tests"), "-q", "-rA", "--no-header", "-p", "no:cacheprovider",
-             "-o", "addopts=", "--continue-on-collection-errors", f"--timeout={per_test_timeout}", "--timeout-method=signal"],
-            cwd=ref, capture_output=True, text=True, timeout=timeout, check=False,
-            env={"PYTHONPATH": os.pathsep.join(p for p in [str(holder), str(ref), str(ref / "src") if (ref / "src").is_dir() else ""] if p),
-                 "PATH": f"{python.parent}:/usr/bin:/bin", "HOME": str(ref), "PYTHONDONTWRITEBYTECODE": "1"},
-        )
+        try:
+            proc = subprocess.run(
+                [str(python), "-m", "pytest", str(holder / "spec_tests"), "-q", "-rA", "--no-header", "-p", "no:cacheprovider",
+                 "-o", "addopts=", "--continue-on-collection-errors", f"--timeout={per_test_timeout}", "--timeout-method=signal"],
+                cwd=ref, capture_output=True, text=True, timeout=timeout, check=False,
+                env={"PYTHONPATH": os.pathsep.join(p for p in [str(holder), str(ref), str(ref / "src") if (ref / "src").is_dir() else ""] if p),
+                     "PATH": f"{python.parent}:/usr/bin:/bin", "HOME": str(ref), "PYTHONDONTWRITEBYTECODE": "1"},
+            )
+            stdout = proc.stdout
+        except subprocess.TimeoutExpired as exc:
+            # a suite that hangs on the reference (a socket test that never returns): keep what was
+            # reported; every case it never reached is a reference failure
+            stdout = exc.stdout.decode(errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+            stdout += "\n" + "\n".join(f"FAILED {c}" for c in _collect(python, holder / "spec_tests", ref))
     out: dict[str, str] = {}
-    for line in proc.stdout.splitlines():
+    for line in stdout.splitlines():
         m = _LINE.match(line)
         if m:
             node = m.group(2)

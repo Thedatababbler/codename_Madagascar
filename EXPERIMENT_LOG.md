@@ -4694,3 +4694,69 @@ mock-based transport tests). Discrimination computable on 11 / 6 / 4 milestones.
 Tests: `tests/unit/control/test_author_eval.py` (3: parametrisations folded and class
 spelling kept; suite case symbols share the result keys and follow fixtures and chained
 calls; report prints every split with the spread across samples). Whole unit suite green.
+
+## EXP-20261006-01 -- author-evolution loop v2, stage B5: cycle 0, three author versions by memory replay (branch `rsi`)
+
+**Status:** closed 2026-10-06. zqin30 gpt-5.5; window 1% -> 20% (19 points; the approved
+estimate was 11-14%). Driver `scratchpad/evo/cycle0.sh`; report
+`docs/reports/author_cycle0_20261006.md` (untracked by convention).
+
+Run. 31 milestones (every training milestone with documented held-out failures) x 3 groups,
+one sample each: A1 = v10.1 written fresh, B = the v11 prompt, C = v10.1 + inventory + audit
++ coverage + fix rounds + soft split. After 20 probes the burn (~0.2 point each) projected
+~23% for the planned 39 milestones, so the 8 extra milestones (reference-fail rate and cost
+only, already measured on all 56 by the cached A suites) were cut before they ran, through a
+new skip list read by each probe at start (no in-flight probe was killed). Every probe
+returned a suite; none hit the window. Cached gate suites (A) are shown for reference only:
+the final repositories were repaired against them. Two fixes during the run: the run CLI
+passed a Path into the environment (crash before any call, smoke run), and a v11 MLLP suite
+hung on the reference past 30 minutes (now: partial output kept, unreached cases count as
+reference failures, 15-minute limit; reference results cached by suite content). A
+milestone-level miss metric was added (the suite has no valid failure on the final
+repository where documented held-out cases fail), because the symbol-level one saturated.
+
+| metric | set | A1 v10.1 | B v11 | C mechanism |
+|---|---|---|---|---|
+| true miss (symbol level) | evolution (18) | 0.98 | 0.97 | 0.96 |
+| | acceptance w/o tinydb (9) | 1.00 | 1.00 | 1.00 |
+| milestone-level miss | evolution (18) | 0.78 | 0.83 | **0.56** |
+| | acceptance (13) | 0.85 | 0.69 | 0.85 |
+| | acceptance w/o tinydb (9) | 0.78 | 0.78 | 0.78 |
+| reference-fail rate, hard | evolution | 0.20 | 0.23 | 0.22 |
+| | acceptance w/o tinydb | 0.21 | 0.16 | **0.13** |
+| reference-fail rate, soft | all | -- | -- | 0.00 |
+| audit violations | acceptance w/o tinydb | 12 | 16 | **0** |
+| inventory hard coverage | evolution / acceptance | -- | -- | 0.96 / 0.99 |
+| inventory gap rate | evolution / acc. / acc. w/o tinydb | -- | -- | 0.37 / 0.52 / 0.67 |
+| cases (acceptance w/o tinydb) | | 141 | 223 | 254 |
+| prompt tokens (all 31) | | 18.1M | 16.8M | 28.1M |
+| fix rounds (all 31) | | 0 | 0 | 33 |
+
+Discrimination (report only, n=4-10) 0.49-0.67 in every group, no separation. False-positive
+rate judged on 1-5 milestones only.
+
+Reading.
+1. The main metric does not move. Whichever prompt wrote it, a suite's failures on the final
+   repository are almost all cases the reference also fails (flask integration: 8 of 11, the
+   other 3 soft; tinydb integration: 2 of 2), so valid failures are near zero; the suites do
+   test `TinyDB.insert`, `count`, ... and those tests pass on the final code, while the held-out
+   failures on the same symbols come from details the documents-level tests do not reach. The
+   author's gap on these milestones is depth, not breadth, and symbol-level true miss cannot
+   steer an evolution loop as it stands.
+2. C versus B (the spec's question): on the acceptance set without tinydb -- the deciding
+   version -- they tie on both miss metrics (1.00 / 0.78 each); with tinydb B looks better
+   (0.69 vs 0.85), which is the v11 tinydb exposure the rule exists for. On the evolution set
+   C's milestone-level miss is clearly lower (0.56 vs 0.83 and 0.78). By the spec's rule ("C
+   better or not worse than B") the base for evolution is C.
+3. What the mechanism does reliably: zero audit violations on the acceptance set (12-16 for
+   the prompts), a lower hard reference-fail rate there (0.13 vs 0.16-0.21: invalid cases move
+   to soft or are fixed), soft cases that never fail on the reference (0.00), hard inventory
+   coverage 0.96-0.99.
+4. The inventory misses a lot: 37-67% of the documented held-out failures rest on paragraphs
+   no inventory item quotes. That is the extraction step's ceiling, ahead of any rule the
+   evolver could add (the labels behind this number still await the human spot check).
+5. Cost of C: +55% prompt tokens over A1, +80% cases on the acceptance set, about one fix
+   round per milestone -- within the spec's cost tolerance only if judged against B, not A1.
+
+One sample per group and 9 deciding milestones: differences of one or two milestones are
+inside the noise.

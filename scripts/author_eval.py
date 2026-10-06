@@ -255,7 +255,7 @@ def metrics(args) -> None:
 
 # --- report ------------------------------------------------------------------------
 
-METRICS = [("true_miss", "true miss rate (main)"), ("symbol_coverage", "symbol-level coverage"),
+METRICS = [("true_miss", "true miss rate (main)"), ("cell_miss", "milestone-level miss (suite never fails validly)"), ("symbol_coverage", "symbol-level coverage"),
            ("ceiling_share", "ceiling share (report only)"), ("ref_fail_rate_hard", "reference-fail rate, hard"),
            ("ref_fail_rate_soft", "reference-fail rate, soft"), ("false_positive_rate", "false-positive rate"),
            ("discrimination", "discrimination (report only)"), ("inventory_coverage_hard", "inventory hard coverage"),
