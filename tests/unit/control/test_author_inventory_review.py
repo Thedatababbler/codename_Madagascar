@@ -273,3 +273,18 @@ def test_node_review_calls_the_backend_again_and_sums_usage(monkeypatch, tmp_pat
 class _Res(SimpleNamespace):
     def model_copy(self, update):
         return _Res(**{**self.__dict__, **update})
+
+
+def test_shared_cache_reuses_the_extraction_across_runs(tmp_path, monkeypatch) -> None:
+    calls = []
+
+    def fake(system, prompt):
+        calls.append(1)
+        return json.dumps([{"symbol": "Store.get", "quote": "Returns None when the key is absent.", "kind": "boundary"}]), "m"
+
+    monkeypatch.setenv("ADAMAS_AUTHOR_INVENTORY_CACHE", str(tmp_path / "cache"))
+    kw = dict(task="t", milestone_id="m", objective="o", criteria=[], focus_paths=["pkg/store.py"], docs=DOCS, call=fake)
+    a = extract_inventory(out_dir=tmp_path / "run1", **kw)
+    b = extract_inventory(out_dir=tmp_path / "run2", **kw)
+    assert len(calls) == 1 and [i.quote for i in a.items] == [i.quote for i in b.items]
+    assert Path(b.reply_path).is_file()

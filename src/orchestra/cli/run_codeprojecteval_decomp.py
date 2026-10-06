@@ -1128,8 +1128,10 @@ def configure_author_layer(author, *, task, run_dir: Path, plan_file: str | None
     os.environ[A.TASK_ENV] = task.task_id
     os.environ[A.HARD_MIN_ENV] = str(author.coverage_hard_min)
     os.environ[A.MAX_ROUNDS_ENV] = str(author.coverage_max_rounds)
-    plan = plan_file or str(Path("configs/datasets/cpe_feature_plans") / f"{task.task_id.removeprefix('rb_')}.plan.json")
-    os.environ[A.PLAN_FILE_ENV] = plan
+    # the task's full feature plan when there is one: an author-only probe runs a one-milestone
+    # plan, and the audit's lenient symbol set needs every earlier milestone
+    full = Path("configs/datasets/cpe_feature_plans") / f"{task.task_id.removeprefix('rb_')}.plan.json"
+    os.environ[A.PLAN_FILE_ENV] = str(full if full.is_file() else (plan_file or full))
 
 
 def main() -> int:

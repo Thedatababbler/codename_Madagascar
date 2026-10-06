@@ -26,6 +26,7 @@ from orchestra.codeprojecteval.suite_audit import normalise
 TIER_RULES_PATH = Path("configs/author/tier_rules.yaml")
 KINDS = ("main_path", "boundary", "state_transition", "error_path", "integration", "protocol")
 INVENTORY_MODEL_ENV = "ADAMAS_AUTHOR_INVENTORY_MODEL"
+INVENTORY_CACHE_ENV = "ADAMAS_AUTHOR_INVENTORY_CACHE"
 EXTRACTOR_VERSION = "inv-v1"
 
 SYSTEM = """You list the observable behaviours a project's design documents state, for one milestone.
@@ -237,7 +238,18 @@ def extract_inventory(*, task: str, milestone_id: str, objective: str, criteria:
     prompt_path = out / f"{milestone_id}.{digest}.prompt.txt"
     reply_path = out / f"{milestone_id}.{digest}.reply.txt"
     prompt_path.write_text(SYSTEM + "\n\n" + prompt, encoding="utf-8")
-    reply, model = (call or default_call)(SYSTEM, prompt)
+    # a shared cache across runs (same documents, milestone and extractor version = same prompt;
+    # temperature 0): an author-only probe also compiles a tail milestone it never runs
+    shared = (os.environ.get(INVENTORY_CACHE_ENV) or "").strip()
+    cached_reply = Path(shared) / f"{milestone_id}.{digest}.reply.json" if shared else None
+    if cached_reply is not None and cached_reply.is_file():
+        rec = json.loads(cached_reply.read_text(encoding="utf-8"))
+        reply, model = rec["reply"], rec["model"]
+    else:
+        reply, model = (call or default_call)(SYSTEM, prompt)
+        if cached_reply is not None:
+            cached_reply.parent.mkdir(parents=True, exist_ok=True)
+            cached_reply.write_text(json.dumps({"reply": reply, "model": model}), encoding="utf-8")
     reply_path.write_text(reply, encoding="utf-8")
     items, dropped = check_items(parse_reply(reply), docs=docs, owned=owned, rules=load_tier_rules(rules_path))
     inv = Inventory(task=task, milestone_id=milestone_id, items=items, dropped=dropped, owned_symbols=sorted(owned),
