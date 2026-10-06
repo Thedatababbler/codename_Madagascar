@@ -1016,7 +1016,24 @@ async def _run_one(
     return summary
 
 
+#: author-only probes listed here (``task.milestone`` = the probe plan's stem) exit before any
+#: model call; lets a running evaluation driver be trimmed without killing in-flight probes
+AUTHOR_PROBE_SKIP_FILE = Path("outputs/author_eval/skip_probes.txt")
+
+
+def _probe_skipped(args: argparse.Namespace) -> bool:
+    if getattr(args, "arm", "") != "author_probe" or not getattr(args, "plan_file", None):
+        return False
+    if not AUTHOR_PROBE_SKIP_FILE.is_file():
+        return False
+    stem = Path(str(args.plan_file)).name.removesuffix(".plan.json")
+    return stem in {ln.strip() for ln in AUTHOR_PROBE_SKIP_FILE.read_text(encoding="utf-8").splitlines()}
+
+
 async def _run(args: argparse.Namespace) -> int:
+    if _probe_skipped(args):
+        print(f"SKIPPED author probe {args.plan_file} (listed in {AUTHOR_PROBE_SKIP_FILE})", flush=True)
+        return 0
     load_env_file(_repo_root() / ".env")
     resolve_runtime_settings(include_lcb_repository_default=False)
 
