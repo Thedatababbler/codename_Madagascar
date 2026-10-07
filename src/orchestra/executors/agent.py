@@ -15,6 +15,7 @@ from orchestra.backends.base import (
 from orchestra.backends.errors import BackendCapabilityError
 from orchestra.backends.registry import AgentBackendRegistry
 from orchestra.control.author.node_review import author_review_dir, run_author_review
+from orchestra.executors.seeded import seed_for, sync_tree
 from orchestra.harness.progress import redact_hidden_suite
 from orchestra.ir.artifacts import ArtifactEnvelope
 from orchestra.ir.contracts import AgentContract
@@ -174,9 +175,14 @@ class AgentNodeExecutor:
             trace_dir=trace_dir,
             workspace_ref=context.workspace_ref,
         )
-        # Semaphores stay in the control plane; backends never see them.
-        async with context.semaphores.llm:
-            result = await backend.run(request, backend_context)
+        seed = seed_for(context.workspace_ref)
+        if seed is not None:
+            # joint experiment: the first stage replays a stored first run (no model call)
+            result = await seeded_result(request, backend_context, seed)
+        else:
+            # Semaphores stay in the control plane; backends never see them.
+            async with context.semaphores.llm:
+                result = await backend.run(request, backend_context)
         raw_trace_path = self._persist_raw_trace(trace_dir, request.request_id, result)
         metadata = dict(result.backend_metadata)
         if result.session_ref is not None:
@@ -245,3 +251,30 @@ class AgentNodeExecutor:
             return NodeExecutionResult.failed(
                 node.node_id, exc, int((time.perf_counter() - started) * 1000)
             )
+
+
+async def seeded_result(request, backend_context, seed: Path):
+    """An agent result whose change is the stored first run (joint experiment)."""
+    from orchestra.backends.base import AgentResult
+    from orchestra.ir.artifacts import create_artifact
+    from orchestra.schemas.artifacts import RepositoryChangeArtifact
+    from orchestra.workspaces.base import WorkspaceRef
+    from orchestra.workspaces.git_workspace import SharedSubtaskGitWorkspaceManager
+
+    ws = WorkspaceRef(workspace_id=backend_context.subtask_id or request.task_id, path=backend_context.workspace_ref,
+                      task_id=backend_context.task_id, subtask_id=backend_context.subtask_id or "main", base_revision=None)
+    manager = SharedSubtaskGitWorkspaceManager()
+    before = await manager.snapshot(ws)
+    ws = ws.model_copy(update={"base_revision": before.head_revision or before.base_revision})
+    changed = sync_tree(seed, Path(backend_context.workspace_ref))
+    snap = await manager.snapshot(ws)
+    payload = RepositoryChangeArtifact(
+        workspace_ref=ws.path, thread_id="seeded", base_revision=ws.base_revision, changed_files=list(snap.changed_files),
+        patch=snap.patch, final_response=f"seeded from {seed} ({len(changed)} file(s) synced)", source_node=request.node_id,
+    )
+    artifact = create_artifact(payload, producer_node_id=request.node_id, task_id=request.task_id)
+    return AgentResult(
+        request_id=request.request_id, backend_id="seeded_replay", status=AgentRunStatus.SUCCESS,
+        final_output=payload.final_response, output_artifacts=[artifact], latency_ms=0, step_count=0,
+        backend_metadata={"seeded_from": str(seed), "synced_files": len(changed), "workspace_ref": ws.path},
+    )

@@ -49,10 +49,14 @@ def cache_path(task: str, workspace: str | Path) -> Path:
 
 
 def attributed_cases(task: str, milestone: str) -> list[str]:
+    """The milestone's attributed cases; ``"*"`` = every attributed case of the task (the whole suite)."""
     p = ATTRIBUTION_ROOT / f"{task}.json"
     if not p.is_file():
         return []
-    return list((json.loads(p.read_text(encoding="utf-8")).get("attribution") or {}).get(milestone) or [])
+    attribution = json.loads(p.read_text(encoding="utf-8")).get("attribution") or {}
+    if milestone == "*":
+        return sorted({c for cases in attribution.values() for c in cases})
+    return list(attribution.get(milestone) or [])
 
 
 def run_heldout(task: str, workspace: Path, cases: list[str], *, per_test_timeout: int = 30) -> dict[str, str]:
@@ -94,7 +98,8 @@ def run_heldout(task: str, workspace: Path, cases: list[str], *, per_test_timeou
 def results_for(task: str, milestone: str, workspace: str | Path, *, refresh: bool = False) -> dict:
     """Cached per-case results; computed on a miss. Safe to call from anywhere (it only reads the cache
     when the entry exists; a miss runs the held-out suite, which the guard allows here)."""
-    p = cache_path(task, workspace)
+    # keyed by workspace and milestone: one repository is scored for its own milestone and for "*"
+    p = cache_path(task, f"{workspace}#{milestone}")
     if p.is_file() and not refresh:
         return json.loads(p.read_text(encoding="utf-8"))
     cases = attributed_cases(task, milestone)

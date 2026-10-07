@@ -1,0 +1,171 @@
+version: joint-r1
+entries:
+- entry_id: F0
+  triggers: []
+  predicted_error_classes: []
+  actions: []
+  source_rows: []
+  state: active
+  any_trigger: true
+  combination_of: []
+  origin: ''
+  intent: the planner's own choice, unchanged
+- entry_id: F1
+  triggers:
+  - feature: kind
+    op: ==
+    value: foundation
+  predicted_error_classes:
+  - E2
+  - E5
+  actions:
+  - kind: add_reviewer
+    role: contract_critic
+  source_rows:
+  - E2-R1
+  - E5-R1
+  state: trial
+  any_trigger: true
+  combination_of: []
+  origin: ''
+  intent: a contract critic after the implementer of a foundation milestone
+- entry_id: F2
+  triggers:
+  - feature: n_documented_exceptions
+    op: '>='
+    value: thr.f2
+  predicted_error_classes:
+  - E5
+  actions:
+  - kind: instruction
+    file: F2.md
+  source_rows:
+  - E5-S1
+  state: candidate
+  any_trigger: true
+  combination_of: []
+  origin: ''
+  intent: the documented exception list handed to the implementer up front
+- entry_id: F3
+  triggers:
+  - feature: n_state_transitions
+    op: '>='
+    value: thr.f3
+  predicted_error_classes:
+  - E4
+  actions:
+  - kind: instruction
+    file: F3.md
+  - kind: add_reviewer
+    role: spec_auditor
+  source_rows:
+  - E4-S1
+  - E4-R1
+  state: candidate
+  any_trigger: true
+  combination_of: []
+  origin: ''
+  intent: a state-machine checklist and a spec auditor
+- entry_id: F4
+  triggers:
+  - feature: kind
+    op: ==
+    value: integration
+  predicted_error_classes:
+  - E7
+  - E2
+  actions:
+  - kind: template
+    template_id: parallel_audit
+  source_rows:
+  - E7-T1
+  state: active
+  any_trigger: true
+  combination_of: []
+  origin: ''
+  intent: the integration milestone audited from two angles (the existing practice)
+- entry_id: F5
+  triggers:
+  - feature: n_focus_files
+    op: '>='
+    value: thr.f5
+  - feature: n_public_symbols
+    op: '>='
+    value: thr.f5s
+  predicted_error_classes:
+  - E1
+  actions:
+  - kind: budget
+    steps: 4
+    seconds: 300
+  - kind: chain
+    when_files_at_least: thr.f5
+  source_rows:
+  - E1-B2
+  - E1-T1
+  state: candidate
+  any_trigger: true
+  combination_of: []
+  origin: ''
+  intent: budget by size; a contract pass first when the scope is wide
+- entry_id: F6
+  triggers:
+  - feature: n_public_classes
+    op: '>='
+    value: thr.f6
+  predicted_error_classes:
+  - E6
+  actions:
+  - kind: instruction
+    file: F6.md
+  source_rows:
+  - E6-S1
+  state: candidate
+  any_trigger: true
+  combination_of: []
+  origin: ''
+  intent: the object-protocol checklist handed to the implementer up front
+- entry_id: F7
+  triggers:
+  - feature: kind
+    op: ==
+    value: foundation
+  predicted_error_classes:
+  - E3
+  actions:
+  - kind: instruction
+    file: F7.md
+  - kind: inventory
+    kinds:
+    - main_path
+    - boundary
+    - error_path
+  source_rows:
+  - E3-S1
+  state: trial
+  any_trigger: true
+  combination_of: []
+  origin: human (joint experiment)
+  intent: 'foundations (strict definition): the implementer gets the documented main-path,
+    boundary and error-path behaviours from the inventory'
+- entry_id: F8
+  triggers:
+  - feature: kind
+    op: ==
+    value: foundation
+  predicted_error_classes:
+  - E3
+  actions:
+  - kind: instruction
+    file: F8.md
+  - kind: inventory
+    kinds:
+    - main_path
+  source_rows:
+  - E3-S1
+  state: candidate
+  any_trigger: true
+  combination_of: []
+  origin: 'playbook promotion: preventive version of E3-S1 (user, 2026-10-07)'
+  intent: before handing the work to the gate, the implementer writes and runs a small
+    self-check per documented main-path behaviour and fixes what does not match

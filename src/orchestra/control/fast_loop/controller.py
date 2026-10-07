@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import shutil
 
@@ -176,6 +177,14 @@ def candidate_task_id(task_id: str, subtask_id: str, candidate_id: str) -> str:
     falling back to its incumbent with nothing to compare against.
     """
     return f"{task_id}__{subtask_id}__candidate__{candidate_id}"
+
+
+#: joint experiment: end every milestone at its first gate (no probe, no repair, no row)
+FIRST_RUN_ONLY_ENV = "ADAMAS_FIRST_RUN_ONLY"
+
+
+def first_run_only() -> bool:
+    return (os.environ.get(FIRST_RUN_ONLY_ENV) or "").strip() not in ("", "0", "false")
 
 
 class FastLoopController:
@@ -565,7 +574,9 @@ class FastLoopController:
         else:
             diagnosis = fl_state.diagnosis
         resample_record = None
-        if self.node_resample_n > 0 and graph_result is not None:
+        from orchestra.executors.seeded import pair_only as _pair_only
+
+        if self.node_resample_n > 0 and graph_result is not None and not _pair_only():
             zero = (incumbent.behaviour_score == 0) and all((p.behaviour_score or 0) == 0 for p in probes)
             if collects_nothing or (summary.persistent and zero):
                 # every sample at 0.0 (or nothing collected): suite-level cause -> re-author
@@ -1065,6 +1076,10 @@ class FastLoopController:
         reached ``flaky_extra_threshold``, in which case a third is drawn.
         """
         n = len(probes)
+        from orchestra.executors.seeded import pair_only
+
+        if pair_only():
+            return False, "pair only: no probe (the incumbent's gate failures are the evidence)"
         if n >= evo.max_probes:
             return False, "cap"
         if n == 0:
@@ -1417,6 +1432,8 @@ class FastLoopController:
         base_workspace: WorkspaceRef | None = None,
         incumbent: CandidateRecord | None = None,
     ) -> TaskExecutionState:
+        if first_run_only():
+            return self._end_after_first_run(state, subtask_id, incumbent, initial_execution_cost)
         try:
             return await self._run_search(
                 state=state, subtask_id=subtask_id, context=context, initial_artifacts=initial_artifacts,
@@ -1830,6 +1847,36 @@ class FastLoopController:
             return None
         return (f"first pass scored 0/{incumbent.behaviour_total} on its own suite and no candidate improved; "
                 f"refusing to commit over the committed base ({', '.join(committed)})")
+
+    def _end_after_first_run(self, state: TaskExecutionState, subtask_id: str, incumbent: CandidateRecord | None,
+                             initial_execution_cost: CostRecord | None) -> TaskExecutionState:
+        """First-run-only mode (joint experiment, 2026-10-07): the milestone ends at its first gate.
+
+        No probe, no default repair, no row, no resample: a passing first run is kept exactly as a
+        declined quality search keeps it; a failing one is marked failed (not retried), so the
+        first run is measured once and costs once.
+        """
+        sub = state.subtasks[subtask_id]
+        fl_state = state.fast_loop_states.get(subtask_id)
+        if fl_state is None:
+            fl_state = FastLoopState(
+                subtask_id=subtask_id, base_attempt_id=len(sub.attempts), base_graph_hash="",
+                diagnosis=FailureDiagnosis(reason=sub.failure_reason or SubtaskFailureReason.HARNESS, retryable=False,
+                                           concise_feedback="first-run only: no search"),
+                initial_execution_cost=initial_execution_cost or CostRecord())
+            state.fast_loop_states[subtask_id] = fl_state
+        fl_state.notes.append("first-run only: no search")
+        if incumbent is not None:
+            if not any(c.candidate_id == incumbent.candidate_id for c in fl_state.candidates):
+                fl_state.candidates.append(incumbent)
+            self._keep_incumbent(sub, fl_state, incumbent, "first-run only", state=state)
+            return state
+        if sub.status is not SubtaskStatus.COMMITTED:
+            fl_state.exhausted = True
+            sub.status = SubtaskStatus.FAILED
+            sub.failure_reason = sub.failure_reason or SubtaskFailureReason.HARNESS
+            sub.failure_message = "first-run only: the gate failed and no search follows"
+        return state
 
     def _keep_incumbent(
         self,

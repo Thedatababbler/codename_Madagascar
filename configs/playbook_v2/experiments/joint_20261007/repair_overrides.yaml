@@ -1,0 +1,6 @@
+version: joint-r1
+rows:
+  E3-S1:
+    preventive_variant: F8
+    note: 'declared 2026-10-07 by the user: the first-pass counterpart of reproduce-before-fix;
+      F8 enters first-run pairs in round 2 only if E3-S1 is positive in round 1'

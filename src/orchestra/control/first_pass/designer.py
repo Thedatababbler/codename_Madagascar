@@ -130,14 +130,23 @@ def save_first_pass_table(entries: Iterable[FEntry], path: Path = FIRST_PASS_TAB
 
 
 def load_first_pass_table(path: Path | None = None) -> tuple[FEntry, ...]:
-    p = Path(path) if path else FIRST_PASS_TABLE_PATH
+    p = Path(path) if path else Path(os.environ.get(FIRST_PASS_TABLE_ENV) or FIRST_PASS_TABLE_PATH)
     if not p.is_file():
         return default_first_pass_entries()
     data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
     return tuple(FEntry.from_dict(d) for d in (data.get("entries") or []))
 
 
+def _instruction_dir(directory: Path) -> Path:
+    """An experiment's table brings its own instructions (``<table dir>/instructions``)."""
+    table = (os.environ.get(FIRST_PASS_TABLE_ENV) or "").strip()
+    if table and directory == INSTRUCTIONS_DIR and (Path(table).parent / "instructions").is_dir():
+        return Path(table).parent / "instructions"
+    return directory
+
+
 def _instruction(file: str, directory: Path) -> str:
+    directory = _instruction_dir(directory)
     p = Path(directory) / file
     return p.read_text(encoding="utf-8").strip() if p.is_file() else ""
 
@@ -189,6 +198,37 @@ def add_reviewer(m: MilestoneDraft, role: str) -> tuple[MilestoneDraft, str]:
     agents.append(replace(fixer, slot_id="fixer") if fixer is not None else _agent(
         m, slot="fixer", role="gate_repairer", title="fixer", mandate="Act on the reviewer's report and the gate's failures."))
     return replace(m, template_id="review_then_fix", agents=agents), f"{m.template_id} -> review_then_fix with {role}"
+
+
+#: the joint experiment's behaviour inventories (``<dir>/<milestone>.inventory.json``), for the
+#: ``inventory`` action; F7 hands the implementer the milestone's documented behaviours of these kinds
+FP_INVENTORY_DIR_ENV = "ADAMAS_FP_INVENTORY_DIR"
+#: an experiment's first-pass table (namespace) instead of configs/playbook_v2/first_pass.yaml
+FIRST_PASS_TABLE_ENV = "ADAMAS_FIRST_PASS_TABLE"
+
+
+def inventory_text(items: Iterable[Mapping[str, Any]], kinds: Iterable[str]) -> str:
+    keep = [i for i in items if str(i.get("kind")) in set(kinds)]
+    if not keep:
+        return ""
+    lines = ["The documents state these behaviours for what this milestone owns. Implement every one of them "
+             "exactly as quoted (return values, state changes, boundaries, the exception and when it is raised):", ""]
+    for i in keep:
+        lines.append(f"- ({i.get('kind')}) `{i.get('symbol')}`: \"{i.get('quote')}\"")
+    return "\n".join(lines)
+
+
+def add_inventory(m: MilestoneDraft, *, kinds: tuple[str, ...]) -> tuple[MilestoneDraft, str]:
+    import json
+
+    d = (os.environ.get(FP_INVENTORY_DIR_ENV) or "").strip()
+    path = Path(d) / f"{m.milestone_id}.inventory.json" if d else None
+    if path is None or not path.is_file():
+        return m, "no behaviour inventory for this milestone"
+    items = json.loads(path.read_text(encoding="utf-8")).get("items") or []
+    text = inventory_text(items, kinds)
+    m, note = add_instruction(m, text)
+    return m, f"{note} ({sum(1 for i in items if str(i.get('kind')) in set(kinds))} inventory items)"
 
 
 def add_instruction(m: MilestoneDraft, text: str) -> tuple[MilestoneDraft, str]:
@@ -256,6 +296,8 @@ def apply_entry(m: MilestoneDraft, entry: FEntry, *, features: Mapping[str, Any]
         elif kind == "instruction":
             text = str(action.get("text") or "").strip() or _instruction(str(action.get("file") or ""), instructions_dir)
             m, note = add_instruction(m, text)
+        elif kind == "inventory":
+            m, note = add_inventory(m, kinds=tuple(action.get("kinds") or ("main_path", "boundary", "error_path")))
         elif kind == "template":
             m, note = set_template(m, str(action.get("template_id")))
         elif kind == "budget":
@@ -390,7 +432,7 @@ def design_plan(
 
 
 __all__ = [
-    "DEFAULT_THRESHOLDS", "FEntry", "FIRST_PASS_TABLE_PATH", "Trigger", "add_budget", "add_instruction",
+    "DEFAULT_THRESHOLDS", "FEntry", "FIRST_PASS_TABLE_ENV", "FP_INVENTORY_DIR_ENV", "add_inventory", "inventory_text", "FIRST_PASS_TABLE_PATH", "Trigger", "add_budget", "add_instruction",
     "add_reviewer", "apply_entry", "default_first_pass_entries", "design_milestone", "design_plan",
     "load_first_pass_table", "matched_entries", "save_first_pass_table", "set_template",
     "shape_leaves_an_interface",
