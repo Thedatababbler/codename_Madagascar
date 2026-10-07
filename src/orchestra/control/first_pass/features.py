@@ -93,4 +93,34 @@ def milestone_features(milestone: Any, *, index: int, total: int, docs_text: str
     }
 
 
-__all__ = ["milestone_features", "milestone_kind", "relevant_docs"]
+__all__ = ["foundation_strict", "milestone_features", "milestone_kind", "relevant_docs"]
+
+
+def foundation_strict(plan_milestones: list[dict], index: int, docs: dict[str, str] | None = None,
+                      *, owned_symbols: set[str] | None = None, min_referenced: int = 2) -> tuple[bool, list[str]]:
+    """The joint experiment's foundation definition (2026-10-07), separate from ``milestone_kind``
+    (which the frozen v1 tables keep using).
+
+    A milestone is a foundation when it is first or second in the dependency chain and at least
+    ``min_referenced`` public types / exceptions / registries it owns (CamelCase names, or names
+    containing "registry"; all-caps constants excluded) are named in a later milestone's objective
+    or acceptance criteria. Returns (is_foundation, the referenced names).
+    """
+    m = plan_milestones[index]
+    by = {x["milestone_id"]: x for x in plan_milestones}
+
+    def depth(mid: str, seen: frozenset = frozenset()) -> int:
+        deps = [d for d in by.get(mid, {}).get("depends_on") or [] if d in by and d not in seen]
+        return 0 if not deps else 1 + max(depth(d, seen | {mid}) for d in deps)
+
+    if depth(m["milestone_id"]) > 1 and index > 1:
+        return False, []
+    if owned_symbols is None:
+        from orchestra.codeprojecteval.public_symbols import derive_public_symbols
+        owned_symbols = derive_public_symbols(docs or {}).owned_by(m.get("focus_paths") or [])
+    types = {s for s in owned_symbols if "." not in s
+             and ((s[:1].isupper() and any(c.islower() for c in s)) or "registry" in s.lower())}
+    later = " ".join(" ".join([x.get("objective", ""), " ".join((x.get("acceptance") or {}).get("criteria") or [])])
+                     for x in plan_milestones[index + 1:])
+    referenced = sorted(s for s in types if re.search(rf"\b{re.escape(s)}\b", later))
+    return len(referenced) >= min_referenced, referenced

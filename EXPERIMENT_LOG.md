@@ -4809,3 +4809,32 @@ against this held-out yardstick: the user's third branch ("主要是天花板 ->
 把精力转向其他方向"). Mutation-guided top-up (depth) and better extraction (breadth) each address
 a minority share. Caveats: one sample per group, labeller three-level agreement 0.63, 11-12% of
 failures unattributable.
+
+## EXP-20261007-02 -- joint first-pass / playbook iteration: free preparation (§3 of the user's spec) (branch `rsi`)
+
+**Status:** preparation done 2026-10-07, no quota spent; paid part awaits the user's go.
+
+- **Foundation, strict** (`first_pass.features.foundation_strict`, the runtime kind untouched):
+  first or second in the dependency chain and >= 2 owned public types / exceptions / registries
+  (CamelCase or "registry"; constants excluded) named in later milestones' objectives or
+  acceptance criteria. 10 of 56 training milestones (the old rule: 42 records, 27 milestones):
+  cookiecutter x2, tinydb x2, voluptuous x2, simplejwt token lifecycle, flask core, imapclient
+  shared contracts, python-hl7 hierarchical containers. Main-path errors (E3) in the history of
+  4 of the 10 (40%); on the proposed evolution group 3 of 5 (60%): F7 passes the pre-trial check.
+- **Error classes in the whole history**: E3 on 8 milestones, E6 on 4, E4 on 1, nothing else. F6
+  (preventive version of E6-S1) fails the pre-trial check on the proposed evolution group (1 of
+  14, 7%); no row targeting E3 declares a preventive version, so round 1 has no promoted entry.
+- **First-pass workspaces scored**: searched milestones keep their first-run code under
+  `<run>/tasks/rb_*/workspaces/<milestone>/repo`, outside the ledger; held-out (sealed cache) and the
+  cycle-0 v10.1 suites (A1, an independent v10.1 sample, used as verification suites) were run on
+  them, so first-run baselines exist for every searched milestone.
+- **Proposed groups** (by task): evolution = cookiecutter, imapclient, tinydb (both previously
+  observed tasks sit here); acceptance = voluptuous, python-hl7, flask (3 tasks, one more than the
+  spec, so that F7 reaches 4 checkpoints without an observed task).
+- **Baselines** (ledger + caches): one-pass rate cookiecutter 1/11, imapclient 1/6, tinydb 2/6,
+  voluptuous 2/5, python-hl7 3/5, flask 4/5; first-run held-out accuracy 0.23 / 0.33 / 0.72 / 0.67
+  / 0.61 / 0.59; R0 filled the gate in 13 of 16 runs; R0 net vs first run: verification suite
+  +1.43 (cookiecutter, n=7), +0.33 (tinydb, n=3), 0 elsewhere (n=1 each); held-out +0.57 / +1.50 /
+  +2.67 / 0.
+
+Details and the round-1 pair list in `docs/reports/joint_prep_20261007.md` (untracked by convention).
