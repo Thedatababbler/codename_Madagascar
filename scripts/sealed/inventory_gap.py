@@ -34,7 +34,8 @@ def inventory_misses(labels: dict[str, dict], paragraphs: list[str], items: list
     norm_paras = [normalise(p) for p in paragraphs]
     out: dict[str, bool] = {}
     for cid, lab in labels.items():
-        if lab.get("milestone") != milestone or lab.get("label") != "documented":
+        if lab.get("milestone") != milestone or lab.get("depth", "detail_specified" if lab.get("label") == "documented" else "x") \
+                not in ("detail_specified", "behaviour_only"):
             continue
         leaves = {s.split(".")[-1] for s in lab.get("symbols") or []}
         backing = [norm_paras[i] for i in lab.get("paragraphs") or [] if 0 <= i < len(norm_paras)]

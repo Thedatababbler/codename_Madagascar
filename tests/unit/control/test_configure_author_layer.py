@@ -16,7 +16,9 @@ KEYS = (A.RULES_DOC_ENV, A.INVENTORY_DIR_ENV, A.DOCS_DIR_ENV, A.PACKAGES_ENV, A.
 
 def test_off_sets_nothing_and_on_sets_strings_with_the_full_plan(monkeypatch, tmp_path) -> None:
     for k in KEYS:
-        monkeypatch.delenv(k, raising=False)
+        # set then delete, so monkeypatch records each key and removes what the function writes
+        monkeypatch.setenv(k, "placeholder")
+        monkeypatch.delenv(k)
     task = SimpleNamespace(task_id="tinydb", repo_root=tmp_path, source_dir="tinydb")
     configure_author_layer(AuthorConfig(), task=task, run_dir=tmp_path, plan_file=Path("x.json"))
     assert not any(k in os.environ for k in KEYS)

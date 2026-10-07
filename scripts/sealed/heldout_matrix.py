@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from _guard import assert_no_source_overlap  # noqa: E402
+from _guard import DATASET_ROOT as DOCS_ROOT, assert_no_source_overlap  # noqa: E402
 from doc_label import doc_paragraphs  # noqa: E402
 from heldout_results import attributed_cases, cache_path  # noqa: E402
 from inventory_gap import inventory_misses  # noqa: E402
@@ -180,8 +180,17 @@ def metrics(args) -> None:
             if rec.get("inventory"):
                 items = json.loads(Path(rec["inventory"]).read_text(encoding="utf-8")).get("items") or []
                 inv_miss = inventory_misses(labels, doc_paragraphs(task), items, mid)
-            held_cases = [HeldoutCase(c, labels.get(c, {}).get("label", "unknown"), frozenset(sym.get(c) or []), inv_miss.get(c))
+            held_cases = [HeldoutCase(c, labels.get(c, {}).get("label", "unknown"), frozenset(sym.get(c) or []), inv_miss.get(c),
+                                      depth=labels.get(c, {}).get("depth", "unknown"),
+                                      paragraphs=tuple(labels.get(c, {}).get("paragraphs") or []))
                           for c in attributed]
+            from orchestra.codeprojecteval.public_symbols import load_docs
+            from orchestra.codeprojecteval.suite_audit import audit_suite, normalise
+            cites: dict[str, tuple[str, ...]] = {}
+            if rec.get("suite_dir") and Path(rec["suite_dir"]).is_dir():
+                aud = audit_suite(Path(rec["suite_dir"]), load_docs(DOCS_ROOT / task / "docs"), packages=[])
+                cites = {f"spec_tests/{k}": tuple(v) for k, v in aud.citations.items()}
+            paras = tuple(normalise(p) for p in doc_paragraphs(task))
             held_results = {}
             for ws in rec["suite_results"]:
                 r = cached(task, mid, ws)
@@ -192,11 +201,12 @@ def metrics(args) -> None:
                 ref_failed = frozenset(reference_failures(task, Path(rec["suite_dir"])))
             m = MilestoneInputs(
                 task=task, milestone=mid, final=rec["final"],
-                suite=[SuiteCase(c["case_id"], c.get("tier", "hard"), frozenset(c.get("symbols") or [])) for c in rec["suite_cases"]],
+                suite=[SuiteCase(c["case_id"], c.get("tier", "hard"), frozenset(c.get("symbols") or []), cites.get(c["case_id"], ()))
+                       for c in rec["suite_cases"]],
                 reference_failed=ref_failed, suite_results=rec["suite_results"], heldout_cases=held_cases,
                 heldout_results=held_results, inventory_hard_total=rec.get("inventory_hard_total"),
                 inventory_hard_covered=rec.get("inventory_hard_covered"), cost=rec.get("cost") or {},
-                audit_violations=int(rec.get("audit_violations") or 0))
+                audit_violations=int(rec.get("audit_violations") or 0), doc_paragraphs=paras)
             row = milestone_metrics(m)
             row["label"] = rec.get("label", "")
             row["sample"] = rec.get("sample", 0)

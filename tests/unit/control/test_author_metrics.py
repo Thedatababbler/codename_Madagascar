@@ -85,3 +85,36 @@ def test_aggregate_with_and_without_a_task_and_stability() -> None:
     assert without["milestones"] == 1 and without["true_miss"] == 0.5
     assert both["cost_cases"] == 8.0
     assert stability([0.5, 0.3]) == 0.1 and stability([0.5]) is None
+
+
+def test_sentence_classes_split_failures_by_why_the_suite_missed_them() -> None:
+    from orchestra.control.author.metrics import sentence_classes
+
+    paras = ("insert returns the id of the new document", "remove deletes matching documents",
+             "count returns the number of matching documents", "update sets the given fields")
+    m = _m(
+        suite=[SuiteCase("s1", "hard", F({"Table.insert"}), ("insert returns the id of the new document",)),
+               SuiteCase("s2", "hard", F({"Table.remove"}), ("remove deletes matching documents",)),
+               SuiteCase("s3", "hard", F({"Table.update"}), ("update sets the given fields",))],
+        reference_failed=F(),
+        suite_results={"final": {"s1": "fail", "s2": "pass", "s3": "pass"}},
+        heldout_cases=[
+            HeldoutCase("caught", "documented", F({"Table.insert"}), depth="detail_specified", paragraphs=(0,)),
+            HeldoutCase("depth", "documented", F({"Table.remove"}), depth="detail_specified", paragraphs=(1,)),
+            HeldoutCase("detail", "undocumented", F({"Table.update"}), depth="behaviour_only", paragraphs=(3,)),
+            HeldoutCase("breadth", "documented", F({"Table.count"}), depth="detail_specified", paragraphs=(2,)),
+            HeldoutCase("ceiling", "undocumented", F({"Table.__repr__"}), depth="not_specified"),
+            HeldoutCase("unknown", "unknown", F(), depth="unknown"),
+            HeldoutCase("passing", "documented", F({"Table.insert"}), depth="detail_specified", paragraphs=(0,)),
+        ],
+        heldout_results={"final": {"caught": "fail", "depth": "fail", "detail": "fail", "breadth": "fail",
+                                   "ceiling": "fail", "unknown": "fail", "passing": "pass"}},
+        doc_paragraphs=paras,
+    )
+    sc = sentence_classes(m)
+    assert {k: v for k, v in sc.items()} == {"caught": ["caught"], "depth": ["depth"], "detail_ceiling": ["detail"],
+                                              "breadth": ["breadth"], "ceiling": ["ceiling"], "unattributable": ["unknown"]}
+    row = milestone_metrics(m)
+    assert row["sentence_classes"]["depth"] == 1
+    agg = aggregate([row, row])
+    assert agg["sentence_classes"]["caught"] == 2 and agg["sentence_shares"]["breadth"] == round(1 / 6, 4)

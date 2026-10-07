@@ -80,6 +80,17 @@ def _features(fn: ast.AST) -> tuple[set[str], set[str], set[str], set[str]]:
                         excs.add(e.id)
                     elif isinstance(e, ast.Attribute):
                         excs.add(e.attr)
+    # literals that also appear as call arguments or assignments outside assertions are test-side
+    # inputs echoed back, not details the documents would have to state (spot check: D_FEATURE_WORDS)
+    inputs: set[str] = set()
+    assert_ids = {id(n) for a in assert_nodes for n in ast.walk(a)}
+    for sub in ast.walk(fn):
+        if isinstance(sub, ast.Constant) and id(sub) not in assert_ids:
+            v = sub.value
+            if isinstance(v, str):
+                inputs.add(v.strip())
+            elif isinstance(v, (int, float)) and not isinstance(v, bool):
+                inputs.add(str(v))
     for node in assert_nodes:
         for sub in ast.walk(node):
             if isinstance(sub, ast.Attribute):
@@ -94,7 +105,7 @@ def _features(fn: ast.AST) -> tuple[set[str], set[str], set[str], set[str]]:
                     lits.add(str(v))
             elif isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name) and sub.func.id in MAGIC_BUILTINS:
                 magic.add(MAGIC_BUILTINS[sub.func.id])
-    return attrs, excs, lits, magic
+    return attrs, excs, {l for l in lits if l not in inputs}, magic
 
 
 def label_task(task: str) -> dict:
@@ -121,7 +132,7 @@ def label_task(task: str) -> dict:
                 continue
             syms = symbols.get(cid) or []
             if not syms:
-                out[cid] = {"milestone": case_ms[cid], "label": "unknown", "reason": "no_project_symbol", "symbols": []}
+                out[cid] = {"milestone": case_ms[cid], "label": "unknown", "depth": "unknown", "reason": "no_project_symbol", "symbols": [], "paragraphs": []}
                 continue
             leaves = {s.split(".")[-1] for s in syms} | {s.split(".")[0] for s in syms}
             documented_syms = sorted(s for s in syms if _word_in(s.split(".")[-1], all_docs) and not s.split(".")[-1].startswith("_"))
@@ -142,18 +153,31 @@ def label_task(task: str) -> dict:
             }
             undocumented_magic = sorted(m for m in magic if not _word_in(m, all_docs) and not _word_in(m.strip("_"), rel_text))
             undocumented_internal = [s for s in internal if not _word_in(s.split(".")[-1], all_docs)]
+            # three levels (the 2026-10-07 spot check): the documents give the asserted detail, give the
+            # behaviour only, or do not state it. Detail = exception classes and output-side literals.
+            details = [("exception", e) for e in excs] + [("literal", l) for l in lits]
+            found = [d for d in details if (_word_in(d[1], rel_text) if d[0] == "exception" else d[1] in rel_text)]
+            attr_hit = any(_word_in(a, rel_text) for a in attrs if not a.startswith("_"))
             if undocumented_internal:
-                label, reason = "undocumented", "internal_attribute"
+                depth, reason = "not_specified", "internal_attribute"
             elif undocumented_magic:
-                label, reason = "undocumented", "magic_method"
-            elif not documented_syms:
-                label, reason = "undocumented", "symbol_not_in_documents"
-            elif not any(hit.values()):
-                label, reason = "undocumented", "assertion_not_in_symbol_paragraphs"
+                depth, reason = "not_specified", "magic_method"
+            elif not documented_syms or not rel_text:
+                depth, reason = "not_specified", "symbol_not_in_documents"
+            elif details and len(found) == len(details):
+                depth, reason = "detail_specified", "all_details_in_documents"
+            elif details:
+                depth, reason = "behaviour_only", f"details_missing_{len(details) - len(found)}_of_{len(details)}"
+            elif attr_hit:
+                depth, reason = "detail_specified", "asserted_attribute_documented"
             else:
-                label, reason = "documented", "+".join(k for k, v in hit.items() if v)
-            out[cid] = {"milestone": case_ms[cid], "label": label, "reason": reason, "symbols": documented_syms or syms,
-                        "magic": undocumented_magic, "paragraphs": backing if label == "documented" else []}
+                depth, reason = "behaviour_only", "symbol_documented_assertion_not"
+            label = "documented" if depth == "detail_specified" else "undocumented"
+            sym_paras = [i for i in idx]
+            out[cid] = {"milestone": case_ms[cid], "label": label, "depth": depth, "reason": reason,
+                        "symbols": documented_syms or syms, "magic": undocumented_magic,
+                        # paragraphs the case rests on: those carrying an assertion feature, else those naming its symbols
+                        "paragraphs": (backing or sym_paras) if depth != "not_specified" else []}
     return out
 
 
@@ -170,8 +194,9 @@ def main() -> None:
         OUT_ROOT.mkdir(parents=True, exist_ok=True)
         (OUT_ROOT / f"{task}.json").write_text(text, encoding="utf-8")
         from collections import Counter
-        c = Counter(v["label"] for v in labels.values())
-        print(f"{task:30s} {len(labels):4d} cases  documented {c['documented']:4d}  undocumented {c['undocumented']:4d}  unknown {c['unknown']:3d}")
+        c = Counter(v["depth"] for v in labels.values())
+        print(f"{task:30s} {len(labels):4d} cases  detail {c['detail_specified']:4d}  behaviour-only {c['behaviour_only']:4d}  "
+              f"not specified {c['not_specified']:4d}  unknown {c['unknown']:3d}")
 
 
 if __name__ == "__main__":

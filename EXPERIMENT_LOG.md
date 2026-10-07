@@ -4760,3 +4760,52 @@ Reading.
 
 One sample per group and 9 deciding milestones: differences of one or two milestones are
 inside the noise.
+
+## EXP-20261007-01 -- cycle 0 re-read: label check, three-level labels, sentence-level classes -> the author's misses are mostly the documents' ceiling (branch `rsi`)
+
+**Status:** closed 2026-10-07. No quota spent (re-computation on the cycle-0 suites).
+
+**Label check.** The 30-case spot check was done by an isolated judge session (a sub-agent that
+read the held-out tests and wrote back only verdicts, error categories and symbol names); the
+session that designs labels, rules and metrics saw no held-out content. This bends the letter
+of §0.3 (no model context with held-out content) for the purpose the user set: a judgement only a
+reader of the tests can make, kept out of the designer's context. Binary labels: 12 right, 13
+wrong, 5 unclear. Main errors: "documented" given when the documents state the behaviour but not
+the exact message / key / header the test checks (6), and test-side input values required to
+appear in the documents (4). `doc_label.py` now grades three levels -- detail specified,
+behaviour only, not specified -- treating exception classes and output-side literals as the
+detail and ignoring literals the test itself passes in. Blind second sample of 30 (seed
+20261007, not used for the rewrite): three-level agreement 0.63, specified-vs-not 0.83. The
+judge's own grades on the random sample: 7 detail specified, 19 behaviour only, 4 not specified.
+
+**Sentence-level classes** (`metrics.sentence_classes`): every held-out case failing on the final
+repository is caught (a valid hard suite case citing a paragraph it rests on fails), a depth miss
+(cited, passes; documents give the detail), a detail ceiling (cited, passes; documents give only
+the behaviour), a breadth miss (no valid hard case cites its paragraphs; split by level), a
+ceiling (not specified) or unattributable (no project symbol). One sample per group:
+
+| group | set | failures | caught | depth, detail given | breadth, detail given | breadth, behaviour only | detail ceiling | ceiling | unattributable |
+|---|---|---|---|---|---|---|---|---|---|
+| A1 v10.1 | evolution | 529 | 1% | 12% | 11% | 29% | 28% | 8% | 11% |
+| A1 v10.1 | acceptance w/o tinydb | 119 | 1% | 3% | 25% | 33% | 24% | 2% | 12% |
+| B v11 | evolution | 529 | 2% | 15% | 8% | 24% | 32% | 8% | 11% |
+| B v11 | acceptance w/o tinydb | 119 | 0% | 6% | 23% | 27% | 31% | 2% | 12% |
+| C mechanism | evolution | 529 | 5% | 13% | 9% | 31% | 23% | 8% | 11% |
+| C mechanism | acceptance w/o tinydb | 119 | 0% | 10% | 18% | 31% | 27% | 2% | 12% |
+
+A breadth miss whose documents give only the behaviour would have become a detail ceiling had it
+been tested, so it belongs with the ceiling. Some breadth misses are tested under another
+sentence: a valid hard case reaches the failing case's symbol for 23-36% of them on the
+evolution set and 65-68% on the acceptance set. For C, the inventory listed the paragraphs of
+152 of its 209 evolution breadth misses (only 10 of 59 on acceptance w/o tinydb).
+
+**Conclusion (recorded as a finding).** On these training tasks, 59-65% of the held-out failures
+of the final code check a detail the documents do not give (an exact message, key, header,
+order, wire format) or a behaviour they do not state, in all three author versions alike; the
+judge's blind grading, which does not depend on the labeller, puts it at 76% of random held-out
+cases. What a documents-only author could still add is a breadth gap of 8-25% and a depth gap of
+3-15%; the best version catches 0-5% today. The author line therefore has limited headroom
+against this held-out yardstick: the user's third branch ("主要是天花板 -> 出题者这条线的收益有限，
+把精力转向其他方向"). Mutation-guided top-up (depth) and better extraction (breadth) each address
+a minority share. Caveats: one sample per group, labeller three-level agreement 0.63, 11-12% of
+failures unattributable.

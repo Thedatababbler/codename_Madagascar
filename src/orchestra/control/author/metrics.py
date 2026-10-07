@@ -25,6 +25,7 @@ class SuiteCase:
     case_id: str
     tier: str = "hard"                       # hard | soft
     symbols: frozenset[str] = frozenset()
+    citations: tuple[str, ...] = ()          # normalised quoted sentences
 
 
 @dataclass
@@ -33,6 +34,8 @@ class HeldoutCase:
     label: str = "unknown"                   # documented | undocumented | unknown
     symbols: frozenset[str] = frozenset()
     inventory_miss: bool | None = None       # None: no inventory to compare with
+    depth: str = "unknown"                   # detail_specified | behaviour_only | not_specified | unknown
+    paragraphs: tuple[int, ...] = ()         # document paragraphs the case rests on (indices)
 
 
 @dataclass
@@ -49,6 +52,7 @@ class MilestoneInputs:
     inventory_hard_covered: int | None = None
     cost: Mapping[str, float] = field(default_factory=dict)
     audit_violations: int = 0
+    doc_paragraphs: tuple[str, ...] = ()                 # normalised document paragraphs
 
 
 def _match(sym: str, pool: Iterable[str]) -> bool:
@@ -127,10 +131,64 @@ def milestone_metrics(m: MilestoneInputs) -> dict:
         out["inventory_coverage_hard"] = None
     judged_gap = [h for h in f_doc if h.inventory_miss is not None]
     out["inventory_gap_rate"] = round(sum(1 for h in judged_gap if h.inventory_miss) / len(judged_gap), 4) if judged_gap else None
+    sc = sentence_classes(m)
+    out["sentence_classes"] = {k: len(v) for k, v in sc.items()}
+    hb = {h.case_id: h for h in m.heldout_cases}
+    sp_syms = set().union(*[c.symbols for c in sp]) if sp else set()
+    out["breadth_split"] = {
+        "detail_specified": sum(1 for c in sc["breadth"] if hb[c].depth == "detail_specified"),
+        "behaviour_only": sum(1 for c in sc["breadth"] if hb[c].depth == "behaviour_only"),
+        # a valid hard case still reaches one of the case's public symbols: the suite tests the symbol
+        # while citing another sentence (or the paragraph match is too strict)
+        "symbol_reached": sum(1 for c in sc["breadth"] if any(_match(s, sp_syms) for s in _public(hb[c].symbols))),
+    }
+    out["breadth_inventory_listed"] = sum(1 for h in m.heldout_cases if h.case_id in set(sc["breadth"]) and h.inventory_miss is False)
     # 10-11 cost and audit, passed through
     out["cost"] = dict(m.cost)
     out["audit_violations"] = m.audit_violations
     del held_by_id
+    return out
+
+
+SENTENCE_CLASSES = ("caught", "depth", "detail_ceiling", "breadth", "ceiling", "unattributable")
+
+
+def _cites(citation: str, paragraph: str) -> bool:
+    return bool(citation) and bool(paragraph) and (
+        (len(citation) >= 12 and citation in paragraph) or (len(paragraph) >= 12 and paragraph in citation))
+
+
+def sentence_classes(m: MilestoneInputs) -> dict[str, list[str]]:
+    """Every held-out case failing on the final repository, by why the suite did not catch it:
+
+    ceiling          the documents do not state the behaviour;
+    breadth          no valid hard suite case cites a paragraph the case rests on;
+    depth            the suite cites it, its cases pass on the final code, and the documents give the detail;
+    detail_ceiling   as depth, but the documents give the behaviour, not the asserted detail;
+    caught           a valid hard suite case citing it fails on the final code;
+    unattributable   no project symbol, no paragraph to rest on.
+    """
+    sp = {c.case_id: c for c in s_prime(m)}
+    final_suite = m.suite_results.get(m.final, {})
+    final_held = m.heldout_results.get(m.final, {})
+    out: dict[str, list[str]] = {k: [] for k in SENTENCE_CLASSES}
+    for h in m.heldout_cases:
+        if final_held.get(h.case_id) != "fail":
+            continue
+        if h.depth == "unknown":
+            out["unattributable"].append(h.case_id)
+            continue
+        if h.depth == "not_specified":
+            out["ceiling"].append(h.case_id)
+            continue
+        paras = [m.doc_paragraphs[i] for i in h.paragraphs if 0 <= i < len(m.doc_paragraphs)]
+        touching = [cid for cid, c in sp.items() if any(_cites(q, p) for q in c.citations for p in paras)]
+        if not touching:
+            out["breadth"].append(h.case_id)
+        elif any(final_suite.get(cid) == "fail" for cid in touching):
+            out["caught"].append(h.case_id)
+        else:
+            out["depth" if h.depth == "detail_specified" else "detail_ceiling"].append(h.case_id)
     return out
 
 
@@ -166,6 +224,12 @@ def aggregate(rows: list[dict], *, exclude_tasks: Iterable[str] = ()) -> dict:
         out[k] = round(statistics.fmean(vals), 4) if vals else None
         out[f"{k}_n"] = len(vals)
     out["audit_violations"] = sum(int(r.get("audit_violations") or 0) for r in rs)
+    pooled = {k: sum((r.get("sentence_classes") or {}).get(k, 0) for r in rs) for k in SENTENCE_CLASSES}
+    total = sum(pooled.values())
+    out["sentence_classes"] = pooled
+    out["breadth_split"] = {k: sum((r.get("breadth_split") or {}).get(k, 0) for r in rs) for k in ("detail_specified", "behaviour_only", "symbol_reached")}
+    out["breadth_inventory_listed"] = sum(int(r.get("breadth_inventory_listed") or 0) for r in rs)
+    out["sentence_shares"] = {k: round(v / total, 4) for k, v in pooled.items()} if total else {}
     for ck in ("cases", "seconds", "tokens", "rounds"):
         vals = [float(r["cost"][ck]) for r in rs if ck in (r.get("cost") or {})]
         if vals:
@@ -179,4 +243,4 @@ def stability(per_sample: list[float | None]) -> float | None:
     return round(statistics.pstdev(vals), 4) if len(vals) >= 2 else None
 
 
-__all__ = ["HeldoutCase", "MilestoneInputs", "SuiteCase", "aggregate", "discrimination", "milestone_metrics", "s_prime", "stability"]
+__all__ = ["SENTENCE_CLASSES", "sentence_classes", "HeldoutCase", "MilestoneInputs", "SuiteCase", "aggregate", "discrimination", "milestone_metrics", "s_prime", "stability"]
