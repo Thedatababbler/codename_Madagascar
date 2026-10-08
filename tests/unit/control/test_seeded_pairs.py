@@ -63,3 +63,16 @@ def test_pair_only_draws_no_probe(monkeypatch) -> None:
     monkeypatch.setenv(S.PAIR_ONLY_ENV, "1")
     more, why = FastLoopController._more_probes_wanted(evo, inc, [])
     assert more is False and "pair only" in why
+
+
+def test_pair_only_search_goes_on_to_phase_two_without_probes(monkeypatch) -> None:
+    from orchestra.control.fast_loop.quality_trigger import build_incumbent_record
+
+    inc = build_incumbent_record(attempt_id=1, graph_hash="h", harness_score=0.9, behaviour_score=0.75,
+                                 behaviour_failures=["t.py::test_x"], furthest_stage="spec_tests")
+    fl = SimpleNamespace(candidates=[inc])
+    ctl = FastLoopController(runtime=None, artifact_store=None, task_checkpoint_store=None, persistence_search=True)
+    monkeypatch.delenv(S.PAIR_ONLY_ENV, raising=False)
+    assert ctl._nothing_to_run(fl, inc) is True          # normal search: no probe ran, nothing to do
+    monkeypatch.setenv(S.PAIR_ONLY_ENV, "1")
+    assert ctl._nothing_to_run(fl, inc) is False         # pair only: R0 and the row are still to come

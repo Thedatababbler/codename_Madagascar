@@ -1665,7 +1665,7 @@ class FastLoopController:
             state.state_version += 1
             await self._save_checkpoint(state)
 
-        if not any(not c.metadata.get("incumbent") for c in fl_state.candidates):
+        if self._nothing_to_run(fl_state, incumbent):
             fl_state.exhausted = True
             if incumbent is not None:
                 self._keep_incumbent(
@@ -1847,6 +1847,15 @@ class FastLoopController:
             return None
         return (f"first pass scored 0/{incumbent.behaviour_total} on its own suite and no candidate improved; "
                 f"refusing to commit over the committed base ({', '.join(committed)})")
+
+    def _nothing_to_run(self, fl_state: FastLoopState, incumbent: CandidateRecord | None) -> bool:
+        """No candidate besides the incumbent, so the search ends here -- except a pair-only search
+        (joint experiment), which draws no probe on purpose and goes straight to phase two (R0 + row)."""
+        from orchestra.executors.seeded import pair_only
+
+        if pair_only() and self.persistence_search and incumbent is not None:
+            return False
+        return not any(not c.metadata.get("incumbent") for c in fl_state.candidates)
 
     def _end_after_first_run(self, state: TaskExecutionState, subtask_id: str, incumbent: CandidateRecord | None,
                              initial_execution_cost: CostRecord | None) -> TaskExecutionState:
