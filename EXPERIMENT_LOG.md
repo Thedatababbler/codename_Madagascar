@@ -4949,6 +4949,12 @@ for src-layout packages and unittest classes before the run.
 - Instruction, reviewer and budget applied, but in 10 runs the reviewer was already in the shape.
 - R11 and R21's instruction text described cookiecutter's input-source workflow and was applied unchanged to IMAP
   milestones.
+- R12/R22 would never trigger in normal operation (they ran only because forced). The driver checked their
+  triggers (`n_documented_exceptions >= 9`, `n_public_symbols >= 40`) on features from the full documents
+  (cookiecutter 42-73 symbols, 9-10 exceptions). The runtime designer computes them from `cpe_brief` documents,
+  cut to 8000 characters for architecture/UML and 12000 for PRD (cookiecutter: 15-22 symbols, 5-8 exceptions).
+- The designs' first-run code differs from the baseline first runs about as much as two baseline runs differ
+  from each other (template_source about 8 files / 700 lines either way).
 
 Default-repair fixes against the two F0 first runs at the same checkpoint: 68 records, 33 not comparable (other
 frozen suite). The 18 distinct comparable cases split 10 A (baseline fails twice), 5 B (flaky) and 3 C (baseline
