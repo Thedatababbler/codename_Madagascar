@@ -4934,3 +4934,41 @@ the evolver prompt describing `kind` as a position, repair summaries naming doma
 `Trigger.holds` evaluating `!=`, `<=`, `<`, `>` as `>=` (every correct trigger was rejected; fixed in the designer,
 baselines re-stamped after verifying forced runs ignore triggers). Relevant held-out counts were also corrected
 for src-layout packages and unittest classes before the run.
+
+## EXP-20261008-04 -- diagnosis of EXP-20261008-03 by replay (branch `rsi`)
+
+**Status:** closed 2026-10-08. No agents, no quota, no held-out; gate suites only. Report
+`docs/reports/firstpass_diagnosis_20261008.md`. Conclusions are not fed to any evolver or table.
+
+**EXP-20261008-03's four "rejected" verdicts do not stand: no design took full effect.**
+- The behaviour inventory was delivered in 0 of 20 design runs. The driver set `ADAMAS_FP_INVENTORY_DIR` to
+  `outputs/fp_from_repair/inventory`, which was never built, and every decision note reads "no behaviour
+  inventory for this milestone".
+- The template change applied in 0 of 20 runs: 12 were "not handled" (`test_first_improve`; `review_then_fix`
+  over `parallel_audit`) and 8 already had the wanted template.
+- Instruction, reviewer and budget applied, but in 10 runs the reviewer was already in the shape.
+- R11 and R21's instruction text described cookiecutter's input-source workflow and was applied unchanged to IMAP
+  milestones.
+
+Default-repair fixes against the two F0 first runs at the same checkpoint: 68 records, 33 not comparable (other
+frozen suite). The 18 distinct comparable cases split 10 A (baseline fails twice), 5 B (flaky) and 3 C (baseline
+passes).
+
+The 10 A cases:
+- **4 harness-coupled.** A fake `git` written as a `#!/usr/bin/env bash` script under a `PATH` that holds only
+  its bin dir; a fake `requests.get(url)` that rejects `stream=True`. The designs implemented the behaviour and
+  still failed.
+- **2 value types the documents do not give** (bytes vs str).
+- **4 documented in whole or in part.** The exception class passed in one of two runs under R11, R12 and R22;
+  the three IMAP cases failed under R11 and R21.
+
+The default repair had the failing list, the pytest output and runnable copies of the failing gate tests, and its
+own summary names the mock adaptations.
+
+Next:
+- make delivery a precondition of counting a run (build inventories, implement or forbid template swaps);
+- rerun R11, R12, R21 and R22 as specified;
+- restrict repair experience to class-A, documented cases (about 4 on the present pool, too thin: more evolution
+  tasks needed);
+- check instructions against every milestone of their cluster;
+- send the two harness-coupled patterns to the author audit.
