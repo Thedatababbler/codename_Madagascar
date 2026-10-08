@@ -1,0 +1,27 @@
+- version: joint-r1-end
+  date: '2026-10-08'
+  changes:
+  - item: F7
+    action: trial -> candidate (first failed trial)
+    reason: held-out mean +1.55 points < 2.0 on 4 acceptance checkpoints; flask attributed
+      subset -0.9
+    target: E3
+  - item: E3-S1
+    action: stays candidate; second half not run
+    reason: 'ties R0 on gate, verification and held-out in 4/4 pairs at +64% tokens:
+      no usefulness condition reachable'
+    target: E3
+  - item: F8
+    action: not promoted
+    reason: its source row E3-S1 was not positive
+  unresolved_pool_from_first_runs:
+    voluptuous:errors_markers_contracts:
+      F0: 4
+      F7: 3
+    flask:core_contracts_and_context_primitives:
+      F0: 1
+      F7: 0
+  evolver: not run in round 1 (round cap reached)
+  budget:
+    round_points: 10
+    estimate: 8.7-9.1
