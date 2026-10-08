@@ -376,9 +376,16 @@ def run(args) -> None:
         return stop(st, reason)
     st.setdefault("budget_log", []).append({"after": "baseline", "used": used()})
     save_state(st)
-    per_run = max(0.1, used() / max(1, sum(1 for k, r in st["runs"].items() if r.get("status") == "done")))
-    reserve = per_run * 2.4 * REPS * 2 * len(ACC)   # acceptance first runs are ~2.4x the evolution ones (round 1)
-    log(f"baseline done; {used():.1f} points used, ~{per_run:.2f} per run, confirmation reserve ~{reserve:.1f}")
+    done_runs = [r for r in st["runs"].values() if r.get("status") == "done"]
+    per_run = max(0.1, used() / max(1, len(done_runs)))
+    # confirmation = 2 designs x 2 runs x 4 acceptance checkpoints; its size is taken from round 1, which ran
+    # exactly that (F0 and F7) there: points per token measured here x round 1's acceptance tokens
+    toks = sum(r.get("tokens") or 0 for r in done_runs)
+    r1 = json.loads((J.OUT / "round1" / "eval.json").read_text())
+    acc_tokens = sum(x.get("tokens") or 0 for x in r1.values() if x["part"] == "first_run")
+    reserve = (used() / toks) * acc_tokens if toks else per_run * REPS * 2 * len(ACC)
+    log(f"baseline done; {used():.1f} points used, ~{per_run:.2f} per run, confirmation reserve ~{reserve:.1f} "
+        f"(round 1 acceptance tokens {acc_tokens / 1e6:.1f}M at {used() / max(toks, 1) * 1e6:.3f} points per million)")
     rnd = len(st["rounds"])
     while rnd < args.max_rounds:
         rnd += 1
