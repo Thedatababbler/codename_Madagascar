@@ -15,12 +15,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import heldout_results as hr  # noqa: E402
-from author_eval import ENV_ROOT, run_suite  # noqa: E402
+from author_eval import run_suite  # noqa: E402
+from _guard import task_python  # noqa: E402
 from heldout_matrix import per_case, reference_failures  # noqa: E402
 
 
 def score_first_run(task: str, mid: str, ws: Path, gate_suite: Path, verifier: Path | None) -> dict:
-    py = ENV_ROOT / task / "bin" / "python"
+    py = task_python(task)
     msgs: dict = {}
     gate = run_suite(ws, gate_suite, py, messages=msgs)
     out = {"gate": gate, "gate_messages": msgs}

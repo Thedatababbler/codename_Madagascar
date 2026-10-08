@@ -1,0 +1,12 @@
+version: round0
+entries:
+- entry_id: F0
+  triggers: []
+  predicted_error_classes: []
+  actions: []
+  source_rows: []
+  state: active
+  any_trigger: true
+  combination_of: []
+  origin: ''
+  intent: the planner's own choice, unchanged

@@ -46,15 +46,32 @@ def require_sealed_caller(what: str) -> None:
         raise SealedAccessError(f"{what} may only be read by a module under scripts/sealed/")
 
 
+NL2_DATASET_ROOT = Path(os.environ.get("NL2_DATASET_ROOT") or "/root/codex-benchmarks/nl2repo/cpe_format")
+NL2_ENV_ROOT = Path(os.environ.get("NL2_ENV_ROOT") or "/root/codex-benchmarks/nl2repo/envs")
+
+
+def dataset_root_for(task: str) -> Path:
+    """NL2Repo tasks (``nl2_*``) live under their own converted dataset root."""
+    if task.startswith("nl2_") and (NL2_DATASET_ROOT / task).is_dir():
+        return NL2_DATASET_ROOT
+    return DATASET_ROOT
+
+
+def env_root_for(task: str) -> Path:
+    if task.startswith("nl2_") and (NL2_ENV_ROOT / task).is_dir():
+        return NL2_ENV_ROOT
+    return ENV_ROOT
+
+
 def task_config(task: str) -> dict:
-    return json.loads((DATASET_ROOT / task / "config.json").read_text(encoding="utf-8"))
+    return json.loads((dataset_root_for(task) / task / "config.json").read_text(encoding="utf-8"))
 
 
 def heldout_dir(task: str) -> Path:
     """The dataset's ``unit_tests`` directory of ``task``. Sealed callers only."""
     require_sealed_caller("the held-out suite")
     cfg = task_config(task)
-    return DATASET_ROOT / task / str(cfg.get("unit_tests") or "unit_tests")
+    return dataset_root_for(task) / task / str(cfg.get("unit_tests") or "unit_tests")
 
 
 def heldout_subdir_name(task: str) -> str:
@@ -65,7 +82,7 @@ def heldout_subdir_name(task: str) -> str:
 def reference_root(task: str) -> Path:
     """The dataset's reference implementation root of ``task``. Sealed callers only."""
     require_sealed_caller("the reference implementation")
-    return DATASET_ROOT / task
+    return dataset_root_for(task) / task
 
 
 def sealed_case_id(node_id: str) -> str:
@@ -80,7 +97,7 @@ def sealed_case_id(node_id: str) -> str:
 
 
 def task_python(task: str) -> Path:
-    return ENV_ROOT / task / "bin" / "python"
+    return env_root_for(task) / task / "bin" / "python"
 
 
 def _windows(text: str, n: int = SHINGLE) -> set[str]:
@@ -126,7 +143,7 @@ def assert_no_source_overlap(output_text: str, task: str, *, n: int = SHINGLE, a
 
 
 __all__ = [
-    "DATASET_ROOT", "ENV_ROOT", "sealed_case_id", "SEALED_DIR", "SHINGLE", "SealedAccessError", "assert_no_source_overlap",
+    "DATASET_ROOT", "ENV_ROOT", "dataset_root_for", "env_root_for", "sealed_case_id", "SEALED_DIR", "SHINGLE", "SealedAccessError", "assert_no_source_overlap",
     "heldout_dir", "heldout_source_windows", "heldout_subdir_name", "reference_root", "require_sealed_caller",
     "task_config", "task_python",
 ]
