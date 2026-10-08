@@ -4838,3 +4838,29 @@ failures unattributable.
   +2.67 / 0.
 
 Details and the round-1 pair list in `docs/reports/joint_prep_20261007.md` (untracked by convention).
+
+## EXP-20261008-01 -- joint first-pass / playbook experiment, round 1 (branch `rsi`)
+
+**Status:** round 1 closed 2026-10-08; zqin30 gpt-5.5, window 0% -> 10% (round cap reached).
+Report: `docs/reports/joint_round1_20261008.md` (untracked by convention).
+
+Code (all committed): first-run-only mode (`ADAMAS_FIRST_RUN_ONLY`: the milestone ends at its first
+gate, a failing one is not retried, a passing one is not searched); seeded first stage
+(`ADAMAS_SEED_FIRST_RUN`: the first attempt's agent nodes replay a stored first run) and pair-only
+search (`ADAMAS_PAIR_ONLY`: no probe, phase two on the incumbent alone, R0 + the forced row);
+F7 with inventory items and F8 (E3-S1's preventive version, candidate) in
+`configs/playbook_v2/experiments/joint_20261007/`; `scripts/joint_experiment.py` (plan / prepare /
+run with a budget guard / dry run of the guard) and `scripts/sealed/joint_eval.py`. Three faults
+fixed during the round, none of which spent quota: every job now uses the planner's feature plan
+(a run's saved draft carries its first-pass design -- flask core had F1 baked in); the pair-only
+search first ended before phase two (no probe candidate) and then declined phase two (one sample).
+
+F7 vs F0 on 4 acceptance checkpoints x 2 fresh first runs: held-out better 2 / same 1 / worse 1,
+mean +1.55 points (threshold 2.0; the flask attributed subset -0.9); one-pass 5/8 -> 6/8;
+verification not lower; tokens -7%; gate failures 8 -> 4. Not promoted. Three of the four
+checkpoints have no attributed held-out case, so the whole suite is used there; it swings by up to
+34 cases between two runs of the same arm.
+
+E3-S1 vs R0, first half (2 normal checkpoints x 2): identical gate, verification and held-out nets in
+all four pairs although the code differs; the row costs 64% more. No usefulness condition can be met,
+so F8 (its preventive version) does not enter round 2.
