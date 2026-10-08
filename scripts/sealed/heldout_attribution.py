@@ -143,6 +143,132 @@ def attribute(task: str, plan_path: Path) -> dict[str, list[str]]:
     return {mid: sorted(cases) for mid, cases in result.items()}
 
 
+# --- relevance (joint experiment, 2026-10-08) ---------------------------------------------------
+# A case is relevant to milestone k when (1) it uses at least one module in k's focus paths and
+# (2) every project module it uses belongs to milestone k or an earlier one: at a first run the
+# later milestones' modules do not exist, so their cases fail under any design and only add noise.
+
+
+def _module_of_import(node_module: str, name: str, package: str, submodules: set[str], resolve) -> str:
+    """Path-like module for an imported name: ``pkg/mod.py``, ``pkg/sub`` (package) or ``pkg/__init__.py``."""
+    if node_module and node_module != package:
+        return node_module.replace(".", "/") + ".py"
+    if name in submodules:
+        return f"{package}/{name}.py"
+    return resolve(name) or f"{package}/__init__.py"
+
+
+def _imports(tree: ast.AST, packages: set[str], submodules: set[str], resolve) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] in packages:
+            pkg = (node.module or "").split(".")[0]
+            for a in node.names:
+                if a.name != "*":
+                    out[a.asname or a.name] = _module_of_import(node.module or "", a.name, pkg, submodules, resolve)
+        elif isinstance(node, ast.Import):
+            for a in node.names:
+                root = a.name.split(".")[0]
+                if root in packages:
+                    out[(a.asname or a.name).split(".")[0]] = (a.name.replace(".", "/") + ".py") if "." in a.name else f"{root}/__init__.py"
+    return out
+
+
+def _used_names(fn: ast.AST) -> set[str]:
+    return {n.id for n in ast.walk(fn) if isinstance(n, ast.Name)}
+
+
+def case_modules(task: str, packages: list[str]) -> dict[str, set[str]]:
+    """``file::test`` -> the project modules the case (and its fixtures, incl. conftest) uses."""
+    from orchestra.codeprojecteval.public_symbols import derive_public_symbols, load_docs, parse_directory_tree
+
+    docs = load_docs(DATASET_ROOT / task / "docs")
+    inv = derive_public_symbols(docs)
+    tree_paths = [t for text in docs.values() for t in parse_directory_tree(text)]
+    pk = set(packages)
+    subs = {t.rstrip("/").rsplit("/", 1)[-1].removesuffix(".py") for t in tree_paths
+            if (t.endswith(".py") or t.endswith("/")) and not t.rsplit("/", 1)[-1].startswith("__")} - pk
+
+    def resolve(name: str) -> str:
+        m = inv.module_of(name)
+        if not m:
+            return ""
+        # the documents' tree may be rooted at the repository name: keep the package-relative tail
+        parts = m.split("/")
+        for i, part in enumerate(parts):
+            if part in pk:
+                return "/".join(parts[i:])
+        return f"{packages[0]}/" + parts[-1]
+
+    tests_dir = heldout_dir(task)
+    fixture_mods: dict[str, set[str]] = {}
+    for c in sorted(tests_dir.rglob("conftest.py"), key=lambda q: len(q.parts)):
+        try:
+            tree = ast.parse(c.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, SyntaxError):
+            continue
+        imp = _imports(tree, pk, subs, resolve)
+        for fn in ast.walk(tree):
+            if isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                fixture_mods[fn.name] = {imp[n] for n in _used_names(fn) if n in imp}
+    out: dict[str, set[str]] = {}
+    for path in _test_files(tests_dir):
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, SyntaxError):
+            continue
+        imp = _imports(tree, pk, subs, resolve)
+        local_fix = dict(fixture_mods)
+        fns = [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        for _ in range(2):
+            for fn in fns:
+                if not fn.name.startswith("test"):
+                    mods = {imp[n] for n in _used_names(fn) if n in imp}
+                    for a in fn.args.args:
+                        mods |= local_fix.get(a.arg, set())
+                    local_fix[fn.name] = mods
+        # module-level helpers referenced by a test count through their names (unittest bases too)
+        rel = str(path.relative_to(tests_dir))
+        for fn in fns:
+            if not fn.name.startswith("test"):
+                continue
+            used = _used_names(fn)
+            mods = {imp[n] for n in used if n in imp}
+            for a in fn.args.args:
+                mods |= local_fix.get(a.arg, set())
+            for n in used:
+                mods |= local_fix.get(n, set()) if n in local_fix and n not in imp else set()
+            if any(a.arg == "self" for a in fn.args.args):
+                mods |= set(imp.values())  # unittest classes: the module's project imports serve every method
+            out[f"{rel}::{fn.name}"] = mods
+    return out
+
+
+def relevant_cases(task: str, plan_path: Path, packages: list[str]) -> dict[str, list[str]]:
+    from orchestra.codeprojecteval.public_symbols import _under
+
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    order = [m["milestone_id"] for m in plan["milestones"]]
+    focus = {m["milestone_id"]: m.get("focus_paths") or [] for m in plan["milestones"]}
+
+    def owner_index(module: str) -> int | None:
+        hits = [i for i, mid in enumerate(order) if any(_under(module, f) or _under(module.removesuffix(".py"), f) for f in focus[mid])]
+        return min(hits) if hits else None
+
+    mods = case_modules(task, packages)
+    out: dict[str, list[str]] = {mid: [] for mid in order}
+    for case, ms in mods.items():
+        if not ms:
+            continue
+        idx = {m: owner_index(m) for m in ms}
+        for k, mid in enumerate(order):
+            uses_own = any(any(_under(m, f) or _under(m.removesuffix(".py"), f) for f in focus[mid]) for m in ms)
+            all_earlier = all(i is not None and i <= k for i in idx.values())
+            if uses_own and all_earlier:
+                out[mid].append(case)
+    return {mid: sorted(v) for mid, v in out.items()}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--task", required=True)
@@ -153,7 +279,8 @@ def main() -> None:
     cfg = json.loads((DATASET_ROOT / args.task / "config.json").read_text(encoding="utf-8"))
     packages = [str(cfg.get("source_code") or args.task).split("/")[0]]
     syms = case_symbols(args.task, packages)
-    text = json.dumps({"task_id": args.task, "attribution": data, "case_symbols": syms}, indent=2)
+    relevant = relevant_cases(args.task, args.plan, packages)
+    text = json.dumps({"task_id": args.task, "attribution": data, "case_symbols": syms, "relevant": relevant}, indent=2)
     assert_no_source_overlap(text, args.task)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(text, encoding="utf-8")

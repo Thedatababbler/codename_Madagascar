@@ -158,7 +158,8 @@ def generate(args) -> None:
 # --- scoring -----------------------------------------------------------------------
 
 
-def run_suite(repo: Path, suite: Path, python: Path, *, timeout: int = 900, timeout_flags: bool = True) -> dict[str, str]:
+def run_suite(repo: Path, suite: Path, python: Path, *, timeout: int = 900, timeout_flags: bool = True,
+              messages: dict | None = None) -> dict[str, str]:
     """``{spec_tests/file::[Class::]test: pass|fail}``; parametrisations folded (any fail = fail)."""
     import tempfile
 
@@ -186,6 +187,8 @@ def run_suite(repo: Path, suite: Path, python: Path, *, timeout: int = 900, time
         node = "spec_tests/" + node.split("spec_tests/", 1)[-1] if "spec_tests/" in node else node
         base = node.split("[", 1)[0]
         v = "pass" if m.group(1) in ("PASSED", "XPASS") else "fail"
+        if messages is not None and v == "fail" and " - " in line:
+            messages.setdefault(base, line.split(" - ", 1)[1][:300])
         out[base] = "fail" if v == "fail" or out.get(base) == "fail" else "pass"
     return out
 

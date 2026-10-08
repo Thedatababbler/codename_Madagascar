@@ -53,7 +53,11 @@ def attributed_cases(task: str, milestone: str) -> list[str]:
     p = ATTRIBUTION_ROOT / f"{task}.json"
     if not p.is_file():
         return []
-    attribution = json.loads(p.read_text(encoding="utf-8")).get("attribution") or {}
+    data = json.loads(p.read_text(encoding="utf-8"))
+    attribution = data.get("attribution") or {}
+    if milestone.startswith("rel:"):
+        # the joint experiment's relevance rule (heldout_attribution.relevant_cases)
+        return list((data.get("relevant") or {}).get(milestone[4:]) or [])
     if milestone == "*":
         return sorted({c for cases in attribution.values() for c in cases})
     return list(attribution.get(milestone) or [])
