@@ -336,10 +336,12 @@ PROMPT = """## What a first-pass design can change
 Structure: one writer at a time; the shape must end with a writer or accept an appended repairer.
 
 ## Triggers
-Triggers are all required to hold. Features: dep_depth (0 = first milestone), kind ("integration" = the last milestone,
-otherwise "foundation" or "middle"), n_focus_files, n_public_symbols, n_documented_exceptions, n_state_transitions, n_public_classes.
-Position groups: first = dep_depth == 0; last = kind == "integration"; middle = dep_depth >= 1 and kind != "integration".
-Size groups: small = n_focus_files <= {median}; large = n_focus_files > {median}.
+Triggers are all required to hold, and they must hold on every milestone of the cluster you target (their feature values
+are listed with each cluster). Features: dep_depth (0 = first milestone, 1 = second, ...), kind ("integration" for the last
+milestone; any other milestone is labelled "foundation" or "middle" from keywords in its text, so do not use kind to mean the
+middle position), n_focus_files, n_public_symbols, n_documented_exceptions, n_state_transitions, n_public_classes.
+Express position with dep_depth and kind: first = dep_depth == 0; middle = dep_depth >= 1 and kind != "integration";
+last = kind == "integration". Size: small = n_focus_files <= {median}; large = n_focus_files > {median}.
 
 ## The current first-pass table
 {table}
@@ -362,11 +364,15 @@ changed and which result motivates it. Never resubmit a design rejected twice. R
 
 
 def cluster_text(cs: list[dict]) -> str:
+    feats = {f"{c['task']}:{c['milestone']}": c["features"] for c in checkpoints(EVO_TASKS)}
+    keys = ("dep_depth", "kind", "n_focus_files", "n_public_symbols", "n_documented_exceptions", "n_state_transitions", "n_public_classes")
     out = []
     for i, c in enumerate(cs, 1):
+        rows = [json.dumps({k: feats[m][k] for k in keys}) for m in c["milestones"] if m in feats]
         out.append(f"### Cluster {i}: {c['position_group']} milestones, {c['size_group']} scope, error class {c['error_class']}\n"
                    f"seen on {c['n_milestones']} milestones ({c['experiences']} repairs); mean stable fixes per repair {c['mean_stable_fixes']}; "
                    f"regressions {c['regressions']}; mean repair cost {c['cost_tokens']} prompt tokens\n"
+                   "feature values of its milestones (your triggers must hold on all of them):\n" + "\n".join(f"- {r}" for r in rows) + "\n"
                    f"repair actions: {json.dumps(c['repairs'])}\n"
                    "what the repairs did:\n" + "\n".join(f"- {s}" for s in c["summaries"]) + "\n"
                    "sentences the fixed cases cite:\n" + "\n".join(f'- "{q}"' for q in c["sentences"]))
