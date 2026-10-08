@@ -4864,3 +4864,38 @@ checkpoints have no attributed held-out case, so the whole suite is used there; 
 E3-S1 vs R0, first half (2 normal checkpoints x 2): identical gate, verification and held-out nets in
 all four pairs although the code differs; the row costs 64% more. No usefulness condition can be met,
 so F8 (its preventive version) does not enter round 2.
+
+## EXP-20261008-02 -- joint experiment: real iteration of first-pass prevention, 3 rounds (branch `rsi`)
+
+**Status:** closed 2026-10-08. zqin30 gpt-5.5, window 10% -> 22% (12 of the 20-point cap); stopped before
+a 4th round to keep the 8.7-point confirmation reserve; no confirmation, the best design is still the
+initial one. Code: `scripts/joint_iterate.py`, `control/evolution/fp_evolver.py`, `scripts/sealed/joint_score.py`;
+designs and change record in `configs/playbook_v2/experiments/joint_20261007/iter/`.
+
+Held-out scope: a case counts for a milestone when it uses one of the milestone's modules and every project
+module it uses belongs to that milestone or an earlier one. Relevant cases: cookiecutter foundation 33,
+template source 60, imapclient shared contracts 38; acceptance checkpoints voluptuous 7 / 7, flask core 7,
+python-hl7 hierarchical 0 (below 10: reference only).
+
+Every design was proposed by the evolver (temperature 0, prompts and replies on disk), validated, and paired
+against the current best (the initial design) with 2 first runs per checkpoint; cookiecutter first, stopped when
+stable regressions outnumbered stable fixes.
+
+| round | design | source | stable fix / reg | checkpoints better / worse | one-pass | tokens vs base | verdict |
+|---|---|---|---|---|---|---|---|
+| 1 | error-path, boundary and protocol inventory + "treat them as contract terms" + contract critic + budget | row E5-R1, residual error-path | 0 / 2 | 0 / 1 | 0 vs 0 | +9% | rejected (stopped after cookiecutter) |
+| 2 | main-path, boundary and error inventory + "checklist, happy paths first" + budget | row E3-S1, residual main path | 1 / 2 | 0 / 1 | 0 vs 0 | +4% | rejected (stopped after cookiecutter) |
+| 2 | main-path, state and integration inventory + "carry state choices through" + a continuation writer pass | row E4-S1, residual state | 1 / 1 | 0 / 0 | 2 vs 2 | +7% | rejected (fix not > reg) |
+| 3 | main-path inventory only + "write a local check per quoted behaviour first" + test-first template | based on round 2's first design, row E3-S1 | 1 / 1 | 0 / 0 | 2 vs 2 | +25% | rejected (fix not > reg) |
+
+Only cookiecutter's foundation checkpoint ever moved (one or two cases either way); template source and
+imapclient shared contracts showed no stable change under any design. Every design cost more than the
+initial one. No fairness issue: all runs used the original frozen suites and no trace touched verification
+or held-out material.
+
+Three faults during the run, all fixed: the confirmation reserve was double-counted (the driver stopped after
+the baseline; re-estimated from round 1's acceptance tokens, 8.7 points); the identifier check banned plain
+English words that are also module names ("state", "main", "template") -- 3 of 4 proposals of round 1 and all
+4 of a round 2 were discarded for it, that round was voided and rerun; an edit to the evolver changed the
+first-run fingerprint and relaunched the baseline (two runs started and failed at once with no tokens; the
+fingerprint now covers the first-run path only, verified equal at the baseline commit).

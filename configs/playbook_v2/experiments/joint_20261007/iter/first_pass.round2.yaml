@@ -1,0 +1,115 @@
+version: iter-r1
+entries:
+- entry_id: F0
+  triggers: []
+  predicted_error_classes: []
+  actions: []
+  source_rows: []
+  state: active
+  any_trigger: true
+  combination_of: []
+  origin: ''
+  intent: the planner's own choice, unchanged
+- entry_id: G11
+  triggers:
+  - feature: n_documented_exceptions
+    op: '>='
+    value: 1
+  predicted_error_classes:
+  - E5
+  - E6
+  - E2
+  actions:
+  - kind: inventory
+    kinds:
+    - error_path
+    - boundary
+    - protocol
+  - kind: instruction
+    text: Treat quoted exception, boundary, and protocol behaviours as non-optional
+      contract terms. For each documented rejection, ambiguity, default, conversion,
+      generated value, and object-level hook, implement the exact externally visible
+      result. Verify that accepted inputs, rejected inputs, and edge values follow
+      the documented contract before polishing unrelated code.
+  - kind: add_reviewer
+    role: contract_critic
+  - kind: budget
+    steps: 1
+    seconds: 90
+  source_rows: []
+  state: trial
+  any_trigger: true
+  combination_of: []
+  origin: '{"based_on": "F0", "playbook_row": "E5-R1", "residual_cluster": "E5"}'
+  intent: Front-load exception, boundary, and protocol contract coverage when the
+    documents name explicit exceptional behaviour.
+- entry_id: G21
+  triggers:
+  - feature: n_public_symbols
+    op: '>='
+    value: 1
+  - feature: n_focus_files
+    op: <=
+    value: 3
+  predicted_error_classes:
+  - E3
+  - E6
+  - E5
+  actions:
+  - kind: inventory
+    kinds:
+    - main_path
+    - boundary
+    - error_path
+  - kind: instruction
+    text: Before writing code, turn the quoted behaviours into a short implementation
+      checklist and satisfy the main successful behaviours first. Give priority to
+      documented defaults, fallbacks, inference rules, generated values, normalization,
+      caching or persistence effects, and the order in which steps must occur. Then
+      cover each quoted boundary and documented rejection without changing the public
+      contract. Do not spend effort on unquoted polish until every quoted externally
+      visible behaviour has a corresponding implementation path.
+  - kind: budget
+    steps: 1
+    seconds: 60
+  source_rows: []
+  state: trial
+  any_trigger: true
+  combination_of: []
+  origin: '{"based_on": "F0", "playbook_row": "E3-S1", "residual_cluster": "E3"}'
+  intent: Make the writer implement the quoted happy-path contract before polishing
+    or over-focusing on exceptional cases.
+- entry_id: G22
+  triggers:
+  - feature: n_state_transitions
+    op: '>='
+    value: 1
+  predicted_error_classes:
+  - E4
+  - E3
+  - E7
+  actions:
+  - kind: inventory
+    kinds:
+    - main_path
+    - state_transition
+    - integration
+  - kind: instruction
+    text: Treat each quoted state change as an observable transition with a required
+      before state, trigger, after state, and downstream effect. Implement the normal
+      path through the transition first, then verify that related integration points
+      observe the same state. When a quoted option or selector changes which state
+      is used, preserve that choice through all later calls instead of hard-coding
+      the default path.
+  - kind: template
+    template_id: continuation
+  - kind: budget
+    steps: 1
+    seconds: 60
+  source_rows: []
+  state: trial
+  any_trigger: true
+  combination_of: []
+  origin: '{"based_on": "F0", "playbook_row": "E4-S1", "residual_cluster": "E4"}'
+  intent: Give stateful milestones a second writer pass aimed at carrying documented
+    state choices through the main path.

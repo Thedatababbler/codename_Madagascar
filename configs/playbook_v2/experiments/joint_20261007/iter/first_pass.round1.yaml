@@ -1,0 +1,45 @@
+version: iter-r0
+entries:
+- entry_id: F0
+  triggers: []
+  predicted_error_classes: []
+  actions: []
+  source_rows: []
+  state: active
+  any_trigger: true
+  combination_of: []
+  origin: ''
+  intent: the planner's own choice, unchanged
+- entry_id: G11
+  triggers:
+  - feature: n_documented_exceptions
+    op: '>='
+    value: 1
+  predicted_error_classes:
+  - E5
+  - E6
+  - E2
+  actions:
+  - kind: inventory
+    kinds:
+    - error_path
+    - boundary
+    - protocol
+  - kind: instruction
+    text: Treat quoted exception, boundary, and protocol behaviours as non-optional
+      contract terms. For each documented rejection, ambiguity, default, conversion,
+      generated value, and object-level hook, implement the exact externally visible
+      result. Verify that accepted inputs, rejected inputs, and edge values follow
+      the documented contract before polishing unrelated code.
+  - kind: add_reviewer
+    role: contract_critic
+  - kind: budget
+    steps: 1
+    seconds: 90
+  source_rows: []
+  state: trial
+  any_trigger: true
+  combination_of: []
+  origin: '{"based_on": "F0", "playbook_row": "E5-R1", "residual_cluster": "E5"}'
+  intent: Front-load exception, boundary, and protocol contract coverage when the
+    documents name explicit exceptional behaviour.

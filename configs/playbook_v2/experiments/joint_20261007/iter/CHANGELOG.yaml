@@ -1,0 +1,140 @@
+- round: 1
+  best_after: F0
+  tested:
+  - design: G11
+    intent: Front-load exception, boundary, and protocol contract coverage when the
+      documents name explicit exceptional behaviour.
+    source:
+      based_on: F0
+      playbook_row: E5-R1
+      residual_cluster: E5
+    differs_from_previous: F0 supplied no quoted behaviour inventory and no contract
+      reader; this combines targeted inventory with a contract-focused review before
+      the gate.
+    why_now: Residual failures include documented exception and boundary obligations,
+      and repair comparisons showed later fixes tied while costing more, so prevention
+      should occur before the first gate.
+    verdict:
+      stable_fix: 0
+      stable_reg: 2
+      better: 0
+      worse: 1
+      one_pass_base: 0
+      one_pass_new: 0
+      tokens_base: 8026591
+      tokens_new: 8741846
+      accepted: false
+    failed_conditions:
+    - stable_fix_gt_reg
+    - better_gt_worse
+  discarded:
+  - intent: Make the writer implement the residual documented behaviours as a single
+      explicit checklist before the first gate.
+    reasons:
+    - 'mentions training-task identifiers: [''state'']'
+  - intent: Add a behaviour-focused read-only review and repair pass for dependency-spanning
+      milestones where documented main paths depend on protocol or integration details.
+    reasons:
+    - 'mentions training-task identifiers: [''main'']'
+  - intent: Convert the writer pass into checklist-driven implementation and add a
+      read-only behaviour review before acceptance.
+    reasons:
+    - 'mentions training-task identifiers: [''time'']'
+  points: 2.0
+- round: 2
+  best_after: F0
+  tested:
+  - design: G21
+    intent: Make the writer implement the quoted happy-path contract before polishing
+      or over-focusing on exceptional cases.
+    source:
+      based_on: F0
+      playbook_row: E3-S1
+      residual_cluster: E3
+    differs_from_previous: Unlike G11, this includes main-path inventory, omits the
+      read-only reviewer, omits protocol inventory, and uses a writer-side checklist
+      focused on ordinary successful behaviour rather than exception and contract
+      criticism.
+    why_now: The latest failures are dominated by E3 main-path misses, while G11's
+      exception-heavy reviewer design caused regressions and extra tokens; the prior
+      inventory result suggests quoted behaviours help, but the new design redirects
+      that help toward the residual main-path cluster.
+    verdict:
+      stable_fix: 1
+      stable_reg: 2
+      better: 0
+      worse: 1
+      one_pass_base: 0
+      one_pass_new: 0
+      tokens_base: 8026591
+      tokens_new: 8313407
+      accepted: false
+    failed_conditions:
+    - stable_fix_gt_reg
+    - better_gt_worse
+  - design: G22
+    intent: Give stateful milestones a second writer pass aimed at carrying documented
+      state choices through the main path.
+    source:
+      based_on: F0
+      playbook_row: E4-S1
+      residual_cluster: E4
+    differs_from_previous: Unlike G11, this targets state-transition and integration
+      inventory rather than exception, boundary, and protocol inventory; it uses a
+      continuation writer pass instead of a contract reviewer, so the extra effort
+      goes directly into implementation.
+    why_now: The remaining failures include documented state-selection behaviour,
+      and previous repair comparisons showed reviewer-style repairs cost more without
+      improving outcomes, so a lightweight continuation pass is a better first-pass
+      prevention for stateful work.
+    verdict:
+      stable_fix: 1
+      stable_reg: 1
+      better: 0
+      worse: 0
+      one_pass_base: 2
+      one_pass_new: 2
+      tokens_base: 11001940
+      tokens_new: 11812027
+      accepted: false
+    failed_conditions:
+    - stable_fix_gt_reg
+    - better_gt_worse
+  discarded: []
+  points: 4.0
+- round: 3
+  best_after: F0
+  tested:
+  - design: G31
+    intent: Force the writer to anchor implementation in quoted successful behaviours
+      by writing checks for them before coding.
+    source:
+      based_on: G21
+      playbook_row: E3-S1
+      residual_cluster: E3
+    differs_from_previous: G21 gave the writer main, boundary, and error inventory
+      with a checklist but kept an ordinary write-first shape; this design narrows
+      the inventory to main-path behaviours and switches to a test-first template
+      so the quoted happy paths become concrete checks before implementation. Unlike
+      G11 it has no reviewer and no exception-heavy inventory; unlike G22 it does
+      not use continuation or state/integration inventory.
+    why_now: The latest remaining failures are dominated by main-path misses, and
+      the prior inventory result reduced gate failures but did not generalize enough;
+      making the writer turn the main-path inventory into checks should reduce superficial
+      compliance and catch default, fallback, inference, and ordering omissions before
+      the first gate.
+    verdict:
+      stable_fix: 1
+      stable_reg: 1
+      better: 0
+      worse: 0
+      one_pass_base: 2
+      one_pass_new: 2
+      tokens_base: 11001940
+      tokens_new: 13747524
+      accepted: false
+    failed_conditions:
+    - stable_fix_gt_reg
+    - better_gt_worse
+  discarded: []
+  points: 3.0
