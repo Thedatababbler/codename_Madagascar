@@ -183,6 +183,13 @@ def candidate_task_id(task_id: str, subtask_id: str, candidate_id: str) -> str:
 FIRST_RUN_ONLY_ENV = "ADAMAS_FIRST_RUN_ONLY"
 
 
+def _pair_only_search() -> bool:
+    """A pair-only search (joint experiment) draws no probe: one sample, the incumbent, is the evidence."""
+    from orchestra.executors.seeded import pair_only
+
+    return pair_only()
+
+
 def first_run_only() -> bool:
     return (os.environ.get(FIRST_RUN_ONLY_ENV) or "").strip() not in ("", "0", "false")
 
@@ -487,7 +494,7 @@ class FastLoopController:
             fl_state.notes.append(
                 f"persistence: the frozen suite collects nothing on {max(len(scored_zero_empty), summary.samples)} "
                 "gate-passing samples; the persistent set is the file itself -> author route")
-        elif summary.samples < 2 or not (summary.persistent or summary.flaky):
+        elif (summary.samples < 2 and not _pair_only_search()) or not (summary.persistent or summary.flaky):
             fl_state.notes.append("persistence: no persistent or flaky failures; phase two declined")
             state.state_version += 1
             await self._save_checkpoint(state)
