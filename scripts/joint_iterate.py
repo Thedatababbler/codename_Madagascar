@@ -92,10 +92,11 @@ def write_table(st: dict) -> None:
 
 def fingerprint() -> str:
     """Code and configuration on the first-run path (the designs themselves are keyed separately)."""
-    tree = subprocess.run(["git", "ls-tree", "-r", "HEAD", "src/orchestra", "configs/roles", "configs/subgraph_templates",
-                           "configs/contracts", J.CONFIG], cwd=ROOT, capture_output=True, text=True).stdout
-    dirty = subprocess.run(["git", "diff", "HEAD", "--", "src/orchestra", "configs/roles", "configs/subgraph_templates"],
-                           cwd=ROOT, capture_output=True, text=True).stdout
+    # the evolver and the design cycle (control/evolution) are not on the first-run path
+    paths = ["src/orchestra", "configs/roles", "configs/subgraph_templates", "configs/contracts", J.CONFIG,
+             ":!src/orchestra/control/evolution"]
+    tree = subprocess.run(["git", "ls-tree", "-r", "HEAD", "--", *paths], cwd=ROOT, capture_output=True, text=True).stdout
+    dirty = subprocess.run(["git", "diff", "HEAD", "--", *paths], cwd=ROOT, capture_output=True, text=True).stdout
     return hashlib.sha1((tree + dirty).encode()).hexdigest()[:16]
 
 
