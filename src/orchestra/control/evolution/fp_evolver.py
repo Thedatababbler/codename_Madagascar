@@ -98,9 +98,19 @@ def parse(reply: str) -> list[dict]:
     return [d for d in data if isinstance(d, dict)][:2]
 
 
+def weak_leaks(text: str, weak: frozenset[str]) -> list[str]:
+    """Single plain words that are also module / file names count only when written as code
+    (``name.py``, ``/name``, or in backticks): as English words ("state", "main") they identify nothing."""
+    out = []
+    for w in weak:
+        if re.search(rf"(?<![A-Za-z0-9_]){re.escape(w)}\.py\b|/{re.escape(w)}\b|`{re.escape(w)}`", text, re.I):
+            out.append(w)
+    return sorted(out)
+
+
 def validate(design: Mapping[str, Any], *, identifiers: frozenset[str], roles: frozenset[str] | None = None,
              templates: frozenset[str] | None = None, rejected: Iterable[Mapping[str, Any]] = (),
-             shape_check: Callable[[dict], list[str]] | None = None) -> list[str]:
+             shape_check: Callable[[dict], list[str]] | None = None, weak: frozenset[str] = frozenset()) -> list[str]:
     """Reasons the design is invalid ([] = valid)."""
     roles = roles or available_roles()
     templates = templates or available_templates()
@@ -144,7 +154,7 @@ def validate(design: Mapping[str, Any], *, identifiers: frozenset[str], roles: f
         elif kind == "budget" and not (a.get("steps") or a.get("seconds")):
             reasons.append("budget action needs steps or seconds")
     for t in texts:
-        leaks = leaked_identifiers(t, identifiers)
+        leaks = leaked_identifiers(t, identifiers) + weak_leaks(t, weak)
         if leaks:
             reasons.append(f"mentions training-task identifiers: {leaks}")
     for r in rejected:
@@ -203,7 +213,7 @@ def shape_checker(milestones: list[Any]) -> Callable[[dict], list[str]]:
 
 def propose(*, context: Mapping[str, str], out_dir: Path, tag: str, identifiers: frozenset[str],
             rejected: list[dict], shape_check: Callable[[dict], list[str]] | None,
-            call: Callable[[str, str], str] | None = None) -> tuple[list[dict], list[dict]]:
+            call: Callable[[str, str], str] | None = None, weak: frozenset[str] = frozenset()) -> tuple[list[dict], list[dict]]:
     """(valid designs, discarded designs with reasons). One automatic retry with the reasons."""
     from orchestra.control.evolution.evolver import default_call
 
@@ -221,7 +231,7 @@ def propose(*, context: Mapping[str, str], out_dir: Path, tag: str, identifiers:
         valid, bad = [], []
         for d in designs:
             reasons = validate(d, identifiers=identifiers, roles=roles, templates=templates, rejected=rejected,
-                               shape_check=shape_check)
+                               shape_check=shape_check, weak=weak)
             (bad if reasons else valid).append({**d, "_reasons": reasons} if reasons else d)
         discarded += [{**b, "attempt": attempt} for b in bad]
         if valid or not designs and attempt == 1:
@@ -230,4 +240,4 @@ def propose(*, context: Mapping[str, str], out_dir: Path, tag: str, identifiers:
     return valid, discarded
 
 
-__all__ = ["ACTION_KINDS", "DESIGN_FEATURES", "parse", "propose", "render", "shape_checker", "validate"]
+__all__ = ["weak_leaks", "ACTION_KINDS", "DESIGN_FEATURES", "parse", "propose", "render", "shape_checker", "validate"]

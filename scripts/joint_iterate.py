@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import re
 import hashlib
 import json
 import os
@@ -308,7 +309,9 @@ def evolver_context(st: dict) -> dict:
             "residual": residual, "rows": "\n".join(rows)}
 
 
-def identifiers() -> frozenset[str]:
+def identifiers() -> tuple[frozenset[str], frozenset[str]]:
+    """(strong, weak): strong = task / package / milestone / test names and multi-part identifiers, banned
+    anywhere; weak = single plain words that are also module names, banned only when written as code."""
     from orchestra.codeprojecteval.public_symbols import derive_public_symbols, load_docs
     from orchestra.control.evolution.validators import training_identifiers
     mids, focus, cases = [], [], []
@@ -326,7 +329,11 @@ def identifiers() -> frozenset[str]:
         words.add(str(cfg.get("source_code") or t).split("/")[0].lower())
     for t, m in EVO:
         cases += list(_suite_sources(ROOT / J.RUNS[t] / "harness" / f"{m}.spec_tests"))
-    return training_identifiers(task_ids=TRAIN, milestone_ids=mids, case_names=cases, focus_paths=focus) | frozenset(words)
+    allw = training_identifiers(task_ids=TRAIN, milestone_ids=mids, case_names=cases, focus_paths=focus) | frozenset(words)
+    task_parts = {w for t in TRAIN for w in [t.lower(), *t.lower().replace("-", "_").split("_")] if len(w) >= 3}
+    pkgs = {w for w in words if "_" not in w}
+    plain = {w for w in allw if re.fullmatch(r"[a-z]+", w) and w not in task_parts and w not in pkgs and w not in words}
+    return frozenset(allw - plain), frozenset(plain)
 
 
 # --- main loop ------------------------------------------------------------------------------------
@@ -369,7 +376,7 @@ def run(args) -> None:
     prepare_inventories()
     write_table(st)
     shape = shape_checker(milestones_for_shape())
-    ids = identifiers()
+    ids, weak = identifiers()
     # baseline: the initial design on the evolution checkpoints
     reason = ensure_runs(st, "F0", EVO, guard, "base")
     if reason:
@@ -399,7 +406,7 @@ def run(args) -> None:
         out_dir.mkdir(parents=True, exist_ok=True)
         rejected = [d for d in st["designs"].values() if (d.get("verdict") or {}).get("accepted") is False]
         valid, discarded = propose(context=evolver_context(st), out_dir=out_dir, tag=f"round{rnd}", identifiers=ids,
-                                   rejected=rejected, shape_check=shape)
+                                   rejected=rejected, shape_check=shape, weak=weak)
         rec = {"round": rnd, "proposed": len(valid) + len(discarded), "valid": [], "discarded": [
             {"intent": d.get("intent"), "reasons": d.get("_reasons")} for d in discarded], "used_before": used()}
         if not valid:
