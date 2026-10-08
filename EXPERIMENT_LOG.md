@@ -4899,3 +4899,38 @@ English words that are also module names ("state", "main", "template") -- 3 of 4
 4 of a round 2 were discarded for it, that round was voided and rerun; an edit to the evolver changed the
 first-run fingerprint and relaunched the baseline (two runs started and failed at once with no tokens; the
 fingerprint now covers the first-run path only, verified equal at the baseline commit).
+
+## EXP-20261008-03 -- first-pass design from repair experience, 3 rounds (branch `rsi`)
+
+**Status:** closed 2026-10-08. zqin30 gpt-5.5, window 24% -> 40% (16 points: round 1 11 incl. 11 verification
+suites, round 2 5, round 3 0). Driver `scripts/fp_repair_loop.py`; state `outputs/fp_from_repair/state.json`;
+per-round experience tables and table versions in `configs/playbook_v2/experiments/firstpass_from_repair_20261008/`.
+
+Split: evolution tasks cookiecutter + imapclient (repair records and checkpoints at every position), acceptance
+tasks nl2_python-jose + nl2_tablib (7 checkpoints with >= 20 relevant held-out cases, positions 2-5), online task
+cookiecutter. The first-pass table started empty. Repair experience = 17 committed repairs (13 default repairs,
+3 node resamples, 1 playbook row) from all stored runs of the evolution tasks; only two clusters span >= 2 milestones:
+middle position / small scope / main path (4 milestones, 10 repairs, 5.9 stable fixes each, usefulness 22) and middle /
+small / error path (2 milestones, 4 repairs, usefulness 2.3).
+
+| round | design | cluster | gate+verification stable fix / reg | held-out fix / reg | targeted class first-run failures | tokens vs base | verdict |
+|---|---|---|---|---|---|---|---|
+| 1 | full inventory + "cover every documented input path end to end" checklist | main path | 0 / 2 (4 checkpoints) | 3 / 1 | 32 -> 30 | -4% | rejected |
+| 1 | contract inventory + "public boundary and exact documented errors" + contract critic, review-then-fix | error path | 0 / 1 (half) | 0 / 9 | 5 -> 5 | -10% | rejected at half |
+| 2 | round 1's main-path design with a behaviour critic and review-then-fix instead of test-first | main path | 0 / 1 (half) | 0 / 0 | 18 -> 28 | -6% | rejected at half; cluster retired |
+| 2 | narrower contract inventory + spec auditor instead of contract critic | error path | 0 / 1 (half) | 0 / 0 | 5 -> 2 | +2% | rejected at half; cluster retired |
+
+Round 3 had no eligible cluster (both retired, no new records because nothing was enabled); the run ended at the
+3-round limit. No design reached confirmation, no online run. No fairness issue (suites identical, no trace hits).
+
+Reading. No design produced a single stable gate+verification fix: with two first runs per arm a case counts
+only if the baseline fails it twice and the design passes it twice, and first runs vary too much for that on these
+milestones. The experience pool is thin (two clusters, both drawn mostly from cookiecutter's template-source
+milestone); the repair summaries, though generic in vocabulary, still carried that milestone's flavour (input
+sources, archives, shorthand expansion), and the designs followed it.
+
+Faults fixed during the run (no spend lost beyond one skipped verification probe): a stale cycle-0 skip list,
+the evolver prompt describing `kind` as a position, repair summaries naming domain concepts, and
+`Trigger.holds` evaluating `!=`, `<=`, `<`, `>` as `>=` (every correct trigger was rejected; fixed in the designer,
+baselines re-stamped after verifying forced runs ignore triggers). Relevant held-out counts were also corrected
+for src-layout packages and unittest classes before the run.

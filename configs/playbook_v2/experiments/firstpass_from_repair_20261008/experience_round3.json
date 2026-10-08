@@ -1,0 +1,1232 @@
+{
+ "experiences": [
+  {
+   "task": "cookiecutter",
+   "milestone": "foundation_config_environment_contracts",
+   "run": "cpe-20261001T021833Z-cookiecutter",
+   "features": {
+    "kind": "foundation",
+    "n_focus_files": 8,
+    "n_public_symbols": 61,
+    "n_documented_exceptions": 7,
+    "n_state_transitions": 5,
+    "n_public_classes": 11,
+    "dep_depth": 0,
+    "position": 1,
+    "n_milestones": 5,
+    "position_group": "first"
+   },
+   "repair": "playbook row E3-T1",
+   "repair_kind": "row",
+   "fixed": 3,
+   "regressed": 0,
+   "fixed_classes": {
+    "E3": 3
+   },
+   "first_run_failures": {
+    "E3": 3
+   },
+   "cited_sentences": [
+    "Sets a default `datetime_format` of `'%Y-%m-%d'` on the environment and registers the `{% now %}` tag.",
+    "Supports three usage forms: `{% now \\",
+    "If `default_config` is `True`, returns a copy of `DEFAULT_CONFIG`.",
+    "Falls back to `DEFAULT_CONFIG` if no user config file exists."
+   ],
+   "diff": {
+    "files": 37,
+    "added": 1352,
+    "removed": 0,
+    "test_files": 0
+   },
+   "cost": {
+    "prompt_tokens": 594853,
+    "calls": 1
+   },
+   "verifier": {
+    "fixed": 2,
+    "regressed": 0
+   },
+   "summary": "It added a previously missing usable implementation surface: version metadata, public initialization, command-line/module entry points, configuration loading, environment setup, extension hooks, utilities, logging, and defined exception types so the expected workflows could be imported and executed. The touched code is mainly entry-point wiring, defaults/configuration handling, template/runtime data processing support, and standardized error handling rather than a small localized logic fix.",
+   "stable_fix": 5,
+   "stable_reg": 0
+  },
+  {
+   "task": "cookiecutter",
+   "milestone": "template_source_resolution",
+   "run": "cpe-20261001T021833Z-cookiecutter",
+   "features": {
+    "kind": "foundation",
+    "n_focus_files": 6,
+    "n_public_symbols": 42,
+    "n_documented_exceptions": 9,
+    "n_state_transitions": 2,
+    "n_public_classes": 3,
+    "dep_depth": 1,
+    "position": 2,
+    "n_milestones": 5,
+    "position_group": "middle"
+   },
+   "repair": "default repair (continuation with the failure list)",
+   "repair_kind": "R0",
+   "fixed": 7,
+   "regressed": 0,
+   "fixed_classes": {
+    "E4": 1,
+    "E3": 5,
+    "E5": 1
+   },
+   "first_run_failures": {
+    "E3": 5,
+    "E4": 1,
+    "E5": 1
+   },
+   "cited_sentences": [
+    "**Branch/Tag Support**: Use the `--checkout` parameter to specify Git branches, tags, or commits",
+    "Applies abbreviation expansion first, then searches candidate paths (including an optional sub-`directory`).",
+    "Remote Git repository URL \u2014 cloned into `clone_to_dir`.",
+    "If not prefixed, the function heuristically infers the type based on substrings like `'git'` or `'bitbucket'`.",
+    "`identify_repo(repo_url)`: Determine whether the given `repo_url` refers to a Git or Mercurial (hg) repository.",
+    "If the URI is a URL, it caches the downloaded zip in the specified `clone_to_dir` and prompts for overwrite confirmation unless `no_input` is True.",
+    "`InvalidZipRepository`: Exception raised when a provided Zip file is not a valid Cookiecutter template repository (e.g., malformed or missing `cookiecutter.json`)."
+   ],
+   "diff": {
+    "files": 26,
+    "added": 578,
+    "removed": 49,
+    "test_files": 0
+   },
+   "cost": {
+    "prompt_tokens": 1517839,
+    "calls": 1
+   },
+   "verifier": {
+    "fixed": 3,
+    "regressed": 0
+   },
+   "summary": "Added the missing end-to-end handling for externally sourced inputs: resolving shorthand names, distinguishing local paths, archive inputs, and remote sources, selecting a safe subdirectory, validating that required metadata exists, and routing unsupported source types to documented errors. It touched public entry-point exports, main workflow dispatch, input/source validation, archive and remote retrieval integration, interactive overwrite/reuse handling, broader extension-load error wrapping, and cleanup of temporary resources after use.",
+   "stable_fix": 10,
+   "stable_reg": 0
+  },
+  {
+   "task": "cookiecutter",
+   "milestone": "foundation_config_environment_contracts",
+   "run": "cpe-20260930T180814Z-cookiecutter",
+   "features": {
+    "kind": "foundation",
+    "n_focus_files": 8,
+    "n_public_symbols": 61,
+    "n_documented_exceptions": 7,
+    "n_state_transitions": 5,
+    "n_public_classes": 11,
+    "dep_depth": 0,
+    "position": 1,
+    "n_milestones": 5,
+    "position_group": "first"
+   },
+   "repair": "default repair (continuation with the failure list)",
+   "repair_kind": "R0",
+   "fixed": 3,
+   "regressed": 0,
+   "fixed_classes": {
+    "E6": 1,
+    "E3": 2
+   },
+   "first_run_failures": {
+    "E6": 1,
+    "E3": 2
+   },
+   "cited_sentences": [
+    "- **TimeExtension**: Date and time handling",
+    "Sets a default `datetime_format` of `'%Y-%m-%d'` on the environment and registers the `{% now %}` tag.",
+    "Supports three usage forms: `{% now \\",
+    "`get_user_config(config_file, default_config)`: Determines and returns the effective user configuration for Cookiecutter.",
+    "If `default_config` is `True`, returns a copy of `DEFAULT_CONFIG`.",
+    "Falls back to `DEFAULT_CONFIG` if no user config file exists."
+   ],
+   "diff": {
+    "files": 37,
+    "added": 1380,
+    "removed": 0,
+    "test_files": 0
+   },
+   "cost": {
+    "prompt_tokens": 361981,
+    "calls": 1
+   },
+   "verifier": {
+    "fixed": 2,
+    "regressed": 0
+   },
+   "summary": "It added a previously missing end-to-end implementation so the accepted workflows could run instead of failing from absent entry points or unsupported behavior. The change touched executable entry points, package metadata/version defaults, configuration loading, input/context handling, templated file generation, external-source retrieval, command-line validation, and error reporting paths.",
+   "stable_fix": 5,
+   "stable_reg": 0
+  },
+  {
+   "task": "cookiecutter",
+   "milestone": "template_source_resolution",
+   "run": "cpe-20260930T180814Z-cookiecutter",
+   "features": {
+    "kind": "foundation",
+    "n_focus_files": 6,
+    "n_public_symbols": 42,
+    "n_documented_exceptions": 9,
+    "n_state_transitions": 2,
+    "n_public_classes": 3,
+    "dep_depth": 1,
+    "position": 2,
+    "n_milestones": 5,
+    "position_group": "middle"
+   },
+   "repair": "default repair (continuation with the failure list)",
+   "repair_kind": "R0",
+   "fixed": 5,
+   "regressed": 0,
+   "fixed_classes": {
+    "E4": 2,
+    "E5": 1,
+    "E3": 2
+   },
+   "first_run_failures": {
+    "E3": 2,
+    "E5": 1,
+    "E4": 2
+   },
+   "cited_sentences": [
+    "After cloning, optionally checks out a specific `checkout` reference (branch, tag, or commit).",
+    "Raises specific exceptions (`RepositoryNotFound`, `RepositoryCloneFailed`, `VCSNotInstalled`, `UnknownRepoType`) for various failure modes.",
+    "Remote Git repository URL \u2014 cloned into `clone_to_dir`.",
+    "- **ZIP Files**: Support for local or online ZIP archives"
+   ],
+   "diff": {
+    "files": 26,
+    "added": 480,
+    "removed": 66,
+    "test_files": 0
+   },
+   "cost": {
+    "prompt_tokens": 582024,
+    "calls": 1
+   },
+   "verifier": {
+    "fixed": 0,
+    "regressed": 0
+   },
+   "summary": "It broadened and corrected the main input-source workflow: public entry points were re-exported, source identifiers are now expanded and classified more accurately, local/remote/archive inputs are handled, subdirectory selection is validated, and documented error types are raised for missing, ambiguous, unsupported, or unsafe inputs. It also touched prompting and cleanup behavior by confirming overwrite/reuse decisions, removing temporary downloaded/extracted resources reliably, preserving safer path handling, and aligning default storage/configuration behavior with expected acceptance scenarios.",
+   "stable_fix": 5,
+   "stable_reg": 0
+  },
+  {
+   "task": "cookiecutter",
+   "milestone": "project_generation_engine",
+   "run": "cpe-20260930T180814Z-cookiecutter",
+   "features": {
+    "kind": "foundation",
+    "n_focus_files": 6,
+    "n_public_symbols": 65,
+    "n_documented_exceptions": 10,
+    "n_state_transitions": 4,
+    "n_public_classes": 10,
+    "dep_depth": 3,
+    "position": 4,
+    "n_milestones": 5,
+    "position_group": "middle"
+   },
+   "repair": "node resample (the blamed writer re-run with the evidence)",
+   "repair_kind": "resample",
+   "fixed": 2,
+   "regressed": 0,
+   "fixed_classes": {
+    "E3": 1,
+    "E5": 1
+   },
+   "first_run_failures": {
+    "E3": 1,
+    "E5": 1
+   },
+   "cited_sentences": [
+    "**Selective Rendering**: Use `_copy_without_render` to specify files that should not be rendered",
+    "If no matching directory is found, raises `NonTemplatedInputDirException`."
+   ],
+   "diff": {
+    "files": 21,
+    "added": 216,
+    "removed": 27,
+    "test_files": 0
+   },
+   "cost": {
+    "prompt_tokens": 3521499,
+    "calls": 3
+   },
+   "verifier": null,
+   "summary": "It expanded the public entry surface and corrected generation workflow behavior: better input-directory validation with the intended error distinction, more robust path/pattern handling for \u201ccopy without processing,\u201d safer binary/text handling, configurable newline preservation, and correct defaults around rendered directory names. It also improved failure handling by tracking and cleaning up only newly created outputs, while preserving permissions and skip/overwrite semantics during copying and rendering.",
+   "stable_fix": 2,
+   "stable_reg": 0
+  },
+  {
+   "task": "cookiecutter",
+   "milestone": "foundation_config_environment_contracts",
+   "run": "rerun-F0-20261002T123356-cookiecutter-foundation_config_environment_contracts-r0",
+   "features": {
+    "kind": "foundation",
+    "n_focus_files": 8,
+    "n_public_symbols": 61,
+    "n_documented_exceptions": 7,
+    "n_state_transitions": 5,
+    "n_public_classes": 11,
+    "dep_depth": 0,
+    "position": 1,
+    "n_milestones": 5,
+    "position_group": "first"
+   },
+   "repair": "default repair (continuation with the failure list)",
+   "repair_kind": "R0",
+   "fixed": 2,
+   "regressed": 0,
+   "fixed_classes": {
+    "E3": 2
+   },
+   "first_run_failures": {
+    "E3": 3
+   },
+   "cited_sentences": [
+    "If `default_config` is `True`, returns a copy of `DEFAULT_CONFIG`.",
+    "Falls back to `DEFAULT_CONFIG` if no user config file exists."
+   ],
+   "diff": {
+    "files": 19,
+    "added": 1205,
+    "removed": 0,
+    "test_files": 0
+   },
+   "cost": {
+    "prompt_tokens": 297772,
+    "calls": 1
+   },
+   "verifier": {
+    "fixed": 1,
+    "regressed": 1
+   },
+   "summary": "It added the previously missing end-to-end workflow for turning an input source plus user/configured values into generated output, including noninteractive operation, reuse of saved inputs, overwrite/skip behavior, and documented failures for invalid or ambiguous inputs. It touched entry points, option parsing, configuration/default merging, context/data loading, rendering/copying logic, external source retrieval, hook execution, logging, cleanup-on-failure, and a structured error hierarchy.",
+   "stable_fix": 3,
+   "stable_reg": 1
+  },
+  {
+   "task": "cookiecutter",
+   "milestone": "template_source_resolution",
+   "run": "rerun-F0-20261002T123356-cookiecutter-template_source_resolution-r0",
+   "features": {
+    "kind": "foundation",
+    "n_focus_files": 6,
+    "n_public_symbols": 42,
+    "n_documented_exceptions": 9,
+    "n_state_transitions": 2,
+    "n_public_classes": 3,
+    "dep_depth": 1,
+    "position": 2,
+    "n_milestones": 5,
+    "position_group": "middle"
+   },
+   "repair": "default repair (continuation with the failure list)",
+   "repair_kind": "R0",
+   "fixed": 7,
+   "regressed": 0,
+   "fixed_classes": {
+    "E4": 1,
+    "E3": 6
+   },
+   "first_run_failures": {
+    "E3": 6,
+    "E4": 1
+   },
+   "cited_sentences": [
+    "**Branch/Tag Support**: Use the `--checkout` parameter to specify Git branches, tags, or commits",
+    "Applies abbreviation expansion first, then searches candidate paths (including an optional sub-`directory`).",
+    "Remote Git repository URL \u2014 cloned into `clone_to_dir`.",
+    "If not prefixed, the function heuristically infers the type based on substrings like `'git'` or `'bitbucket'`.",
+    "`identify_repo(repo_url)`: Determine whether the given `repo_url` refers to a Git or Mercurial (hg) repository.",
+    "`is_zip_file(value)`: Return `True` if the given `value` ends with the `.zip` extension (case-insensitive), indicating it is a ZIP archive.",
+    "If the URI is a URL, it caches the downloaded zip in the specified `clone_to_dir` and prompts for overwrite confirmation unless `no_input` is True."
+   ],
+   "diff": {
+    "files": 7,
+    "added": 458,
+    "removed": 47,
+    "test_files": 0
+   },
+   "cost": {
+    "prompt_tokens": 405727,
+    "calls": 1
+   },
+   "verifier": {
+    "fixed": 2,
+    "regressed": 1
+   },
+   "summary": "It implemented the previously missing source-resolution workflow: expanding configured shortcuts, distinguishing local paths, remote URLs, and archive inputs, validating selected subdirectories and required metadata, and raising the documented errors for unsupported, missing, or invalid sources. It also touched public entry-point exposure, interactive overwrite/reuse prompts, temporary download cleanup, safer recursive deletion including read-only files, and small filesystem utilities such as executable-bit handling and temporary directory copying.",
+   "stable_fix": 9,
+   "stable_reg": 1
+  },
+  {
+   "task": "cookiecutter",
+   "milestone": "template_source_resolution",
+   "run": "rerun-F1-20261002T123356-cookiecutter-template_source_resolution-r0",
+   "features": {
+    "kind": "foundation",
+    "n_focus_files": 6,
+    "n_public_symbols": 42,
+    "n_documented_exceptions": 9,
+    "n_state_transitions": 2,
+    "n_public_classes": 3,
+    "dep_depth": 1,
+    "position": 2,
+    "n_milestones": 5,
+    "position_group": "middle"
+   },
+   "repair": "default repair (continuation with the failure list)",
+   "repair_kind": "R0",
+   "fixed": 7,
+   "regressed": 0,
+   "fixed_classes": {
+    "E4": 1,
+    "E3": 6
+   },
+   "first_run_failures": {
+    "E3": 6,
+    "E4": 1
+   },
+   "cited_sentences": [
+    "**Branch/Tag Support**: Use the `--checkout` parameter to specify Git branches, tags, or commits",
+    "Applies abbreviation expansion first, then searches candidate paths (including an optional sub-`directory`).",
+    "Remote Git repository URL \u2014 cloned into `clone_to_dir`.",
+    "If not prefixed, the function heuristically infers the type based on substrings like `'git'` or `'bitbucket'`.",
+    "`identify_repo(repo_url)`: Determine whether the given `repo_url` refers to a Git or Mercurial (hg) repository.",
+    "`is_zip_file(value)`: Return `True` if the given `value` ends with the `.zip` extension (case-insensitive), indicating it is a ZIP archive.",
+    "If the URI is a URL, it caches the downloaded zip in the specified `clone_to_dir` and prompts for overwrite confirmation unless `no_input` is True."
+   ],
+   "diff": {
+    "files": 7,
+    "added": 555,
+    "removed": 47,
+    "test_files": 0
+   },
+   "cost": {
+    "prompt_tokens": 501113,
+    "calls": 1
+   },
+   "verifier": {
+    "fixed": 2,
+    "regressed": 1
+   },
+   "summary": "Implemented the previously missing path-resolution workflow for inputs that may be local directories, remote locations, archives, or configured shorthands, including validation of supported schemes, safe subdirectory handling, existence checks, and correct documented error reporting. It also updated public entry points, main orchestration, archive/remote cleanup, deletion robustness for read-only files, and aligned an invalid-template case with the expected exception type.",
+   "stable_fix": 9,
+   "stable_reg": 1
+  },
+  {
+   "task": "cookiecutter",
+   "milestone": "foundation_config_environment_contracts",
+   "run": "rerun-U-S1-20261002T102616-cookiecutter-foundation_config_environment_contracts-r0",
+   "features": {
+    "kind": "foundation",
+    "n_focus_files": 8,
+    "n_public_symbols": 61,
+    "n_documented_exceptions": 7,
+    "n_state_transitions": 5,
+    "n_public_classes": 11,
+    "dep_depth": 0,
+    "position": 1,
+    "n_milestones": 5,
+    "position_group": "first"
+   },
+   "repair": "default repair (continuation with the failure list)",
+   "repair_kind": "R0",
+   "fixed": 2,
+   "regressed": 0,
+   "fixed_classes": {
+    "E3": 2
+   },
+   "first_run_failures": {
+    "E3": 2,
+    "E6": 1
+   },
+   "cited_sentences": [
+    "If `default_config` is `True`, returns a copy of `DEFAULT_CONFIG`.",
+    "Falls back to `DEFAULT_CONFIG` if no user config file exists."
+   ],
+   "diff": {
+    "files": 19,
+    "added": 1317,
+    "removed": 0,
+    "test_files": 0
+   },
+   "cost": {
+    "prompt_tokens": 421227,
+    "calls": 1
+   },
+   "verifier": {
+    "fixed": 1,
+    "regressed": 0
+   },
+   "summary": "It added a previously missing executable/library implementation path so the main workflow can be invoked, configured, validate inputs, process structured settings, and report documented errors instead of failing at import or startup. The change touched entry points, version/default metadata, configuration merging and path expansion, extension/environment setup, command-line option validation, exception exposure, and supporting utility behavior.",
+   "stable_fix": 3,
+   "stable_reg": 0
+  },
+  {
+   "task": "cookiecutter",
+   "milestone": "template_source_resolution",
+   "run": "rerun-U-S1-20261002T102616-cookiecutter-template_source_resolution-r0",
+   "features": {
+    "kind": "foundation",
+    "n_focus_files": 6,
+    "n_public_symbols": 42,
+    "n_documented_exceptions": 9,
+    "n_state_transitions": 2,
+    "n_public_classes": 3,
+    "dep_depth": 1,
+    "position": 2,
+    "n_milestones": 5,
+    "position_group": "middle"
+   },
+   "repair": "default repair (continuation with the failure list)",
+   "repair_kind": "R0",
+   "fixed": 5,
+   "regressed": 0,
+   "fixed_classes": {
+    "E4": 1,
+    "E3": 3,
+    "E5": 1
+   },
+   "first_run_failures": {
+    "E3": 3,
+    "E5": 1,
+    "E4": 1
+   },
+   "cited_sentences": [
+    "**Branch/Tag Support**: Use the `--checkout` parameter to specify Git branches, tags, or commits",
+    "Applies abbreviation expansion first, then searches candidate paths (including an optional sub-`directory`).",
+    "Remote Git repository URL \u2014 cloned into `clone_to_dir`.",
+    "If no matching directory is found, raises `NonTemplatedInputDirException`.",
+    "If the URI is a URL, it caches the downloaded zip in the specified `clone_to_dir` and prompts for overwrite confirmation unless `no_input` is True."
+   ],
+   "diff": {
+    "files": 7,
+    "added": 522,
+    "removed": 51,
+    "test_files": 0
+   },
+   "cost": {
+    "prompt_tokens": 569150,
+    "calls": 1
+   },
+   "verifier": {
+    "fixed": 1,
+    "regressed": 0
+   },
+   "summary": "It completed the main input-source resolution workflow by adding support for non-local sources, archive handling, abbreviation expansion, subdirectory selection, repository validation, documented \u201cnot found/unknown type\u201d errors, and proper temporary cleanup. It also touched public entry-point exports, interactive overwrite/reuse prompting, deletion robustness for read-only files, and small utility helpers for permissions, temporary copies, and context-derived environment setup.",
+   "stable_fix": 6,
+   "stable_reg": 0
+  },
+  {
+   "task": "imapclient",
+   "milestone": "response_lexing_and_parsing",
+   "run": "cpe-20261001T055006Z-imapclient",
+   "features": {
+    "kind": "foundation",
+    "n_focus_files": 7,
+    "n_public_symbols": 5,
+    "n_documented_exceptions": 1,
+    "n_state_transitions": 0,
+    "n_public_classes": 3,
+    "dep_depth": 1,
+    "position": 2,
+    "n_milestones": 5,
+    "position_group": "middle"
+   },
+   "repair": "default repair (continuation with the failure list)",
+   "repair_kind": "R0",
+   "fixed": 6,
+   "regressed": 0,
+   "fixed_classes": {
+    "E6": 4,
+    "E3": 2
+   },
+   "first_run_failures": {
+    "E6": 4,
+    "E3": 2
+   },
+   "cited_sentences": [
+    "`BodyData(response: Tuple[_Atom, ...])`: A tuple subclass that represents parsed IMAP BODY or BODYSTRUCTURE response data, supporting both single-part and multipart messages.",
+    "`create(response: Tuple[_Atom, ...]) -> \\",
+    "Ability to parse ENVELOPE responses into structured objects",
+    "`Envelope(date: Optional[datetime.datetime], subject: bytes, from_: Optional[Tuple[\\",
+    "`Address(name: bytes, route: bytes, mailbox: bytes, host: bytes)`: A dataclass representing an individual email address, typically used within `Envelope` fields.",
+    "Ability to fetch message data (flags, envelope, body parts, headers, etc.)",
+    "`parse_fetch_response(text: List[bytes], normalise_times: bool = True, uid_is_key: bool = True) -> defaultdict[int, _ParseFetchResponseInnerDict]`: Parses IMAP FETCH responses into a dictionary keyed by message ID (or UID if `uid_is_key=True`), where each value is a dictionary mapping FETCH attributes (e.g., `b\\",
+    "`fetch(messages, data, modifiers)`: Fetch specified *data* items for messages; returns a dict keyed by message id with parsed typed values (timestamps -> `datetime`, ENVELOPE -> `Envelope`, etc.).",
+    "`TokenSource(text: List[bytes])`: A simple iterator wrapper around the `Lexer` class that provides access to the current IMAP literal during tokenization.",
+    "The instance attribute `current_literal` is an optional `bytes` object representing the literal associated with the current token source, if any."
+   ],
+   "diff": {
+    "files": 20,
+    "added": 358,
+    "removed": 18,
+    "test_files": 1
+   },
+   "cost": {
+    "prompt_tokens": 959193,
+    "calls": 1
+   },
+   "verifier": null,
+   "summary": "It replaced placeholder/pass-through parsing with a real structured parser that handles nesting, quoted/escaped text, embedded binary segments, numeric and null conversion, and higher-level response normalization, making previously unimplemented workflow branches return meaningful structured results. It also added input/type validation, protocol/format error reporting for malformed data, conversion helpers for specialized structured records and timestamps, and touched public parsing entry points plus lower-level tokenization/data-handling code.",
+   "stable_fix": 6,
+   "stable_reg": 0
+  },
+  {
+   "task": "imapclient",
+   "milestone": "transport_session_and_authentication",
+   "run": "cpe-20261001T055006Z-imapclient",
+   "features": {
+    "kind": "foundation",
+    "n_focus_files": 6,
+    "n_public_symbols": 6,
+    "n_documented_exceptions": 0,
+    "n_state_transitions": 0,
+    "n_public_classes": 0,
+    "dep_depth": 2,
+    "position": 3,
+    "n_milestones": 5,
+    "position_group": "middle"
+   },
+   "repair": "default repair (continuation with the failure list)",
+   "repair_kind": "R0",
+   "fixed": 4,
+   "regressed": 0,
+   "fixed_classes": {
+    "E3": 4
+   },
+   "first_run_failures": {
+    "E3": 4
+   },
+   "cited_sentences": [
+    "`enable(*capabilities)`: Activate server-side capability extensions (requires ENABLE capability); returns list of enabled extensions.",
+    "`login(username: str, password: str)`: Authenticate using plain username/password; returns server response or raises `LoginError`.",
+    "`noop()`: Execute NOOP to retrieve server-side updates; returns command response and list of status updates.",
+    "`IMAP4_TLS(host: str, port: int, ssl_context: Optional[ssl.SSLContext], timeout: Optional[float] = None)`: An IMAP4 client class that establishes a TLS/SSL-encrypted connection to an IMAP server, adapted from `imaplib.IMAP4_SSL` but with explicit SSL context and timeout support."
+   ],
+   "diff": {
+    "files": 22,
+    "added": 565,
+    "removed": 28,
+    "test_files": 1
+   },
+   "cost": {
+    "prompt_tokens": 1239616,
+    "calls": 1
+   },
+   "verifier": {
+    "fixed": 0,
+    "regressed": 0
+   },
+   "summary": "Added the missing public error types and mapped lower-level failures and non-success command responses into the documented higher-level exceptions, including exposing them through the main entry points. The change also filled in broad client workflow support around command execution, argument normalization/quoting/parsing, timeout/default handling, logging redaction, context cleanup, and input validation for invalid criteria.",
+   "stable_fix": 4,
+   "stable_reg": 0
+  },
+  {
+   "task": "imapclient",
+   "milestone": "mailbox_message_and_extension_operations",
+   "run": "cpe-20261001T055006Z-imapclient",
+   "features": {
+    "kind": "foundation",
+    "n_focus_files": 6,
+    "n_public_symbols": 5,
+    "n_documented_exceptions": 0,
+    "n_state_transitions": 1,
+    "n_public_classes": 1,
+    "dep_depth": 3,
+    "position": 4,
+    "n_milestones": 5,
+    "position_group": "middle"
+   },
+   "repair": "node resample (the blamed writer re-run with the evidence)",
+   "repair_kind": "resample",
+   "fixed": 5,
+   "regressed": 0,
+   "fixed_classes": {
+    "E3": 4,
+    "E6": 1
+   },
+   "first_run_failures": {
+    "E3": 4,
+    "E6": 1
+   },
+   "cited_sentences": [
+    "`getacl(folder)`: Return list of `(who, acl)` tuples describing access controls (requires ACL).",
+    "`get_quota(mailbox=\\",
+    "`get_quota_root(mailbox)`: Return `(MailboxQuotaRoots, List[Quota])` for the mailbox (requires QUOTA).",
+    "`append(folder, msg, flags=(), msg_time=None)`: Append a message string to *folder* with optional flags and internal date; returns server APPEND response.",
+    "`copy(messages, folder)`: Copy messages to another folder; returns server COPY response string (UID-aware).",
+    "`move(messages, folder)`: Atomically move messages to another folder (requires MOVE capability); returns server response.",
+    "`get_gmail_labels(messages)`: Return Gmail `X-GM-LABELS` per message decoded to unicode (requires server support).",
+    "`add_gmail_labels(messages, labels, silent=False)`: Add Gmail labels (requires `X-GM-LABELS` support); returns updated labels or `None`.",
+    "`idle()`: Enter IDLE mode (server will send unsolicited updates; use `idle_check`/`idle_done` to interact) (requires IDLE).",
+    "`idle_check(timeout=None)`: Poll for IDLE responses; returns list of parsed untagged responses (requires IDLE)."
+   ],
+   "diff": {
+    "files": 19,
+    "added": 519,
+    "removed": 7,
+    "test_files": 2
+   },
+   "cost": {
+    "prompt_tokens": 4290172,
+    "calls": 3
+   },
+   "verifier": null,
+   "summary": "Implemented previously missing branches of the main client workflow, adding many public entry points for remote operations, response parsing/normalization, encoded text handling, stateful waiting, and result conversion to documented return shapes. It also tightened input validation, mapped lower-level failures to documented errors, corrected default argument handling, and added cleanup/state tracking needed for long-running interactions.",
+   "stable_fix": 5,
+   "stable_reg": 0
+  },
+  {
+   "task": "imapclient",
+   "milestone": "public_api_config_and_full_integration",
+   "run": "cpe-20261001T055006Z-imapclient",
+   "features": {
+    "kind": "integration",
+    "n_focus_files": 11,
+    "n_public_symbols": 99,
+    "n_documented_exceptions": 1,
+    "n_state_transitions": 0,
+    "n_public_classes": 1,
+    "dep_depth": 4,
+    "position": 5,
+    "n_milestones": 5,
+    "position_group": "last"
+   },
+   "repair": "default repair (continuation with the failure list)",
+   "repair_kind": "R0",
+   "fixed": 4,
+   "regressed": 0,
+   "fixed_classes": {
+    "E3": 4
+   },
+   "first_run_failures": {
+    "E3": 4
+   },
+   "cited_sentences": [
+    "`create_client_from_config(conf: argparse.Namespace, login: bool = True) -> imapclient.IMAPClient`: Instantiates and optionally logs in an `IMAPClient` using connection settings from the provided configuration namespace.",
+    "- Ability to authenticate using OAuth2/XOAUTH2 mechanism",
+    "`get_config_defaults() -> Dict[str, Any]`: Returns a dictionary of default configuration values for IMAP connection parameters, sourcing credentials from environment variables where available.",
+    "`command_line() -> argparse.Namespace`: Parses command-line arguments for connecting to an IMAP server, supporting both direct options and a configuration file.",
+    "python -m imapclient.interact -H <host> -u <user>",
+    "The connected IMAPClient instance is available as variable "
+   ],
+   "diff": {
+    "files": 24,
+    "added": 416,
+    "removed": 11,
+    "test_files": 5
+   },
+   "cost": {
+    "prompt_tokens": 1374032,
+    "calls": 1
+   },
+   "verifier": {
+    "fixed": 0,
+    "regressed": 0
+   },
+   "summary": "Implemented a previously stubbed configuration-driven initialization path, including exported entry points, expanded defaults, environment/file overrides, type coercion, secure-connection setup, timeout handling, optional credential/token-based authentication, and token caching/refresh. It also added error handling for external refresh failures and ensured partially initialized resources are cleaned up when setup fails.",
+   "stable_fix": 4,
+   "stable_reg": 0
+  },
+  {
+   "task": "imapclient",
+   "milestone": "transport_session_and_authentication",
+   "run": "cpe-20260930T210432Z-imapclient",
+   "features": {
+    "kind": "foundation",
+    "n_focus_files": 6,
+    "n_public_symbols": 6,
+    "n_documented_exceptions": 0,
+    "n_state_transitions": 0,
+    "n_public_classes": 0,
+    "dep_depth": 2,
+    "position": 3,
+    "n_milestones": 5,
+    "position_group": "middle"
+   },
+   "repair": "default repair (continuation with the failure list)",
+   "repair_kind": "R0",
+   "fixed": 6,
+   "regressed": 0,
+   "fixed_classes": {
+    "E3": 6
+   },
+   "first_run_failures": {
+    "E3": 6
+   },
+   "cited_sentences": [
+    "capabilities() -> tuple: Return server capabilities (cached where appropriate).",
+    "has_capability(capability) -> bool: Return True if the server advertises the given capability.",
+    "enable(*capabilities): Activate server-side capability extensions (requires ENABLE capability); returns list of enabled extensions.",
+    "login(username: str, password: str): Authenticate using plain username/password; returns server response or raises `LoginError`.",
+    "noop(): Execute NOOP to retrieve server-side updates; returns command response and list of status updates.",
+    "- Ability to distinguish between different error types (abort, read-only, capability, login, protocol)",
+    "oauth2_login(user: str, access_token: str, mech: str = \\",
+    "oauthbearer_login(identity, access_token): Authenticate using the OAUTHBEARER mechanism (Gmail support).",
+    "plain_login(identity, password, authorization_identity=None): Authenticate using the PLAIN SASL mechanism.",
+    "sasl_login(mech_name, mech_callable): Authenticate using a provided SASL mechanism callable; supports multi-step stateful/ stateless mechanisms."
+   ],
+   "diff": {
+    "files": 22,
+    "added": 612,
+    "removed": 24,
+    "test_files": 1
+   },
+   "cost": {
+    "prompt_tokens": 732262,
+    "calls": 1
+   },
+   "verifier": {
+    "fixed": 0,
+    "regressed": 0
+   },
+   "summary": "Implemented previously missing workflow behavior across connection setup, authentication, capability negotiation, command execution, timeout handling, and cleanup, including documented defaults and broader public entry points. It also added missing error classifications, input/argument validation, response/data normalization and parsing helpers, and safer resource shutdown/context-manager behavior.",
+   "stable_fix": 6,
+   "stable_reg": 0
+  },
+  {
+   "task": "imapclient",
+   "milestone": "mailbox_message_and_extension_operations",
+   "run": "cpe-20260930T210432Z-imapclient",
+   "features": {
+    "kind": "foundation",
+    "n_focus_files": 6,
+    "n_public_symbols": 5,
+    "n_documented_exceptions": 0,
+    "n_state_transitions": 1,
+    "n_public_classes": 1,
+    "dep_depth": 3,
+    "position": 4,
+    "n_milestones": 5,
+    "position_group": "middle"
+   },
+   "repair": "default repair (continuation with the failure list)",
+   "repair_kind": "R0",
+   "fixed": 21,
+   "regressed": 0,
+   "fixed_classes": {
+    "E6": 5,
+    "E3": 16
+   },
+   "first_run_failures": {
+    "E3": 16,
+    "E6": 5
+   },
+   "cited_sentences": [
+    "add_flags(messages, flags, silent=False): Add flags to messages; returns updated flags per message or `None` if *silent*.",
+    "set_gmail_labels(messages, labels, silent=False): Set Gmail labels for messages; returns updated labels or `None`.",
+    "_normalise_search_criteria(criteria, charset=None) -> List[bytes]: Convert various forms of search *criteria* (strings, ints, datetimes, nested lists) into a list of IMAP-ready bytes values; raises `InvalidCriteriaError` on empty input.",
+    "create_folder(folder): Create *folder* on server; return server response string.",
+    "rename_folder(old_name, new_name): Rename a folder on the server; return server response string.",
+    "delete_folder(folder): Delete a folder on the server; return server response string.",
+    "subscribe_folder(folder): Subscribe to *folder*; return server response string.",
+    "unsubscribe_folder(folder): Unsubscribe from *folder*; return server response string.",
+    "folder_status(folder, what=None): Query STATUS for a folder and return requested items as a dict.",
+    "select_folder(folder, readonly=False): Select a mailbox; returns a dict with select response keys (EXISTS, FLAGS, UIDVALIDITY, etc.)."
+   ],
+   "diff": {
+    "files": 20,
+    "added": 772,
+    "removed": 20,
+    "test_files": 2
+   },
+   "cost": {
+    "prompt_tokens": 2112946,
+    "calls": 1
+   },
+   "verifier": {
+    "fixed": 0,
+    "regressed": 0
+   },
+   "summary": "Implemented broad missing workflow coverage across the public API: additional entry points for resource listing/selection/mutation, searching/sorting/retrieval, state updates, append/copy/move/delete-style operations, quota/metadata/idle handling, and response parsing. It mainly added command construction, input normalization/encoding, capability and state checks, structured response parsing, documented error behavior, timeout/idle cleanup, and exported helper access needed by the acceptance cases.",
+   "stable_fix": 21,
+   "stable_reg": 0
+  },
+  {
+   "task": "imapclient",
+   "milestone": "public_api_config_and_full_integration",
+   "run": "cpe-20260930T210432Z-imapclient",
+   "features": {
+    "kind": "integration",
+    "n_focus_files": 11,
+    "n_public_symbols": 99,
+    "n_documented_exceptions": 1,
+    "n_state_transitions": 0,
+    "n_public_classes": 1,
+    "dep_depth": 4,
+    "position": 5,
+    "n_milestones": 5,
+    "position_group": "last"
+   },
+   "repair": "default repair (continuation with the failure list)",
+   "repair_kind": "R0",
+   "fixed": 5,
+   "regressed": 0,
+   "fixed_classes": {
+    "E3": 5
+   },
+   "first_run_failures": {
+    "E3": 5
+   },
+   "cited_sentences": [
+    "Ability to authenticate using OAuth2/XOAUTH2 mechanism",
+    "`get_oauth2_token(hostname: str, client_id: str, client_secret: str, refresh_token: str) -> str`: Returns a cached or newly refreshed OAuth2 access token for the given set of credentials, caching tokens to avoid redundant refresh requests.",
+    "`get_config_defaults() -> Dict[str, Any]`: Returns a dictionary of default configuration values for IMAP connection parameters, sourcing credentials from environment variables where available.",
+    "`IMAPClient(host: str, port: int = None, use_uid: bool = True, ssl: bool = True, stream: bool = False, ssl_context: Optional[ssl_lib.SSLContext] = None, timeout: Optional[float] = None)`",
+    "`parse_config_file(filename: str) -> argparse.Namespace`: Parses an INI-format configuration file to extract IMAP connection settings, returning a namespace that includes a DEFAULT section and any alternate named sections.",
+    "python -m imapclient.interact -H <host> -u <user>",
+    "The connected IMAPClient instance is available as variable \\"
+   ],
+   "diff": {
+    "files": 23,
+    "added": 371,
+    "removed": 15,
+    "test_files": 4
+   },
+   "cost": {
+    "prompt_tokens": 544448,
+    "calls": 1
+   },
+   "verifier": {
+    "fixed": 0,
+    "regressed": 0
+   },
+   "summary": "Implemented the missing configuration-driven setup workflow, including typed default handling, file/environment merging, optional secure-connection setup, automatic authentication path selection, external token retrieval with caching, and construction of the runtime object from those settings. It also exposed the new public entry points and added validation/conversion for configuration values plus cleanup-on-failure so partially created resources are shut down when setup errors occur.",
+   "stable_fix": 5,
+   "stable_reg": 0
+  }
+ ],
+ "clusters": [
+  {
+   "key": "middle/small/E3",
+   "position_group": "middle",
+   "size_group": "small",
+   "error_class": "E3",
+   "milestones": [
+    "cookiecutter:project_generation_engine",
+    "cookiecutter:template_source_resolution",
+    "imapclient:mailbox_message_and_extension_operations",
+    "imapclient:transport_session_and_authentication"
+   ],
+   "n_milestones": 4,
+   "experiences": 10,
+   "mean_stable_fixes": 5.92,
+   "regressions": 1.71,
+   "usefulness": 21.95,
+   "repairs": {
+    "default repair (continuation with the failure list)": 8,
+    "node resample (the blamed writer re-run with the evidence)": 2
+   },
+   "summaries": [
+    "Added the missing end-to-end handling for externally sourced inputs: resolving shorthand names, distinguishing local paths, archive inputs, and remote sources, selecting a safe subdirectory, validating that required metadata exists, and routing unsupported source types to documented errors. It touched public entry-point exports, main workflow dispatch, input/source validation, archive and remote retrieval integration, interactive overwrite/reuse handling, broader extension-load error wrapping, and cleanup of temporary resources after use.",
+    "It broadened and corrected the main input-source workflow: public entry points were re-exported, source identifiers are now expanded and classified more accurately, local/remote/archive inputs are handled, subdirectory selection is validated, and documented error types are raised for missing, ambiguous, unsupported, or unsafe inputs. It also touched prompting and cleanup behavior by confirming overwrite/reuse decisions, removing temporary downloaded/extracted resources reliably, preserving safer path handling, and aligning default storage/configuration behavior with expected acceptance scenarios.",
+    "It expanded the public entry surface and corrected generation workflow behavior: better input-directory validation with the intended error distinction, more robust path/pattern handling for \u201ccopy without processing,\u201d safer binary/text handling, configurable newline preservation, and correct defaults around rendered directory names. It also improved failure handling by tracking and cleaning up only newly created outputs, while preserving permissions and skip/overwrite semantics during copying and rendering.",
+    "It implemented the previously missing source-resolution workflow: expanding configured shortcuts, distinguishing local paths, remote URLs, and archive inputs, validating selected subdirectories and required metadata, and raising the documented errors for unsupported, missing, or invalid sources. It also touched public entry-point exposure, interactive overwrite/reuse prompts, temporary download cleanup, safer recursive deletion including read-only files, and small filesystem utilities such as executable-bit handling and temporary directory copying.",
+    "Implemented the previously missing path-resolution workflow for inputs that may be local directories, remote locations, archives, or configured shorthands, including validation of supported schemes, safe subdirectory handling, existence checks, and correct documented error reporting. It also updated public entry points, main orchestration, archive/remote cleanup, deletion robustness for read-only files, and aligned an invalid-template case with the expected exception type.",
+    "It completed the main input-source resolution workflow by adding support for non-local sources, archive handling, abbreviation expansion, subdirectory selection, repository validation, documented \u201cnot found/unknown type\u201d errors, and proper temporary cleanup. It also touched public entry-point exports, interactive overwrite/reuse prompting, deletion robustness for read-only files, and small utility helpers for permissions, temporary copies, and context-derived environment setup."
+   ],
+   "sentences": [
+    "**Branch/Tag Support**: Use the `--checkout` parameter to specify Git branches, tags, or commits",
+    "Applies abbreviation expansion first, then searches candidate paths (including an optional sub-`directory`).",
+    "Remote Git repository URL \u2014 cloned into `clone_to_dir`.",
+    "If not prefixed, the function heuristically infers the type based on substrings like `'git'` or `'bitbucket'`.",
+    "`identify_repo(repo_url)`: Determine whether the given `repo_url` refers to a Git or Mercurial (hg) repository.",
+    "If the URI is a URL, it caches the downloaded zip in the specified `clone_to_dir` and prompts for overwrite confirmation unless `no_input` is True.",
+    "`InvalidZipRepository`: Exception raised when a provided Zip file is not a valid Cookiecutter template repository (e.g., malformed or missing `cookiecutter.json`).",
+    "After cloning, optionally checks out a specific `checkout` reference (branch, tag, or commit).",
+    "Raises specific exceptions (`RepositoryNotFound`, `RepositoryCloneFailed`, `VCSNotInstalled`, `UnknownRepoType`) for various failure modes.",
+    "- **ZIP Files**: Support for local or online ZIP archives"
+   ],
+   "cost_tokens": 1547234,
+   "excluded": "rejected twice"
+  },
+  {
+   "key": "last/large/E3",
+   "position_group": "last",
+   "size_group": "large",
+   "error_class": "E3",
+   "milestones": [
+    "imapclient:public_api_config_and_full_integration"
+   ],
+   "n_milestones": 1,
+   "experiences": 2,
+   "mean_stable_fixes": 4.5,
+   "regressions": 0.0,
+   "usefulness": 4.5,
+   "repairs": {
+    "default repair (continuation with the failure list)": 2
+   },
+   "summaries": [
+    "Implemented a previously stubbed configuration-driven initialization path, including exported entry points, expanded defaults, environment/file overrides, type coercion, secure-connection setup, timeout handling, optional credential/token-based authentication, and token caching/refresh. It also added error handling for external refresh failures and ensured partially initialized resources are cleaned up when setup fails.",
+    "Implemented the missing configuration-driven setup workflow, including typed default handling, file/environment merging, optional secure-connection setup, automatic authentication path selection, external token retrieval with caching, and construction of the runtime object from those settings. It also exposed the new public entry points and added validation/conversion for configuration values plus cleanup-on-failure so partially created resources are shut down when setup errors occur."
+   ],
+   "sentences": [
+    "`create_client_from_config(conf: argparse.Namespace, login: bool = True) -> imapclient.IMAPClient`: Instantiates and optionally logs in an `IMAPClient` using connection settings from the provided configuration namespace.",
+    "- Ability to authenticate using OAuth2/XOAUTH2 mechanism",
+    "`get_config_defaults() -> Dict[str, Any]`: Returns a dictionary of default configuration values for IMAP connection parameters, sourcing credentials from environment variables where available.",
+    "`command_line() -> argparse.Namespace`: Parses command-line arguments for connecting to an IMAP server, supporting both direct options and a configuration file.",
+    "python -m imapclient.interact -H <host> -u <user>",
+    "The connected IMAPClient instance is available as variable ",
+    "Ability to authenticate using OAuth2/XOAUTH2 mechanism",
+    "`get_oauth2_token(hostname: str, client_id: str, client_secret: str, refresh_token: str) -> str`: Returns a cached or newly refreshed OAuth2 access token for the given set of credentials, caching tokens to avoid redundant refresh requests.",
+    "`IMAPClient(host: str, port: int = None, use_uid: bool = True, ssl: bool = True, stream: bool = False, ssl_context: Optional[ssl_lib.SSLContext] = None, timeout: Optional[float] = None)`",
+    "`parse_config_file(filename: str) -> argparse.Namespace`: Parses an INI-format configuration file to extract IMAP connection settings, returning a namespace that includes a DEFAULT section and any alternate named sections."
+   ],
+   "cost_tokens": 959240,
+   "excluded": "one milestone"
+  },
+  {
+   "key": "middle/large/E6",
+   "position_group": "middle",
+   "size_group": "large",
+   "error_class": "E6",
+   "milestones": [
+    "imapclient:response_lexing_and_parsing"
+   ],
+   "n_milestones": 1,
+   "experiences": 1,
+   "mean_stable_fixes": 4.0,
+   "regressions": 0.0,
+   "usefulness": 4.0,
+   "repairs": {
+    "default repair (continuation with the failure list)": 1
+   },
+   "summaries": [
+    "It replaced placeholder/pass-through parsing with a real structured parser that handles nesting, quoted/escaped text, embedded binary segments, numeric and null conversion, and higher-level response normalization, making previously unimplemented workflow branches return meaningful structured results. It also added input/type validation, protocol/format error reporting for malformed data, conversion helpers for specialized structured records and timestamps, and touched public parsing entry points plus lower-level tokenization/data-handling code."
+   ],
+   "sentences": [
+    "`BodyData(response: Tuple[_Atom, ...])`: A tuple subclass that represents parsed IMAP BODY or BODYSTRUCTURE response data, supporting both single-part and multipart messages.",
+    "`create(response: Tuple[_Atom, ...]) -> \\",
+    "Ability to parse ENVELOPE responses into structured objects",
+    "`Envelope(date: Optional[datetime.datetime], subject: bytes, from_: Optional[Tuple[\\",
+    "`Address(name: bytes, route: bytes, mailbox: bytes, host: bytes)`: A dataclass representing an individual email address, typically used within `Envelope` fields.",
+    "Ability to fetch message data (flags, envelope, body parts, headers, etc.)",
+    "`parse_fetch_response(text: List[bytes], normalise_times: bool = True, uid_is_key: bool = True) -> defaultdict[int, _ParseFetchResponseInnerDict]`: Parses IMAP FETCH responses into a dictionary keyed by message ID (or UID if `uid_is_key=True`), where each value is a dictionary mapping FETCH attributes (e.g., `b\\",
+    "`fetch(messages, data, modifiers)`: Fetch specified *data* items for messages; returns a dict keyed by message id with parsed typed values (timestamps -> `datetime`, ENVELOPE -> `Envelope`, etc.).",
+    "`TokenSource(text: List[bytes])`: A simple iterator wrapper around the `Lexer` class that provides access to the current IMAP literal during tokenization.",
+    "The instance attribute `current_literal` is an optional `bytes` object representing the literal associated with the current token source, if any."
+   ],
+   "cost_tokens": 959193,
+   "excluded": "one milestone"
+  },
+  {
+   "key": "middle/small/E6",
+   "position_group": "middle",
+   "size_group": "small",
+   "error_class": "E6",
+   "milestones": [
+    "imapclient:mailbox_message_and_extension_operations"
+   ],
+   "n_milestones": 1,
+   "experiences": 2,
+   "mean_stable_fixes": 3.0,
+   "regressions": 0.0,
+   "usefulness": 3.0,
+   "repairs": {
+    "node resample (the blamed writer re-run with the evidence)": 1,
+    "default repair (continuation with the failure list)": 1
+   },
+   "summaries": [
+    "Implemented previously missing branches of the main client workflow, adding many public entry points for remote operations, response parsing/normalization, encoded text handling, stateful waiting, and result conversion to documented return shapes. It also tightened input validation, mapped lower-level failures to documented errors, corrected default argument handling, and added cleanup/state tracking needed for long-running interactions.",
+    "Implemented broad missing workflow coverage across the public API: additional entry points for resource listing/selection/mutation, searching/sorting/retrieval, state updates, append/copy/move/delete-style operations, quota/metadata/idle handling, and response parsing. It mainly added command construction, input normalization/encoding, capability and state checks, structured response parsing, documented error behavior, timeout/idle cleanup, and exported helper access needed by the acceptance cases."
+   ],
+   "sentences": [
+    "`getacl(folder)`: Return list of `(who, acl)` tuples describing access controls (requires ACL).",
+    "`get_quota(mailbox=\\",
+    "`get_quota_root(mailbox)`: Return `(MailboxQuotaRoots, List[Quota])` for the mailbox (requires QUOTA).",
+    "`append(folder, msg, flags=(), msg_time=None)`: Append a message string to *folder* with optional flags and internal date; returns server APPEND response.",
+    "`copy(messages, folder)`: Copy messages to another folder; returns server COPY response string (UID-aware).",
+    "`move(messages, folder)`: Atomically move messages to another folder (requires MOVE capability); returns server response.",
+    "`get_gmail_labels(messages)`: Return Gmail `X-GM-LABELS` per message decoded to unicode (requires server support).",
+    "`add_gmail_labels(messages, labels, silent=False)`: Add Gmail labels (requires `X-GM-LABELS` support); returns updated labels or `None`.",
+    "`idle()`: Enter IDLE mode (server will send unsolicited updates; use `idle_check`/`idle_done` to interact) (requires IDLE).",
+    "`idle_check(timeout=None)`: Poll for IDLE responses; returns list of parsed untagged responses (requires IDLE)."
+   ],
+   "cost_tokens": 3201559,
+   "excluded": "one milestone"
+  },
+  {
+   "key": "first/large/E3",
+   "position_group": "first",
+   "size_group": "large",
+   "error_class": "E3",
+   "milestones": [
+    "cookiecutter:foundation_config_environment_contracts"
+   ],
+   "n_milestones": 1,
+   "experiences": 4,
+   "mean_stable_fixes": 3.58,
+   "regressions": 1.0,
+   "usefulness": 2.58,
+   "repairs": {
+    "playbook row E3-T1": 1,
+    "default repair (continuation with the failure list)": 3
+   },
+   "summaries": [
+    "It added a previously missing usable implementation surface: version metadata, public initialization, command-line/module entry points, configuration loading, environment setup, extension hooks, utilities, logging, and defined exception types so the expected workflows could be imported and executed. The touched code is mainly entry-point wiring, defaults/configuration handling, template/runtime data processing support, and standardized error handling rather than a small localized logic fix.",
+    "It added a previously missing end-to-end implementation so the accepted workflows could run instead of failing from absent entry points or unsupported behavior. The change touched executable entry points, package metadata/version defaults, configuration loading, input/context handling, templated file generation, external-source retrieval, command-line validation, and error reporting paths.",
+    "It added the previously missing end-to-end workflow for turning an input source plus user/configured values into generated output, including noninteractive operation, reuse of saved inputs, overwrite/skip behavior, and documented failures for invalid or ambiguous inputs. It touched entry points, option parsing, configuration/default merging, context/data loading, rendering/copying logic, external source retrieval, hook execution, logging, cleanup-on-failure, and a structured error hierarchy.",
+    "It added a previously missing executable/library implementation path so the main workflow can be invoked, configured, validate inputs, process structured settings, and report documented errors instead of failing at import or startup. The change touched entry points, version/default metadata, configuration merging and path expansion, extension/environment setup, command-line option validation, exception exposure, and supporting utility behavior."
+   ],
+   "sentences": [
+    "Sets a default `datetime_format` of `'%Y-%m-%d'` on the environment and registers the `{% now %}` tag.",
+    "Supports three usage forms: `{% now \\",
+    "If `default_config` is `True`, returns a copy of `DEFAULT_CONFIG`.",
+    "Falls back to `DEFAULT_CONFIG` if no user config file exists.",
+    "- **TimeExtension**: Date and time handling",
+    "`get_user_config(config_file, default_config)`: Determines and returns the effective user configuration for Cookiecutter."
+   ],
+   "cost_tokens": 418958,
+   "excluded": "one milestone"
+  },
+  {
+   "key": "middle/small/E5",
+   "position_group": "middle",
+   "size_group": "small",
+   "error_class": "E5",
+   "milestones": [
+    "cookiecutter:project_generation_engine",
+    "cookiecutter:template_source_resolution"
+   ],
+   "n_milestones": 2,
+   "experiences": 4,
+   "mean_stable_fixes": 1.16,
+   "regressions": 0.0,
+   "usefulness": 2.31,
+   "repairs": {
+    "default repair (continuation with the failure list)": 3,
+    "node resample (the blamed writer re-run with the evidence)": 1
+   },
+   "summaries": [
+    "Added the missing end-to-end handling for externally sourced inputs: resolving shorthand names, distinguishing local paths, archive inputs, and remote sources, selecting a safe subdirectory, validating that required metadata exists, and routing unsupported source types to documented errors. It touched public entry-point exports, main workflow dispatch, input/source validation, archive and remote retrieval integration, interactive overwrite/reuse handling, broader extension-load error wrapping, and cleanup of temporary resources after use.",
+    "It broadened and corrected the main input-source workflow: public entry points were re-exported, source identifiers are now expanded and classified more accurately, local/remote/archive inputs are handled, subdirectory selection is validated, and documented error types are raised for missing, ambiguous, unsupported, or unsafe inputs. It also touched prompting and cleanup behavior by confirming overwrite/reuse decisions, removing temporary downloaded/extracted resources reliably, preserving safer path handling, and aligning default storage/configuration behavior with expected acceptance scenarios.",
+    "It expanded the public entry surface and corrected generation workflow behavior: better input-directory validation with the intended error distinction, more robust path/pattern handling for \u201ccopy without processing,\u201d safer binary/text handling, configurable newline preservation, and correct defaults around rendered directory names. It also improved failure handling by tracking and cleaning up only newly created outputs, while preserving permissions and skip/overwrite semantics during copying and rendering.",
+    "It completed the main input-source resolution workflow by adding support for non-local sources, archive handling, abbreviation expansion, subdirectory selection, repository validation, documented \u201cnot found/unknown type\u201d errors, and proper temporary cleanup. It also touched public entry-point exports, interactive overwrite/reuse prompting, deletion robustness for read-only files, and small utility helpers for permissions, temporary copies, and context-derived environment setup."
+   ],
+   "sentences": [
+    "**Branch/Tag Support**: Use the `--checkout` parameter to specify Git branches, tags, or commits",
+    "Applies abbreviation expansion first, then searches candidate paths (including an optional sub-`directory`).",
+    "Remote Git repository URL \u2014 cloned into `clone_to_dir`.",
+    "If not prefixed, the function heuristically infers the type based on substrings like `'git'` or `'bitbucket'`.",
+    "`identify_repo(repo_url)`: Determine whether the given `repo_url` refers to a Git or Mercurial (hg) repository.",
+    "If the URI is a URL, it caches the downloaded zip in the specified `clone_to_dir` and prompts for overwrite confirmation unless `no_input` is True.",
+    "`InvalidZipRepository`: Exception raised when a provided Zip file is not a valid Cookiecutter template repository (e.g., malformed or missing `cookiecutter.json`).",
+    "After cloning, optionally checks out a specific `checkout` reference (branch, tag, or commit).",
+    "Raises specific exceptions (`RepositoryNotFound`, `RepositoryCloneFailed`, `VCSNotInstalled`, `UnknownRepoType`) for various failure modes.",
+    "- **ZIP Files**: Support for local or online ZIP archives"
+   ],
+   "cost_tokens": 1547628,
+   "excluded": "rejected twice"
+  },
+  {
+   "key": "middle/large/E3",
+   "position_group": "middle",
+   "size_group": "large",
+   "error_class": "E3",
+   "milestones": [
+    "imapclient:response_lexing_and_parsing"
+   ],
+   "n_milestones": 1,
+   "experiences": 1,
+   "mean_stable_fixes": 2.0,
+   "regressions": 0.0,
+   "usefulness": 2.0,
+   "repairs": {
+    "default repair (continuation with the failure list)": 1
+   },
+   "summaries": [
+    "It replaced placeholder/pass-through parsing with a real structured parser that handles nesting, quoted/escaped text, embedded binary segments, numeric and null conversion, and higher-level response normalization, making previously unimplemented workflow branches return meaningful structured results. It also added input/type validation, protocol/format error reporting for malformed data, conversion helpers for specialized structured records and timestamps, and touched public parsing entry points plus lower-level tokenization/data-handling code."
+   ],
+   "sentences": [
+    "`BodyData(response: Tuple[_Atom, ...])`: A tuple subclass that represents parsed IMAP BODY or BODYSTRUCTURE response data, supporting both single-part and multipart messages.",
+    "`create(response: Tuple[_Atom, ...]) -> \\",
+    "Ability to parse ENVELOPE responses into structured objects",
+    "`Envelope(date: Optional[datetime.datetime], subject: bytes, from_: Optional[Tuple[\\",
+    "`Address(name: bytes, route: bytes, mailbox: bytes, host: bytes)`: A dataclass representing an individual email address, typically used within `Envelope` fields.",
+    "Ability to fetch message data (flags, envelope, body parts, headers, etc.)",
+    "`parse_fetch_response(text: List[bytes], normalise_times: bool = True, uid_is_key: bool = True) -> defaultdict[int, _ParseFetchResponseInnerDict]`: Parses IMAP FETCH responses into a dictionary keyed by message ID (or UID if `uid_is_key=True`), where each value is a dictionary mapping FETCH attributes (e.g., `b\\",
+    "`fetch(messages, data, modifiers)`: Fetch specified *data* items for messages; returns a dict keyed by message id with parsed typed values (timestamps -> `datetime`, ENVELOPE -> `Envelope`, etc.).",
+    "`TokenSource(text: List[bytes])`: A simple iterator wrapper around the `Lexer` class that provides access to the current IMAP literal during tokenization.",
+    "The instance attribute `current_literal` is an optional `bytes` object representing the literal associated with the current token source, if any."
+   ],
+   "cost_tokens": 959193,
+   "excluded": "one milestone"
+  },
+  {
+   "key": "first/large/E6",
+   "position_group": "first",
+   "size_group": "large",
+   "error_class": "E6",
+   "milestones": [
+    "cookiecutter:foundation_config_environment_contracts"
+   ],
+   "n_milestones": 1,
+   "experiences": 1,
+   "mean_stable_fixes": 1.67,
+   "regressions": 0.0,
+   "usefulness": 1.67,
+   "repairs": {
+    "default repair (continuation with the failure list)": 1
+   },
+   "summaries": [
+    "It added a previously missing end-to-end implementation so the accepted workflows could run instead of failing from absent entry points or unsupported behavior. The change touched executable entry points, package metadata/version defaults, configuration loading, input/context handling, templated file generation, external-source retrieval, command-line validation, and error reporting paths."
+   ],
+   "sentences": [
+    "- **TimeExtension**: Date and time handling",
+    "Sets a default `datetime_format` of `'%Y-%m-%d'` on the environment and registers the `{% now %}` tag.",
+    "Supports three usage forms: `{% now \\",
+    "`get_user_config(config_file, default_config)`: Determines and returns the effective user configuration for Cookiecutter.",
+    "If `default_config` is `True`, returns a copy of `DEFAULT_CONFIG`.",
+    "Falls back to `DEFAULT_CONFIG` if no user config file exists."
+   ],
+   "cost_tokens": 361981,
+   "excluded": "one milestone"
+  },
+  {
+   "key": "middle/small/E4",
+   "position_group": "middle",
+   "size_group": "small",
+   "error_class": "E4",
+   "milestones": [
+    "cookiecutter:template_source_resolution"
+   ],
+   "n_milestones": 1,
+   "experiences": 5,
+   "mean_stable_fixes": 1.44,
+   "regressions": 0.29,
+   "usefulness": 1.15,
+   "repairs": {
+    "default repair (continuation with the failure list)": 5
+   },
+   "summaries": [
+    "Added the missing end-to-end handling for externally sourced inputs: resolving shorthand names, distinguishing local paths, archive inputs, and remote sources, selecting a safe subdirectory, validating that required metadata exists, and routing unsupported source types to documented errors. It touched public entry-point exports, main workflow dispatch, input/source validation, archive and remote retrieval integration, interactive overwrite/reuse handling, broader extension-load error wrapping, and cleanup of temporary resources after use.",
+    "It broadened and corrected the main input-source workflow: public entry points were re-exported, source identifiers are now expanded and classified more accurately, local/remote/archive inputs are handled, subdirectory selection is validated, and documented error types are raised for missing, ambiguous, unsupported, or unsafe inputs. It also touched prompting and cleanup behavior by confirming overwrite/reuse decisions, removing temporary downloaded/extracted resources reliably, preserving safer path handling, and aligning default storage/configuration behavior with expected acceptance scenarios.",
+    "It implemented the previously missing source-resolution workflow: expanding configured shortcuts, distinguishing local paths, remote URLs, and archive inputs, validating selected subdirectories and required metadata, and raising the documented errors for unsupported, missing, or invalid sources. It also touched public entry-point exposure, interactive overwrite/reuse prompts, temporary download cleanup, safer recursive deletion including read-only files, and small filesystem utilities such as executable-bit handling and temporary directory copying.",
+    "Implemented the previously missing path-resolution workflow for inputs that may be local directories, remote locations, archives, or configured shorthands, including validation of supported schemes, safe subdirectory handling, existence checks, and correct documented error reporting. It also updated public entry points, main orchestration, archive/remote cleanup, deletion robustness for read-only files, and aligned an invalid-template case with the expected exception type.",
+    "It completed the main input-source resolution workflow by adding support for non-local sources, archive handling, abbreviation expansion, subdirectory selection, repository validation, documented \u201cnot found/unknown type\u201d errors, and proper temporary cleanup. It also touched public entry-point exports, interactive overwrite/reuse prompting, deletion robustness for read-only files, and small utility helpers for permissions, temporary copies, and context-derived environment setup."
+   ],
+   "sentences": [
+    "**Branch/Tag Support**: Use the `--checkout` parameter to specify Git branches, tags, or commits",
+    "Applies abbreviation expansion first, then searches candidate paths (including an optional sub-`directory`).",
+    "Remote Git repository URL \u2014 cloned into `clone_to_dir`.",
+    "If not prefixed, the function heuristically infers the type based on substrings like `'git'` or `'bitbucket'`.",
+    "`identify_repo(repo_url)`: Determine whether the given `repo_url` refers to a Git or Mercurial (hg) repository.",
+    "If the URI is a URL, it caches the downloaded zip in the specified `clone_to_dir` and prompts for overwrite confirmation unless `no_input` is True.",
+    "`InvalidZipRepository`: Exception raised when a provided Zip file is not a valid Cookiecutter template repository (e.g., malformed or missing `cookiecutter.json`).",
+    "After cloning, optionally checks out a specific `checkout` reference (branch, tag, or commit).",
+    "Raises specific exceptions (`RepositoryNotFound`, `RepositoryCloneFailed`, `VCSNotInstalled`, `UnknownRepoType`) for various failure modes.",
+    "- **ZIP Files**: Support for local or online ZIP archives"
+   ],
+   "cost_tokens": 715170,
+   "excluded": "one milestone"
+  }
+ ]
+}
