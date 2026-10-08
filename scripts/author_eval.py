@@ -69,7 +69,7 @@ def _read(p: Path, default):
 
 def _packages(task: str) -> list[str]:
     cfg = json.loads((DATASET_ROOT / task / "config.json").read_text(encoding="utf-8"))
-    return [str(cfg.get("source_code") or task).split("/")[0]]
+    return [str(cfg.get("source_code") or task).removeprefix("src/").split("/")[0]]
 
 
 def _submodules(task: str) -> set[str]:

@@ -229,17 +229,25 @@ def case_modules(task: str, packages: list[str]) -> dict[str, set[str]]:
                     local_fix[fn.name] = mods
         # module-level helpers referenced by a test count through their names (unittest bases too)
         rel = str(path.relative_to(tests_dir))
+        # unittest classes: a method also uses what its class's non-test methods (setUp, helpers) use
+        class_used: dict[int, set[str]] = {}
+        for c in tree.body:
+            if isinstance(c, ast.ClassDef):
+                shared = set()
+                for m in c.body:
+                    if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef)) and not m.name.startswith("test"):
+                        shared |= _used_names(m)
+                for m in c.body:
+                    class_used[id(m)] = shared
         for fn in fns:
             if not fn.name.startswith("test"):
                 continue
-            used = _used_names(fn)
+            used = _used_names(fn) | class_used.get(id(fn), set())
             mods = {imp[n] for n in used if n in imp}
             for a in fn.args.args:
                 mods |= local_fix.get(a.arg, set())
             for n in used:
                 mods |= local_fix.get(n, set()) if n in local_fix and n not in imp else set()
-            if any(a.arg == "self" for a in fn.args.args):
-                mods |= set(imp.values())  # unittest classes: the module's project imports serve every method
             out[f"{rel}::{fn.name}"] = mods
     return out
 
@@ -249,10 +257,19 @@ def relevant_cases(task: str, plan_path: Path, packages: list[str]) -> dict[str,
 
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     order = [m["milestone_id"] for m in plan["milestones"]]
-    focus = {m["milestone_id"]: m.get("focus_paths") or [] for m in plan["milestones"]}
+    # src-layout tasks (NL2Repo) list focus paths as src/<pkg>/...; imports resolve to <pkg>/...
+    focus = {m["milestone_id"]: [f[4:] if str(f).startswith("src/") else f for f in (m.get("focus_paths") or [])]
+             for m in plan["milestones"]}
+
+    def forms(module: str) -> list[str]:
+        base = module.removesuffix(".py")
+        return [module, base, base + "/__init__.py"]
+
+    def owns(mid: str, module: str) -> bool:
+        return any(_under(x, f) for x in forms(module) for f in focus[mid])
 
     def owner_index(module: str) -> int | None:
-        hits = [i for i, mid in enumerate(order) if any(_under(module, f) or _under(module.removesuffix(".py"), f) for f in focus[mid])]
+        hits = [i for i, mid in enumerate(order) if owns(mid, module)]
         return min(hits) if hits else None
 
     mods = case_modules(task, packages)
@@ -262,7 +279,7 @@ def relevant_cases(task: str, plan_path: Path, packages: list[str]) -> dict[str,
             continue
         idx = {m: owner_index(m) for m in ms}
         for k, mid in enumerate(order):
-            uses_own = any(any(_under(m, f) or _under(m.removesuffix(".py"), f) for f in focus[mid]) for m in ms)
+            uses_own = any(owns(mid, m) for m in ms)
             all_earlier = all(i is not None and i <= k for i in idx.values())
             if uses_own and all_earlier:
                 out[mid].append(case)
@@ -277,7 +294,7 @@ def main() -> None:
     args = ap.parse_args()
     data = attribute(args.task, args.plan)
     cfg = json.loads((DATASET_ROOT / args.task / "config.json").read_text(encoding="utf-8"))
-    packages = [str(cfg.get("source_code") or args.task).split("/")[0]]
+    packages = [str(cfg.get("source_code") or args.task).removeprefix("src/").split("/")[0]]
     syms = case_symbols(args.task, packages)
     relevant = relevant_cases(args.task, args.plan, packages)
     text = json.dumps({"task_id": args.task, "attribution": data, "case_symbols": syms, "relevant": relevant}, indent=2)
