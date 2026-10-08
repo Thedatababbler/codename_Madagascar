@@ -49,12 +49,15 @@ class Trigger:
         wanted: Any = self.value
         if isinstance(wanted, str) and wanted.startswith("thr."):
             wanted = thresholds.get(wanted[4:], DEFAULT_THRESHOLDS.get(wanted[4:], 0))
-        if self.op == "==":
-            return str(actual) == str(wanted)
+        if self.op in ("==", "!="):
+            same = str(actual) == str(wanted)
+            return same if self.op == "==" else not same
         try:
-            return float(actual or 0) >= float(wanted)
+            a, w = float(actual or 0), float(wanted)
         except (TypeError, ValueError):
             return False
+        # every operator, not ">=" for anything that is not "==" (until 2026-10-08)
+        return {">=": a >= w, "<=": a <= w, ">": a > w, "<": a < w}.get(self.op, a >= w)
 
 
 @dataclass(frozen=True)

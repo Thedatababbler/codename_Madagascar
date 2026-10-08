@@ -58,3 +58,12 @@ def test_official_table_is_untouched_without_the_namespace(monkeypatch) -> None:
     f7 = next(e for e in D.load_first_pass_table() if e.entry_id == "F7")
     assert all(a.get("kind") != "inventory" for a in f7.actions)
     assert all(e.entry_id != "F8" for e in D.load_first_pass_table())
+
+
+def test_trigger_operators() -> None:
+    f = {"kind": "middle", "n_focus_files": 6, "dep_depth": 0}
+    T = D.Trigger
+    assert T("kind", "!=", "integration").holds(f, {}) and not T("kind", "!=", "middle").holds(f, {})
+    assert T("n_focus_files", "<=", 6).holds(f, {}) and not T("n_focus_files", "<", 6).holds(f, {})
+    assert T("n_focus_files", ">", 5).holds(f, {}) and T("dep_depth", "==", 0).holds(f, {})
+    assert not T("n_focus_files", ">=", 7).holds(f, {})
