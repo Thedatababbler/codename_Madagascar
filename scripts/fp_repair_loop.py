@@ -227,11 +227,14 @@ def summarise(exp: dict, patch: str, strong, weak) -> str:
     key = hashlib.sha1((patch or "").encode()).hexdigest()[:16]
     if key in data:
         return data[key]
-    system = ("You describe what a code change did, in general terms, for a designer of software processes. Never name the "
-              "project, package, module, file, class, function or test. Two sentences at most.")
+    system = ("You describe what a code change did for a designer of software processes, in generic software-engineering terms "
+              "only (for example: 'added missing input validation and the documented error for an invalid argument', 'implemented "
+              "an omitted branch of the main workflow', 'made a default value match the documented one'). Never name the project, "
+              "its domain, its package, modules, files, classes, functions, tests or the concepts they model. Two sentences at most.")
     prompt = (f"A repair made {exp['fixed']} failing acceptance cases pass (error classes {exp['fixed_classes']}); it changed "
               f"{exp['diff']['files']} file(s), +{exp['diff']['added']} / -{exp['diff']['removed']} lines. The diff (truncated):\n\n"
-              + (patch or "")[:12000] + "\n\nWhat kind of behaviour did it add or correct, and what kind of code did it touch?")
+              + (patch or "")[:12000] + "\n\nIn generic terms: what kind of behaviour did it add or correct, and what kind of code "
+              "(entry points, validation, data handling, error handling, defaults, cleanup, ...) did it touch?")
     text = default_call(system, prompt)
     if leaked_identifiers(text, strong) or weak_leaks(text, weak):
         text = re.sub(r"`[^`]+`", "<name>", text)
@@ -266,14 +269,14 @@ def build_experiences(strong, weak) -> list[dict]:
     for task in EVO_TASKS:
         for e in P.experiences(task):
             key = f"{e['run']}|{task}|{e['milestone']}|{e['repair']}"
-            if key not in cache:
+            if key not in cache or "summary" not in cache[key]:
                 run = next(r for r in P.runs_of(task) if r.parent.name == e["run"])
                 state = json.loads(Path(_glob.glob(str(run / "tasks/*/task_execution.json"))[0]).read_text())
                 v = state["fast_loop_states"][e["milestone"]]
                 cand = next(c for c in v["candidates"] if c.get("status") == "committed" and P.kind_of(c["candidate_id"], c.get("metadata") or {}))
                 inc_ws = next(iter(sorted(run.glob(f"tasks/*/workspaces/{e['milestone']}/repo"))), Path("/nonexistent"))
                 cand_ws = next(iter(sorted(run.glob(f"tasks/*/subtasks/{e['milestone']}/candidates/{cand['candidate_id']}/repo"))), Path("/nonexistent"))
-                vf = verifier_fixes(task, e["milestone"], inc_ws, cand_ws)
+                vf = (cache.get(key) or {}).get("verifier") if key in cache else verifier_fixes(task, e["milestone"], inc_ws, cand_ws)
                 summary = summarise(e, cand.get("patch") or "", strong, weak)
                 cache[key] = {"verifier": vf, "summary": summary}
                 cache_path.write_text(json.dumps(cache, indent=1))
