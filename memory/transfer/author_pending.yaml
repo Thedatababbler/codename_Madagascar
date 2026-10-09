@@ -1,0 +1,420 @@
+- record_id: R-14afdb29ec
+  milestone: tree_core_operations
+  case: test_bulk_inserts_split_and_iterate_in_sorted_key_order
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-0dc6291989
+  milestone: tree_core_operations
+  case: test_delete_from_multilevel_tree_preserves_remaining_sorted_records_after_reopen
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-ba51c37d45
+  milestone: tree_core_operations
+  case: test_delete_from_root_and_multi_level_tree_preserves_remaining_records_after_reopen
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-2d5d7da0dc
+  milestone: deliver_bplustree_behavior_and_public_api
+  case: test_reopen_loads_persisted_metadata_and_records
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-6c880dca4f
+  milestone: deliver_bplustree_behavior_and_public_api
+  case: test_batch_insert_supports_each_constructible_documented_key_serializer
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-b3efe3c2af
+  milestone: deliver_bplustree_behavior_and_public_api
+  case: test_delete_removes_records_and_preserves_remaining_order_after_reopen
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-a75f2d1fca
+  milestone: deliver_bplustree_behavior_and_public_api
+  case: test_insert_orders_remain_individually_searchable_and_sorted_after_reopen
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-eee5546928
+  milestone: freeze_storage_and_node_contracts
+  case: test_bplustree_delete_after_splits_reads_remaining_keys_sorted
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-dcaaf996bc
+  milestone: freeze_storage_and_node_contracts
+  case: test_file_memory_write_transaction_commits_node_page_and_reload
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-81cdbc8528
+  milestone: freeze_storage_and_node_contracts
+  case: test_file_memory_write_transaction_rolls_back_page_on_exception
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-0efe369338
+  milestone: template_source_resolution
+  case: test_clone_runs_git_clone_and_checkout_commands
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-2147f4ba56
+  milestone: template_source_resolution
+  case: test_determine_repo_dir_applies_abbreviations_before_classifying_template
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-5f48bb7c70
+  milestone: template_source_resolution
+  case: test_determine_repo_dir_clones_remote_vcs_repositories
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-ae9780d869
+  milestone: template_source_resolution
+  case: test_identify_repo_infers_git_and_bitbucket_repositories
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-ea090a70a5
+  milestone: template_source_resolution
+  case: test_unzip_downloads_remote_zip_before_extracting
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-72ca5b6f1f
+  milestone: template_source_resolution
+  case: test_clone_runs_checkout_command_after_successful_clone
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-8bc0660ff7
+  milestone: template_source_resolution
+  case: test_clone_subprocess_failure_raises_repository_clone_failed
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-e943223490
+  milestone: template_source_resolution
+  case: test_determine_repo_dir_clones_vcs_repository_and_returns_clone
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-b1f9aa09b4
+  milestone: template_source_resolution
+  case: test_unzip_downloads_remote_zip_archive
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-ba3f0a7f58
+  milestone: project_generation_engine
+  case: test_generate_files_copies_copy_without_render_directory_verbatim
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-5675320c67
+  milestone: sphinx_docstring_decorators
+  case: test_line_length_wraps_reason_text_in_directive
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-9944c4a24d
+  milestone: response_lexing_and_parsing
+  case: test_parse_fetch_response_keeps_body_section_literals_under_documented_attribute_key
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-027f760823
+  milestone: response_lexing_and_parsing
+  case: test_parse_fetch_response_keys_by_uid_and_parses_flags_size_and_internaldate
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-e63d7a598a
+  milestone: response_lexing_and_parsing
+  case: test_token_source_tracks_current_literal_for_tuple_records
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-b6e1749fae
+  milestone: response_lexing_and_parsing
+  case: test_parse_response_preserves_literal_bytes_with_8bit_and_spaces
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-d155f37a8b
+  milestone: transport_session_and_authentication
+  case: test_enable_requires_capability_and_returns_enabled_extensions
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-7f5ecf9814
+  milestone: transport_session_and_authentication
+  case: test_login_returns_server_response_and_maps_failure_to_login_error
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-2dd5b80690
+  milestone: transport_session_and_authentication
+  case: test_noop_returns_command_response_and_status_updates
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-ffd5cafd6b
+  milestone: transport_session_and_authentication
+  case: test_tls_transport_open_wraps_socket_and_exposes_read_send_shutdown
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-3c69851c69
+  milestone: mailbox_message_and_extension_operations
+  case: test_acl_and_quota_methods_return_documented_structures
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-bd6d9e2985
+  milestone: mailbox_message_and_extension_operations
+  case: test_append_copy_move_and_expunge_return_command_responses
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-165de8850e
+  milestone: mailbox_message_and_extension_operations
+  case: test_gmail_label_methods_decode_labels_and_silent_operations_return_none
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-af39e37e83
+  milestone: mailbox_message_and_extension_operations
+  case: test_idle_enters_collects_responses_and_exits
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-ab18fa11fe
+  milestone: mailbox_message_and_extension_operations
+  case: test_list_folders_returns_parsed_tuples_and_decoded_names
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-6275062e9a
+  milestone: public_api_config_and_full_integration
+  case: test_create_client_from_config_logs_in_with_oauth2_token
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-b560900379
+  milestone: public_api_config_and_full_integration
+  case: test_config_defaults_include_connection_parameters_and_environment_credentials
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-a008a7bf96
+  milestone: public_api_config_and_full_integration
+  case: test_command_line_accepts_documented_host_user_and_config_arguments
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-b349e1fe9b
+  milestone: public_api_config_and_full_integration
+  case: test_module_entry_point_exposes_connected_client_as_c_to_interactive_console
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-61bbabde3e
+  milestone: transport_session_and_authentication
+  case: test_capabilities_are_tuple_cached_and_used_for_lookup
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-1b059b0921
+  milestone: transport_session_and_authentication
+  case: test_enable_dispatches_extensions_and_returns_enabled_list
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-70d6e258da
+  milestone: transport_session_and_authentication
+  case: test_login_dispatches_username_password_and_maps_authentication_failure
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-b6641f4822
+  milestone: transport_session_and_authentication
+  case: test_noop_dispatches_command_and_maps_abort_failure
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-beb3ff0c41
+  milestone: transport_session_and_authentication
+  case: test_plain_login_uses_plain_sasl_authentication
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-716a265420
+  milestone: mailbox_message_and_extension_operations
+  case: test_silent_add_flags_returns_none_and_uses_silent_store
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-121f9d33cf
+  milestone: mailbox_message_and_extension_operations
+  case: test_silent_set_gmail_labels_returns_none_and_uses_silent_store
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-a4aa24bcaf
+  milestone: mailbox_message_and_extension_operations
+  case: test_normalise_search_criteria_handles_dates_ints_nested_lists_and_charset
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-da16601b1e
+  milestone: mailbox_message_and_extension_operations
+  case: test_create_delete_rename_subscribe_and_unsubscribe_return_response_strings
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-d609963232
+  milestone: mailbox_message_and_extension_operations
+  case: test_folder_status_returns_requested_items_as_dictionary
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-326bed188a
+  milestone: mailbox_message_and_extension_operations
+  case: test_select_folder_returns_select_response_dictionary
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-03cb539cc4
+  milestone: mailbox_message_and_extension_operations
+  case: test_append_passes_folder_flags_datetime_and_message
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-52c93403e4
+  milestone: mailbox_message_and_extension_operations
+  case: test_copy_uses_uid_command_and_returns_server_response
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-d804659894
+  milestone: mailbox_message_and_extension_operations
+  case: test_delete_messages_adds_deleted_flag_and_returns_flags
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-358ab84f28
+  milestone: mailbox_message_and_extension_operations
+  case: test_move_uses_uid_move_when_uid_mode_is_enabled
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-bfe8f508a8
+  milestone: mailbox_message_and_extension_operations
+  case: test_multiappend_accepts_strings_and_dict_message_items
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-0fe3b3322d
+  milestone: mailbox_message_and_extension_operations
+  case: test_uid_expunge_uses_uidplus_uid_expunge_command
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-e53c4620c2
+  milestone: mailbox_message_and_extension_operations
+  case: test_getacl_returns_access_control_pairs
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-71aa216782
+  milestone: mailbox_message_and_extension_operations
+  case: test_idle_check_and_done_return_parsed_idle_responses
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-e1827de141
+  milestone: mailbox_message_and_extension_operations
+  case: test_set_quota_accepts_quota_objects
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-6909e8c2f0
+  milestone: mailbox_message_and_extension_operations
+  case: test_setacl_returns_server_response_string
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-7aab0457b1
+  milestone: mailbox_message_and_extension_operations
+  case: test_fetch_includes_modifiers_in_uid_fetch_command
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-7ad7563c14
+  milestone: mailbox_message_and_extension_operations
+  case: test_gmail_search_uses_x_gm_raw_search_criteria
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-57ac8ec84a
+  milestone: mailbox_message_and_extension_operations
+  case: test_search_uses_sequence_command_when_uid_mode_is_disabled
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-2d7ddfcb55
+  milestone: mailbox_message_and_extension_operations
+  case: test_search_uses_uid_command_when_uid_mode_is_enabled
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-773afdcb6c
+  milestone: mailbox_message_and_extension_operations
+  case: test_sort_normalizes_sort_and_search_criteria
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-41203f8158
+  milestone: public_api_config_and_full_integration
+  case: test_create_client_from_config_uses_oauth2_token_login_when_configured
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-ff68e7f7ae
+  milestone: public_api_config_and_full_integration
+  case: test_config_defaults_cover_connection_parameters_and_environment_credentials
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-419635ee71
+  milestone: public_api_config_and_full_integration
+  case: test_parse_config_file_returns_default_and_named_section_namespaces
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-dfe121f695
+  milestone: public_api_config_and_full_integration
+  case: test_command_line_accepts_documented_host_user_options
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-07242b5eba
+  milestone: public_api_config_and_full_integration
+  case: test_module_entry_connects_client_as_interactive_variable_c
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-4a67511793
+  milestone: implement_client_behaviour_and_public_surface
+  case: test_add_flags_returns_updated_flags_and_silent_returns_none
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-83cc8cd4b8
+  milestone: implement_client_behaviour_and_public_surface
+  case: test_copy_uses_uid_default_and_returns_response_string
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-e7b01106b0
+  milestone: implement_client_behaviour_and_public_surface
+  case: test_create_client_from_config_uses_connection_settings_and_optional_login
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-5f6ae76042
+  milestone: implement_client_behaviour_and_public_surface
+  case: test_get_quota_root_returns_mailbox_roots_and_quota_objects
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-96baf665ad
+  milestone: implement_client_behaviour_and_public_surface
+  case: test_idle_flow_enters_checks_and_exits_idle_mode
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-5f41b50672
+  milestone: implement_client_behaviour_and_public_surface
+  case: test_list_folders_decodes_modified_utf7_names_when_folder_encoding_enabled
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-c07e944ea7
+  milestone: implement_python_hl7
+  case: test_escape_and_unescape_handle_standard_and_application_mappings
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-d6bd711653
+  milestone: errors_markers_contracts
+  case: test_multiple_invalid_empty_error_list_still_has_errors_msg_and_path
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-6e15eb65de
+  milestone: errors_markers_contracts
+  case: test_multiple_invalid_exposes_errors_iteration_and_length
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-5acc179a18
+  milestone: errors_markers_contracts
+  case: test_multiple_invalid_prepend_mutates_all_contained_error_paths
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-cd835c0b95
+  milestone: implement_zxcvbn_library
+  case: test_attack_time_estimates_include_all_documented_scenarios
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-1867b1e5b2
+  milestone: implement_zxcvbn_library
+  case: test_display_time_uses_documented_human_units
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-9d28fbd9a1
+  milestone: implement_zxcvbn_library
+  case: test_float_to_decimal_returns_decimal_without_float_display_error
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-1be232b1e0
+  milestone: implement_zxcvbn_library
+  case: test_public_api_sequence_represents_documented_pattern_families
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'
+- record_id: R-f40613a100
+  milestone: implement_zxcvbn_library
+  case: test_scoring_module_exports_documented_guess_functions
+  note: gate case fails on the reference implementation
+  date: '2026-10-09'

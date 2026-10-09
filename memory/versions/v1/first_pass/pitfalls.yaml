@@ -1,0 +1,13 @@
+- pitfall_id: P-0000
+  category_id: FP-TYPE
+  symptom: retired canary entry CANARY-FP-3cf4c3653f455b5b
+  cause: never recalled
+  lesson: never recalled
+  applies_when: {}
+  evidence:
+    source_records: []
+    fixes_observed: 0
+    milestones_observed: 0
+  state: retired
+  origin: human:canary
+  memory_version_added: 1

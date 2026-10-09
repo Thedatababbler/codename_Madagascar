@@ -1,0 +1,1844 @@
+- bank: repair
+  file: patterns
+  entry:
+    pattern_id: E3-S1
+    category_id: RP-E3
+    category_ids:
+    - RP-E3
+    action:
+      instruction: For each named failure, first write a minimal reproduction script (a few lines that call the documented API the way the test does and print what comes back), run it, and locate the line where the observed behaviour diverges from the documented one. Fix that divergence, re-run the reproduction and the named failure, then move to the next. Do not change code a reproduction did not lead you to.
+      add_readonly_role: null
+      template: null
+      budget_delta: null
+    intent: a reproduction before every fix
+    row:
+      row_id: E3-S1
+      table: repair
+      error_classes:
+      - E3
+      action: S
+      target_template: null
+      slot_edits: []
+      instruction: null
+      evidence_routing:
+      - improver
+      budget_delta: null
+      preconditions: []
+      from_incumbent: true
+      preventive_variant: null
+      source_rows: []
+      origin: new
+      intent: a reproduction before every fix
+      state: candidate
+      legacy_id: ''
+    state: candidate
+    evidence:
+      migrated_from: configs/playbook_v2/repair.yaml
+      legacy_id: null
+    origin: migrated:playbook_v2
+    memory_version_added: 1
+  reasons:
+  - shares a 20-character substring with a held-out source
+  stage: migration
+  date: '2026-10-09T01:57:06Z'
+- bank: repair
+  file: patterns
+  entry:
+    pattern_id: E4-S1
+    category_id: RP-E4
+    category_ids:
+    - RP-E4
+    action:
+      instruction: 'Extract the state machine the documents describe for the objects under test: every state, every transition, and what triggers it (an operation, a threshold, a close/reopen). Write it as a checklist. Walk each named failure through that checklist to find the transition the code gets wrong, fix that transition, and confirm the surrounding transitions still behave as listed.'
+      add_readonly_role: null
+      template: null
+      budget_delta: null
+    intent: the documented state machine as a checklist
+    row:
+      row_id: E4-S1
+      table: repair
+      error_classes:
+      - E4
+      action: S
+      target_template: null
+      slot_edits: []
+      instruction: null
+      evidence_routing:
+      - improver
+      budget_delta: null
+      preconditions: []
+      from_incumbent: true
+      preventive_variant: F3
+      source_rows: []
+      origin: new
+      intent: the documented state machine as a checklist
+      state: candidate
+      legacy_id: ''
+    state: candidate
+    evidence:
+      migrated_from: configs/playbook_v2/repair.yaml
+      legacy_id: null
+    origin: migrated:playbook_v2
+    memory_version_added: 1
+  reasons:
+  - shares a 20-character substring with a verification suite
+  stage: migration
+  date: '2026-10-09T01:57:06Z'
+- bank: repair
+  file: patterns
+  entry:
+    pattern_id: E5-R1
+    category_id: RP-E5
+    category_ids:
+    - RP-E5
+    action:
+      instruction: null
+      add_readonly_role: contract_critic
+      template: continuation_reviewed
+      budget_delta: null
+    intent: exception hierarchy checked against the base milestone's definitions
+    row:
+      row_id: E5-R1
+      table: repair
+      error_classes:
+      - E5
+      action: R
+      target_template: continuation_reviewed
+      slot_edits:
+      - slot: reviewer
+        role: contract_critic
+        mode: insert
+        read_only: true
+      instruction: null
+      evidence_routing:
+      - reviewer
+      - improver
+      budget_delta: null
+      preconditions:
+      - kind: lacks_role
+        value: contract_critic
+      from_incumbent: true
+      preventive_variant: F1
+      source_rows: []
+      origin: new
+      intent: exception hierarchy checked against the base milestone's definitions
+      state: candidate
+      legacy_id: ''
+    state: candidate
+    evidence:
+      migrated_from: configs/playbook_v2/repair.yaml
+      legacy_id: null
+    origin: migrated:playbook_v2
+    memory_version_added: 1
+  reasons:
+  - shares a 20-character substring with a held-out source
+  stage: migration
+  date: '2026-10-09T01:57:06Z'
+- bank: repair
+  file: patterns
+  entry:
+    pattern_id: E6-S1
+    category_id: RP-E6
+    category_ids:
+    - RP-E6
+    action:
+      instruction: 'Check the objects under test against the object protocol the documents specify, one item at a time: equality and hashing, iteration and length, containment, repr, and behaviour on empty or boundary input. For each named failure, identify which protocol item it exercises, implement or correct that item, and verify the others still hold.'
+      add_readonly_role: null
+      template: null
+      budget_delta: null
+    intent: the object protocol checked item by item
+    row:
+      row_id: E6-S1
+      table: repair
+      error_classes:
+      - E6
+      action: S
+      target_template: null
+      slot_edits: []
+      instruction: null
+      evidence_routing:
+      - improver
+      budget_delta: null
+      preconditions: []
+      from_incumbent: true
+      preventive_variant: F6
+      source_rows: []
+      origin: new
+      intent: the object protocol checked item by item
+      state: candidate
+      legacy_id: ''
+    state: candidate
+    evidence:
+      migrated_from: configs/playbook_v2/repair.yaml
+      legacy_id: null
+    origin: migrated:playbook_v2
+    memory_version_added: 1
+  reasons:
+  - shares a 20-character substring with a verification suite
+  stage: migration
+  date: '2026-10-09T01:57:06Z'
+- bank: repair
+  file: patterns
+  entry:
+    pattern_id: E8-S1
+    category_id: RP-E8
+    category_ids:
+    - RP-E8
+    action:
+      instruction: 'For each timed-out case, find the hot spot: run the case under a profiler or with timing prints, identify the operation whose cost grows with the input size, and compare its complexity with what the documents imply for ordinary use. Replace the algorithm or data structure at that spot; do not raise timeouts, skip work, or cache results the documents do not describe.'
+      add_readonly_role: null
+      template: null
+      budget_delta: null
+    intent: the hot spot found and its complexity fixed
+    row:
+      row_id: E8-S1
+      table: repair
+      error_classes:
+      - E8
+      action: S
+      target_template: null
+      slot_edits: []
+      instruction: null
+      evidence_routing:
+      - improver
+      budget_delta: null
+      preconditions: []
+      from_incumbent: true
+      preventive_variant: null
+      source_rows: []
+      origin: new
+      intent: the hot spot found and its complexity fixed
+      state: candidate
+      legacy_id: ''
+    state: candidate
+    evidence:
+      migrated_from: configs/playbook_v2/repair.yaml
+      legacy_id: null
+    origin: migrated:playbook_v2
+    memory_version_added: 1
+  reasons:
+  - shares a 20-character substring with a verification suite
+  stage: migration
+  date: '2026-10-09T01:57:06Z'
+- record_id: R-14afdb29ec
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: 'Bulk insertions that exceed a node''s capacity do not preserve the documented tree behavior: stored entries may not be organized through split nodes, upward propagation may be absent, and iteration may fail to reflect sorted key order after many inserts in varied orders.'
+    cause: The implementation treated storage as a flat key-value collection rather than maintaining the documented balanced tree structure with leaf/internal nodes, capacity checks, node splits, parent updates, and root creation when needed.
+    lesson: 'When documents specify a B+ tree with automatic splitting, implement insertion as a real tree operation: locate the target leaf, insert in sorted position, split full nodes around half capacity, propagate separator keys and child references upward, create a new root when the old root splits, and implement key/item/value iteration by walking leaves in sorted key order rather than relying on insertion order or a flat map.'
+    proposed_category: 'NEW:DATA-STRUCTURE-INVARIANTS: Specifications that name a concrete data structure require preserving its algorithmic invariants, such as ordering, balancing, split/merge behavior, and traversal semantics, not merely exposing a superficially similar collection API.'
+    applies_when:
+      domain_tags:
+      - storage
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The repair implements documented storage behavior and tree invariants rather than adapting to a mock, fake dependency, environment detail, or test-specific construction.
+  date: '2026-10-09'
+- record_id: R-0dc6291989
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: After many inserts followed by deletions in a multi-level persistent index, the remaining records were not reliably preserved as a sorted sequence across close and reopen, and deleted keys could still affect lookup or iteration correctness.
+    cause: The implementation treated storage as a simple serialized in-memory mapping instead of maintaining the documented on-disk balanced-tree structure, including persisted metadata, root page tracking, sorted leaf traversal, and rebalancing after deletions.
+    lesson: When documents require a persistent B+ tree with deletion, reopening, sorted access, and automatic merge/borrow behavior, implementers must preserve the actual tree invariants on disk rather than substituting a simpler key-value dump. The file format should store and reload metadata such as configuration and root location, and delete operations must rebalance underfull nodes so that later iteration, lookup, length reporting, and reopen all observe the same sorted set of surviving records.
+    proposed_category: 'NEW:persistent-structure-invariants: Implementations of documented persistent data structures must maintain and reload structural metadata and invariants, not merely persist equivalent-looking data in an ad hoc representation.'
+    applies_when:
+      domain_tags:
+      - storage
+      - file_format
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The repair implements documented storage, persistence, sorted traversal, and deletion rebalancing behavior rather than adapting to a mock, fake executable, environment quirk, or test-only calling convention.
+  date: '2026-10-09'
+- record_id: R-ba51c37d45
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: After many removals from a multi-level on-disk index, remaining records could be lost, become unreachable, or fail to survive reopening; removing the final record from a root-only tree could also leave stale state instead of an empty structure.
+    cause: The implementation treated removal as a simple record deletion rather than as a structural storage operation. It did not fully preserve page/node invariants, handle underfull nodes through sibling borrowing or merging, propagate separator changes upward, shrink the root when appropriate, and persist the resulting metadata and nodes consistently.
+    lesson: When the specification says removals automatically borrow, merge, and may reduce tree height, implement deletion as a complete rebalancing algorithm, not just removal from a container. After each removal, maintain leaf/internal occupancy rules, update parent separators, collapse an empty or single-child root, preserve sorted traversal of all surviving records, ensure absent-key lookup returns the documented default, and write all structural changes durably so reopening observes the same state.
+    proposed_category: 'NEW:STRUCTURAL-MUTATION-INVARIANTS: Specifications for mutable storage/index structures may imply non-local invariants during updates, such as rebalancing, parent separator maintenance, root collapse, and durable metadata updates; implementations must preserve the whole structure, not only change the target entry.'
+    applies_when:
+      domain_tags:
+      - storage
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'The acceptance case exercises documented storage semantics: removal with merging/borrowing, propagation that can reduce height, absent-key default lookup behavior, and persistence after reopening. It is not dependent on a mock, fake executable, environment setup, or test-specific calling convention.'
+  date: '2026-10-09'
+- record_id: R-2d5d7da0dc
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: After closing and reopening a persisted storage file without restating the original configuration, previously written records could not be read or iterated correctly.
+    cause: The implementation treated omitted constructor options as fresh defaults even when the file already contained a serialized tree. It did not fully replace the in-memory configuration and access helpers with the metadata stored in the file, so key decoding, page layout, and tree traversal could be inconsistent with the existing data.
+    lesson: 'When documentation says an existing serialized tree loads its metadata, reopening must derive all persistence-relevant configuration from the file before reading records: key encoding, sizing parameters, root location, page layout, and traversal state. Defaults should apply only when creating a new empty tree, not when opening an existing serialized structure.'
+    proposed_category: 'NEW:PERSISTED-METADATA-PRECEDENCE: When opening an existing serialized file or store, persisted metadata must override constructor defaults and be applied before decoding, traversal, or record access.'
+    applies_when:
+      domain_tags:
+      - storage
+      - file_format
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'The case checks documented persistence behavior: existing serialized data must be reopened using stored metadata rather than default configuration. It is not dependent on a mock shape, fake command, or test-only environment detail.'
+  date: '2026-10-09'
+- record_id: R-6c880dca4f
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A bulk-load operation succeeds only while the accumulated records fit in one storage page, then fails during persistence with a page-capacity error for larger ordered inputs across documented key encodings.
+    cause: 'The implementation handled the bulk path as if it could materialize or persist all inserted records in a single leaf/page, instead of maintaining the indexed storage invariants: fixed-size serialized keys, bounded page payloads, leaf splitting, parent/root updates, and ordered leaf traversal.'
+    lesson: When documentation promises efficient insertion of many ascending key/value pairs in one transaction, implement it as a real bulk-load or repeated indexed insertion that honors page capacity at every level. For every documented key encoder, serialize keys to the configured fixed size, split leaves before they overflow, create or update internal pages and the root as needed, link leaves in order, and persist enough configuration metadata that reopening the structure preserves lookups and ordered iteration.
+    proposed_category: 'NEW:STORAGE-CAPACITY-INVARIANTS: Persistent indexed storage operations must enforce page/block capacity and structural split/rebalance invariants for documented large or bulk operations, rather than assuming data fits in one node.'
+    applies_when:
+      domain_tags:
+      - storage
+      - file_format
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The case exercises documented bulk insertion semantics and documented key serialization behavior using ordinary persistent storage, not a mock, fake executable, synthetic environment, or test-only calling convention.
+  date: '2026-10-09'
+- record_id: R-b3efe3c2af
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: Bulk insertion of many ordered key-value pairs fails before deletion can be exercised, because a persisted node grows beyond the fixed page capacity. In related cases, reopening could also risk exposing stale or incorrectly ordered records if deleted or superseded pages are scanned indiscriminately.
+    cause: The implementation treated the in-memory record collection as if it could be serialized into a single or insufficiently split set of pages, instead of enforcing page-size limits through node splitting during growth and rebalancing through borrowing or merging during deletion. Persistence and reload logic also need to follow the live tree structure rather than every historical page in the file.
+    lesson: 'For a disk-backed ordered index that documents deletion with automatic merging and borrowing, implement the full page-level invariants: every serialized node must fit within the configured page size, inserts must split overflowing nodes and update parent separators, deletes must borrow or merge underfull nodes and update parent structure, and reopening must reconstruct records by traversing the reachable ordered leaves. Iteration should reflect only the remaining live keys in sorted order after close and reopen.'
+    proposed_category: 'NEW:storage-page-invariants: Persistent tree or index implementations must maintain fixed-size page/node capacity, split/merge/borrow structural invariants, and reload only the reachable live structure rather than assuming all records fit in one node or scanning stale pages.'
+    applies_when:
+      domain_tags:
+      - storage
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The failure and repair concern documented persistent storage behavior, deletion rebalancing, ordered iteration, and reopen semantics, not adaptation to a mock, fake executable, environment variable, or test-only calling convention.
+  date: '2026-10-09'
+- record_id: R-a75f2d1fca
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: Bulk insertion of a few hundred key-value pairs fails during persistence with a page-capacity error, and therefore the data cannot be reopened and verified for point lookup or sorted traversal.
+    cause: The implementation treated persistent storage too much like an in-memory collection and allowed a serialized node or root structure to grow beyond the fixed page size instead of maintaining the tree's page-level invariants through splitting, linking, and reachable-page loading.
+    lesson: When documentation promises insertion, sorted key iteration, and reopening an existing serialized structure, implementers must preserve the on-disk data-structure invariants, not merely store all records somewhere. Inserts in ascending, descending, or arbitrary order should trigger node splitting before any serialized page exceeds its configured capacity; persisted metadata should identify the current root; reopening should load the stored configuration and traverse only the reachable leaf chain or equivalent current structure; and iteration should return keys in logical sorted order regardless of insertion order.
+    proposed_category: 'NEW:STORAGE-PERSISTENCE-INVARIANTS: Persistent data structures must maintain their documented logical behavior across serialization boundaries while respecting fixed-size page, block, node, or record-layout limits; implementations must split, link, compact, or otherwise manage storage rather than allowing serialized structures to exceed capacity.'
+    applies_when:
+      domain_tags:
+      - storage
+      - file_format
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'The case exercises documented behavior: inserting records, reopening an existing serialized structure, retrieving values, and iterating keys in order. The failure reflects a real persistence and storage-layout invariant violation, not adaptation to a mock, fake executable, or test-only environment detail.'
+  date: '2026-10-09'
+- record_id: R-eee5546928
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: 'After many insertions that force node splits, deleting a large subset of keys can leave the structure in an inconsistent state: remaining keys may become unreachable, lookups may fail, or key iteration may no longer return the surviving keys in sorted order.'
+    cause: Deletion was treated as removing an entry locally, without fully preserving the post-delete tree invariants required after underflow. When nodes become too empty, separators, sibling links, parent references, and sorted traversal state must remain consistent after borrowing or merging.
+    lesson: When a storage index documents deletion with automatic merging and borrowing, implement deletion as a structural operation, not just as entry removal. After every delete, maintain minimum occupancy rules, update parent separator keys, repair leaf links, collapse an empty root when needed, and verify that point lookup and ordered iteration still see exactly the remaining keys after prior splits.
+    proposed_category: 'NEW:DELETE-REBALANCE-INVARIANTS: Implementations of mutable tree or index structures must preserve structural invariants after deletion, including borrowing, merging, separator updates, root collapse, and ordered traversal consistency.'
+    applies_when:
+      domain_tags:
+      - storage
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'The case exercises documented storage behavior: deletion after growth and splitting must preserve remaining data and sorted key iteration. It is not dependent on a mock, fake executable, environment detail, or test-only interface shape.'
+  date: '2026-10-09'
+- record_id: R-dcaaf996bc
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A page written inside a committed write transaction appeared successful in memory, but after checkpointing, closing, and reopening the storage file, the written record was missing.
+    cause: 'The implementation did not fully honor the documented durability path for node writes: a committed write needed to be recorded in the write-ahead log and later materialized into the backing file, not merely reflected in transient state.'
+    lesson: When documentation says a storage write records data in the write-ahead log and updates cache state, implementers should treat that as a durability contract. A write committed in a transaction must survive checkpoint, close, and reopen, even when caching is disabled. The implementation should serialize the page data into the log during the transaction, make checkpoint replay or flush apply it to the file, and ensure reads after reopening reconstruct the same persisted node contents.
+    proposed_category: 'NEW:durable-storage-commit: Documentation describes a write operation as going through a transaction log or persistence layer, so implementations must preserve the written data across commit, checkpoint, close, and reopen rather than only updating in-memory state.'
+    applies_when:
+      domain_tags:
+      - storage
+      - file_format
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'The acceptance case exercises documented storage behavior: a committed log-backed write should be durable after checkpoint and reload. It does not depend on mock shapes, fake commands, environment quirks, or test-only scaffolding.'
+  date: '2026-10-09'
+- record_id: R-81cdbc8528
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: After an exception inside a documented write context, a page written during that context was not safely rolled back; a later read observed an invalid/missing-file state instead of the pre-transaction state.
+    cause: The implementation did not treat writes inside the context as provisional. It allowed aborted changes to affect durable storage or storage metadata, and did not restore the previous file extent/cache state when the context exited with an error.
+    lesson: When documentation promises atomic write operations for a context manager, implementers should journal, buffer, or otherwise stage every mutation made inside the context. Only publish those mutations on normal exit; on exceptional exit, discard staged data and restore the prior visible state, including file size, page contents, and cached pages. Reads after rollback must behave as if the aborted writes never happened.
+    proposed_category: 'NEW:ATOMIC-WRITE-ROLLBACK: Documentation promises atomic write or transactional behavior, so implementations must ensure changes made in the protected scope become visible only on successful completion and are fully undone on failure.'
+    applies_when:
+      domain_tags:
+      - storage
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The case checks documented atomic write semantics, not a mock shape, fake executable, environment detail, or other test-construction artifact.
+  date: '2026-10-09'
+- record_id: R-0efe369338
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A repository source that included a requested branch, tag, or commit did not complete successfully under acceptance testing, so the later verification that the requested revision was selected could not be reached.
+    cause: 'The implementation path for remote template sources was too incomplete and brittle around external version-control invocation: it needed to classify remote sources correctly, invoke the underlying VCS command, and apply the requested revision after cloning rather than treating the source like a plain local path.'
+    lesson: 'When the documentation says a checkout option may name a branch, tag, or commit, implement remote repository handling as a two-step VCS operation: first clone the repository into a concrete local directory, then, if a checkout value is provided, run the VCS checkout operation inside that cloned directory using that exact value. Also ensure the returned repository path is the actual local clone containing the expected template metadata.'
+    proposed_category: FP-EXT-CALL
+    applies_when:
+      domain_tags:
+      - cli_tool
+      - template_engine
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: Although the acceptance test used a fake external executable, the required behavior is not merely adapting to the fake; it reflects the documented need to support branch, tag, or commit selection through the checkout option.
+  date: '2026-10-09'
+- record_id: R-2147f4ba56
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A case intended to verify that shorthand template references are expanded before repository classification instead failed while launching an external version-control command, even though the attempted command already contained the expanded remote location.
+    cause: The observed failure came from the test harness's fake executable depending on an interpreter that was not available in the execution environment, not from the documented source-resolution behavior itself.
+    lesson: When implementing documented template-source resolution, first normalize any configured shorthand into its full source form, then apply repository/local/archive classification and any subdirectory lookup to that normalized value. Separately, keep external-command execution portable and do not infer contract requirements from failures caused by test doubles or environment-specific shell assumptions.
+    proposed_category: FP-EXT-CALL
+    applies_when:
+      domain_tags:
+      - cli_tool
+      - template_engine
+      position:
+      - middle
+    is_test_artifact_suspect: true
+    artifact_reason: The failure was caused by the fake external command's launcher/interpreter setup rather than by a mismatch with the cited documented behavior; the command line already showed the expanded source being used.
+  date: '2026-10-09'
+- record_id: R-5f48bb7c70
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: Supplying a remote version-control URL did not reliably produce a usable local template directory under the configured cache location, and the operation failed or behaved like local-path resolution instead of fetching the repository.
+    cause: The implementation did not fully model the documented input forms for template sources. It treated repository resolution as primarily local-path based and lacked the required branch that recognizes remote VCS URLs, invokes the appropriate clone operation into the configured destination, applies the requested revision, and returns the cloned directory without marking it as temporary cleanup.
+    lesson: When documentation says an entry point accepts a remote Git repository URL and clones it into a configured directory, implementers should explicitly classify that input form as remote VCS, route it through the VCS clone workflow, honor checkout/revision options, validate that the resulting directory is usable, and return cleanup semantics appropriate for a persistent cache rather than a temporary extraction.
+    proposed_category: FP-INPUT-FORMS
+    applies_when:
+      domain_tags:
+      - cli_tool
+      - template_engine
+      - storage
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'The acceptance case exercises documented behavior: a remote repository URL must be cloned into the configured directory. The fake executable only observes that behavior and is not the reason for the required repair.'
+  date: '2026-10-09'
+- record_id: R-ae9780d869
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: An unprefixed remote repository address was not recognized as a valid version-control repository even though its text contained a known provider or version-control marker.
+    cause: The implementation handled only explicit prefixes or narrow URL forms, and did not apply the documented heuristic classification for unprefixed inputs containing recognizable repository substrings.
+    lesson: When documentation says an input may omit an explicit type prefix and should then be inferred heuristically, implementers must support both prefixed and unprefixed forms. For unprefixed repository-like strings, inspect the full input for documented version-control or hosting-provider markers and return the inferred repository type while preserving the original location string.
+    proposed_category: FP-INPUT-FORMS
+    applies_when:
+      domain_tags:
+      - template_engine
+      - storage
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The acceptance case checks documented behavior for supported unprefixed input forms, not a mock shape, fake command, environment detail, or other test-only artifact.
+  date: '2026-10-09'
+- record_id: R-ea090a70a5
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A remote archive download path failed before any extraction because the HTTP fetch call used an optional keyword argument that the substituted fetch implementation did not accept.
+    cause: The implementation coupled the documented “download and cache this URL” behavior to a particular third-party call shape. The required behavior was to retrieve the URL, persist the zip into the cache directory, and extract it; the extra streaming keyword was not part of the documented contract and made the code less compatible with simple adapters or test doubles.
+    lesson: 'When a document only requires downloading a URL before processing it, implement the behavior in terms of the observable contract: perform one fetch of the given URL, check for HTTP errors, write the response body to the cache location, then extract from that cached file. Avoid relying on optional third-party call parameters unless the documented behavior requires them, or isolate them behind an adapter whose interface you control.'
+    proposed_category: FP-EXT-CALL
+    applies_when:
+      domain_tags:
+      - network_protocol
+      - file_format
+      - template_engine
+      - storage
+      position:
+      - middle
+    is_test_artifact_suspect: true
+    artifact_reason: The immediate failure was caused by a fake fetch function whose signature accepted only the URL and rejected an optional keyword argument. The documentation requires a remote zip to be downloaded and cached, but it does not specify the exact third-party HTTP call signature, so the failing detail is tied to the mock shape rather than a documented behavior.
+  date: '2026-10-09'
+- record_id: R-72ca5b6f1f
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A clone operation with a requested revision did not produce the expected two-step command sequence and instead attempted a real external clone, causing environment-dependent failures before any checkout could occur.
+    cause: The implementation treated cloning as the whole operation and did not reliably model the documented follow-up revision selection as a separate external command executed after a successful clone in the cloned directory.
+    lesson: 'When documentation says a repository source may include an optional checkout reference, implement cloning and revision selection as distinct ordered steps: first clone into the target directory, then, only if a checkout value was provided and the clone succeeded, invoke the VCS checkout command for that reference with the cloned repository as the working directory. Keep external command invocation centralized so it can be consistently mocked, error-mapped, and reused across supported VCS backends.'
+    proposed_category: FP-EXT-CALL
+    applies_when:
+      domain_tags:
+      - cli_tool
+      - storage
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: Although the failing run exposed a subprocess-mocking mismatch, the repaired behavior also implements the documented requirement to perform a checkout after a successful clone, so the fix is not only an adaptation to the test harness.
+  date: '2026-10-09'
+- record_id: R-8bc0660ff7
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A failed external repository retrieval surfaced as the wrong high-level exception, so callers could not reliably distinguish a generic clone failure from a confirmed missing repository.
+    cause: The implementation inferred a more specific failure category from external-command behavior/output instead of consistently translating generic command execution failures into the documented clone-failure exception unless there was reliable evidence for a narrower case.
+    lesson: When documentation promises specific exception types for failure modes, wrap all low-level process errors at the boundary and map them deliberately. Treat an ordinary nonzero exit from the retrieval command as the documented clone-failure exception, include the original repository location in the message, and reserve more specific exceptions only for clearly detected conditions such as an unavailable tool, unsupported repository type, or an unambiguous not-found signal.
+    proposed_category: FP-DOC-EXC
+    applies_when:
+      domain_tags:
+      - cli_tool
+      - template_engine
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: Although the acceptance case uses a mocked subprocess failure, the required behavior is grounded in the documented contract that distinct failure modes must raise the documented high-level exceptions rather than leaking or misclassifying low-level command errors.
+  date: '2026-10-09'
+- record_id: R-e943223490
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A remote repository URL path triggered a real external clone attempt during acceptance instead of using the repository acquisition layer, causing the operation to fail in an environment without network credentials.
+    cause: The implementation did not route remote URL handling through the expected VCS cloning abstraction with the documented options, so the clone destination, checkout, noninteractive mode, and cleanup semantics were not reliably controlled at the higher-level resolution boundary.
+    lesson: When documentation says a remote repository URL is cloned into a specified cache or destination directory, the resolver should recognize remote repository URL forms, delegate acquisition to the VCS cloning component with all relevant options, return the resolved cloned repository path, and mark it as not requiring temporary cleanup unless the acquisition mechanism actually creates a disposable temporary directory.
+    proposed_category: FP-EXT-CALL
+    applies_when:
+      domain_tags:
+      - cli_tool
+      - template_engine
+      - storage
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The fake clone isolates an external network command, but the underlying documented behavior still requires remote repository acquisition into the requested destination and returning the resulting local repository directory.
+  date: '2026-10-09'
+- record_id: R-b1f9aa09b4
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: An online archive download path failed before archive extraction because the HTTP call used an optional keyword that the surrounding integration did not accept.
+    cause: The implementation treated the choice of third-party HTTP invocation style as incidental, while the required behavior was simply to fetch a remote ZIP archive and process its bytes. This made support for online archives depend on a narrower call contract than necessary.
+    lesson: 'When a requirement says local and online ZIP archives are supported, implement the online path as an end-to-end behavior: recognize remote ZIP URLs, perform a standard HTTP GET, check for transport errors, persist or read the returned bytes, and then extract and validate the archive just like a local ZIP. Avoid relying on optional client-call features unless they are necessary to the documented behavior, and keep the download code compatible with ordinary response objects that expose content and status-checking.'
+    proposed_category: FP-EXT-CALL
+    applies_when:
+      domain_tags:
+      - file_format
+      - storage
+      position:
+      - middle
+    is_test_artifact_suspect: true
+    artifact_reason: The immediate failure was caused by a fake HTTP function that did not accept an optional keyword argument, so that specific stack trace reflects the mock's shape rather than a documented requirement about how the HTTP client must be called. The underlying documented behavior, however, is still support for online ZIP archives.
+  date: '2026-10-09'
+- record_id: R-ba3f0a7f58
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A path matched by the documented no-render selection was still processed as a template, so literal placeholder syntax in the directory name, file name, or file contents was transformed instead of being preserved.
+    cause: The implementation treated the no-render rule too narrowly, applying normal template rendering to some descendants or path components even when a matching pattern designated that subtree for verbatim copying.
+    lesson: When documentation says selected files should not be rendered, implementers should apply that selection to the whole matched path according to the documented pattern semantics, including directory subtrees when patterns cover them, and should copy matching content and names verbatim rather than rendering placeholders anywhere inside the selected area.
+    proposed_category: 'NEW:SELECTIVE-RENDER-SCOPE: Documentation provides a mechanism to exclude paths from template rendering, but implementers must determine the scope of the exclusion, including whether it applies to directory descendants, filenames, path components, and file contents.'
+    applies_when:
+      domain_tags:
+      - template_engine
+      - storage
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The case checks the documented selective rendering behavior rather than adapting to a mock, fake command, environment setup, or test-only interface shape.
+  date: '2026-10-09'
+- record_id: R-5675320c67
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A generated documentation block placed the directive header outside the expected trailing block because the explanatory text was wrapped into too many continuation lines.
+    cause: The implementation treated the configured line length as applying after accounting for directive indentation, effectively reducing the usable wrapping width for the reason text. The documented wrapping option instead needs to govern the visible reason text itself, with indentation added only as formatting.
+    lesson: When a documentation/decorator API exposes a line-length option for wrapping explanatory text, apply that width to the user-provided text content before adding structural indentation or directive prefixes. Preserve the directive header as its own line, then append wrapped continuation lines whose stripped content respects the requested width.
+    proposed_category: 'NEW:TEXT-WRAP-SEMANTICS: Formatting options such as line length must be applied to the documented text content at the correct stage, not accidentally altered by prefixes, indentation, or container syntax.'
+    applies_when:
+      domain_tags:
+      - template_engine
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The failure concerns documented behavior of text wrapping and generated documentation formatting, not adaptation to mocks, fake commands, environment setup, or test-only scaffolding.
+  date: '2026-10-09'
+- record_id: R-9944c4a24d
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: Parsing a protocol response containing a literal byte payload fails with a protocol error instead of returning the payload under the documented response attribute key.
+    cause: The implementation treated the literal size marker as something to revalidate against the already-separated byte payload, so valid higher-level parsing was blocked by low-level literal handling. It also risked losing the distinction between raw protocol bytes and decoded text when handling body sections.
+    lesson: When documentation says a response parser returns a mapping from protocol attribute names to parsed values, preserve attribute names as raw protocol bytes and store literal body-section data exactly as supplied, including 8-bit bytes and trailing spaces. If a lexer or input adapter has already separated literal payloads from their markers, the parser should consume that payload as the authoritative raw value rather than transforming it or rejecting it because of secondary length accounting.
+    proposed_category: FP-TYPE
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'The case exercises documented protocol parsing behavior: preserving raw binary body data and mapping it under the documented attribute key. Although the constructed literal marker length appears fragile, the repair aligns with the documented requirement to parse fetch data into attribute-value mappings rather than merely matching a mock or environment shape.'
+  date: '2026-10-09'
+- record_id: R-027f760823
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A protocol response parser returned an empty or untyped result instead of a mapping keyed by the documented message identifier, with numeric fields, flag lists, and timestamp fields converted to their expected typed representations.
+    cause: The implementation treated the response as raw tokens or a placeholder collection rather than parsing the protocol grammar, handling parenthesized data, quoted strings, numeric atoms, and selecting the documented key field when requested.
+    lesson: 'When documentation says a network response is parsed into a keyed mapping with typed values, implement the full response decoding path: tokenize bytes safely, preserve protocol byte atoms where appropriate, convert numeric atoms to integers, parse quoted timestamp fields into date-time objects, decode nested parenthesized lists, and choose the alternate documented identifier as the dictionary key when that option is enabled.'
+    proposed_category: FP-TYPE
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The repair implements documented parser behavior and typed protocol decoding, not a test-specific mock shape or artificial environment detail.
+  date: '2026-10-09'
+- record_id: R-e63d7a598a
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: When response input was supplied as records that pair protocol text with literal bytes, iteration over the parsed tokens did not expose the associated literal bytes for each token from that record.
+    cause: The implementation treated each response record as plain byte text and tokenized it without preserving record-level metadata. As a result, the literal payload attached to a record was lost instead of remaining available while tokens from that record were being produced.
+    lesson: When documentation says a tokenizer or parser exposes the literal associated with the current token source, implementers must model each input record as both token text and optional literal metadata. If a record carries a literal payload, that payload should remain accessible for every token emitted from the same record, not only when the literal marker itself is encountered.
+    proposed_category: FP-INPUT-FORMS
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'The acceptance case checks documented protocol-tokenization behavior: preserving literal bytes associated with the current response record. It is not merely adapting to a mock, fake executable, environment detail, or test-only construction.'
+  date: '2026-10-09'
+- record_id: R-b6e1749fae
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A response containing a protocol literal with 8-bit bytes, embedded spaces, and a NUL byte was rejected with a literal-length mismatch instead of being returned as an opaque byte value alongside the parsed surrounding structure.
+    cause: The parser treated the textual response stream and the attached literal bytes as if they could be tokenized with ordinary whitespace splitting. That corrupted the distinction between protocol syntax and literal payload, so spaces and non-text bytes inside the literal affected parsing and length validation.
+    lesson: When documentation says a response record may contain a separately stored literal and that responses are parsed into Python types, implementers should treat the literal payload as opaque bytes. Tokenize only the protocol framing text, detect literal markers in that framing, then splice in the associated byte payload unchanged. Do not decode, split, trim, or otherwise reinterpret literal bytes, and validate literal size by byte count rather than by textual token boundaries.
+    proposed_category: FP-TYPE
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'The case checks documented protocol behavior: preserving a separately stored binary literal while parsing the surrounding response. It is not dependent on mocks, fake commands, environment setup, or test-only calling conventions.'
+  date: '2026-10-09'
+- record_id: R-d155f37a8b
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A capability-activation operation returned generic response tokens instead of the actual extensions that the server reported as enabled, and related command wrappers confused completion text with protocol status/data.
+    cause: 'The implementation treated the operation like a generic command response rather than applying the command-specific response contract: verify the required advertised capability first, issue the command with all requested capability atoms, and extract only the enabled-extension atoms from the server response.'
+    lesson: 'When documentation says an operation returns a list of enabled server extensions and requires a specific advertised capability, implement that as a command-specific contract: check the prerequisite capability before sending, raise the documented capability error if absent, pass each requested extension through as a separate protocol argument, and return only the server-reported enabled extension atoms in the API''s raw protocol representation rather than a generic status, completion message, or placeholder response.'
+    proposed_category: FP-RESP-FILTER
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'The expected behavior follows from the documented command semantics: prerequisite capability checking and returning the enabled extensions, not from the shape of a mock or fake backend.'
+  date: '2026-10-09'
+- record_id: R-7f5ecf9814
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: An authentication operation reported only the response payload, omitting the protocol status, and failure handling did not consistently surface the documented domain-specific exception.
+    cause: The implementation treated the server's response data as the whole return value and did not preserve the full command result shape described by the API contract. It also risked letting lower-level or generic failures escape instead of translating unsuccessful authentication into the documented exception type.
+    lesson: When documentation says an operation returns the server response, implementers should preserve the complete protocol response structure, including both status and data, rather than returning only the final text or payload. For documented authentication failure cases, translate non-success protocol statuses into the explicitly documented exception type.
+    proposed_category: FP-RAW-VS-STATUS
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'The case checks documented behavior: returning the server response shape and raising the specified exception on authentication failure, not merely adapting to a mock-specific signature or environment detail.'
+  date: '2026-10-09'
+- record_id: R-2dd5b80690
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A protocol operation returned the server's completion text as the first element of its result tuple instead of the command status, while the accompanying update list was otherwise correct.
+    cause: The implementation treated the final response payload/text as the command response value, rather than preserving the protocol status indicator separately from any status-update data.
+    lesson: When documentation says an operation returns both a command response and status updates, implement the return shape so the command response is the protocol-level status such as success/failure, and keep server update messages or completion text in the separate update/data portion. Do not infer the first tuple element from the last informational message unless the documentation explicitly says so.
+    proposed_category: FP-RAW-VS-STATUS
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The expected behavior follows directly from the documented distinction between command response and status updates, not from a mock-specific signature or test-only construction.
+  date: '2026-10-09'
+- record_id: R-ffd5cafd6b
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A TLS-enabled client could be constructed, but opening the connection did not create the underlying TCP connection with the documented timeout, wrap it with the provided TLS context using the target host name, and expose the normal read, write, and close operations on the secured transport.
+    cause: The implementation treated encrypted transport setup as ordinary connection setup, or relied on default library behavior, instead of explicitly coordinating the raw socket creation, timeout propagation, TLS wrapping, and transport method delegation required by the documented constructor contract.
+    lesson: 'When documentation says a network client is adapted from a standard encrypted client but adds explicit context and timeout support, implement the full transport sequence explicitly: create the raw connection with the supplied timeout, wrap that exact socket with the supplied TLS context and server host name, store the wrapped socket as the active transport, and ensure subsequent read, send, and shutdown operations operate on the wrapped transport rather than the raw one.'
+    proposed_category: FP-EXT-CALL
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'The mocked socket and TLS context stand in for documented network behavior: explicit timeout handling, use of the caller-provided security context, host-aware wrapping, and normal transport operations. The repair aligns with the documented behavior rather than merely adapting to an artificial mock shape.'
+  date: '2026-10-09'
+- record_id: R-3c69851c69
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: 'Protocol helper methods produced responses that did not match the documented high-level return shape: callers expected parsed lists, tuples, and quota records rather than raw response fragments or loosely typed values.'
+    cause: The implementation treated extension responses as generic command output instead of parsing each untagged response into the documented structures and preserving the protocol-level value types for individual fields.
+    lesson: 'When documentation says a protocol method returns structured data, implementers should build that exact public structure from the server response: filter out command-completion/status material, parse each relevant response item, decode only fields that are documented or semantically textual identifiers, and leave opaque protocol tokens or numeric literals in their raw byte form when the API has historically exposed them that way.'
+    proposed_category: FP-TYPE
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The case checks documented return structures and protocol parsing behavior, not an adaptation to a fake backend or mock-specific calling convention.
+  date: '2026-10-09'
+- record_id: R-bd6d9e2985
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: Operations that complete successfully return a generic success indicator or otherwise discard the server-supplied completion text, so callers cannot observe the response payload promised by the API contract.
+    cause: The implementation treated command success as the only relevant result and normalized responses to a status-like value instead of propagating the response data returned by the underlying protocol command.
+    lesson: When documentation says an operation returns the server response, implementers should preserve and return the command response text/data from the protocol layer after successful completion, including for UID-aware variants, rather than replacing it with a boolean, status code, or other generic success marker.
+    proposed_category: FP-RAW-VS-STATUS
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The expectation follows the documented behavior that these operations return server responses, not merely the shape of a fake backend or mock.
+  date: '2026-10-09'
+- record_id: R-165de8850e
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A protocol extension method exposed label data in the wrong public form and did not consistently suppress return data for silent mutation operations.
+    cause: The implementation treated extension response atoms as raw protocol values instead of applying the documented text decoding boundary, and it failed to honor the documented nullable return contract when an operation is requested silently.
+    lesson: When documentation says returned protocol fields are decoded to Unicode, decode every label atom using the protocol’s specified encoding before returning it, even when the server response is byte-oriented. For mutating operations with a silent mode and a documented “updated data or none” contract, return updated data only when the operation is non-silent and response data is expected; return null/None for silent operations.
+    proposed_category: FP-TYPE
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'The case checks documented behavior: Unicode decoding of protocol label fields and the documented absence of returned data for silent operations, not a quirk of a fake backend or mock shape.'
+  date: '2026-10-09'
+- record_id: R-af39e37e83
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A protocol session mode that should collect asynchronous server updates returned the wrong set of responses when polling and when leaving the mode.
+    cause: The implementation did not clearly separate protocol control lines from unsolicited data lines. Continuation prompts and tagged command-completion responses were allowed to affect the returned update list instead of being treated as mode-entry or mode-exit framing.
+    lesson: 'When documentation says a polling method returns parsed unsolicited responses and a separate exit method returns command completion text plus remaining parsed responses, implementers should filter by protocol role: return only untagged asynchronous updates as collected responses, consume control prompts internally, and treat the tagged completion line as the command result rather than as another update.'
+    proposed_category: FP-RESP-FILTER
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The case checks documented protocol behavior about entering a streaming/update mode, polling parsed unsolicited responses, and exiting with command completion results; it is not merely adapting to a mock-specific signature or environment.
+  date: '2026-10-09'
+- record_id: R-ab18fa11fe
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A folder-listing API returned data that did not match the documented structured shape and/or left internationalized folder names in their wire encoding instead of returning human-readable text.
+    cause: The implementation treated the server response too much like raw protocol data, failing to fully parse each response into the documented tuple fields and to apply the required modified UTF-7 decoding to mailbox names while preserving the appropriate byte-oriented protocol fields.
+    lesson: 'When documentation promises parsed folder tuples and automatic internationalized-name handling, implementers should convert each matching server response into the exact public return structure: flags as a tuple of protocol bytes, delimiter as protocol bytes, and folder name as a decoded text string using modified UTF-7. Do not expose raw response lines or encoded mailbox names through the high-level API.'
+    proposed_category: FP-TYPE
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'The case checks documented public behavior: structured folder-listing results and automatic modified UTF-7 decoding, not an incidental mock shape or test-only execution detail.'
+  date: '2026-10-09'
+- record_id: R-6275062e9a
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: When configuration requested OAuth2 authentication, client creation failed during login because the implementation invoked the client’s OAuth login operation with an extra keyword argument that the expected login interface did not accept.
+    cause: The implementation treated the OAuth2 mechanism as an argument to pass explicitly instead of relying on the documented XOAUTH2/OAuth2 login path and the client API’s default behavior for that mechanism. This made the integration depend on a more specific call shape than the documented behavior required.
+    lesson: When a document says a configured client can authenticate with OAuth2/XOAUTH2, implement client creation so that it obtains or uses an access token from the configured OAuth2 credentials and calls the client’s documented OAuth login interface with the required user and token. Do not add optional mechanism or vendor parameters unless they are explicitly part of the documented configuration contract; defaults should cover XOAUTH2 when no override is specified.
+    proposed_category: FP-EXT-CALL
+    applies_when:
+      domain_tags:
+      - network_protocol
+      - cli_tool
+      position:
+      - last
+    is_test_artifact_suspect: false
+    artifact_reason: The failure reflects an observable integration contract for OAuth2 authentication, not merely the shape of a mock. The documented behavior requires OAuth2/XOAUTH2 login from configuration, and the implementation should use the public login call in its minimal documented form unless additional parameters are documented.
+  date: '2026-10-09'
+- record_id: R-b560900379
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A configuration-defaults API returned only a minimal subset of settings and did not provide the complete connection-parameter defaults expected by callers, even though environment-provided credentials were present.
+    cause: The implementation treated the documented defaults as a few credential-related values instead of defining a full default configuration schema and then applying environment overrides across that schema.
+    lesson: When documentation promises default configuration values for a connection setup, implement a complete defaults map for all documented connection options, then overlay environment-sourced values where available and preserve appropriate value types. Do not limit the result to only the most obvious credentials.
+    proposed_category: 'NEW:CONFIG-DEFAULT-SCHEMA: Documentation promises a configuration-defaults API; implementation must return the complete expected option schema with correct defaults and environment overrides, not just a partial subset.'
+    applies_when:
+      domain_tags:
+      - network_protocol
+      - cli_tool
+      - data_validation
+      position:
+      - last
+    is_test_artifact_suspect: false
+    artifact_reason: 'The repair implements documented behavior: returning a comprehensive default configuration and sourcing values from environment variables. It is not merely adapting to a mock, fake executable, or test-only shape.'
+  date: '2026-10-09'
+- record_id: R-a008a7bf96
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A command-line parsing entry point raised a missing-file error when given a documented configuration-file argument, instead of returning a parsed namespace containing the supplied direct options and configuration path.
+    cause: The implementation treated parsing as an eager configuration-loading step, opening the referenced file during argument parsing. This made a syntactically valid documented argument form fail when the file was not present, and blurred parsing with later I/O or connection setup.
+    lesson: When documentation says a CLI routine parses arguments and returns a namespace while supporting both direct options and a configuration-file option, implement the parser to accept and preserve all documented argument forms independently of whether later configuration loading succeeds. Keep argument recognition separate from file I/O and network setup unless the documentation explicitly says parsing validates or consumes those resources.
+    proposed_category: FP-INPUT-FORMS
+    applies_when:
+      domain_tags:
+      - cli_tool
+      - file_format
+      position:
+      - last
+    is_test_artifact_suspect: false
+    artifact_reason: The test exercises documented command-line argument forms and expects parsing behavior without relying on a fake executable, mock signature, or environment-specific test artifact.
+  date: '2026-10-09'
+- record_id: R-b349e1fe9b
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: An executable interactive entry point attempted a real network connection during an acceptance scenario that expected the client creation step to be substitutable, so execution failed before the interactive console could receive the connected object.
+    cause: The entry-point path constructed the network client through an internal/imported implementation path rather than the documented public construction path used by callers and tests, which bypassed substitution of the client factory and leaked an external side effect into startup.
+    lesson: 'When documentation promises a command-line interactive entry point and says the connected client is available in the console under a specific variable name, implement the entry point as a thin integration layer: parse the documented flags, obtain credentials, create the client through the same public API surface users are expected to use, perform the documented connection/login step, and pass the resulting object into the interactive console locals under the promised name. Avoid hidden construction paths that make the entry point harder to substitute or that perform real network I/O before the documented observable behavior can be verified.'
+    proposed_category: FP-EXT-CALL
+    applies_when:
+      domain_tags:
+      - cli_tool
+      - network_protocol
+      position:
+      - last
+    is_test_artifact_suspect: false
+    artifact_reason: 'The scenario uses substitution to avoid real network I/O, but the checked behavior is documented: the module entry point must create a connected client and expose that exact instance to the interactive console under the promised variable name. The lesson is about preserving the documented public integration path, not merely matching a fake signature.'
+  date: '2026-10-09'
+- record_id: R-61bbabde3e
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A capability query did not return the server-advertised capability set in the expected immutable protocol-data form, did not reuse the first result, and capability membership checks could give incorrect answers when the queried value used a different text/binary representation.
+    cause: The implementation treated the capability API as a stub or simple local value instead of issuing/parsing the server capability response, caching the parsed result, and normalizing capability names consistently for lookup.
+    lesson: 'When documentation says an API returns server capabilities as a tuple and may cache them, implement it as a real protocol query on first use: parse the server response into a stable tuple of canonical capability tokens, preserve the protocol-level byte representation where appropriate, store that tuple for later calls until a state change invalidates it, and make membership checks compare normalized capability names so equivalent string and byte inputs behave consistently.'
+    proposed_category: FP-TYPE
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'The repair implements documented behavior: returning cached server capabilities and using them for capability lookup. It is not merely adapting to a mock shape or test-only fixture.'
+  date: '2026-10-09'
+- record_id: R-1b059b0921
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A capability-activation operation successfully reached the transport layer but returned the enabled capability atoms in the wrong container shape, using a tuple where the contract expected a list. A related command path also exposed generic protocol status/data rather than the command-specific response shape.
+    cause: The implementation passed through low-level backend return values too directly instead of normalizing them to the public API contract described by the documentation. It treated transport response structure as if it were already the user-facing result.
+    lesson: 'When documentation specifies that an operation returns a list of enabled extensions, implement the public method as a normalization boundary: dispatch the requested capability names to the server, validate success, then return exactly the documented collection shape containing the enabled extension tokens. Do not leak backend-specific tuples, status codes, or tagged response framing unless the documentation says those are part of the public return value.'
+    proposed_category: FP-TYPE
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The expected behavior follows the documented public contract for the operation’s return value, not from a mock-specific signature or artificial test harness detail.
+  date: '2026-10-09'
+- record_id: R-70d6e258da
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A plain credential authentication call did not both return the server-provided success data and convert an authentication failure into the specifically documented failure exception.
+    cause: 'The wrapper did not fully implement the documented contract for the authentication operation: it either failed to delegate the supplied credential pair to the underlying protocol object, returned a generic status instead of the response payload, or let lower-level failures escape without mapping them to the documented exception type.'
+    lesson: 'When documentation says an operation authenticates with plain credentials, returns the server response, and raises a named authentication exception on failure, implement the method as a thin contract-preserving wrapper: pass the credential values through to the underlying protocol command in order, return the response data from that command on success, and translate any authentication-related failure into the documented exception rather than a generic or backend-specific error.'
+    proposed_category: FP-DOC-EXC
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'The behavior under test follows the documented contract: returning the server response and raising the documented authentication exception. It is not merely adapting to a mock shape or test-only environment.'
+  date: '2026-10-09'
+- record_id: R-b6641f4822
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A successful protocol command returned a generic success status together with the completion text in the update list, instead of returning the server's completion response as the command result and an empty update list. On failure, the same path also needed to surface the documented abort-specific exception rather than a generic failure.
+    cause: The implementation treated the low-level protocol status code as the public command response and did not distinguish tagged command-completion data from unsolicited status updates. It also lacked a consistent mapping from transport-layer abort failures to the documented abort exception type.
+    lesson: When a document says an operation returns the command response plus a list of status updates, implementers should preserve the server's actual command response as the primary result, reserve the update list for separate server-side updates, and translate protocol failure classes into the documented exception categories.
+    proposed_category: FP-RAW-VS-STATUS
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The expected behavior follows the documented return contract and documented error-type distinction, not merely the shape of a fake backend or mock.
+  date: '2026-10-09'
+- record_id: R-beb3ff0c41
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: 'A convenience authentication entry point appeared to succeed only partially or used the wrong authentication path: the underlying protocol layer was not invoked with the documented SASL mechanism and callback payload expected by the server.'
+    cause: 'The implementation treated the convenience login as a separate or ordinary login operation instead of expressing it as a SASL authentication exchange. It also risked omitting the required wire-format payload details: optional authorization identity, authentication identity, password, NUL separators, and byte encoding.'
+    lesson: When documentation says a convenience login authenticates using a specific SASL mechanism, implement it by delegating to the generic SASL authentication path with that mechanism name and a callable that produces the mechanism’s exact wire-format response. The callable should accept the server challenge, return bytes, preserve optional authorization identity semantics, and let the generic SASL path return the server’s authentication response data.
+    proposed_category: FP-EXT-CALL
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The repair implements documented protocol behavior rather than merely matching a mock shape; the fake backend is standing in for the real protocol layer that should receive a mechanism name and authentication callback.
+  date: '2026-10-09'
+- record_id: R-716a265420
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A silent message-flag mutation returned the expected absence of result, but the recorded protocol operation did not match because command operands were serialized as text strings rather than bytes, and related flag/list formatting differed from the expected wire form.
+    cause: The implementation treated protocol atoms and parenthesized flag lists as ordinary text after normalization, instead of preserving the byte-oriented representation required for low-level protocol commands. It also needed the silent variant of the mutation operation to be reflected in the actual command sent, not only in the public return value.
+    lesson: 'For protocol-facing APIs, implement the documented silent option in both observable dimensions: return no result when silent is requested, and send the protocol''s silent mutation form. When inputs such as flags are byte values, normalize and serialize every command atom, sequence, and parenthesized list consistently as bytes before handing them to the transport layer.'
+    proposed_category: FP-TYPE
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The failure concerns documented silent-operation semantics and byte-oriented protocol serialization, not merely the shape of a mock or fake dependency.
+  date: '2026-10-09'
+- record_id: R-121f9d33cf
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: 'A silent message-metadata update did not produce the expected protocol operation: the outgoing arguments used text values and generic quoted formatting instead of byte-level protocol atoms, even though the high-level result was supposed to be absent when silent mode is requested.'
+    cause: 'The implementation mapped the documented high-level operation to a generic mutation path without preserving the wire-level distinctions required by the protocol: silent mode must use the silent variant of the update attribute, command arguments should be encoded as bytes, and label/list values must be formatted according to protocol syntax rather than ordinary string quoting rules.'
+    lesson: 'When a document describes a protocol operation with a silent option that returns updated data or none, implement both halves of that contract: use the protocol’s silent update form so the server is not asked to return updated metadata, return null/None for that path, and build the wire command with the exact byte tokens and list formatting required by the protocol instead of relying on generic string conversion or quoting.'
+    proposed_category: 'NEW: Protocol wire-command encoding: High-level API documentation may imply exact protocol atoms, modifiers, byte encodings, and quoting/list syntax for outbound commands; implementations must preserve those wire-level forms, not just approximate the semantic operation.'
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The expectation reflects documented silent-operation semantics and protocol wire encoding requirements, not merely the shape of a fake backend or mock-specific signature.
+  date: '2026-10-09'
+- record_id: R-a4aa24bcaf
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: 'A converter for protocol search criteria produced structurally valid-looking bytes, but encoded some accepted input forms incorrectly: text operands were additionally quoted, nested criteria were grouped instead of flattened, and date values were not emitted as separate protocol-ready tokens.'
+    cause: The implementation treated nested sequences as a parenthesized subexpression and applied generic quoting rules to strings, rather than following the documented contract that all supported criteria forms should be normalized into a flat list of byte tokens using the requested character set and protocol date formatting.
+    lesson: 'When documentation says an input accepts multiple forms such as strings, integers, dates, and nested lists and returns a list of protocol-ready bytes, implement normalization recursively and uniformly: flatten nested lists, convert integers to their decimal byte representation, format date-like values using the protocol date format, and encode strings with the supplied charset without adding extra quoting unless the contract explicitly requires it.'
+    proposed_category: FP-INPUT-FORMS
+    applies_when:
+      domain_tags:
+      - network_protocol
+      - data_validation
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The failure concerns documented input forms and output normalization semantics, not adaptation to a mock, fake backend, environment detail, or test-only command shape.
+  date: '2026-10-09'
+- record_id: R-da16601b1e
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: Resource-management operations completed against the backend but did not yield the response payload that the server supplied for each command.
+    cause: The implementation treated these commands as side-effect-only operations or returned a generic success/status value, instead of extracting and returning the server's final response data after verifying success.
+    lesson: 'When documentation says an operation returns the server response string, implement the method as a thin protocol wrapper: issue the corresponding command, check that it succeeded, and return the response text/data supplied by the server for that command. Do this consistently for create, rename, delete, subscribe, and unsubscribe style operations rather than returning booleans, status atoms, or nothing.'
+    proposed_category: FP-RAW-VS-STATUS
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'The acceptance case verifies documented API behavior: these operations must return the server response, not merely adapt to a mock shape or test-only fixture.'
+  date: '2026-10-09'
+- record_id: R-d609963232
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A status-query API returned an unparsed protocol response, an empty result, or otherwise failed to produce a mapping of the requested status fields to their values.
+    cause: The implementation treated the command response as generic command data instead of interpreting the protocol’s status response payload and converting the requested name/value pairs into a dictionary with numeric values.
+    lesson: When documentation says an operation returns requested status items as a dictionary, implementers should parse the protocol response for the relevant status payload, extract only the requested fields, preserve the protocol-level field names consistently, convert numeric fields to integers, and return that structured mapping rather than raw response lines or a generic success indicator.
+    proposed_category: 'NEW:STRUCTURED-PROTOCOL-RESPONSE: 文档要求返回结构化结果时，实现必须解析协议响应并构造指定的数据结构，而不是返回原始响应或通用状态。'
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The expectation follows the documented behavior that the operation returns requested status items as a dictionary; it is not merely adapting to a fake backend or mock shape.
+  date: '2026-10-09'
+- record_id: R-326bed188a
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: 'A mailbox-selection operation returned a dictionary, but values were associated with the wrong response keys: a count field contained the value from a different metadata field.'
+    cause: The implementation did not parse the server's untagged selection responses as independent key-value records. Instead, it effectively reused or misassigned parsed values across response fields, so later response data could overwrite or be returned for earlier keys.
+    lesson: When documentation says an operation returns a dictionary with protocol response keys, implementers should parse each response line by its explicit field name and store the value under that exact key. Numeric fields should be converted to integers, list-like flag fields should be parsed into stable sequences, and unrelated response fields must not overwrite one another merely because they appear in the same command response.
+    proposed_category: 'NEW:FP-RESP-KEYING: Protocol responses that contain multiple named fields must be parsed and returned by explicit field/key association, not by position, last value, or a shared parser result.'
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'The acceptance case checks documented behavior: a mailbox-selection command should return a dictionary keyed by selection response fields. The repair implements response parsing semantics rather than merely adapting to a mock or fake backend shape.'
+  date: '2026-10-09'
+- record_id: R-03cb539cc4
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A message-addition operation failed before reaching the server because the underlying command invocation did not receive the message payload argument; related command assertions also exposed inconsistent text-versus-bytes encoding for protocol arguments.
+    cause: The wrapper did not preserve the full documented command shape when translating the public call into the lower-level protocol call. Optional metadata such as flags and internal date, plus the message literal itself, must be passed in the protocol-required order and representation rather than being dropped or normalized inconsistently.
+    lesson: 'When a document says an operation accepts a target container, a message body, optional flags, and an optional internal timestamp, implement the wrapper as a faithful protocol adapter: encode flags into the protocol flag-list form, format the timestamp as the protocol internal-date value, pass the message body as the final literal argument, keep the documented argument order, and return the server response data rather than a generic success marker.'
+    proposed_category: FP-EXT-CALL
+    applies_when:
+      domain_tags:
+      - network_protocol
+      - storage
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'Although the failure surfaced through a scripted backend signature, the underlying issue is documented behavior: the operation must forward the message body and optional metadata to the protocol command in the expected form and return the server response.'
+  date: '2026-10-09'
+- record_id: R-52c93403e4
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: An operation sent the correct protocol verb and returned the server response, but the recorded command arguments had the wrong text/byte representation for different parameters.
+    cause: 'The implementation applied a uniform conversion policy to command arguments instead of preserving the representation expected for each protocol parameter: message identifiers were serialized as protocol bytes, while a textual destination name should remain a text value for the lower-level command layer to handle.'
+    lesson: When implementing documented protocol operations, do not blindly convert every argument to the same type. Treat numeric/message-set protocol atoms, flags, and mailbox or folder names according to their documented role and the lower-level protocol API’s expectations. Also ensure UID-aware operations dispatch through the UID form of the command and return the server’s response data rather than a synthesized status.
+    proposed_category: FP-TYPE
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'Although the failing assertion inspects a fake backend’s recorded call shape, the underlying issue reflects a real protocol-wrapper concern: different command arguments may need different byte-versus-text handling, and UID-aware dispatch plus returning the server response are documented behaviours.'
+  date: '2026-10-09'
+- record_id: R-d804659894
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A message-mutation operation produced the correct logical result, but the recorded protocol command used text strings for flag-related command atoms where the expected wire-level representation was bytes.
+    cause: The implementation normalized parsed response flags to bytes but did not apply the same byte-oriented representation when constructing the outbound protocol command, creating an inconsistent boundary between API logic and protocol I/O.
+    lesson: For network-protocol APIs, treat command atoms, flags, identifiers, and parsed protocol fields as wire data unless the documentation explicitly says they are user-facing text. When implementing an operation that adds a protocol flag and returns updated flags, encode both outbound command arguments and returned protocol tokens consistently as bytes at the protocol boundary.
+    proposed_category: FP-TYPE
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: Although the failure was observed through a fake backend recording calls, the mismatch reflects a real protocol-boundary type issue rather than merely adapting to a mock-specific signature or environment.
+  date: '2026-10-09'
+- record_id: R-358ab84f28
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: In identifier-based mode, the message relocation command reached the backend with the destination mailbox encoded as bytes instead of preserving the caller-provided text value; related response handling also risked returning a container rather than the actual server response payload.
+    cause: The implementation treated all command arguments and response data uniformly as wire-level byte data, instead of distinguishing protocol literals such as message sets from user-facing folder names and the documented return value shape.
+    lesson: When a document says an operation accepts messages plus a folder and returns the server response, implementers should preserve the API-level type of user-supplied names unless the contract explicitly requires byte encoding, encode only the protocol fields that must be bytes on the wire, and return the actual server response payload rather than a status surrogate or an unnecessarily wrapped collection.
+    proposed_category: FP-TYPE
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The failure concerns public API type and response-shape expectations for a network protocol operation, not adaptation to a fake backend’s incidental construction.
+  date: '2026-10-09'
+- record_id: R-bfe8f508a8
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A successful protocol operation returned a one-element response container instead of the response payload itself, causing callers to receive a list-like value where the documented API implies the server response data.
+    cause: The implementation exposed the lower-level transport/library response shape directly rather than normalizing it to the public method's documented return contract.
+    lesson: 'When documentation says an operation returns the server response, define and consistently apply the public response shape: extract the meaningful completion response from the protocol library result and return it in its raw data form, rather than leaking intermediate containers or status wrappers used internally.'
+    proposed_category: FP-TYPE
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The expected behavior follows from the documented public API return contract, not from a mock-specific signature or artificial test harness detail.
+  date: '2026-10-09'
+- record_id: R-0fe3b3322d
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A mutating protocol operation succeeded at the transport layer but returned a one-element response collection instead of the expected single completion payload.
+    cause: The implementation exposed the low-level library’s response container directly rather than normalizing it to the public API’s scalar completion response for command-style operations.
+    lesson: 'When a documented operation represents a single protocol command with a completion response, normalize the backend response before returning it: validate success, discard the transport wrapper/container, and return the actual completion data in the API’s documented or established raw type.'
+    proposed_category: FP-RAW-VS-STATUS
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The failure concerns public return-value semantics for a protocol operation, not adaptation to a mock-only signature, fake executable, environment setup, or other test harness artifact.
+  date: '2026-10-09'
+- record_id: R-e53c4620c2
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A method that parses access-control data returned the right pair structure and values, but decoded protocol atoms into text strings where callers expected raw byte values.
+    cause: The implementation treated undocumented element types in protocol response tuples as a convenience decoding choice. For wire-protocol fields such as identities and rights, this changed the public return type even though the underlying response data was binary.
+    lesson: When documentation promises structured data derived from a network protocol but does not explicitly say to decode fields to text, preserve raw protocol atoms as bytes in the returned structure. Decode only fields whose API contract clearly defines them as human-readable strings or mailbox names.
+    proposed_category: FP-TYPE
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The failure concerns the public representation of protocol response data, not a mock-specific call shape or test-only environment detail.
+  date: '2026-10-09'
+- record_id: R-71aa216782
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: After entering a protocol mode meant to receive asynchronous server updates, the nonblocking polling step returned an empty collection even though the server had sent untagged update lines.
+    cause: The implementation treated the mode entry as complete but did not continue consuming and parsing the server's unsolicited responses for later interaction steps, or it filtered those responses out along with control/completion lines.
+    lesson: When documentation says a protocol mode will deliver unsolicited updates and provides separate interaction steps for checking and finishing that mode, implementers should maintain mode state, read pending server lines during the check step, parse only the unsolicited update records into the library's normal structured response form, and keep continuation prompts or final tagged completion responses out of that update list.
+    proposed_category: FP-RESP-FILTER
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'The failure concerns documented protocol behavior: asynchronous unsolicited server updates during an interactive mode must be returned by the public interaction API, not merely accommodated for a fake backend or mock shape.'
+  date: '2026-10-09'
+- record_id: R-e1827de141
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A mutating API appeared to return the expected parsed data, but the underlying protocol command was never issued; the last backend interaction was a read of an untagged response instead of the documented setter operation.
+    cause: The implementation treated the operation as response extraction/parsing rather than as a command that must be sent to the server. It reused the response name associated with the resulting data instead of dispatching the documented state-changing command with the supplied quota objects.
+    lesson: When documentation says an API sets or changes server state and accepts structured objects as input, implementers must serialize those objects into the corresponding protocol command, send that command, validate the command result, and only then parse the server response. Do not satisfy the return shape by reading cached or untagged response data without performing the documented operation.
+    proposed_category: 'NEW:PROTOCOL-COMMAND-DISPATCH: For protocol-backed APIs, the documented operation may require issuing a specific command distinct from the response type being parsed; implementations must dispatch the correct command rather than only retrieving or parsing similarly named response data.'
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'Although the failure is observed through a test backend''s recorded calls, it exposes a real documented-behavior issue: a setter operation must send the protocol command that performs the state change, not merely read an untagged response.'
+  date: '2026-10-09'
+- record_id: R-6909e8c2f0
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A command that otherwise succeeded sent one argument in byte form where the expected command construction kept it as text, causing the observable protocol-call arguments to differ from the documented operation shape.
+    cause: The implementation applied low-level encoding to a user-supplied textual mailbox/folder argument too early or inconsistently. This blurred the boundary between public API values and wire-level byte tokens.
+    lesson: When documentation describes an operation in terms of textual inputs and a server response string, preserve the public argument types through the API-level command construction and only encode at the single boundary that actually writes to the protocol stream. Be explicit and consistent about which command components are text, which are raw protocol bytes, and which returned values should remain the server’s raw response.
+    proposed_category: FP-TYPE
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'The failure concerns a real ambiguity in protocol-client implementations: whether API-level textual parameters should be converted to bytes before command construction. Although observed through a test backend, the issue reflects documented behavior around textual inputs and raw server responses rather than only a mock-specific signature.'
+  date: '2026-10-09'
+- record_id: R-7aab0457b1
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A protocol command included the requested conditional modifier, but some command arguments were emitted as text strings while other arguments were emitted as bytes, so the recorded wire-level call did not match the expected binary serialization.
+    cause: The implementation normalized only part of the command arguments to the protocol's byte representation. Parenthesized data items and modifier clauses were assembled as strings instead of being encoded consistently before sending.
+    lesson: When a document says an operation supports protocol modifiers, implementers should treat those modifiers as part of the wire command and serialize every command atom, list, and parenthesized clause into the protocol's raw byte form consistently, not mix native text objects with bytes.
+    proposed_category: FP-TYPE
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'Although the failure was observed through a fake backend''s recorded call, the mismatch reflects a real protocol serialization concern: wire commands should use a consistent byte representation.'
+  date: '2026-10-09'
+- record_id: R-7ad7563c14
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: 'A provider-specific search operation returned the expected message identifiers but issued the underlying search command with the wrong argument shape: the character set was serialized as a protocol token and the raw query was additionally quoted instead of being passed as the raw extension criterion.'
+    cause: The implementation treated the character set and query text as ordinary search criteria to be formatted, rather than respecting the command builder's convention that the character set is a separate leading parameter and the extension name plus query bytes are the actual search criteria.
+    lesson: 'When implementing a documented protocol extension, map the documented parameters onto the lower-level command abstraction exactly: pass the charset through the charset channel, emit the extension criterion as its own atom, and encode the user query to bytes without applying generic quoting or criterion rewriting unless the protocol layer explicitly owns that serialization.'
+    proposed_category: 'NEW:协议命令参数序列化: 实现网络协议命令时，文档参数必须映射到正确的命令参数层级；字符集、扩展原子、原始查询和值引用等不能被通用格式化逻辑错误地重排、包装或转义。'
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The failure concerns the semantic construction of a protocol search command for a documented extension, not merely adapting to a mock-only signature or artificial environment.
+  date: '2026-10-09'
+- record_id: R-57ac8ec84a
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: 'A message lookup operation returned the expected numeric results, but the recorded protocol call used the wrong command dispatch shape: it omitted the optional leading charset argument and did not consistently choose between identifier-based and sequence-number-based command execution according to the configured mode.'
+    cause: The implementation normalized only the visible search criteria and sent them directly, instead of preserving the full protocol argument layout and routing the operation through a UID-aware command abstraction that can switch between UID and non-UID execution.
+    lesson: When documentation promises the ability to switch between UID-based and sequence-number-based operation, implementers should apply that mode uniformly to every message-addressing command. The public method should build the complete protocol argument list, including optional placeholders such as charset when the protocol syntax reserves that position, and then delegate to a single command path that decides whether to send the UID-prefixed form or the plain sequence-number form.
+    proposed_category: 'NEW:PROTOCOL-MODE-DISPATCH: A documented mode changes which wire-level command form must be used, so implementations must route operations through the correct protocol dispatch path rather than only changing returned values or parsed results.'
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'The failure reflects documented protocol behavior: switching between UID and sequence-number operation affects the actual command sent on the wire, not merely the shape of a fake backend or mock.'
+  date: '2026-10-09'
+- record_id: R-2d7ddfcb55
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: With unique-identifier mode enabled, a message-query operation reached the lower protocol layer using the unique-identifier command variant, but its argument list did not preserve the expected placeholder for the optional character set parameter.
+    cause: The implementation treated an omitted optional parameter as something to drop from the delegated call, even though the underlying protocol/library calling convention depends on that positional slot to distinguish the character set from the query criteria.
+    lesson: When a document requires message operations to use unique identifiers by default, apply that mode at the protocol-command dispatch boundary and keep the same canonical argument layout as the non-unique-identifier form, including explicit placeholders for omitted optional parameters where the protocol/library API requires them.
+    proposed_category: FP-EXT-CALL
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'Although the failure was observed through a fake backend''s recorded call shape, the issue reflects a real protocol/library invocation contract: the unique-identifier command variant must be dispatched with the correct positional structure, not merely with a superficially similar command name.'
+  date: '2026-10-09'
+- record_id: R-773afdcb6c
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A protocol command accepted structured criteria but sent them without the required normalization, so the backend did not receive the expected parenthesized sort keys, charset argument, and formatted date search term.
+    cause: The implementation handled only simple criteria representations and did not fully cover the documented input forms, especially sequences of keys and typed date values that must be converted into wire-format protocol atoms.
+    lesson: 'When a protocol API documents that criteria can be supplied as high-level values, implementers should normalize every supported form before issuing the command: combine ordered key lists into the protocol’s grouped syntax, encode textual atoms consistently, include the charset in the correct position, and convert date objects to the protocol-mandated date format.'
+    proposed_category: FP-INPUT-FORMS
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The repair implements documented protocol input normalization rather than adapting to a mock, fake backend, environment detail, or test-only call shape.
+  date: '2026-10-09'
+- record_id: R-41203f8158
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: An OAuth2-enabled configuration obtained an access token correctly, but the authentication step was considered wrong because it invoked the login routine with additional optional keyword arguments for the mechanism/vendor instead of only the username and access token.
+    cause: The implementation treated the default OAuth2 mechanism details as explicit call parameters. The documented behavior only required retrieving an access token from the configured credentials and using that token to perform OAuth2 authentication; it did not require exposing or forwarding default-valued mechanism options in the login call.
+    lesson: 'When implementing configuration-driven OAuth2 authentication, derive the access token from the documented credential fields, then call the OAuth2 login path in its simplest documented/default form: username plus access token. Only pass optional mechanism or vendor parameters when the configuration or public contract explicitly requires non-default values. Avoid making default protocol choices visible as extra arguments to lower-level APIs unless that is part of the documented interface.'
+    proposed_category: FP-EXT-CALL
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - last
+    is_test_artifact_suspect: true
+    artifact_reason: The failing check was sensitive to the exact shape of an internal mocked login call. Passing explicit default keyword arguments for the same mechanism may not change documented runtime behavior, so the repair appears partly driven by the mock's expected signature rather than by a clearly stated documentation requirement.
+  date: '2026-10-09'
+- record_id: R-ff68e7f7ae
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: The default-configuration API returned only a small subset of connection settings, so callers could not rely on it to provide all documented connection defaults or environment-provided credentials.
+    cause: The implementation treated the configuration helper as a minimal convenience map instead of deriving its shape from the documented connection API and the documented environment-credential behavior.
+    lesson: When documentation says a configuration-defaults helper covers connection parameters and also shows the connection constructor signature, implement the defaults dictionary to include every documented constructor option with its documented default value. Then overlay any supported environment-provided credential or connection values, converting strings to the appropriate runtime types for booleans, numbers, and null-like values.
+    proposed_category: 'NEW:CONFIG-DEFAULT-COVERAGE: Documentation defines a configuration-defaults surface by reference to another API signature or parameter list; implementation must include the full documented key set and default values, not just a minimal subset.'
+    applies_when:
+      domain_tags:
+      - network_protocol
+      - cli_tool
+      position:
+      - last
+    is_test_artifact_suspect: false
+    artifact_reason: 'The case checks behavior directly described by the documentation: complete connection-parameter defaults and environment-sourced credentials, rather than adapting to a mock-only shape or test-specific fake.'
+  date: '2026-10-09'
+- record_id: R-419635ee71
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: Parsing a configuration file returned only a flat set of base options, so callers could not access separate namespaces for the base section and alternate named sections, and inherited values or typed values were missing or incorrect.
+    cause: The implementation treated the configuration as a single set of defaults instead of modeling the documented section structure. It also failed to merge base-section values into named sections and convert textual configuration values into the expected runtime types such as booleans, numbers, and null-like values.
+    lesson: When documentation says a configuration parser returns an object containing both a base section and alternate named sections, implementers should parse the file as a structured format, materialize each section as its own namespace-like object, apply inheritance from the base section to named sections, and normalize string values into the documented or conventional runtime types rather than leaving all values as raw strings.
+    proposed_category: 'NEW:CONFIG-SECTION-MODEL: Documentation describes a structured configuration result with default/base sections and named sections; implementations must preserve that section hierarchy, merge inherited defaults correctly, and expose each section separately rather than flattening the file.'
+    applies_when:
+      domain_tags:
+      - file_format
+      - cli_tool
+      position:
+      - last
+    is_test_artifact_suspect: false
+    artifact_reason: The repaired behavior implements documented configuration-file semantics rather than adapting to a mock, fake executable, environment-specific test setup, or other test-only artifact.
+  date: '2026-10-09'
+- record_id: R-dfe121f695
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A documented command-line invocation that supplies the server address and account name still attempts to read a secret from the terminal, causing failures or hangs in captured, redirected, or non-interactive environments.
+    cause: The command-line entry path combined argument parsing with interactive completion of missing credentials, and unconditionally prompted for a password when it was absent. This made an undocumented interactive requirement part of a documented invocation that only promised acceptance of specific options.
+    lesson: When documentation shows a command-line form with particular options, implement that form so it can be parsed and accepted without requiring additional undocumented interactive input. If optional credentials or defaults may be prompted for, guard those prompts behind explicit need and an interactive-terminal check, and keep argument parsing separable from side-effecting connection or prompting behavior.
+    proposed_category: 'NEW:CLI-INTERACTIVE-SIDE-EFFECTS: Documented command-line invocations must not trigger undocumented prompts or side effects during parsing; interactive fallback behavior should be conditional and safe in non-interactive environments.'
+    applies_when:
+      domain_tags:
+      - cli_tool
+      position:
+      - last
+    is_test_artifact_suspect: false
+    artifact_reason: The failure concerns documented command-line behavior and safe handling of non-interactive execution, not a mock-specific signature, fake executable, or test-only environment detail.
+  date: '2026-10-09'
+- record_id: R-07242b5eba
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: Running a command-line interactive entry point in a non-terminal environment tried to read a secret from standard input and failed before the interactive session could start.
+    cause: The entry-point path performed eager credential prompting while constructing options, instead of relying on the configured client-construction path and then exposing the resulting connected client in the interactive namespace.
+    lesson: 'When documentation promises that an interactive entry point exposes a connected client under a named variable, implement the entry point as a thin orchestration layer: parse options, create/connect the client through the documented configuration mechanism, assign that exact client into the interactive global namespace, and only then launch the console. Avoid hidden blocking prompts in intermediate parsing steps unless the documentation explicitly requires them.'
+    proposed_category: 'NEW:CLI-ENTRY-NAMESPACE: Command-line or module entry points must establish documented interactive/session globals and avoid side effects that prevent the documented session state from being created.'
+    applies_when:
+      domain_tags:
+      - cli_tool
+      - network_protocol
+      position:
+      - last
+    is_test_artifact_suspect: false
+    artifact_reason: 'The test uses mocks to isolate the documented entry-point behavior, but the underlying requirement is not mock-specific: the entry point must create the connected client and make it available in the interactive environment rather than failing during preliminary prompting.'
+  date: '2026-10-09'
+- record_id: R-4a67511793
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A non-silent flag update returned a raw tuple-like response, so callers could not look up the updated data by message identifier and field name; the silent variant correctly returned no value.
+    cause: The implementation treated the protocol response as the public return value instead of parsing it into the documented per-message updated-flag structure. It also failed to preserve the expected protocol-oriented field representation for returned flag data.
+    lesson: When documentation says a mutating protocol operation returns updated data “per message” unless a silent option is used, implement the non-silent path by parsing the server response into the same structured per-message mapping used by comparable fetch-style APIs, and implement the silent path as an explicit no-result return. Do not expose raw command tuples or generic status data as the public result.
+    proposed_category: FP-TYPE
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'The acceptance case checks documented public behavior: non-silent calls return updated flags per message, while silent calls return no value. It is not merely adapting to a mock or fake dependency shape.'
+  date: '2026-10-09'
+- record_id: R-83cc8cd4b8
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A message operation completed successfully but returned a raw protocol payload as a list of bytes instead of the documented decoded response text, and the command path also needed to honor UID-based operation by default.
+    cause: The implementation exposed the lower-level protocol client's response shape directly instead of normalizing it to the public API contract, and did not consistently treat UID mode as the default for message-oriented commands.
+    lesson: 'When documentation says an operation returns a server response string and is UID-aware by default, implement the public method as a normalization boundary: issue the UID-prefixed protocol command whenever UID mode is enabled, then decode and unwrap the server response into a single text string rather than returning raw byte lists or transport-level structures.'
+    proposed_category: FP-TYPE
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'The expectation follows the documented public behavior: decoded response string return type and UID-aware default message operations, not a mock-specific shape or test-only fixture detail.'
+  date: '2026-10-09'
+- record_id: R-e7b01106b0
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A factory built a network client but the constructed object did not receive the full set of connection options from the configuration, and optional authentication behavior had to be respected separately.
+    cause: The implementation treated the configuration as if only the endpoint address mattered, forwarding only a minimal subset of settings to the underlying client constructor instead of propagating all documented connection-related options with sensible defaults.
+    lesson: When documentation says a factory instantiates a client using connection settings from a configuration namespace, implementers should map every connection-related configuration attribute into the underlying constructor call, including optional flags and security, streaming, identity-mode, context, and timeout settings where supported. Authentication should be controlled only by the documented login switch and should not be conflated with construction.
+    proposed_category: FP-EXT-CALL
+    applies_when:
+      domain_tags:
+      - network_protocol
+      - cli_tool
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The failure reflects a documented behavioral requirement to construct the client from configuration connection settings, not merely an adaptation to a mock or fake object shape.
+  date: '2026-10-09'
+- record_id: R-5f6ae76042
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A method documented to return a pair of structured results produced a first component that incorrectly contained data belonging to the second component, including duplicated root entries and embedded resource-usage tuples.
+    cause: The implementation parsed heterogeneous protocol response records too broadly and did not separate root-list records from quota/resource records before constructing the two return values.
+    lesson: When documentation says a protocol method returns multiple structured values, parse the server response by response kind and assign each record only to the documented structure it belongs to. Do not flatten or reuse all untagged response tokens for every return component; preserve the documented boundary between roots/identifiers and detailed quota/resource objects.
+    proposed_category: FP-RESP-FILTER
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The repair aligns the implementation with the documented behavior of returning separate structured protocol results, rather than adapting to a mock-specific signature, fake command, or test-only environment detail.
+  date: '2026-10-09'
+- record_id: R-96baf665ad
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: Entering a long-lived protocol mode succeeded, but checking for asynchronous server updates failed with a transport-level attribute error instead of returning the unsolicited update and then the completion text when the mode was ended.
+    cause: 'The implementation treated update checking as a raw socket-timeout operation and assumed a concrete socket object was always available. It did not fully model the protocol flow: accept the server continuation, read protocol lines, parse only unsolicited update lines as updates, and treat the tagged completion line as the result of leaving the mode.'
+    lesson: When documentation says a client enters a server-push mode and then uses separate operations to check for updates and finish the mode, implement those operations in terms of the protocol state and wire responses, not in terms of incidental transport objects. The checker should return parsed unsolicited updates only, and the finisher should return the server's completion response while excluding already-consumed push updates.
+    proposed_category: FP-RESP-FILTER
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'Although the failure surfaced through a simplified transport double, the expected behavior is protocol-level: server-push interactions must parse unsolicited lines and completion responses without leaking transport-specific assumptions to callers.'
+  date: '2026-10-09'
+- record_id: R-5f41b50672
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A listing operation correctly decoded an internationalized mailbox name to text, but also converted protocol attribute tokens from bytes to strings, causing the returned tuple shape to differ from the expected public contract.
+    cause: The implementation treated the whole parsed response as user-facing text once internationalized-name decoding was enabled, instead of applying decoding only to mailbox name fields while preserving raw protocol tokens in their binary representation.
+    lesson: When a document promises automatic encoding or decoding of internationalized names, implement that transformation narrowly for the name fields. Do not infer that every element in the protocol response should become text; preserve wire-level metadata such as flags, attributes, and other protocol atoms in the raw type expected by the API.
+    proposed_category: FP-TYPE
+    applies_when:
+      domain_tags:
+      - network_protocol
+      - storage
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The failure reflects a documented behavior boundary for internationalized name decoding and protocol return types, not an adaptation to a mock, fake command, environment variable, or test-only fixture shape.
+  date: '2026-10-09'
+- record_id: R-c07e944ea7
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: Standard delimiter escaping worked, but a caller-supplied application mapping was ignored, so an input value that should have been encoded with a custom escape token was returned unchanged.
+    cause: The implementation covered only the built-in escape table and did not integrate the documented extension mechanism for application-defined mappings into both encoding and decoding paths.
+    lesson: When a format specification says escaping supports standard sequences, encoded byte forms, and application-defined mappings, treat the custom mapping as first-class behavior rather than an optional convenience. Implement both directions using the caller-provided map in addition to the standard table, preserve the configured escape delimiters, and add coverage showing that custom tokens round-trip just like built-in tokens.
+    proposed_category: FP-INPUT-FORMS
+    applies_when:
+      domain_tags:
+      - file_format
+      - network_protocol
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The failing behavior corresponds directly to documented support for application-defined escape mappings, not to a mock shape, fake executable, environment setup, or other test-only artifact.
+  date: '2026-10-09'
+- record_id: R-d6bd711653
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: Creating an aggregate validation exception with no contained sub-errors but with explicit message/path metadata fails at construction time, or its string form omits the explicit message.
+    cause: The implementation treated the aggregate exception only as a wrapper around at least one child error and did not preserve the base validation-error contract for the empty-collection case.
+    lesson: 'When documenting an aggregate exception as combining underlying validation errors, implement it as a valid exception object even when the collection is empty: accept and retain explicit message, path, and type metadata, report length zero, and fall back to the base exception string formatting when there are no child messages to combine.'
+    proposed_category: 'NEW:EMPTY-AGGREGATE-SEMANTICS: Aggregate objects that normally derive their state or display from contained items must define and support behavior for an empty collection, including explicit fallback metadata and formatting.'
+    applies_when:
+      domain_tags:
+      - data_validation
+      position:
+      - first
+    is_test_artifact_suspect: false
+    artifact_reason: The failure concerns observable exception construction, metadata preservation, length behavior, and string formatting, not adaptation to a mock, fake executable, environment setup, or test-only harness shape.
+  date: '2026-10-09'
+- record_id: R-6e15eb65de
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: Creating an aggregate validation exception with standard validation-error metadata fails at construction time, preventing callers from inspecting the grouped errors, iterating over them, or counting them.
+    cause: 'The aggregate exception was implemented as a special case rather than as a full subclass-compatible validation error: it did not preserve the base error initialization interface and did not expose the documented collection behavior over its contained errors.'
+    lesson: 'When documentation defines an aggregate exception as a subtype of a validation exception and also documents iteration and length behavior, implement it with both contracts: accept and retain the same core metadata as the base validation error, store the underlying errors in a public collection, make iteration delegate to that collection, and make length report the number of contained errors.'
+    proposed_category: 'NEW:AGGREGATE-EXCEPTION-CONTRACT: When documentation describes an exception as both a subclass of a base error and a container for multiple underlying errors, the implementation must preserve the base error interface while also implementing the documented container protocol.'
+    applies_when:
+      domain_tags:
+      - data_validation
+      position:
+      - first
+    is_test_artifact_suspect: false
+    artifact_reason: The repair implements documented behavior for an aggregate validation error and its iteration/length contract, not a quirk of a mock, fake dependency, or test harness.
+  date: '2026-10-09'
+- record_id: R-5acc179a18
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: Creating a grouped validation error with message, path, and type metadata failed before the path-prefixing behavior could be exercised; the grouped error API did not accept the documented/expected metadata shape.
+    cause: The implementation treated the grouped error as a simpler container and did not fully mirror the metadata-bearing behavior of individual validation errors. It also risked applying path changes only to the aggregate object rather than to every contained error.
+    lesson: 'When documents say an operation on a grouped validation error applies to all individual contained errors, implement the group as a true composite: accept the same relevant metadata as individual errors, preserve explicit aggregate metadata where provided, and propagate path-prefix mutations to each child error, not merely to the wrapper.'
+    proposed_category: 'NEW:COMPOSITE-MUTATION-PROPAGATION: Documentation states that an operation on an aggregate object affects each contained element; implementations must mutate or update every child object consistently, while preserving aggregate-level metadata semantics.'
+    applies_when:
+      domain_tags:
+      - data_validation
+      position:
+      - first
+    is_test_artifact_suspect: false
+    artifact_reason: The failure concerns documented validation-error behavior and public API semantics, not a mock, fake executable, environment setup, or test-only artifact.
+  date: '2026-10-09'
+- record_id: R-cd835c0b95
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A time estimate for a throttled online attack differed by a factor matching an hour-to-second conversion, and the throttled and unthrottled online scenarios were treated as if they had the same rate.
+    cause: 'The documented rate units were not consistently applied: a scenario described in attempts per hour was effectively expected or handled like attempts per second.'
+    lesson: When documentation specifies attack rates or throughput in different units, normalize each documented rate to a common unit before calculating elapsed time, and verify that each named scenario uses its own documented denominator rather than reusing another scenario's rate.
+    proposed_category: 'NEW:RATE-UNIT-CONVERSION: Documentation specifies numeric rates with units, and implementations must preserve the unit semantics when converting them into calculations.'
+    applies_when:
+      domain_tags:
+      - data_validation
+      position:
+      - middle
+    is_test_artifact_suspect: true
+    artifact_reason: The cited documentation says the throttled case is 100 attempts per hour, which would produce a much larger duration than the acceptance expectation for the given guess count. The failure appears to expose a mismatch in the test's expected value rather than a documented behavior requirement.
+  date: '2026-10-09'
+- record_id: R-1867b1e5b2
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A human-readable duration formatter produced lower-level units for very large values, so an input representing roughly one hundred years was rendered as years instead of using the documented century-scale unit.
+    cause: The implementation did not cover the full set of time units promised by the documentation, particularly the largest documented bucket. Its threshold logic stopped at years and never promoted sufficiently large durations to centuries.
+    lesson: When documentation enumerates the human-readable units an API can display, implement every listed unit and define threshold boundaries that make each unit reachable. Include boundary and representative cases for the smallest, intermediate, and largest documented units, including pluralization or stem variants where applicable.
+    proposed_category: 'NEW:ENUMERATED-OUTPUT-COVERAGE: When documentation lists a finite set of possible output labels, states, units, or categories, the implementation must make every documented output category reachable rather than supporting only a subset.'
+    applies_when:
+      domain_tags:
+      - data_validation
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'The failure concerns a documented user-visible behavior: displaying all promised human-readable time units. The repair is not adapting to a mock, fake executable, environment detail, or test harness shape.'
+  date: '2026-10-09'
+- record_id: R-9d28fbd9a1
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: A decimal conversion of a simple fractional floating-point value returned a long binary-representation tail instead of the concise decimal value users expect.
+    cause: The implementation preserved or exposed the underlying IEEE-754 binary float value during conversion, so the resulting decimal represented the machine approximation rather than the intended human-facing decimal literal.
+    lesson: When documentation promises conversion to decimal without floating-point display error, implement the conversion so common decimal-looking floats become their shortest user-facing decimal representation, or an equivalent normalized decimal, rather than expanding the raw binary approximation. Also preserve already-decimal inputs without degrading precision.
+    proposed_category: 'NEW:NUMERIC-REPRESENTATION: Documentation requires numeric conversions to avoid representation artifacts; implementations must choose the user-visible numeric semantics, rounding, or normalization strategy rather than mechanically exposing the underlying machine representation.'
+    applies_when:
+      domain_tags:
+      - data_validation
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The case checks a documented user-visible behavior about avoiding floating-point display artifacts, not a mock shape, fake executable, environment quirk, or other test-construction detail.
+  date: '2026-10-09'
+- record_id: R-1be232b1e0
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: An input that is a well-known keyboard pattern was reported only as a dictionary-like match, so the documented keyboard-pattern detection family was absent from the public match results.
+    cause: The implementation treated pattern detection as a single best explanation chosen by scoring or precedence. When multiple documented detectors matched the same full input, the lower-priority or non-selected detector was dropped from the exposed sequence.
+    lesson: When documentation promises support for multiple pattern families, implementers should ensure the public result can represent every documented family that applies, including overlapping matches. Scoring may choose a most-guessable explanation, but it must not silently hide a documented detection category such as keyboard patterns, repeats, sequences, dates, regexes, reversed words, or substitution-based dictionary matches.
+    proposed_category: 'NEW:OVERLAPPING-DETECTOR-COVERAGE: When documentation lists multiple detectable pattern or validation families, implementations must expose all applicable families or define clear precedence rules; otherwise one detector can mask another valid documented detection.'
+    applies_when:
+      domain_tags:
+      - data_validation
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'The failure concerns documented behavior: detecting a listed pattern family in public results. The repair was not adapting to a mock, fake command, environment detail, or test harness shape.'
+  date: '2026-10-09'
+- record_id: R-f40613a100
+  stage: reference
+  reason: the case fails on the reference implementation (suite error)
+  generated:
+    symptom: An acceptance check that imports the documented scoring component and calls each documented public operation fails because the expected public API surface is absent or incomplete.
+    cause: The implementation did not provide the documented component and its listed public operations as importable, callable symbols with usable return values, even though the design documentation enumerated them as part of the public interface.
+    lesson: 'When documentation presents a component with public methods or functions, implementers should treat that list as an API contract: create the documented component at the expected import location, expose every listed operation, accept the documented parameters, and return values of the documented kind. Even if full algorithmic parity is still evolving, each documented public operation should be callable and should produce a sensible positive or structured result for ordinary valid inputs.'
+    proposed_category: 'NEW:PUBLIC-API-SURFACE: Documentation enumerates public components, methods, or functions; the implementation must expose all of them at the expected locations with compatible call signatures and return shapes, not merely implement internal behavior.'
+    applies_when:
+      domain_tags:
+      - data_validation
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The check directly follows the documented public interface list rather than depending on a mock, fake executable, environment detail, or test-only construction.
+  date: '2026-10-09'
+- record_id: R-8ef8493aa9
+  stage: generality
+  reason: The lesson is specifically about binary storage helpers honoring exact byte-count read/write semantics, including looping on partial I/O and raising the documented exception on short reads or zero-progress writes. The observed failures are about archive/template validation and mapping missing required metadata or missing template directories to the documented invalid/archive exception path. Although both involve honoring documented failure modes, the concrete lesson about partial reads/writes and exact byte counts would not have directly prevented these metadata-discovery and validation errors.
+  generated:
+    symptom: 'Binary file helper behavior did not satisfy the documented exact-byte contract: range reads could fail to return precisely the requested bytes or fail to signal an unexpected end-of-file with the specified exception, and writes needed to tolerate partial write results.'
+    cause: The implementation treated file I/O as a single-call operation instead of accounting for short reads and short writes, and it did not consistently map an incomplete read to the documented domain-specific exception.
+    lesson: When documentation promises exact byte counts for binary storage helpers, implementers should loop until the requested byte count has been read or written. A read that reaches end-of-file before the full requested range is available must raise the specifically documented exception, not return fewer bytes or use a generic failure. A write should continue after partial writes until all data is persisted, and should treat zero-progress writes as an error.
+    proposed_category: FP-DOC-EXC
+    applies_when:
+      domain_tags:
+      - storage
+      - file_format
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'The case exercises documented storage I/O semantics: exact byte ranges, short-read signaling, and full-content writes. It is not dependent on a mock shape, fake executable, or test-only environment detail.'
+    generality:
+      answer: 'no'
+      reason: The lesson is specifically about binary storage helpers honoring exact byte-count read/write semantics, including looping on partial I/O and raising the documented exception on short reads or zero-progress writes. The observed failures are about archive/template validation and mapping missing required metadata or missing template directories to the documented invalid/archive exception path. Although both involve honoring documented failure modes, the concrete lesson about partial reads/writes and exact byte counts would not have directly prevented these metadata-discovery and validation errors.
+      compared: 3
+  date: '2026-10-09'
+- record_id: R-e7c8b40d3e
+  stage: generality
+  reason: 'The lesson is specific to binary positional reads and unexpected EOF handling: seek to byte offsets, read an exact length, and raise the documented EOF exception on short reads. The other failures involve archive/template validation and directory discovery: checking for required metadata or matching directory names and mapping absence to documented invalid-template exceptions. They share a broader theme of honoring documented failure modes and exception types, but this specific lesson would not directly guide the needed implementation checks for these cases.'
+  generated:
+    symptom: A binary range-read helper did not both return the exact requested byte slice and signal a short read with the documented failure mode.
+    cause: The implementation failed to treat the end position as defining an exact byte count to retrieve, and did not verify that the underlying file read produced that full count before returning.
+    lesson: 'When documentation says a binary file operation reads between two byte positions and names a specific exception for unexpected end-of-file, implement it as an exact-length positional read: seek to the start offset, request exactly stop minus start bytes, return those bytes unchanged, and if fewer bytes are obtained, raise the documented exception type rather than returning partial data or using a generic error.'
+    proposed_category: FP-DOC-EXC
+    applies_when:
+      domain_tags:
+      - storage
+      - file_format
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'The acceptance case directly exercises documented behavior: exact binary range reading and the specified exception on unexpected end-of-file. It is not dependent on mocks, fake executables, or test-only environment details.'
+    generality:
+      answer: 'no'
+      reason: 'The lesson is specific to binary positional reads and unexpected EOF handling: seek to byte offsets, read an exact length, and raise the documented EOF exception on short reads. The other failures involve archive/template validation and directory discovery: checking for required metadata or matching directory names and mapping absence to documented invalid-template exceptions. They share a broader theme of honoring documented failure modes and exception types, but this specific lesson would not directly guide the needed implementation checks for these cases.'
+      compared: 3
+  date: '2026-10-09'
+- record_id: R-160c71768e
+  stage: generality
+  reason: The lesson is specific to implementing a reserved-page metadata record with magic/header validation, stored fields, reconstruction, and an uninitialized-store exception. The observed failures are about validating extracted archives or directories for required template metadata/naming patterns and mapping absence to documented invalid-template/archive exceptions. While they share a broader theme of checking documented metadata and using the specified exception, the concrete lesson would not directly prevent these directory/archive discovery failures unless generalized beyond its reserved-page storage context.
+  generated:
+    symptom: Reading persisted metadata from a newly created storage file did not produce the documented initialization failure, and/or metadata written to the reserved first page was not reliably reconstructed with the same configuration fields.
+    cause: The implementation did not treat the metadata page as a distinct, versioned/recognizable record with an explicit uninitialized state. Missing, short, or non-matching page contents were allowed to surface as lower-level I/O/parse behavior instead of the documented exception, and the configuration fields were not fully serialized and deserialized for round-trip use.
+    lesson: 'When documentation says metadata lives in a reserved page and names the exception for an uninitialized store, implement that page as a small file-format record: write a recognizable header/magic plus all documented fields, read only from the reserved page, validate the header and lengths before decoding, reconstruct the configuration object from the stored fields, and translate absent or uninitialized metadata into the exact documented exception type.'
+    proposed_category: FP-DOC-EXC
+    applies_when:
+      domain_tags:
+      - file_format
+      - storage
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'The acceptance case checks documented behavior: reserved-page metadata persistence, round-trip reconstruction, and the specified exception for uninitialized metadata. It is not dependent on mock shapes, fake commands, environment details, or other test-only artifacts.'
+    generality:
+      answer: 'no'
+      reason: The lesson is specific to implementing a reserved-page metadata record with magic/header validation, stored fields, reconstruction, and an uninitialized-store exception. The observed failures are about validating extracted archives or directories for required template metadata/naming patterns and mapping absence to documented invalid-template/archive exceptions. While they share a broader theme of checking documented metadata and using the specified exception, the concrete lesson would not directly prevent these directory/archive discovery failures unless generalized beyond its reserved-page storage context.
+      compared: 3
+  date: '2026-10-09'
+- record_id: R-d691f8f238
+  stage: generality
+  reason: The lesson is specific to repository-type detection and VCS URL forms, including explicit selector prefixes and transport URLs. The observed failure concerns template date/time environment wiring and complete tag syntax support. While both share a broad theme of implementing all documented forms, the concrete lesson would not directly guide the date/time implementation failure.
+  generated:
+    symptom: Repository detection works for plain transport URLs but fails or misclassifies URLs that include an explicit VCS selector prefix before the transport scheme.
+    cause: The parser treats the URL scheme as a single transport scheme and does not account for compound repository specifiers where the VCS type is prepended to another valid scheme, nor does it normalize the URL after using that prefix for classification.
+    lesson: When implementing repository-type detection, support all documented input forms implied by Git and Mercurial repository references, including compound forms such as a VCS prefix followed by a transport URL. Use the explicit prefix to determine the repository type, then return the underlying transport URL with only the selector prefix removed.
+    proposed_category: FP-INPUT-FORMS
+    applies_when:
+      domain_tags:
+      - cli_tool
+      - storage
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The case checks externally observable URL parsing and normalization behavior for common repository URL forms, not adaptation to mocks, fake commands, environment setup, or test-only scaffolding.
+    generality:
+      answer: 'no'
+      reason: The lesson is specific to repository-type detection and VCS URL forms, including explicit selector prefixes and transport URLs. The observed failure concerns template date/time environment wiring and complete tag syntax support. While both share a broad theme of implementing all documented forms, the concrete lesson would not directly guide the date/time implementation failure.
+      compared: 1
+  date: '2026-10-09'
+- record_id: R-be2542e6f6
+  stage: generality
+  reason: The lesson captures a related principle—explicitly validate documented invariants and map malformed or missing state to the documented exception—but it is framed too narrowly around invalid archives/repositories, post-extraction metadata, and required metadata validation. It would apply well to the uninitialized or malformed metadata cases, and somewhat to template-directory discovery, but it would not directly cover the binary range-read/write failures, where the issue is exact-byte I/O semantics, short reads/writes, and exception mapping rather than archive extraction or metadata validation.
+  generated:
+    symptom: An archive that was structurally readable but lacked the required template metadata was accepted or failed with an unintended error instead of being rejected through the documented invalid-archive path.
+    cause: The implementation treated successful extraction as sufficient validity and did not verify that the extracted repository root contained the required metadata file before returning control to callers.
+    lesson: When documentation names a specific exception for an invalid archive or repository format, implementers should add explicit post-extraction validation for required metadata and map every malformed-or-missing-metadata case to that documented exception, even if the archive itself can be opened and unpacked successfully.
+    proposed_category: FP-DOC-EXC
+    applies_when:
+      domain_tags:
+      - file_format
+      - data_validation
+      - template_engine
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The acceptance case checks documented behavior for invalid archive contents and the documented exception type, not a mock shape, fake executable, or test-only environment detail.
+    generality:
+      answer: 'no'
+      reason: The lesson captures a related principle—explicitly validate documented invariants and map malformed or missing state to the documented exception—but it is framed too narrowly around invalid archives/repositories, post-extraction metadata, and required metadata validation. It would apply well to the uninitialized or malformed metadata cases, and somewhat to template-directory discovery, but it would not directly cover the binary range-read/write failures, where the issue is exact-byte I/O semantics, short reads/writes, and exception mapping rather than archive extraction or metadata validation.
+      compared: 5
+  date: '2026-10-09'
+- record_id: R-fd5546b597
+  stage: generality
+  reason: The lesson is narrowly about initializing a documented built-in date/time extension and supporting its specific invocation forms, defaults, formats, timezones, and relative offsets. The other failures are about faithfully implementing documented parsing/classification rules for VCS-prefixed repository URLs and case-insensitive archive suffix checks. They share a broad theme of following documentation exactly, but applying this specific lesson would not directly prevent those parsing and suffix-classification bugs.
+  generated:
+    symptom: A template environment either lacked the documented date/time tag and default date formatting setting, or accepted only the simplest tag invocation while failing variants with an explicit output format or signed time shift.
+    cause: The implementation treated date/time handling as an optional or partial feature instead of wiring the extension into every strict template environment and implementing the complete syntax described by the architecture.
+    lesson: 'When documentation says an environment registers a built-in date/time tag, sets a default date format, and supports several invocation forms, implementers should initialize that extension by default and cover every documented form: timezone-only rendering, timezone plus custom format, and timezone plus signed relative offsets, with the default format applied whenever no custom format is supplied.'
+    proposed_category: FP-INPUT-FORMS
+    applies_when:
+      domain_tags:
+      - template_engine
+      position:
+      - first
+    is_test_artifact_suspect: false
+    artifact_reason: 'The case checks documented template-engine behavior: default date formatting, built-in tag registration, and all documented input forms. It is not dependent on mocks, fake commands, environment quirks, or test-only signatures.'
+    generality:
+      answer: 'no'
+      reason: The lesson is narrowly about initializing a documented built-in date/time extension and supporting its specific invocation forms, defaults, formats, timezones, and relative offsets. The other failures are about faithfully implementing documented parsing/classification rules for VCS-prefixed repository URLs and case-insensitive archive suffix checks. They share a broad theme of following documentation exactly, but applying this specific lesson would not directly prevent those parsing and suffix-classification bugs.
+      compared: 2
+  date: '2026-10-09'
+- record_id: R-7d83a18048
+  stage: generality
+  reason: The lesson is specifically about implementing documented filename/extension recognition with exact terminal-boundary matching and case normalization. The observed failure concerns wiring a documented date/time template extension into strict environments and supporting its full tag syntax, including formatting and signed time shifts. While both involve following documentation precisely, the concrete predicate/extension-boundary lesson would not have prevented the date/time tag implementation gap.
+  generated:
+    symptom: An archive-detection helper returned the wrong boolean for names whose extension casing varied or whose final characters were not exactly the archive extension.
+    cause: The implementation did not strictly model the documented rule as a case-insensitive suffix check on the effective input being classified, so non-extension trailing text could be mistaken for part of a valid archive name or valid uppercase extensions could be missed.
+    lesson: 'When documentation says a value is recognized because it ends with a specific extension, implement exactly that predicate: normalize casing, then check the terminal extension boundary. Do not classify values merely because the extension appears somewhere inside the string, and do not ignore trailing query-like or suffix text unless the documentation explicitly says such parsing is required.'
+    proposed_category: FP-INPUT-FORMS
+    applies_when:
+      domain_tags:
+      - file_format
+      - data_validation
+      - template_engine
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: The acceptance case directly exercises documented behavior about case-insensitive extension-based recognition, not a mock, fake executable, environment setup, or other test harness artifact.
+    generality:
+      answer: 'no'
+      reason: The lesson is specifically about implementing documented filename/extension recognition with exact terminal-boundary matching and case normalization. The observed failure concerns wiring a documented date/time template extension into strict environments and supporting its full tag syntax, including formatting and signed time shifts. While both involve following documentation precisely, the concrete predicate/extension-boundary lesson would not have prevented the date/time tag implementation gap.
+      compared: 1
+  date: '2026-10-09'
+- record_id: R-c7ddfd2a7a
+  stage: generality
+  reason: The lesson applies well to failures involving discovery/lookup where non-matching candidates should be ignored and a documented exception raised when no valid candidate exists, such as the templated-directory case. But several listed failures concern exact-byte I/O contracts, short reads/writes, metadata serialization, and mapping uninitialized storage states to documented exceptions. Those require broader lessons about enforcing documented I/O counts, handling partial operations, recognizing metadata formats, and translating low-level conditions into domain-specific exceptions, not merely exhaustive candidate lookup.
+  generated:
+    symptom: When a repository-like input contains only ordinary directories and no directory matching the expected templated naming pattern, the implementation failed to report the documented failure mode.
+    cause: The search logic did not treat the absence of a matching candidate as its own specified error condition, allowing a generic outcome or unrelated failure path instead of the explicitly documented exception.
+    lesson: When documentation states that a specific exception is raised for a particular negative lookup result, implement the lookup so that all candidates are examined, non-matching entries are ignored, and the documented exception is raised if no valid candidate remains.
+    proposed_category: FP-DOC-EXC
+    applies_when:
+      domain_tags:
+      - template_engine
+      - cli_tool
+      position:
+      - middle
+    is_test_artifact_suspect: false
+    artifact_reason: 'The acceptance case checks a documented behavior: a specific exception must be raised when no suitable templated directory exists, rather than depending on mock shape, environment setup, or test-only execution details.'
+    generality:
+      answer: 'no'
+      reason: The lesson applies well to failures involving discovery/lookup where non-matching candidates should be ignored and a documented exception raised when no valid candidate exists, such as the templated-directory case. But several listed failures concern exact-byte I/O contracts, short reads/writes, metadata serialization, and mapping uninitialized storage states to documented exceptions. Those require broader lessons about enforcing documented I/O counts, handling partial operations, recognizing metadata formats, and translating low-level conditions into domain-specific exceptions, not merely exhaustive candidate lookup.
+      compared: 5
+  date: '2026-10-09'
+- record_id: R-1bb47b5aa6
+  stage: leak
+  reason: shares a 20-character substring with a held-out source; shares a 20-character substring with a verification suite
+  generated:
+    category_id: FP-DOC-EXC
+    symptom: Calling the metadata reader on a newly created but uninitialized storage file did not produce the documented failure mode.
+    cause: The implementation treated absent or incomplete on-disk metadata as a low-level storage condition or an implicit initialization path instead of mapping the uninitialized-metadata state to the explicitly documented exception.
+    lesson: When documentation names a specific exception for an uninitialized persistent metadata area, the metadata-reading operation must detect that state and raise exactly that exception until metadata has actually been written. Do not silently create defaults, return placeholder values, or leak lower-level end-of-file/parsing errors from this public operation.
+    applies_when:
+      domain_tags:
+      - storage
+      - file_format
+      position:
+      - middle
+    evidence:
+      source_records:
+      - R-1bb47b5aa6
+      fixes_observed: 1
+      milestones_observed: 1
+      milestones:
+      - bplustree:freeze_storage_and_node_contracts
+    state: trial
+    single_source: false
+    origin: transfer:2026-10-09
+    pitfall_id: T-0000
+  date: '2026-10-09'
+- record_id: R-ed5f4bbee6
+  stage: leak
+  reason: shares a 20-character substring with a held-out source; shares a 20-character substring with a verification suite
+  generated:
+    category_id: FP-DOC-EXC
+    symptom: When an input location contained only an ordinary subdirectory and no directory matching the expected template naming pattern, the implementation did not signal the documented failure condition with the specified exception type.
+    cause: The directory-discovery logic treated the absence of a templated directory as a generic or non-error path instead of mapping that exact condition to the exception explicitly required by the documentation.
+    lesson: When documentation names a specific exception for a particular failure mode, implementers should make that failure mode an explicit branch and raise that exact exception, even if nearby generic validation or filesystem errors could also apply.
+    applies_when:
+      domain_tags:
+      - template_engine
+      - storage
+      position:
+      - middle
+    evidence:
+      source_records:
+      - R-ed5f4bbee6
+      fixes_observed: 1
+      milestones_observed: 1
+      milestones:
+      - cookiecutter:project_generation_engine
+    state: trial
+    single_source: false
+    origin: transfer:2026-10-09
+    pitfall_id: T-0001
+  date: '2026-10-09'
+- record_id: R-3428a85f87
+  stage: leak
+  reason: shares a 20-character substring with a verification suite
+  generated:
+    category_id: FP-RAW-VS-STATUS
+    symptom: 'Ending a long-lived protocol wait mode returned only part of the available result: either the command-completion information or the accumulated asynchronous updates were lost, even though the terminator was sent.'
+    cause: 'The implementation modeled the termination as a simple status-changing command instead of as a two-part protocol operation: first collect any pending untagged updates, then read and preserve the tagged completion response from the server.'
+    lesson: 'When implementing a protocol mode that accumulates asynchronous server updates until an explicit terminator is sent, the completion API should preserve both outputs in the documented return shape: the server''s completion response text/data and the collected pending updates. Do not collapse the completion into a generic success value or discard unsolicited updates observed before the final response.'
+    applies_when:
+      domain_tags:
+      - network_protocol
+      position:
+      - middle
+    evidence:
+      source_records:
+      - R-3428a85f87
+      fixes_observed: 1
+      milestones_observed: 1
+      milestones:
+      - imapclient:implement_client_behaviour_and_public_surface
+    state: trial
+    single_source: true
+    origin: transfer:2026-10-09
+    pitfall_id: T-0003
+  date: '2026-10-09'

@@ -103,9 +103,16 @@ class AgentDraft:
     max_tokens: int = 8192
     max_steps: int = 12
     timeout_seconds: float = 1200.0
+    #: the first-pass memory section (memory spec §3.1), rendered at the end of
+    #: this agent's system prompt; empty -- and absent from to_dict -- unless the
+    #: memory banks are on
+    memory_block: str = ""
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        if not d.get("memory_block"):
+            d.pop("memory_block", None)
+        return d
 
 
 @dataclass(frozen=True)
@@ -151,6 +158,7 @@ class MilestoneDraft:
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
+        payload["agents"] = [a.to_dict() for a in self.agents]   # AgentDraft drops an empty memory_block
         return payload
 
 

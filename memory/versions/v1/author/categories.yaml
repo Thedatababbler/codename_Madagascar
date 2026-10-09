@@ -1,0 +1,36 @@
+- category_id: AU-MAIN_PATH
+  name: 主路径
+  definition: 行为清单中类型为主路径的条目
+  signals: []
+  state: active
+  origin: migrated:inventory kinds
+- category_id: AU-BOUNDARY
+  name: 边界
+  definition: 行为清单中类型为边界的条目
+  signals: []
+  state: active
+  origin: migrated:inventory kinds
+- category_id: AU-STATE_TRANSITION
+  name: 状态转换
+  definition: 行为清单中类型为状态转换的条目
+  signals: []
+  state: active
+  origin: migrated:inventory kinds
+- category_id: AU-ERROR_PATH
+  name: 异常
+  definition: 行为清单中类型为异常路径的条目
+  signals: []
+  state: active
+  origin: migrated:inventory kinds
+- category_id: AU-INTEGRATION
+  name: 组合
+  definition: 行为清单中类型为组合 / 集成的条目
+  signals: []
+  state: active
+  origin: migrated:inventory kinds
+- category_id: AU-PROTOCOL
+  name: 协议
+  definition: 行为清单中类型为协议的条目
+  signals: []
+  state: active
+  origin: migrated:inventory kinds

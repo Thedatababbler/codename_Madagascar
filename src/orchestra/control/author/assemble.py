@@ -83,6 +83,18 @@ def record_author_contract(contract_id: str, milestone, *, env: dict | None = No
 
 
 def author_prompt(default_prompt: str, *, env: dict | None = None, milestone=None) -> str:
+    """``_author_prompt`` plus, with a memory run active, the author bank's recalled rules (memory spec §3.3)."""
+    base = _author_prompt(default_prompt, env=env, milestone=milestone)
+    e = os.environ if env is None else env
+    if not (e.get("ADAMAS_MEMORY_RUN") or "").strip() or milestone is None:
+        return base
+    from orchestra.memory.author import author_memory_block
+
+    block = author_memory_block(milestone, env=e)
+    return f"{base.rstrip()}\n\n{block}" if block else base
+
+
+def _author_prompt(default_prompt: str, *, env: dict | None = None, milestone=None) -> str:
     """The prompt the test_author role gets in this process.
 
     Without ``ADAMAS_AUTHOR_RULES_DOC`` in the environment this is

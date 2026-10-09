@@ -1,0 +1,12 @@
+- version: 1
+  date: '2026-10-09T01:57:07Z'
+  origin: memory_init
+  reason: store created; tables migrated
+  canary: CANARY-AU-6226febdd1f5a532
+  validation:
+    author/categories:
+      entries: 6
+      rejected: {}
+    author/rules:
+      entries: 1
+      rejected: {}

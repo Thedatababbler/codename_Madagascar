@@ -266,6 +266,12 @@ def build_cpe_task_plan(
             draft, docs_text=docs_text, thresholds=tuning_evolution.thr, seed=task_id,
         )
         _write_json(plan_path.parent / "first_pass_decision.json", decisions)
+    if os.environ.get("ADAMAS_MEMORY_RUN") and not blind:
+        # memory banks (memory spec §3.1): judge, recall and assembly per milestone
+        from orchestra.memory.firstpass import apply_first_pass_memory, full_docs
+
+        draft = apply_first_pass_memory(draft, docs=full_docs(task), task_id=task_id,
+                                        only={only_milestone} if only_milestone else None)
     _write_json(plan_path.parent / "milestone_plan_draft.json", draft.to_dict())
 
     def bind(milestone: Any) -> list[str]:
@@ -615,6 +621,18 @@ async def _run_one(
     source_repo = build_agent_workspace(task, batch_dir / "workspaces" / task_id)
     if base_snapshot:
         overlay_snapshot(source_repo, base_snapshot)
+    from orchestra.memory.runtime import MemoryRun
+    from orchestra.memory.store import load_config as load_memory_config
+
+    memory_cfg = load_memory_config(config)
+    memory_on = bool((memory_cfg.get("memory") or {}).get("enabled"))
+    MemoryRun.deactivate()
+    if memory_on:
+        # one pinned memory version for the whole task (memory spec §6); the
+        # workspace must hold nothing of the store (§2.1)
+        from orchestra.memory.firstpass import start_task_memory
+
+        start_task_memory(run_dir=run_dir, source_repo=source_repo, cfg=memory_cfg, task_id=task_id)
     harness_dir = run_dir / "harness"
     plan_path = run_dir / "plan.yaml"
 
@@ -1002,6 +1020,11 @@ async def _run_one(
             "trace_md": str(run_dir / "TRACE.md"),
         },
     }
+    if memory_on:
+        from orchestra.memory.runtime import audit_run
+
+        summary["memory_audit"] = audit_run(run_dir)
+        MemoryRun.deactivate()
     _write_json(run_dir / "summary.json", summary)
     _write_trace_md(run_dir=run_dir, plan=plan, state=state, summary=summary)
     try:

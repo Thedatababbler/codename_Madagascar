@@ -17,6 +17,7 @@ for a row that failed its second trial (§3.4); the design cycle moves them
 from __future__ import annotations
 
 import hashlib
+import os
 import random
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field, replace
@@ -237,8 +238,35 @@ def save_repair_table(rows: Iterable[PlaybookRow], path: Path = REPAIR_TABLE_PAT
     return path
 
 
+def memory_repair_rows() -> tuple[PlaybookRow, ...] | None:
+    """The repair bank's patterns as rows when a memory run is active (memory spec §7), else None."""
+    from orchestra.memory.runtime import MemoryRun
+
+    run = MemoryRun.current()
+    if run is None:
+        return None
+    rows = []
+    for pat in run.view().entries("repair", "patterns"):
+        if not pat.get("row"):
+            continue
+        d = dict(pat["row"])
+        d["state"] = pat.get("state") or d.get("state")
+        instr = (pat.get("action") or {}).get("instruction")
+        d["instruction"] = instr or None
+        rows.append(PlaybookRow.from_dict(d))
+    return tuple(rows)
+
+
 def load_repair_table(path: Path | None = None) -> tuple[PlaybookRow, ...]:
-    """The published table, or the in-code default when no file exists."""
+    """The published table, or the in-code default when no file exists.
+
+    With a memory run active (and no explicit path) the rows come from the
+    pinned repair bank instead; with memory off this reads the file as before.
+    """
+    if path is None:
+        mem = memory_repair_rows()
+        if mem is not None:
+            return mem
     p = Path(path) if path else REPAIR_TABLE_PATH
     if not p.is_file():
         return default_repair_rows() + default_legacy_rows()
@@ -460,8 +488,23 @@ def to_playbook(row: PlaybookRow, *, facts: RowFacts, instructions_dir: Path = I
     """The binding recipe for a row, on the existing machinery.
 
     ``None`` for rows the controller builds itself (N) and for E9-T1 when no
-    alternative first-pass shape is left.
+    alternative first-pass shape is left. With a memory run active the row's
+    text arrives tagged ``[MEM:<row_id>]`` and the prompt ends with the
+    MEMORY_ACK requirement (memory spec §3.2).
     """
+    pb = _to_playbook(row, facts=facts, instructions_dir=instructions_dir)
+    if pb is None or not os.environ.get("ADAMAS_MEMORY_RUN"):
+        return pb
+    from dataclasses import replace as _replace
+
+    from orchestra.memory.assemble import ACK_REQUIREMENT, repair_block
+
+    text = instruction_text(row, instructions_dir) or f"Repair pattern applied to this candidate: {row.intent}"
+    body = (pb.extra_prompt or "").replace(instruction_text(row, instructions_dir), "").strip() if instruction_text(row, instructions_dir) else (pb.extra_prompt or "")
+    return _replace(pb, extra_prompt=f"{repair_block(row.row_id, text)}\n\n{body}\n\n{ACK_REQUIREMENT}".strip())
+
+
+def _to_playbook(row: PlaybookRow, *, facts: RowFacts, instructions_dir: Path = INSTRUCTIONS_DIR) -> Playbook | None:
     quality = frozenset({SearchReason.QUALITY})
     pid = f"v2:{row.row_id}"
     guard = _QUALITY_GUARD + " " + _REPAIR_EVIDENCE_NOTE

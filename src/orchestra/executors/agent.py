@@ -1,4 +1,5 @@
 import json
+import os
 import time
 from pathlib import Path
 from uuid import uuid4
@@ -20,6 +21,9 @@ from orchestra.harness.progress import redact_hidden_suite
 from orchestra.ir.artifacts import ArtifactEnvelope
 from orchestra.ir.contracts import AgentContract
 from orchestra.ir.nodes import AgentNodeSpec
+from orchestra.memory.assemble import strip_first_pass
+from orchestra.memory.runtime import RUN_ENV, MemoryRun, after_result, before_send
+from orchestra.prompts.agent_request import render_agent_request_messages
 from orchestra.prompts.render import render_contract
 from orchestra.runtime.backend import RunContext
 from orchestra.runtime.state import NodeExecutionResult
@@ -69,6 +73,9 @@ class AgentNodeExecutor:
         if len(node.output_slots) != 1:
             raise ValueError("Agent nodes must declare exactly one output slot")
         messages = list(render_contract(contract, _agent_visible(inputs)))
+        if "__candidate__" in context.task_id and os.environ.get(RUN_ENV):
+            # repair candidates re-running a first-run contract get no first-pass memory (memory spec §2.2)
+            messages = strip_first_pass(messages)
         if node.prompt_prelude:
             prelude = str(node.prompt_prelude).strip()
             if prelude:
@@ -176,6 +183,15 @@ class AgentNodeExecutor:
             workspace_ref=context.workspace_ref,
         )
         seed = seed_for(context.workspace_ref)
+        # memory banks (memory spec §4): checks on the exact prompt, off unless a run activated them
+        memory = MemoryRun.current()
+        memory_pre = None
+        if memory is not None:
+            prompt_text = render_agent_request_messages(request)
+            memory_pre = before_send(
+                memory, node_id=node.node_id, contract_id=request.contract_id or "", task_id=context.task_id,
+                role=request.role, prompt=prompt_text,
+            )
         if seed is not None:
             # joint experiment: the first stage replays a stored first run (no model call)
             result = await seeded_result(request, backend_context, seed)
@@ -184,6 +200,17 @@ class AgentNodeExecutor:
             async with context.semaphores.llm:
                 result = await backend.run(request, backend_context)
         raw_trace_path = self._persist_raw_trace(trace_dir, request.request_id, result)
+        if memory is not None and memory_pre is not None:
+            captured = Path(trace_dir) / f"{request.request_id}.prompt.txt"
+            if seed is None and not captured.is_file() and str(request.backend_config.get("type")) != "codex_sdk":
+                # a backend without its own capture was handed exactly these messages
+                captured.write_text(prompt_text, encoding="utf-8")
+            after_result(
+                memory, memory_pre, node_id=node.node_id, contract_id=request.contract_id or "",
+                task_id=context.task_id, role=request.role, prompt=prompt_text,
+                final_output=str(result.final_output or ""), status=str(result.status.value if hasattr(result.status, "value") else result.status),
+                trace_dir=trace_dir, request_id=request.request_id, seeded=seed is not None,
+            )
         metadata = dict(result.backend_metadata)
         if result.session_ref is not None:
             metadata["session_ref"] = result.session_ref.model_dump(mode="json")

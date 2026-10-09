@@ -1,0 +1,28 @@
+# Memory banks (memory spec 2026-10-09). An experiment yaml may override any key
+# under its own top-level `memory:` / `transfer:` blocks; ADAMAS_MEMORY_ENABLED=1
+# turns the banks on for one run. With enabled: false nothing changes anywhere.
+memory:
+  enabled: false
+  root: memory/
+  recall:
+    max_pitfalls: 5
+    max_patterns: 2
+    max_categories: 3
+    max_rules: 5
+  require_memory_ack: true
+  fail_closed: true
+transfer:
+  train_only: true
+  leak_substring_len: 20
+  # the author-evolution 8:4 split (2026-10-04) plus the acceptance tasks of
+  # EXP-20261008-03; records of test tasks never become memory
+  train_tasks: [bplustree, cookiecutter, deprecated, djangorestframework-simplejwt, imapclient, python-hl7, voluptuous, zxcvbn]
+  test_tasks: [flask, tinydb, rsa, csvs-to-sqlite, nl2_python-jose, nl2_tablib]
+  # manifests naming the verification suites (generated, not sealed) that the
+  # substring check also compares against: lists of {suite_dir} or {key: dir}
+  verification_manifests:
+    - outputs/author_eval/V/suites.s0.json
+    - outputs/author_eval/A1/suites.s0.json
+    - outputs/fp_from_repair/verifiers.json
+functional_test:
+  t3_budget_cap: 3

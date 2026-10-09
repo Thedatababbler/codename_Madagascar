@@ -1,0 +1,8 @@
+- rule_id: AU-R-000
+  category_id: AU-MAIN_PATH
+  trigger: never
+  rule: retired canary entry CANARY-AU-81f80b791d9ea616
+  state: retired
+  evidence: {}
+  origin: human:canary
+  memory_version_added: 1

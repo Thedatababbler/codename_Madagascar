@@ -1,0 +1,22 @@
+- version: 1
+  date: '2026-10-09T01:57:07Z'
+  origin: memory_init
+  reason: store created; tables migrated
+  canary: CANARY-RP-51927dd3079c5494
+  validation:
+    repair/categories:
+      entries: 10
+      rejected: {}
+    repair/patterns:
+      entries: 30
+      rejected:
+        E3-S1:
+        - shares a 20-character substring with a held-out source
+        E4-S1:
+        - shares a 20-character substring with a verification suite
+        E5-R1:
+        - shares a 20-character substring with a held-out source
+        E6-S1:
+        - shares a 20-character substring with a verification suite
+        E8-S1:
+        - shares a 20-character substring with a verification suite

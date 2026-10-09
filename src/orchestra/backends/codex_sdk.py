@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
+from pathlib import Path
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -89,6 +91,29 @@ def _transient_retry_budget() -> int:
     except ValueError:
         return 3
 
+
+
+def _capture_dir(context: BackendExecutionContext) -> Path | None:
+    """The trace directory when backend capture is on (``ADAMAS_CAPTURE_BACKEND=1``), else None."""
+    if (os.getenv("ADAMAS_CAPTURE_BACKEND") or "").strip() not in ("1", "true", "yes"):
+        return None
+    if not context.trace_dir:
+        return None
+    d = Path(context.trace_dir)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _capture_turn(capture: Path, request_id: str, turn: Any, final_response: str) -> None:
+    items = []
+    for item in list(getattr(turn, "items", None) or []):
+        dump = getattr(item, "model_dump", None)
+        try:
+            items.append(dump(mode="json") if callable(dump) else str(item))
+        except Exception:  # noqa: BLE001 -- a capture must never fail the call
+            items.append(str(item))
+    (capture / f"{request_id}.items.json").write_text(json.dumps(items, indent=1, default=str), encoding="utf-8")
+    (capture / f"{request_id}.final.txt").write_text(final_response, encoding="utf-8")
 
 class CodexSDKBackend:
     backend_id = "codex_sdk"
@@ -251,6 +276,10 @@ class CodexSDKBackend:
         require_diff = bool(request.backend_config.get("require_git_diff", True))
         # Full contract messages (system + user), not only the last user turn.
         prompt = render_agent_request_messages(request)
+        capture = _capture_dir(context)
+        if capture is not None:
+            # memory spec §4.1: the exact string handed to the SDK, stored before it is sent
+            (capture / f"{request.request_id}.prompt.txt").write_text(prompt, encoding="utf-8")
 
         try:
             sandbox = map_sandbox(sandbox_name)
@@ -310,6 +339,8 @@ class CodexSDKBackend:
                             approval_mode=approval,
                         )
                         final_response = str(getattr(turn, "final_response", "") or "")
+                        if capture is not None:
+                            _capture_turn(capture, request.request_id, turn, final_response)
                         turn_usage = getattr(turn, "usage", None)
                         if turn_usage is not None:
                             # TokenUsage / breakdown shapes vary by SDK build.

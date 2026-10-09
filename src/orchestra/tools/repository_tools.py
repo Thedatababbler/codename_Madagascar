@@ -85,6 +85,8 @@ def resolve_authorized_path(
     # Reject null bytes / odd separators.
     if "\x00" in relative_path:
         raise WorkspacePathError("invalid path")
+    if _is_memory_path(candidate):
+        raise WorkspacePathError("the memory store is not readable by agents")
 
     # Walk components without following symlinks until the final resolve check.
     cur = root
@@ -108,10 +110,22 @@ def resolve_authorized_path(
         resolved.relative_to(root)
     except ValueError as exc:
         raise WorkspacePathError("path escapes authorized workspace") from exc
+    if _MEMORY_ROOT == resolved or _MEMORY_ROOT in resolved.parents:
+        raise WorkspacePathError("the memory store is not readable by agents")
 
     if not allow_missing and not resolved.exists():
         raise WorkspacePathError(f"path does not exist: {relative_path}")
     return resolved
+
+
+#: the memory banks (memory spec §2.1): never copied into a workspace, and refused by name
+_MEMORY_ROOT = (Path(__file__).resolve().parents[3] / "memory").resolve()
+_MEMORY_PARTS = ("first_pass", "repair", "author", "transfer", "versions", "VERSION", "domain_tags.yaml")
+
+
+def _is_memory_path(candidate: Path) -> bool:
+    parts = [p for p in candidate.parts if p not in ("", ".")]
+    return len(parts) >= 2 and parts[0] == "memory" and parts[1] in _MEMORY_PARTS
 
 
 def _rel_key(relative_path: str) -> str:

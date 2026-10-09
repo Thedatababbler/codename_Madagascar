@@ -293,7 +293,8 @@ def _agent_draft(
     """
     role = pool.require(role_id)
     if parent is not None:
-        return replace(parent, role_id=node_id, slot_id=slot.slot_id)
+        # the first-pass memory section belongs to the first run's writer only (memory spec §2.2)
+        return replace(parent, role_id=node_id, slot_id=slot.slot_id, memory_block="")
     return AgentDraft(
         role_id=node_id,
         title=role.title,

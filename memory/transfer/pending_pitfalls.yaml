@@ -1,0 +1,420 @@
+- category_id: 'NEW:STATEFUL-ALLOCATOR-SEMANTICS: APIs that expose the next available identifier, offset, page, or slot must clarify and implement whether reading that value merely reports current state or also reserves/advances allocation state.'
+  symptom: Successive requests for a free storage page did not yield consecutive page numbers, so the same slot could be exposed more than once or allocation order could be unstable.
+  cause: The implementation treated the free-page value as a passive computation from current persisted state instead of a stateful allocation cursor that advances when a page number is handed out.
+  lesson: 'When documentation describes an API as providing the next available storage slot, implement it as a reservation/allocation operation: each successful access should advance internal allocation state so later calls expose the following slot, even before data is written to disk.'
+  applies_when:
+    domain_tags:
+    - storage
+    - file_format
+    position:
+    - middle
+  evidence:
+    source_records:
+    - R-a637c99b32
+    fixes_observed: 1
+    milestones_observed: 1
+    milestones:
+    - bplustree:freeze_storage_and_node_contracts
+  state: trial
+  single_source: true
+  origin: transfer:2026-10-09
+  proposed_category: 'NEW:STATEFUL-ALLOCATOR-SEMANTICS: APIs that expose the next available identifier, offset, page, or slot must clarify and implement whether reading that value merely reports current state or also reserves/advances allocation state.'
+  date: '2026-10-09'
+- category_id: 'NEW:Persistent metadata initialization and round-trip: Implementations of file-backed formats must explicitly handle absent metadata and must serialize and deserialize all fields needed to reconstruct equivalent metadata across reopen or read operations.'
+  symptom: A newly created file-backed store either returned default/partial metadata or failed unpredictably before metadata had been written, and metadata written later did not reliably round-trip all configuration fields.
+  cause: The implementation did not treat the metadata header as a first-class persisted record with an explicit uninitialized state, durable serialization, and reconstruction of the full configuration object including serializer identity.
+  lesson: 'For file-backed storage, implement metadata handling as a defined part of the on-disk format: before initialization, detect the missing or invalid metadata record and raise the documented error; after initialization, persist the root/page pointer and every configuration field needed to reconstruct an equivalent configuration, including serializer selection, then read back exactly that record rather than relying on constructor defaults or in-memory state.'
+  applies_when:
+    domain_tags:
+    - storage
+    - file_format
+    position:
+    - middle
+  evidence:
+    source_records:
+    - R-803b39b0d8
+    fixes_observed: 1
+    milestones_observed: 1
+    milestones:
+    - bplustree:freeze_storage_and_node_contracts
+  state: trial
+  single_source: true
+  origin: transfer:2026-10-09
+  proposed_category: 'NEW:Persistent metadata initialization and round-trip: Implementations of file-backed formats must explicitly handle absent metadata and must serialize and deserialize all fields needed to reconstruct equivalent metadata across reopen or read operations.'
+  date: '2026-10-09'
+- category_id: 'NEW:PLATFORM-SPECIFIC-RESOURCE-CONTRACT: Documentation requires different resource acquisition or return values depending on the operating system or runtime platform, and implementations must honor those conditional semantics.'
+  symptom: 'Opening a path that did not yet exist failed to satisfy the documented contract: the target file was not reliably created as a readable and writable file, and the accompanying directory handle did not follow the documented platform-specific behavior.'
+  cause: 'The implementation did not fully encode the storage-opening semantics described by the documentation: it needed to create the parent directory if necessary, create the file if absent, reopen it for both reading and writing, and return a real directory file descriptor only on platforms where directory syncing is expected.'
+  lesson: When documentation says a storage-opening operation creates a missing file and also opens the parent directory except on a specific platform, implement all parts of that contract explicitly. Ensure parent directories exist, create the file without truncating existing contents, open the file in read/write binary mode, and make the secondary directory handle conditional on the operating system rather than returning a placeholder or always attempting the same behavior everywhere.
+  applies_when:
+    domain_tags:
+    - storage
+    position:
+    - middle
+  evidence:
+    source_records:
+    - R-b64d3116f9
+    fixes_observed: 1
+    milestones_observed: 1
+    milestones:
+    - bplustree:freeze_storage_and_node_contracts
+  state: trial
+  single_source: true
+  origin: transfer:2026-10-09
+  proposed_category: 'NEW:PLATFORM-SPECIFIC-RESOURCE-CONTRACT: Documentation requires different resource acquisition or return values depending on the operating system or runtime platform, and implementations must honor those conditional semantics.'
+  date: '2026-10-09'
+- category_id: 'NEW:Platform-specific filesystem resource contract: Documentation specifies different file or directory handle behavior depending on the operating system, and implementations must preserve those OS-specific resource semantics rather than using one uniform path.'
+  symptom: A storage file-opening operation did not satisfy the documented contract for newly missing files and platform-dependent directory synchronization handles.
+  cause: 'The implementation overlooked part of the documented filesystem semantics: it must create the target file when absent, and it must return a usable parent-directory file descriptor on non-Windows platforms while returning no directory handle on Windows.'
+  lesson: When implementing documented durable file-opening behavior, treat file creation and directory metadata synchronization as part of the public contract. Open the target in a mode that creates it if needed, derive and open the parent directory for metadata fsync on non-Windows systems, and explicitly skip that directory handle on Windows.
+  applies_when:
+    domain_tags:
+    - storage
+    position:
+    - middle
+  evidence:
+    source_records:
+    - R-2bcdfaf28e
+    fixes_observed: 1
+    milestones_observed: 1
+    milestones:
+    - bplustree:freeze_storage_and_node_contracts
+  state: trial
+  single_source: true
+  origin: transfer:2026-10-09
+  proposed_category: 'NEW:Platform-specific filesystem resource contract: Documentation specifies different file or directory handle behavior depending on the operating system, and implementations must preserve those OS-specific resource semantics rather than using one uniform path.'
+  date: '2026-10-09'
+- category_id: 'NEW:STATEFUL-ACCESSOR-SIDE-EFFECT: Documentation describes a property or accessor that appears query-like but must mutate internal state, such as consuming an ID, page, offset, or sequence number on each access.'
+  symptom: Two consecutive reads of a documented allocation accessor returned the same page number instead of advancing to the following page.
+  cause: The implementation treated the accessor as a passive query of the current free-page counter, rather than as a state-changing allocation operation that consumes the returned index.
+  lesson: 'When documentation says an accessor returns the next available index and advances the internal counter, implement it as an atomic consume-and-increment operation: return the current value, immediately update the stored counter, and ensure repeated calls produce a monotonically increasing sequence.'
+  applies_when:
+    domain_tags:
+    - storage
+    position:
+    - middle
+  evidence:
+    source_records:
+    - R-ce1095c04b
+    fixes_observed: 1
+    milestones_observed: 1
+    milestones:
+    - bplustree:freeze_storage_and_node_contracts
+  state: trial
+  single_source: true
+  origin: transfer:2026-10-09
+  proposed_category: 'NEW:STATEFUL-ACCESSOR-SIDE-EFFECT: Documentation describes a property or accessor that appears query-like but must mutate internal state, such as consuming an ID, page, offset, or sequence number on each access.'
+  date: '2026-10-09'
+- category_id: 'NEW:ITERATOR-SIDE-EFFECT-CONTRACT: Documentation describes an operation that yields items while also requiring final side effects such as flushing, closing, or deleting resources; implementations must preserve both the yielded data contract and the cleanup semantics when the iterator is consumed.'
+  symptom: A storage recovery operation completed without exposing the committed page data expected by callers and/or left its transient recovery file behind after the transfer.
+  cause: The implementation did not treat the documented transfer operation as both an iterator over committed page records and a cleanup boundary. It handled persistence state but missed the required observable yield contract and final deletion semantics.
+  lesson: When documentation says an operation yields records during a transfer and then closes and deletes its temporary recovery file, implement it as a consumable iterable that emits every committed page as a `(page_number, page_data)` pair, using the original binary page bytes, and performs cleanup after the yielded transfer completes.
+  applies_when:
+    domain_tags:
+    - storage
+    position:
+    - middle
+  evidence:
+    source_records:
+    - R-7660026a23
+    fixes_observed: 1
+    milestones_observed: 1
+    milestones:
+    - bplustree:freeze_storage_and_node_contracts
+  state: trial
+  single_source: true
+  origin: transfer:2026-10-09
+  proposed_category: 'NEW:ITERATOR-SIDE-EFFECT-CONTRACT: Documentation describes an operation that yields items while also requiring final side effects such as flushing, closing, or deleting resources; implementations must preserve both the yielded data contract and the cleanup semantics when the iterator is consumed.'
+  date: '2026-10-09'
+- category_id: 'NEW:PAGE-CAPACITY-SPLIT: Fixed-size page storage structures must enforce serialized page capacity during insertion and splitting, not merely logical item counts or configured order.'
+  symptom: Bulk inserting a large ascending dataset with default settings fails during persistence because a node grows beyond the fixed page size instead of being split and written safely.
+  cause: The implementation treated the configured branching order as sufficient capacity control, but did not consistently enforce the physical page-size limit or cascade node splits through leaves, internal nodes, and the root before serialization.
+  lesson: When documentation promises automatic node splitting and persistent reopening under a default fixed-page configuration, implementers must design insertion around both logical occupancy and serialized byte size. Bulk insertion should create only page-fitting nodes, cascade splits as the tree height grows, update root metadata, and reload records from the reachable tree structure rather than relying on oversized in-memory aggregation.
+  applies_when:
+    domain_tags:
+    - storage
+    - file_format
+    position:
+    - middle
+  evidence:
+    source_records:
+    - R-b60c925f48
+    fixes_observed: 1
+    milestones_observed: 1
+    milestones:
+    - bplustree:deliver_bplustree_behavior_and_public_api
+  state: trial
+  single_source: true
+  origin: transfer:2026-10-09
+  proposed_category: 'NEW:PAGE-CAPACITY-SPLIT: Fixed-size page storage structures must enforce serialized page capacity during insertion and splitting, not merely logical item counts or configured order.'
+  date: '2026-10-09'
+- category_id: 'NEW:bulk-persistence-transaction-semantics: Bulk mutation APIs in persistent data structures must participate in the same durable storage, atomic commit, indexing, and ordered iteration invariants as single-record operations, not merely accept multiple inputs.'
+  symptom: A bulk load appeared to complete but the inserted records were not reliably available through point lookup, ordered traversal, and reopening the persisted store.
+  cause: The bulk path was not fully wired into the same durable storage and ordering semantics as ordinary indexed data operations; it treated insertion as an in-memory/update shortcut rather than an atomic persistent index mutation.
+  lesson: When documentation promises an ordered bulk insertion performed as one transaction, implementers should make the bulk path update the canonical persistent index, enforce ascending unique keys as required, commit all records atomically, and ensure that subsequent lookups, ordered iteration, and reopened handles observe the same sorted contents.
+  applies_when:
+    domain_tags:
+    - storage
+    position:
+    - middle
+  evidence:
+    source_records:
+    - R-f0880e8f99
+    - R-5a2005ab83
+    fixes_observed: 2
+    milestones_observed: 1
+    milestones:
+    - bplustree:freeze_storage_and_node_contracts
+  state: trial
+  single_source: true
+  origin: transfer:2026-10-09
+  proposed_category: 'NEW:bulk-persistence-transaction-semantics: Bulk mutation APIs in persistent data structures must participate in the same durable storage, atomic commit, indexing, and ordered iteration invariants as single-record operations, not merely accept multiple inputs.'
+  date: '2026-10-09'
+- category_id: 'NEW: Capacity-driven structural invariants: When documentation requires a storage/index structure to grow, split, rebalance, or otherwise reorganize as capacity limits are reached, implementations must preserve lookup and ordered traversal semantics across overflow cases, not only for the initial/simple layout.'
+  symptom: After inserting enough records to exceed a node's capacity, some inserted keys could not be read back correctly or ordered iteration did not return the complete sorted key/value set across different insertion orders and key encodings.
+  cause: 'The implementation did not fully handle capacity pressure during insertion: overflow handling, ordering invariants, and lookup paths were not made robust for repeated inserts that force structural growth beyond a single node or simple case.'
+  lesson: 'When the documentation promises automatic splitting on full nodes, implement insertion as a complete overflow path, not just as an append or single-node write. Verify that every supported key serializer and insertion order preserves these invariants: all inserted values remain retrievable, duplicate/replace rules are respected, and key and item iteration return the globally sorted contents after multiple splits.'
+  applies_when:
+    domain_tags:
+    - storage
+    position:
+    - middle
+  evidence:
+    source_records:
+    - R-30188ff732
+    - R-135a568d31
+    - R-755251485b
+    - R-5b870b3d3b
+    - R-e3584cee86
+    - R-bd58cbc2b2
+    - R-3fe52814e8
+    - R-57473f6883
+    - R-34055d2cab
+    - R-38a2428bfc
+    - R-04c7ea470a
+    - R-5874d087e9
+    fixes_observed: 12
+    milestones_observed: 1
+    milestones:
+    - bplustree:freeze_storage_and_node_contracts
+  state: trial
+  single_source: true
+  origin: transfer:2026-10-09
+  proposed_category: 'NEW: Capacity-driven structural invariants: When documentation requires a storage/index structure to grow, split, rebalance, or otherwise reorganize as capacity limits are reached, implementations must preserve lookup and ordered traversal semantics across overflow cases, not only for the initial/simple layout.'
+  date: '2026-10-09'
+- category_id: 'NEW:DEFAULT-COPY-SEMANTICS: Documentation that promises returning a copy of defaults requires preserving the default values exactly while ensuring object independence; implementations must not apply later normalization, environment resolution, or merging to that branch.'
+  symptom: A configuration-loading API returned a dictionary whose path values had been expanded to absolute filesystem paths, so it was not equal to the documented default configuration even though the caller requested defaults only.
+  cause: The implementation treated the default-only path as part of the normal effective-configuration pipeline and applied path expansion or normalization. The documented behavior, however, required an independent copy of the default configuration values, not a resolved or environment-dependent variant.
+  lesson: When documentation says a default-configuration flag returns a copy of the default configuration, implement that branch as an early return that deep-copies the declared defaults exactly. Do not merge user configuration, inspect the filesystem, read environment variables, or expand paths in that branch unless the documentation explicitly says the returned defaults are normalized.
+  applies_when:
+    domain_tags:
+    - cli_tool
+    - file_format
+    position:
+    - first
+  evidence:
+    source_records:
+    - R-e665966b32
+    fixes_observed: 1
+    milestones_observed: 1
+    milestones:
+    - cookiecutter:foundation_config_environment_contracts
+  state: trial
+  single_source: true
+  origin: transfer:2026-10-09
+  proposed_category: 'NEW:DEFAULT-COPY-SEMANTICS: Documentation that promises returning a copy of defaults requires preserving the default values exactly while ensuring object independence; implementations must not apply later normalization, environment resolution, or merging to that branch.'
+  date: '2026-10-09'
+- category_id: 'NEW:Default fallback identity vs normalized effective config: Documentation may require returning a built-in default configuration exactly when optional user configuration is absent, rather than returning an environment-expanded or otherwise normalized effective configuration.'
+  symptom: When no user configuration file was present, the returned configuration had home-relative path defaults expanded into absolute paths, so it did not equal the documented built-in default configuration.
+  cause: The implementation treated the missing-config fallback as an opportunity to compute an effective runtime configuration and normalize path fields, instead of returning the documented default configuration unchanged for that absence case.
+  lesson: When documentation says absence of a user config falls back to the built-in defaults, implement that fallback as the defaults themselves, without applying user-environment-dependent transformations such as home-directory expansion. Apply path expansion only in code paths where a configuration file or explicit override is actually being loaded and merged, unless the documentation explicitly says the fallback is normalized.
+  applies_when:
+    domain_tags:
+    - cli_tool
+    - file_format
+    position:
+    - first
+  evidence:
+    source_records:
+    - R-f3452cf0c7
+    fixes_observed: 1
+    milestones_observed: 1
+    milestones:
+    - cookiecutter:foundation_config_environment_contracts
+  state: trial
+  single_source: true
+  origin: transfer:2026-10-09
+  proposed_category: 'NEW:Default fallback identity vs normalized effective config: Documentation may require returning a built-in default configuration exactly when optional user configuration is absent, rather than returning an environment-expanded or otherwise normalized effective configuration.'
+  date: '2026-10-09'
+- category_id: 'NEW:literal-default-copy-vs-effective-config: Documentation may distinguish returning the literal built-in default object copy from returning a processed effective configuration; implementations must avoid applying normalization or environment-dependent transformations on the literal-default-copy path.'
+  symptom: When asked to return the built-in defaults, the implementation returned an otherwise similar configuration whose path fields had been expanded to absolute home-directory paths, so equality with the documented defaults failed even though the structure was mostly correct.
+  cause: The implementation treated the built-in-defaults path as part of the normal effective-configuration loading pipeline, applying path normalization that is appropriate for loaded or merged user configuration but not for a documented raw copy of the defaults.
+  lesson: When documentation says a flag returns a copy of the built-in default configuration, implement that as a deep copy of the literal default data before any environment expansion, user-home expansion, absolutization, merging, or other post-processing. Keep the raw-defaults branch separate from the effective-configuration branch.
+  applies_when:
+    domain_tags:
+    - cli_tool
+    position:
+    - first
+  evidence:
+    source_records:
+    - R-4aee63334f
+    - R-29954bb84d
+    fixes_observed: 2
+    milestones_observed: 1
+    milestones:
+    - cookiecutter:foundation_config_environment_contracts
+  state: trial
+  single_source: true
+  origin: transfer:2026-10-09
+  proposed_category: 'NEW:literal-default-copy-vs-effective-config: Documentation may distinguish returning the literal built-in default object copy from returning a processed effective configuration; implementations must avoid applying normalization or environment-dependent transformations on the literal-default-copy path.'
+  date: '2026-10-09'
+- category_id: 'NEW:DEFAULT-FALLBACK-IDENTITY: When documentation specifies fallback to built-in defaults, implementations must preserve the default values and structure in the absence case rather than applying environment-dependent normalization or treating defaults as if they came from a user file.'
+  symptom: When no user configuration file was present, the returned configuration was not equal to the built-in defaults because path-like default values had been expanded using the current home directory.
+  cause: The implementation treated the absence fallback the same as a loaded or merged configuration and applied normalization to default path fields, even though the documented fallback requires returning the default configuration itself.
+  lesson: When documentation says to fall back to built-in defaults if no user configuration exists, implement the no-file branch as a direct default fallback. Do not apply user-environment-dependent transformations, path expansion, or merge-time normalization unless the documentation explicitly says those transformations are part of the fallback result.
+  applies_when:
+    domain_tags:
+    - cli_tool
+    - file_format
+    position:
+    - first
+  evidence:
+    source_records:
+    - R-cbc115e56e
+    - R-83231c03aa
+    fixes_observed: 2
+    milestones_observed: 1
+    milestones:
+    - cookiecutter:foundation_config_environment_contracts
+  state: trial
+  single_source: true
+  origin: transfer:2026-10-09
+  proposed_category: 'NEW:DEFAULT-FALLBACK-IDENTITY: When documentation specifies fallback to built-in defaults, implementations must preserve the default values and structure in the absence case rather than applying environment-dependent normalization or treating defaults as if they came from a user file.'
+  date: '2026-10-09'
+- category_id: 'NEW:递归嵌套结构解析: 文档要求返回值支持嵌套或递归结构时，实现必须解析并转换所有层级，而不能只处理顶层或保留内部原始标记。'
+  symptom: A protocol response containing a multipart, parenthesized nested structure was not returned as the documented structured object with nested structured children; callers could not inspect multipart status or iterate converted subparts correctly.
+  cause: 'The implementation treated the response too shallowly: it did not perform full tokenization and recursive conversion of nested protocol tuples, so multipart body metadata remained unparsed, missing, or in raw form instead of being wrapped consistently at every level.'
+  lesson: When documentation says a parser constructs a structured representation recursively and supports both single-part and multipart messages, implementers must parse the protocol grammar deeply enough to preserve nesting. Every nested multipart section should be converted into the same documented structured representation as the top-level value, while scalar atoms such as numbers, nil values, quoted bytes, and literals should be normalized according to the protocol rules.
+  applies_when:
+    domain_tags:
+    - network_protocol
+    position:
+    - middle
+  evidence:
+    source_records:
+    - R-4f377e918e
+    fixes_observed: 1
+    milestones_observed: 1
+    milestones:
+    - imapclient:response_lexing_and_parsing
+  state: trial
+  single_source: true
+  origin: transfer:2026-10-09
+  proposed_category: 'NEW:递归嵌套结构解析: 文档要求返回值支持嵌套或递归结构时，实现必须解析并转换所有层级，而不能只处理顶层或保留内部原始标记。'
+  date: '2026-10-09'
+- category_id: 'NEW:PROTOCOL-MECH-SELECTION: Documentation specifies the exact protocol verb, authentication mechanism, or negotiation mode an operation must use; implementations must route through that named mechanism rather than an equivalent-looking or generic path.'
+  symptom: Token-based authentication appeared to complete only when using a generic or incorrect authentication path, while acceptance checks expected the client to invoke the exact protocol mechanisms documented for each login variant and return the server's authentication response data.
+  cause: The implementation treated OAuth-style login helpers as thin placeholders or used the wrong SASL mechanism name instead of mapping each documented helper to its specified authentication mechanism and passing that mechanism through to the underlying protocol authentication call.
+  lesson: 'When documentation names a specific protocol mechanism for an authentication helper, implement that helper as a precise wrapper around the protocol authentication command: build the documented token payload, pass the documented mechanism name unchanged to the backend, and return the backend''s response data rather than substituting a generic success value or another mechanism.'
+  applies_when:
+    domain_tags:
+    - network_protocol
+    position:
+    - middle
+  evidence:
+    source_records:
+    - R-394d4e9805
+    fixes_observed: 1
+    milestones_observed: 1
+    milestones:
+    - imapclient:transport_session_and_authentication
+  state: trial
+  single_source: true
+  origin: transfer:2026-10-09
+  proposed_category: 'NEW:PROTOCOL-MECH-SELECTION: Documentation specifies the exact protocol verb, authentication mechanism, or negotiation mode an operation must use; implementations must route through that named mechanism rather than an equivalent-looking or generic path.'
+  date: '2026-10-09'
+- category_id: 'NEW:缓存键粒度: 当实现缓存、连接池、令牌复用或 memoization 时，必须按所有影响结果有效性的输入字段构造缓存键，而不能使用过宽或过窄的全局缓存'
+  symptom: Repeated authentication-token requests with the same credentials triggered repeated refreshes, while requests for a different host were not isolated from the first credential set.
+  cause: The implementation treated token retrieval as a direct refresh operation or used insufficient cache scoping, instead of caching access tokens under the full set of inputs that determine token validity.
+  lesson: 'When implementing documented token reuse or refresh behavior, cache only by the complete credential identity: service host plus every credential component that can affect the issued token. A cache hit should return the previous valid token without invoking refresh, while any differing credential component must force an independent refresh path.'
+  applies_when:
+    domain_tags:
+    - network_protocol
+    - storage
+    position:
+    - middle
+  evidence:
+    source_records:
+    - R-d52ab3a718
+    fixes_observed: 1
+    milestones_observed: 1
+    milestones:
+    - imapclient:implement_client_behaviour_and_public_surface
+  state: trial
+  single_source: true
+  origin: transfer:2026-10-09
+  proposed_category: 'NEW:缓存键粒度: 当实现缓存、连接池、令牌复用或 memoization 时，必须按所有影响结果有效性的输入字段构造缓存键，而不能使用过宽或过窄的全局缓存'
+  date: '2026-10-09'
+- category_id: 'NEW:IDENTIFIER-MODE-RESULT-KEYS: When an API supports multiple identifier schemes for the same protocol objects, the selected scheme determines not only the command sent but also which parsed identifier must be used as keys or references in returned data structures.'
+  symptom: A protocol retrieval operation in alternate-identifier mode returned parsed attributes under the wrong message key, so callers could not look up the result by the stable identifier reported in the server response.
+  cause: 'The implementation did not fully apply the identifier-mode semantics while parsing the server response: it treated the requested message number, or another default identifier, as the result-map key instead of extracting and using the UID contained in the response data.'
+  lesson: When documentation describes a mode that switches commands from sequence-number semantics to UID semantics, implementers must propagate that mode through both the outbound command and the inbound response parser. Returned mappings should be keyed by the documented identifier for that mode, using the identifier parsed from the server response rather than assuming the caller's input numbers remain the correct keys.
+  applies_when:
+    domain_tags:
+    - network_protocol
+    position:
+    - middle
+  evidence:
+    source_records:
+    - R-90f8150df7
+    fixes_observed: 1
+    milestones_observed: 1
+    milestones:
+    - imapclient:implement_client_behaviour_and_public_surface
+  state: trial
+  single_source: true
+  origin: transfer:2026-10-09
+  proposed_category: 'NEW:IDENTIFIER-MODE-RESULT-KEYS: When an API supports multiple identifier schemes for the same protocol objects, the selected scheme determines not only the command sent but also which parsed identifier must be used as keys or references in returned data structures.'
+  date: '2026-10-09'
+- category_id: 'NEW:FACTORY-PROPAGATION: When an API accepts a custom factory, builder, or constructor provider, implementations must apply it consistently across nested or recursive object creation, not just at the entry point.'
+  symptom: A caller-provided construction policy was honored only for the top-level parsed structure, while nested parsed structures were still created with the default concrete types.
+  cause: The parser did not consistently propagate the caller-supplied factory through every recursive or layered construction step, so deeper containers bypassed the customization hook.
+  lesson: When documentation says a custom factory can be supplied to construct a parsed object and its components, treat that factory as the single source of object creation for the entire object graph. Every level of parsing, including nested containers and leaf-like parts, should receive or retain the same factory instead of directly instantiating default classes.
+  applies_when:
+    domain_tags:
+    - file_format
+    position:
+    - middle
+  evidence:
+    source_records:
+    - R-27dd7db727
+    fixes_observed: 1
+    milestones_observed: 1
+    milestones:
+    - python-hl7:implement_python_hl7
+  state: trial
+  single_source: true
+  origin: transfer:2026-10-09
+  proposed_category: 'NEW:FACTORY-PROPAGATION: When an API accepts a custom factory, builder, or constructor provider, implementations must apply it consistently across nested or recursive object creation, not just at the entry point.'
+  date: '2026-10-09'
+- category_id: 'NEW:CONSTRUCTOR-FIELD-SEPARATION: When a documented constructor accepts several related parameters, implementations must preserve their distinct public semantics and defaults rather than aliasing or overwriting one field with another.'
+  symptom: An object constructed with both a user-facing validation message and a separate underlying/raw message exposed the raw message where the primary display message was expected, while the other constructor-supplied metadata needed to remain intact.
+  cause: 'The implementation conflated two documented constructor concepts: the primary message used for display and the optional raw error detail. Supplying the optional raw detail incorrectly replaced the primary message instead of being stored separately.'
+  lesson: When documentation lists multiple constructor inputs with distinct meanings, preserve each semantic field independently. Optional detail fields should only populate their own stored value or documented default, not overwrite the primary field. Also normalize optional collection inputs carefully while retaining the supplied location and classification metadata.
+  applies_when:
+    domain_tags:
+    - data_validation
+    position:
+    - first
+  evidence:
+    source_records:
+    - R-2fb13a688c
+    fixes_observed: 1
+    milestones_observed: 1
+    milestones:
+    - voluptuous:errors_markers_contracts
+  state: trial
+  single_source: true
+  origin: transfer:2026-10-09
+  proposed_category: 'NEW:CONSTRUCTOR-FIELD-SEPARATION: When a documented constructor accepts several related parameters, implementations must preserve their distinct public semantics and defaults rather than aliasing or overwriting one field with another.'
+  date: '2026-10-09'

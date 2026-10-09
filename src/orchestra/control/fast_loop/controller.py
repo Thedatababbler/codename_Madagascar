@@ -775,6 +775,12 @@ class FastLoopController:
         )
         forced = forced_row_for(sub.spec.subtask_id)
         table = load_repair_table()
+        memory_judgement = None
+        if not error_classes and os.environ.get("ADAMAS_MEMORY_RUN"):
+            # memory spec §3.2: the classification rules decided nothing, so the repair judge picks
+            memory_judgement = _repair_judgement(sub=sub, summary=summary)
+            error_classes = [c.removeprefix("RP-") for c in memory_judgement.category_ids if c != "RP-ANY"]
+            fl_state.notes.append(f"memory: repair judge chose {memory_judgement.category_ids}")
         if forced:
             # A bank re-run (§7.2): the row under test runs regardless of its
             # state, the trial draw and its preconditions; shape validity still applies.
@@ -842,6 +848,17 @@ class FastLoopController:
                 fl_state.notes.append(f"v2 filtered {chosen_meta.get(cand.candidate_id, {}).get('row_id', cand.candidate_id)}: {why}")
         fl_state.routing["v2_rows"] = v2_rows
         fl_state.notes.append("v2 rows selected: " + ", ".join(m["row_id"] for m in chosen_meta.values()))
+        if os.environ.get("ADAMAS_MEMORY_RUN"):
+            from orchestra.memory.runtime import MemoryRun
+
+            run = MemoryRun.current()
+            if run is not None:
+                for cid, meta in chosen_meta.items():
+                    run.record("repair", {
+                        "subtask_id": sub.spec.subtask_id, "candidate_id": cid, "tags": [meta["row_id"]],
+                        "error_classes": list(error_classes),
+                        "judge": memory_judgement.to_dict() if memory_judgement is not None else None,
+                    }, key=f"{sub.spec.subtask_id}:{cid}")
         return [c for c in generated if not getattr(c, "compatibility_rejected", False)]
 
     def _write_ledger(self, state, subtask_id: str, context) -> None:
@@ -2840,3 +2857,21 @@ def _cost_from_result(result: GraphExecutionResult) -> CostRecord:
         estimated_cost_usd=estimated or 0.0,
         backend_calls=calls,
     )
+
+
+def _repair_judgement(*, sub, summary):
+    """The repair bank's judge over the persistent failures (memory spec §3.2); raises when unusable."""
+    from orchestra.memory.judge import judge
+    from orchestra.memory.runtime import MemoryRun
+
+    run = MemoryRun.current()
+    meta = getattr(sub.spec, "metadata", None) or {}
+    failures = [str(getattr(f, "node_id", f)) for f in list(getattr(summary, "persistent", []) or [])[:30]]
+    text = (f"Milestone objective: {getattr(sub.spec, 'objective', '') or meta.get('objective', '')}\n"
+            f"Files: {', '.join(meta.get('focus_paths') or [])}\n"
+            "Persistent failing cases:\n" + "\n".join(f"- {f}" for f in failures))
+    j = judge(run.view(), "repair", milestone_text=text, docs_excerpt="",
+              max_categories=int((run.cfg.get("recall") or {}).get("max_categories", 3)))
+    run.record("repair_judge", j.to_dict(), key=str(sub.spec.subtask_id))
+    return j
+

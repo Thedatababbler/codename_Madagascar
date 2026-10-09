@@ -313,7 +313,14 @@ def _system_prompt(
         f"{suite}"
         "Do not access parent directories, look for reference implementations, or "
         "create subagents."
+        f"{_memory_section(agent)}"
     )
+
+
+def _memory_section(agent: AgentDraft) -> str:
+    """The first-pass memory block, last in the system prompt; '' when memory is off."""
+    block = str(getattr(agent, "memory_block", "") or "").strip()
+    return f"\n\n{block}" if block else ""
 
 
 def contract_id_for(
@@ -362,9 +369,18 @@ def materialize_agent_contract(
         f"Execute your mandate for milestone `{milestone.milestone_id}`, then stop. "
         "Do not create subagents."
     )
+    if os.environ.get("ADAMAS_MEMORY_RUN") and (_memory_section(agent) or "[MEM:" in system_prompt):
+        # memory spec §3.1 step 3: the acknowledgement requirement closes the prompt
+        from orchestra.memory.assemble import ACK_REQUIREMENT
+
+        user_prompt = f"{user_prompt}\n\n{ACK_REQUIREMENT}"
     if agent.role == "test_author":
         # the author node finds its milestone by contract id (stage B3); no-op with the feature off
         record_author_contract(contract_id, milestone)
+    if os.environ.get("ADAMAS_MEMORY_RUN") and agent.role == "test_author" and "[MEM:" in system_prompt:
+        from orchestra.memory.author import register_author_contract
+
+        register_author_contract(contract_id, milestone.milestone_id, system_prompt)
     tools = _SMOLAGENTS_TOOLS if agent_backend == "smolagents_code" else _CODEX_TOOLS
     payload = {
         "contract_id": contract_id,
