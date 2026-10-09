@@ -221,6 +221,9 @@ def _build(repo: Path, failures: list[str], *, env_python: str | None, timeout: 
     env["PYTHONPATH"] = os.pathsep.join(
         p for p in [str(evidence), str(repo), env.get("PYTHONPATH", "")] if p
     )
+    from orchestra.sandbox.policy import confine_command
+
+    command, env, _private = confine_command(command, cwd=repo, env=env)
     try:
         proc = subprocess.run(
             command, cwd=str(repo), env=env, capture_output=True, text=True,

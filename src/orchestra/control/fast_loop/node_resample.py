@@ -120,9 +120,12 @@ def traceback_frames(repo: Path, failures: list[str], python: str, timeout: int 
     node_ids = [f"{holder / SPEC_DIR / rel}::{tid}" for _, (_, rel, tid) in resolved]
     env = {"PYTHONPATH": ":".join(p for p in [str(holder), str(repo), str(Path(repo) / "src") if (Path(repo) / "src").is_dir() else ""] if p),
            "PATH": f"{Path(python).parent}:/usr/bin:/bin", "HOME": str(repo)}
+    from orchestra.sandbox.policy import confine_command
+
+    cmd, env, _private = confine_command([python, "-m", "pytest", "-q", "--no-header", "-p", "no:cacheprovider", "-o", "addopts=",
+                                          "--tb=short", "-rN", *node_ids], cwd=repo, env=env)
     try:
-        proc = subprocess.run([python, "-m", "pytest", "-q", "--no-header", "-p", "no:cacheprovider", "-o", "addopts=",
-                               "--tb=short", "-rN", *node_ids], cwd=str(repo), env=env, capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(cmd, cwd=str(repo), env=env, capture_output=True, text=True, timeout=timeout)
         out = proc.stdout
     except subprocess.TimeoutExpired:
         return {}

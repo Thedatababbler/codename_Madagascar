@@ -75,13 +75,14 @@ def run_heldout(task: str, workspace: Path, cases: list[str], *, per_test_timeou
         shutil.copytree(heldout_dir(task), repo / sub)
         files = sorted({f"{sub}/{c.split('::', 1)[0]}" for c in cases})
         wanted = set(cases)
-        proc = subprocess.run(
+        from orchestra.sandbox.policy import confine_scoring
+
+        cmd, env, _private = confine_scoring(
             [str(python), "-m", "pytest", *files, "-q", "-rA", "--no-header", "-p", "no:cacheprovider", "-o", "addopts=",
              "--continue-on-collection-errors", f"--timeout={per_test_timeout}", "--timeout-method=signal"],
-            cwd=repo, capture_output=True, text=True, timeout=3600, check=False,
-            env={"PYTHONPATH": os.pathsep.join(p for p in [str(repo), str(repo / "src") if (repo / "src").is_dir() else ""] if p),
-                 "PATH": f"{python.parent}:/usr/bin:/bin", "HOME": str(repo), "PYTHONDONTWRITEBYTECODE": "1"},
-        )
+            {"PYTHONPATH": os.pathsep.join(p for p in [str(repo), str(repo / "src") if (repo / "src").is_dir() else ""] if p),
+             "PATH": f"{python.parent}:/usr/bin:/bin", "HOME": str(repo), "PYTHONDONTWRITEBYTECODE": "1"})
+        proc = subprocess.run(cmd, cwd=repo, capture_output=True, text=True, timeout=3600, check=False, env=env)
     out: dict[str, str] = {}
     seen: set[str] = set()
     for line in proc.stdout.splitlines():

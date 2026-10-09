@@ -111,6 +111,10 @@ class RepositoryTestHarnessExecutor:
             command,
         )
 
+        from orchestra.sandbox.policy import confine_command
+
+        command, harness_env, _private = confine_command(list(command), cwd=cwd, env=harness_env)
+
         async def _run() -> tuple[int, str, str]:
             proc = await asyncio.create_subprocess_exec(
                 *command,

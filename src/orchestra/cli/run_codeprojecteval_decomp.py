@@ -487,6 +487,46 @@ def _fast_loop_budget(
     )
 
 
+def _start_sandbox(config: dict[str, Any], *, run_dir: Path, harness_dir: Path, task_id: str, workspace: Path) -> bool:
+    """Sandbox spec A: with ``sandbox.enforced`` every agent and gate process of this task runs confined.
+
+    Sets the environment the backend and harness read, asserts the task venv
+    does not carry the task's own package, runs the self-check probes inside the
+    exact launcher an agent gets and writes ``sandbox_manifest.json``.
+    """
+    from orchestra.sandbox import policy as SB
+
+    cfg = SB.load_config(config)
+    on = bool((cfg.get("sandbox") or {}).get("enforced"))
+    os.environ[SB.ENFORCED_ENV] = "1" if on else "0"
+    if not on:
+        os.environ.pop(SB.VENV_ENV, None)
+        return False
+    from orchestra.sandbox.venv_check import check as venv_check
+
+    # the after-the-fact audit (second line of defence) reads the captured prompts and turn items
+    os.environ["ADAMAS_CAPTURE_BACKEND"] = "1"
+
+    man = json.loads((harness_dir / "adamas_cpe_harness.json").read_text(encoding="utf-8"))
+    env_python = Path(man["env_python"])
+    venv = env_python.parent.parent
+    os.environ[SB.VENV_ENV] = str(venv)
+    pkgs = list(man.get("top_level_packages") or []) + [task_id.removeprefix("nl2_")]
+    vc = venv_check(env_python, pkgs)
+    if not vc["clean"]:
+        raise SystemExit(f"sandbox: {task_id}'s own package is installed in {venv}: {vc}")
+    private = run_dir / "sandbox_selfcheck"
+    probes = SB.default_probes()
+    probes["other_run"] = str(run_dir.parent.parent)          # the batch root: other runs live beside this one
+    pol = SB.agent_policy(workspace=workspace, private=private, venv=venv)
+    sc = SB.self_check(pol, SB.private_env(private), probes, python=str(env_python))
+    SB.write_manifest(run_dir, {"kind": "run", "task_id": task_id, "venv": str(venv), "venv_check": vc,
+                                "agent_policy": pol.to_dict() | {"connect_ports": "see network"}, "self_check": sc})
+    if not sc["ok"]:
+        raise SystemExit(f"sandbox self-check failed for {task_id}: {sc}")
+    return True
+
+
 def purge_task_packages(env_python: Path, packages: list[str]) -> list[str]:
     """Remove any install of the task's own packages from the task environment.
 
@@ -651,6 +691,7 @@ async def _run_one(
         only_milestone=only_milestone,
         inherit_harness=inherit_harness,
     )
+    sandbox_on = _start_sandbox(config, run_dir=run_dir, harness_dir=harness_dir, task_id=task_id, workspace=source_repo)
     problem = _build_problem(
         task_id,
         task.read(task.prd_path),

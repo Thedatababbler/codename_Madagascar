@@ -38,6 +38,7 @@ async def run_authoritative_harness_command(
             ),
         )
     env = build_harness_env()
+    command, env, private = _confine(path, list(command), env)
     logger.info(
         "authoritative harness: trusted fixture only; not a security boundary "
         "(cwd=%s command=%s)",
@@ -66,4 +67,16 @@ async def run_authoritative_harness_command(
     stdout = stdout_b.decode("utf-8", errors="replace")
     stderr = stderr_b.decode("utf-8", errors="replace")
     code = int(proc.returncode or 0)
+    if private is not None:
+        import shutil
+
+        shutil.rmtree(private, ignore_errors=True)
     return code == 0, code, stdout[-4000:], stderr[-4000:]
+
+
+def _confine(cwd: Path, command: list[str], env: dict[str, str]) -> tuple[list[str], dict[str, str], Path | None]:
+    """With ``ADAMAS_SANDBOX_ENFORCED`` on, the gate runs confined (sandbox spec A): it reads the
+    workspace, the harness directory named on its command line (gate suites, testkit) and the venv."""
+    from orchestra.sandbox.policy import confine_command
+
+    return confine_command(command, cwd=cwd, env=env)

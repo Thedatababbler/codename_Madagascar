@@ -166,15 +166,17 @@ def run_suite(repo: Path, suite: Path, python: Path, *, timeout: int = 900, time
     with tempfile.TemporaryDirectory() as tmp:
         holder = Path(tmp)
         (holder / "spec_tests").symlink_to(suite.resolve(), target_is_directory=True)
+        from orchestra.sandbox.policy import confine_command
+
+        cmd, env, _private = confine_command(
+            [str(python), "-m", "pytest", str(holder / "spec_tests"), "-q", "-rA", "--no-header", "-p", "no:cacheprovider",
+             "-o", "addopts=", "--continue-on-collection-errors",
+             *(["--timeout=60", "--timeout-method=signal"] if timeout_flags else [])],
+            cwd=repo,
+            env={"PYTHONPATH": os.pathsep.join(p for p in [str(holder), str(repo), str(repo / "src") if (repo / "src").is_dir() else ""] if p),
+                 "PATH": f"{python.parent}:/usr/bin:/bin", "HOME": str(repo), "PYTHONDONTWRITEBYTECODE": "1"})
         try:
-            proc = subprocess.run(
-                [str(python), "-m", "pytest", str(holder / "spec_tests"), "-q", "-rA", "--no-header", "-p", "no:cacheprovider",
-                 "-o", "addopts=", "--continue-on-collection-errors",
-                 *(["--timeout=60", "--timeout-method=signal"] if timeout_flags else [])],
-                cwd=repo, capture_output=True, text=True, timeout=timeout, check=False,
-                env={"PYTHONPATH": os.pathsep.join(p for p in [str(holder), str(repo), str(repo / "src") if (repo / "src").is_dir() else ""] if p),
-                     "PATH": f"{python.parent}:/usr/bin:/bin", "HOME": str(repo), "PYTHONDONTWRITEBYTECODE": "1"},
-            )
+            proc = subprocess.run(cmd, cwd=repo, capture_output=True, text=True, timeout=timeout, check=False, env=env)
             stdout = proc.stdout
         except subprocess.TimeoutExpired:
             stdout = ""

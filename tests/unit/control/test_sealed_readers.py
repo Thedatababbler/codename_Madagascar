@@ -77,6 +77,8 @@ ALLOWLIST = {
     "src/orchestra/control/fast_loop/node_resample.py", "src/orchestra/cli/run_codeprojecteval_decomp.py",
     "scripts/eval_codeprojecteval.py", "src/orchestra/codeprojecteval/ceiling.py",
     "scripts/nl2repo_to_cpe.py", "scripts/probe_codeprojecteval_env.py",
+    # sandbox spec A: these name held-out paths only as targets the confined process must fail to open
+    "src/orchestra/sandbox/policy.py", "scripts/sandbox_tests.py",
 }
 READ_PATTERNS = re.compile(r"\.unit_tests\b|/\s*[\"']unit_tests[\"']|get\(\s*[\"']unit_tests[\"']|[\"']unit_tests/|heldout_dir\(|reference_root\(")
 

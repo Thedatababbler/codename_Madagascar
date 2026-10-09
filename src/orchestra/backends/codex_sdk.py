@@ -93,6 +93,46 @@ def _transient_retry_budget() -> int:
 
 
 
+
+def _sandboxed_config(request: AgentRequest, context: BackendExecutionContext, workspace_path: str) -> Any:
+    """The CodexConfig that runs app-server (and every command it starts) confined, or None when
+    ``ADAMAS_SANDBOX_ENFORCED`` is off (sandbox spec A)."""
+    from orchestra.sandbox import policy as SB
+
+    if not SB.enforced():
+        return None
+    from openai_codex import CodexConfig
+    from openai_codex.client import _resolve_codex_bin
+
+    base = _build_codex_config(workspace_path=workspace_path)
+    codex_bin = str(_resolve_codex_bin(base))
+    private = Path(context.trace_dir or ".") / ".sandbox" / request.request_id
+    pol = SB.agent_policy(workspace=workspace_path, private=private, venv=os.environ.get(SB.VENV_ENV) or None, codex_bin=codex_bin)
+    pol_path = SB.write_policy(pol, private / "policy.json")
+    args = [codex_bin]
+    for kv in (*base.config_overrides, 'shell_environment_policy.inherit="all"'):
+        args += ["--config", kv]
+    args += ["app-server", "--listen", "stdio://"]
+    env = SB.launcher_env(SB.private_env(private))
+    # pytest searches every ancestor for its config and starts collecting at the rootdir it finds;
+    # the workspace lives under the repository, whose tree the agent may not list
+    env["PYTEST_ADDOPTS"] = " ".join(x for x in (env.get("PYTEST_ADDOPTS", ""), f"--rootdir={workspace_path}",
+                                                f"--confcutdir={workspace_path}") if x)
+    run_dir = _run_dir_of(context)
+    if run_dir is not None:
+        SB.write_manifest(run_dir, {"kind": "agent", "node_id": request.node_id, "request_id": request.request_id,
+                                    "task_id": request.task_id, "policy": pol.to_dict() | {"connect_ports": "see network"},
+                                    "private_dir": str(private), "workspace": workspace_path})
+    return CodexConfig(launch_args_override=(*SB.launcher(pol_path), *args), env=env, cwd=workspace_path)
+
+
+def _run_dir_of(context: BackendExecutionContext) -> Path | None:
+    """<run_dir>/tasks/<task>/backend_traces/<node> -> <run_dir>."""
+    if not context.trace_dir:
+        return None
+    p = Path(context.trace_dir)
+    return p.parents[3] if len(p.parents) > 3 and p.parents[0].name == "backend_traces" else None
+
 def _capture_dir(context: BackendExecutionContext) -> Path | None:
     """The trace directory when backend capture is on (``ADAMAS_CAPTURE_BACKEND=1``), else None."""
     if (os.getenv("ADAMAS_CAPTURE_BACKEND") or "").strip() not in ("1", "true", "yes"):
@@ -305,7 +345,13 @@ class CodexSDKBackend:
                     metadata={"codex_failure_class": "infra"},
                 )
 
+            sandbox_config = _sandboxed_config(request, context, workspace.path)
+
             def client_factory() -> Any:
+                if sandbox_config is not None:
+                    from openai_codex import AsyncCodex
+
+                    return AsyncCodex(config=sandbox_config)
                 return _default_client_factory(workspace_path=workspace.path)
         else:
             client_factory = self._client_factory
