@@ -4978,3 +4978,38 @@ Next:
   tasks needed);
 - check instructions against every milestone of their cluster;
 - send the two harness-coupled patterns to the author audit.
+
+## EXP-20261009-01 -- memory banks and skills: implementation and functional tests T0-T3 (branch `rsi`)
+
+**Status:** closed 2026-10-09. Report `docs/reports/memory_functional_test_20261009.md`.
+- Quota: T3 used 2.0 points of the zqin30 gpt-5.5 window (41% -> 43%, script cap 3).
+- Model calls outside agents: 118 transfer generations, 9 generality/merge calls, about 15 judge calls.
+- No held-out source entered any model context.
+
+**What exists.** Three isolated banks under `memory/`:
+- first_pass: pitfalls and patterns;
+- repair: the playbook rows, migrated;
+- author: rules (empty, as is the published rules doc).
+
+A run pins a read-only snapshot (`versions/v<N>`), then: judge (temperature 0, skill_version echo) -> recall -> assembly (`[MEM:id]` tags, MEMORY_ACK requirement) -> delivery checks. The checks are fail-closed: `MEMORY_VIOLATION.json` plus a BaseException.
+- Codex prompts, turn items and replies are now captured; `backend_traces` was empty before.
+- Repository tools refuse `memory/` paths.
+- The transfer channel writes pitfalls from training-task R0 / node-resample records only.
+- `memory.enabled` defaults to false. With it off, the existing suite is unchanged against HEAD (same 3 failures and 1 import-cycle collection error), and 140 compiled files of two tasks are byte-identical to HEAD.
+
+**Results.**
+- **T0:** 27/27 unit tests pass.
+- **T1:** pass. Command-execution reads of `memory/` under Codex's `full_access` sandbox are detected from the turn items and stop the run, but cannot be refused beforehand. One isolation bug was found and fixed: the ACK example named `P-0001`, a real entry.
+- **T2:** pass. The transfer took 154 raw / 118 unique facts.
+  - 84 were rejected because the case fails on the reference implementation. imapclient suites' FakeSocket lacks `settimeout`; cookiecutter has the bash shim.
+  - 8 failed generality, 3 failed the leak checks, and 19 went to pending as NEW categories.
+  - 4 were written, all trial and single-source (v2).
+  - 2 of 14 milestones recall a pitfall written from another task: hl7 `mllp_transport` <- imapclient, imapclient `mailbox` <- hl7.
+  - Version pinning holds.
+- **T3:** pass on items 1-5 for two first runs (hl7, imapclient) and one repair (imapclient: R0 plus the recalled row E3-T1). Every MEMORY_ACK equals its recall; no canary was found.
+  - Item 6: one reply of a memory-free spec auditor shares 11 windows with held-out tests. All 11 are in the pre-run repository snapshot, i.e. shared code, so it is not a leak.
+
+**Decisions open for the user.**
+- The 6 §5.5 draft categories were written as active, so that T2/T3 could run.
+- The strict 20-character rule rejects generic English. It removed 5 migrated rows (E3-S1, E4-S1, E5-R1, E6-S1, E8-S1) and 13 of 19 pending suggestions; most hits are against the comments of our verification suites.
+- 19 new-category suggestions await review.

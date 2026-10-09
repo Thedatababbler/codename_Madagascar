@@ -187,7 +187,27 @@ def check() -> dict:
         res["jobs"][jid] = r
     # 6. sealed: every agent reply vs held-out sources (20-char windows)
     sealed = substring_check({k: v for k, v in replies.items() if v.strip()}, tasks=["python-hl7", "imapclient"])
-    res["6_sealed_reply_check"] = {"replies": len(sealed), "fail": [k for k, v in sealed.items() if v["heldout"] == "FAIL"]}
+    strict_fail = [k for k, v in sealed.items() if v["heldout"] == "FAIL"]
+    origins = {}
+    for k in strict_fail:
+        # a strict hit is traced against what the agent could already see before the run (sealed, counts only)
+        jid = k.split(":")[0]
+        _, part, task, mid = next(j for j in JOBS if j[0] == jid)
+        repo, rev = predecessor(task, mid)
+        pre = OUT / "pre_ws" / jid
+        if not pre.exists():
+            subprocess.run(["git", "-C", repo, "worktree", "add", "-q", "--detach", str(pre), rev], check=True)
+        reply = OUT / "pre_ws" / f"{k.replace(':', '_')}.txt"
+        reply.write_text(replies[k])
+        out = subprocess.run([sys.executable, str(ROOT / "scripts" / "sealed" / "reply_overlap_origin.py"), "--task", task,
+                              "--reply", str(reply), "--workspace", str(pre)], capture_output=True, text=True, cwd=str(ROOT))
+        origins[k] = json.loads(out.stdout.strip().splitlines()[-1])
+        reply.unlink()
+        subprocess.run(["git", "-C", repo, "worktree", "remove", "--force", str(pre)], check=False)
+    res["6_sealed_reply_check"] = {
+        "replies": len(sealed), "strict_fail": strict_fail, "origin_of_strict_hits": origins,
+        "fail_beyond_pre_run_material": [k for k, o in origins.items() if o.get("only_in_heldout")],
+    }
     spend = OUT / "spend.json"
     res["spend"] = json.loads(spend.read_text()) if spend.is_file() else None
     (OUT / "result.json").write_text(json.dumps(res, indent=1, ensure_ascii=False, default=str))
