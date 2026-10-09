@@ -158,6 +158,14 @@ def generate(args) -> None:
 # --- scoring -----------------------------------------------------------------------
 
 
+def _testkit_dir(suite: Path) -> str:
+    """adamas_testkit for a gate or verification suite: the copy in the suite's harness directory, else the source."""
+    for cand in (Path(suite).resolve().parent / "testkit", ROOT / "src" / "orchestra" / "harness" / "testkit"):
+        if (cand / "adamas_testkit").is_dir():
+            return str(cand)
+    return ""
+
+
 def run_suite(repo: Path, suite: Path, python: Path, *, timeout: int = 900, timeout_flags: bool = True,
               messages: dict | None = None) -> dict[str, str]:
     """``{spec_tests/file::[Class::]test: pass|fail}``; parametrisations folded (any fail = fail)."""
@@ -173,7 +181,8 @@ def run_suite(repo: Path, suite: Path, python: Path, *, timeout: int = 900, time
              "-o", "addopts=", "--continue-on-collection-errors",
              *(["--timeout=60", "--timeout-method=signal"] if timeout_flags else [])],
             cwd=repo,
-            env={"PYTHONPATH": os.pathsep.join(p for p in [str(holder), str(repo), str(repo / "src") if (repo / "src").is_dir() else ""] if p),
+            env={"PYTHONPATH": os.pathsep.join(p for p in [str(holder), str(repo), str(repo / "src") if (repo / "src").is_dir() else "",
+                                                           _testkit_dir(suite)] if p),
                  "PATH": f"{python.parent}:/usr/bin:/bin", "HOME": str(repo), "PYTHONDONTWRITEBYTECODE": "1"})
         try:
             proc = subprocess.run(cmd, cwd=repo, capture_output=True, text=True, timeout=timeout, check=False, env=env)

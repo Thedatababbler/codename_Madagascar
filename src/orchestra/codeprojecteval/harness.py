@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shutil
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -541,6 +542,10 @@ def _pytest_env(cwd, import_root=None):
     shadow = os.environ.get("ADAMAS_PACKAGE_SHADOW")
     if shadow:
         roots.append(shadow)
+    # the authors' testkit, next to this script in the run's harness directory (never in the workspace)
+    testkit = Path(__file__).resolve().parent / "testkit"
+    if testkit.is_dir():
+        roots.append(str(testkit))
     existing = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = os.pathsep.join([p for p in roots + [existing] if p])
     return env
@@ -635,6 +640,23 @@ def _collect_ids(cwd, target, env, *, timeout=180):
     except subprocess.TimeoutExpired:
         return []
     return [ln.strip() for ln in (proc.stdout or "").splitlines() if "::" in ln and " " not in ln.strip()]
+
+
+def _suite_suspects(frozen):
+    """Case keys ('file.py::[Cls::]test') listed in '<frozen suite>.suite_suspect.json', if any."""
+    p = Path(str(frozen).rstrip("/") + ".suite_suspect.json")
+    if not p.is_file():
+        return set()
+    try:
+        return {str(k) for k in json.loads(p.read_text(encoding="utf-8")).get("cases", [])}
+    except (OSError, ValueError):
+        return set()
+
+
+def _suspect_key(node):
+    tail = str(node).split("spec_tests/", 1)[-1]
+    head, _, rest = tail.partition("::")
+    return (Path(head).name + "::" + rest).split("[", 1)[0]
 
 
 def _run_pytest(cwd, target, *, timeout, import_root=None):
@@ -994,6 +1016,16 @@ def main() -> int:
                 import_root=_spec_import_root(spec_frozen),
             )
             total = _pinned_case_total(spec_frozen, collected)
+            suspects = _suite_suspects(spec_frozen)
+            if suspects:
+                # training tasks: cases that fail on the reference implementation are out of the gate
+                dropped_f = {f for f in failed if _suspect_key(f) in suspects}
+                dropped_p = {p for p in passed_ids if _suspect_key(p) in suspects}
+                failed = type(failed)(f for f in failed if f not in dropped_f)
+                passed_ids = type(passed_ids)(p for p in passed_ids if p not in dropped_p)
+                passed -= len(dropped_p)
+                total -= len(dropped_f) + len(dropped_p)
+                print("NOTE " + str(len(dropped_f) + len(dropped_p)) + " case(s) out of the gate (suite_suspect: fail on the reference)")
             gradable = total - vacuous
             if gradable <= 0:
                 print(
@@ -1257,6 +1289,27 @@ if __name__ == "__main__":
 '''
 
 
+TESTKIT_SRC = Path(__file__).resolve().parents[1] / "harness" / "testkit"
+
+
+def install_testkit(harness_dir: Path) -> Path | None:
+    """Copy adamas_testkit next to the check script (author fake-object fix): the gate puts it on the
+    import path; it never enters a workspace. Off with ``author.testkit: false``."""
+    try:
+        from orchestra.sandbox.policy import load_config
+
+        if not (load_config().get("author") or {}).get("testkit", True):
+            return None
+    except Exception:  # noqa: BLE001
+        pass
+    dest = Path(harness_dir) / "testkit"
+    if TESTKIT_SRC.is_dir():
+        shutil.rmtree(dest, ignore_errors=True)
+        shutil.copytree(TESTKIT_SRC, dest, ignore=shutil.ignore_patterns("__pycache__"))
+        return dest
+    return None
+
+
 def materialize_check_harness(
     task: CpeTask,
     *,
@@ -1273,6 +1326,7 @@ def materialize_check_harness(
 
     script_path = out / CHECK_SCRIPT_NAME
     script_path.write_text(_check_script_source(), encoding="utf-8")
+    install_testkit(out)
     python = Path(env_python or task.env_python)
     # The baseline an authored test has to be measured against is the repository
     # as the agent received it — documents and the visible suite, no source.

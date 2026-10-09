@@ -107,7 +107,9 @@ def _sandboxed_config(request: AgentRequest, context: BackendExecutionContext, w
     base = _build_codex_config(workspace_path=workspace_path)
     codex_bin = str(_resolve_codex_bin(base))
     private = Path(context.trace_dir or ".") / ".sandbox" / request.request_id
-    pol = SB.agent_policy(workspace=workspace_path, private=private, venv=os.environ.get(SB.VENV_ENV) or None, codex_bin=codex_bin)
+    testkit = _author_testkit(request, context)
+    pol = SB.agent_policy(workspace=workspace_path, private=private, venv=os.environ.get(SB.VENV_ENV) or None, codex_bin=codex_bin,
+                          extra_read=[testkit] if testkit else None)
     pol_path = SB.write_policy(pol, private / "policy.json")
     args = [codex_bin]
     for kv in (*base.config_overrides, 'shell_environment_policy.inherit="all"'):
@@ -116,6 +118,9 @@ def _sandboxed_config(request: AgentRequest, context: BackendExecutionContext, w
     env = SB.launcher_env(SB.private_env(private))
     # pytest searches every ancestor for its config and starts collecting at the rootdir it finds;
     # the workspace lives under the repository, whose tree the agent may not list
+    if testkit:
+        # the author's own test runs import adamas_testkit; the launcher restores this PYTHONPATH after confining
+        env["ADAMAS_SANDBOX_ORIG_PYTHONPATH"] = os.pathsep.join(x for x in (testkit, env.get("ADAMAS_SANDBOX_ORIG_PYTHONPATH", "")) if x)
     env["PYTEST_ADDOPTS"] = " ".join(x for x in (env.get("PYTEST_ADDOPTS", ""), f"--rootdir={workspace_path}",
                                                 f"--confcutdir={workspace_path}") if x)
     run_dir = _run_dir_of(context)
@@ -124,6 +129,15 @@ def _sandboxed_config(request: AgentRequest, context: BackendExecutionContext, w
                                     "task_id": request.task_id, "policy": pol.to_dict() | {"connect_ports": "see network"},
                                     "private_dir": str(private), "workspace": workspace_path})
     return CodexConfig(launch_args_override=(*SB.launcher(pol_path), *args), env=env, cwd=workspace_path)
+
+
+def _author_testkit(request: AgentRequest, context: BackendExecutionContext) -> str:
+    """The run's adamas_testkit directory for a test-author node, '' for every other role."""
+    if "test_author" not in str(request.node_id):
+        return ""
+    run_dir = _run_dir_of(context)
+    tk = run_dir / "harness" / "testkit" if run_dir is not None else None
+    return str(tk) if tk is not None and (tk / "adamas_testkit").is_dir() else ""
 
 
 def _run_dir_of(context: BackendExecutionContext) -> Path | None:
@@ -347,11 +361,19 @@ class CodexSDKBackend:
 
             sandbox_config = _sandboxed_config(request, context, workspace.path)
 
-            def client_factory() -> Any:
-                if sandbox_config is not None:
-                    from openai_codex import AsyncCodex
+            author_tk = _author_testkit(request, context) if sandbox_config is None else ""
 
+            def client_factory() -> Any:
+                from openai_codex import AsyncCodex
+
+                if sandbox_config is not None:
                     return AsyncCodex(config=sandbox_config)
+                if author_tk:
+                    from dataclasses import replace as _replace
+
+                    base = _build_codex_config(workspace_path=workspace.path)
+                    pp = os.pathsep.join(x for x in (author_tk, os.environ.get("PYTHONPATH", "")) if x)
+                    return AsyncCodex(config=_replace(base, env={**(base.env or {}), "PYTHONPATH": pp}))
                 return _default_client_factory(workspace_path=workspace.path)
         else:
             client_factory = self._client_factory

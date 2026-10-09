@@ -206,7 +206,24 @@ def build_identifiers(train_tasks: Iterable[str], *, extra_case_names: Iterable[
             if name.startswith("test_") and len(name) > 9:
                 strong.add(name[5:])
     strong.discard("")
-    return Identifiers(frozenset(strong), frozenset(weak - strong))
+    std = stdlib_names()
+    # a standard-library or builtin name cannot identify a training task (unittest, Mock, environ, ...)
+    return Identifiers(frozenset(strong - std), frozenset(weak - strong - std))
+
+
+def stdlib_names() -> frozenset[str]:
+    import builtins
+    import importlib
+
+    names = {n.lower() for n in getattr(sys, "stdlib_module_names", ())} | {n.lower() for n in dir(builtins)}
+    for mod in ("os", "os.path", "sys", "subprocess", "shutil", "socket", "ssl", "unittest", "unittest.mock", "urllib.request",
+                "urllib.parse", "http.client", "json", "pathlib", "tempfile", "io", "re", "typing", "collections", "functools",
+                "itertools", "datetime", "logging", "threading", "asyncio", "contextlib", "dataclasses", "enum", "abc", "inspect"):
+        try:
+            names |= {n.lower() for n in dir(importlib.import_module(mod)) if not n.startswith("_")}
+        except ImportError:
+            continue
+    return frozenset(names)
 
 
 def _dataset_root(task: str) -> Path:

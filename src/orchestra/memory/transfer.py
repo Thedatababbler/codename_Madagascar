@@ -102,6 +102,8 @@ def runs_of(task: str) -> list[Path]:
 def kind_of(cid: str, meta: dict) -> str | None:
     if "feedback" in cid or cid == "incumbent_first_pass" or meta.get("probe"):
         return None
+    if (meta.get("accommodation") or {}).get("accommodated"):
+        return None   # a repair that accommodated the suite's construction never becomes memory (author fix §6.4)
     k = meta.get("candidate_kind")
     if cid == "cand_R0" or k == "R0" or "continue_improve" in cid:
         return "R0"

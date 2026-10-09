@@ -5013,3 +5013,31 @@ A run pins a read-only snapshot (`versions/v<N>`), then: judge (temperature 0, s
 - The 6 §5.5 draft categories were written as active, so that T2/T3 could run.
 - The strict 20-character rule rejects generic English. It removed 5 migrated rows (E3-S1, E4-S1, E5-R1, E6-S1, E8-S1) and 13 of 19 pending suggestions; most hits are against the comments of our verification suites.
 - 19 new-category suggestions await review.
+
+## EXP-20261009-02 -- sandbox isolation (A) and author fake-object fix (B): implementation and tests (branch `rsi`)
+
+**Status:** open. Reports `docs/reports/sandbox_test_20261009.md` and `docs/reports/author_fake_fix_test_20261009.md`.
+- Quota so far: 2.0 points (S6), plus 23 temperature-0 calls (A3).
+- Pending your approval: S6 retest (≤ 2 points) and A4 (≤ 4 points).
+
+**A: sandbox.**
+- **Constraint:** the container refuses every namespace and has neither CAP_SYS_ADMIN nor CAP_NET_ADMIN, so the isolation is Landlock ABI 4 plus an LD_PRELOAD netguard plus the after-the-fact audit.
+  - Landlock filesystem: workspace, its git dirs, a private home/tmp/CODEX_HOME, the task venv, the Codex binary and the system trees only.
+  - Landlock TCP: connect to the proxy port and the ephemeral range only.
+  - netguard: loopback or AF_UNIX only for dynamic programs.
+- **Coverage:** Codex app-server and every command, gates, and driver-side runs of workspace code (repair evidence, resample frames, run_suite). Held-out scoring gets the network rules only. `sandbox.enforced` is still false.
+- **Results:**
+  - **S1:** 15/15 forbidden reads refused before the read.
+  - **S2:** external network refused; local server and proxy work. Residual: with LD_PRELOAD removed, an external host on an ephemeral port is not refused locally.
+  - **S3:** 14/14 task venvs clean.
+  - **S4:** gate and held-out identical on 4 tasks (83/133/159/39 cases), with a control showing the sandbox active.
+  - **S5:** 513 captured commands, 0 out-of-bounds. Similarity leads (no direct evidence): pyjwt 09-02 continuation at 0.904 against a next-highest 0.453; imapclient 08-11 tuning at 0.569 against a median 0.24.
+  - **S6 not passed:** pytest broke inside the sandbox (ancestor pyproject.toml; fixed with config-file read plus PYTEST_ADDOPTS rootdir/confcutdir), capture was tied to memory (fixed), and the repair run was cut at the 2-point cap. Retest pending.
+
+**B: author fix.**
+- **Built:** adamas_testkit; audit rules fake_io / env_path / call_assert, plus fake_inject; the accommodation check before acceptance; the training-task reference filter that drops reference-failing cases from the gate; fixed author rules allowing the testkit.
+- **A1:** the spec's 3 rules reach 6.1% recall on 754 reference-failing cases; with fake_inject, 20.3% (66% of fake-object failures), with 3.2% false flags. Most reference failures are value or interface ambiguity, not fakes.
+- **A2:** testkit works inside the sandbox.
+- **A3:** precision 1.0, recall 9.9% vs reference-fail (environment 8/16, fake 2/13).
+- **A5:** unit tests pass.
+- **Not written:** the four human author rules and the skill section to memory/. They fail the strict 20-character rule on generic English, the same open decision as EXP-20261009-01.

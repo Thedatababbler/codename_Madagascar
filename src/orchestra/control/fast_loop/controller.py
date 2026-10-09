@@ -899,6 +899,7 @@ class FastLoopController:
         """
         repo = Path(source_repo) if source_repo else (Path(base_ws.path) if base_ws is not None else None)
         persistent = list(summary.persistent)
+        ref_removed = self._reference_filter(state=state, fl_state=fl_state, base_graph=base_graph)
         if repo is None or not repo.is_dir():
             return persistent, []
         docs = docs_text_of(repo)
@@ -970,6 +971,11 @@ class FastLoopController:
         fl_state.routing.update(routing.to_dict())
         fl_state.error_classes = classification.to_dict()
         fl_state.suite_suspect = list(routing.suite_suspect)
+        if ref_removed:
+            from orchestra.control.fast_loop.reference_filter import _key as _ref_key
+
+            gone = set(ref_removed)
+            fl_state.suite_suspect = sorted(set(fl_state.suite_suspect) | {f for f in persistent if _ref_key(f) in gone})
         if routing.routed:
             fl_state.notes.append(
                 "routing: " + ", ".join(f"{r.route}={sum(1 for x in routing.routed if x.route == r.route)}"
@@ -982,7 +988,85 @@ class FastLoopController:
         if classification.classes:
             fl_state.notes.append(f"error classes: {list(classification.classes)} ({classification.note})")
         repair = list(routing.kept) + list(routing.regressions)
+        if ref_removed:
+            from orchestra.control.fast_loop.reference_filter import _key as _ref_key
+
+            # cases the reference itself fails are the suite's problem; the repairer never sees them
+            repair = [c for c in repair if _ref_key(c) not in set(ref_removed)]
         return repair, list(classification.classes)
+
+    def _accommodation_check(self, *, state, fl_state, incumbent, executed, context, subtask_id) -> None:
+        """§6.4: a repair whose fix of a case only changes how it calls a dependency marks that case suite_suspect."""
+        try:
+            from orchestra.sandbox.policy import load_config as _sb_config
+
+            if not (_sb_config().get("author") or {}).get("accommodation_check", True):
+                return
+        except Exception:  # noqa: BLE001
+            pass
+        if incumbent is None or incumbent.workspace_ref is None:
+            return
+        from orchestra.control.fast_loop.accommodation import judge as _accom
+        from orchestra.control.fast_loop.persistence import failure_key as _fk
+
+        inc_fail = {_fk(f): f for f in incumbent.behaviour_failures}
+        new_suspects: dict[str, str] = {}
+        for cand in executed:
+            kind = str(cand.metadata.get("candidate_kind") or "")
+            if cand.workspace_ref is None or cand.metadata.get("probe") or "accommodation" in cand.metadata:
+                continue
+            if kind != "R0" and not cand.metadata.get("v2_row") and not cand.candidate_id.startswith("cand_v2"):
+                continue
+            fixed = sorted(inc_fail[k] for k in set(inc_fail) - {_fk(f) for f in cand.behaviour_failures})
+            if not fixed:
+                continue
+            patch = _source_diff(Path(incumbent.workspace_ref.path), Path(cand.workspace_ref.path))
+            call = None
+            if os.environ.get("OPENAI_BASE_URL"):
+                from orchestra.control.evolution.evolver import default_call as call  # temperature 0
+            try:
+                j = _accom(patch, fixed, call=call)
+            except Exception as exc:  # noqa: BLE001
+                fl_state.notes.append(f"accommodation check skipped on {cand.candidate_id}: {exc}")
+                continue
+            cand.metadata["accommodation"] = j.to_dict()
+            for c in j.accommodated:
+                new_suspects[c] = cand.candidate_id
+        if new_suspects:
+            fl_state.suite_suspect = sorted(set(fl_state.suite_suspect) | set(new_suspects))
+            fl_state.notes.append(f"accommodation: {len(new_suspects)} case(s) fixed only by changing a dependency call -> suite_suspect")
+            self._write_routing_records(
+                getattr(context, "run_dir", None), state.task_id, subtask_id,
+                [{"case_id": c, "route": "suite_suspect", "reason": f"repair {cid} only changed how a dependency is called"}
+                 for c, cid in sorted(new_suspects.items())],
+            )
+            try:
+                from orchestra.memory.store import memory_root, read_yaml_list, write_yaml
+
+                pp = memory_root() / "transfer" / "author_pending.yaml"
+                write_yaml(pp, read_yaml_list(pp) + [{"task": state.task_id.removeprefix("rb_"), "milestone": subtask_id, "case": c,
+                                                      "note": f"fixed by {cid} only by changing a dependency call (accommodation)"}
+                                                     for c, cid in sorted(new_suspects.items())])
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _reference_filter(self, *, state, fl_state, base_graph) -> list[str]:
+        """§6.5: once per milestone of a training task, gate cases failing on the reference leave the gate."""
+        if "reference_filter" in fl_state.routing:
+            return list((fl_state.routing.get("reference_filter") or {}).get("removed") or [])
+        frozen = nr.frozen_spec_dir(base_graph)
+        removed: list[str] | None = None
+        if frozen:
+            from orchestra.control.fast_loop import reference_filter as RF
+
+            try:
+                removed = RF.apply(state.task_id, Path(frozen))
+            except Exception as exc:  # noqa: BLE001 -- the filter must not take the search down
+                fl_state.notes.append(f"reference filter skipped: {type(exc).__name__}: {exc}")
+        fl_state.routing["reference_filter"] = {"applied": removed is not None, "removed": removed or []}
+        if removed:
+            fl_state.notes.append(f"reference filter: {len(removed)} gate case(s) fail on the reference and leave the gate")
+        return list(removed or [])
 
     @staticmethod
     def _rows_without_progress(fl_state: FastLoopState) -> int:
@@ -1023,6 +1107,8 @@ class FastLoopController:
         r0 = next((c.candidate_id for c in executed if c.metadata.get("candidate_kind") == "R0"), "")
         # `suite_suspect` cases come from the routing diagnosis (stage 2); until
         # then nothing is excluded.
+        self._accommodation_check(state=state, fl_state=fl_state, incumbent=incumbent, executed=executed, context=context,
+                                  subtask_id=subtask_id)
         suspect: list[str] = list(fl_state.suite_suspect)
         verdicts, conflicts = judge_all(executed, incumbent, probes, r0_id=r0, suspect=suspect)
         # Flaky-only searches (§2.5 addendum, 2026-10-02): a candidate that
@@ -2874,4 +2960,29 @@ def _repair_judgement(*, sub, summary):
               max_categories=int((run.cfg.get("recall") or {}).get("max_categories", 3)))
     run.record("repair_judge", j.to_dict(), key=str(sub.spec.subtask_id))
     return j
+
+
+def _source_diff(a: Path, b: Path, *, limit: int = 400) -> str:
+    """Unified diff of the non-test Python sources of two workspaces (accommodation check)."""
+    import difflib
+
+    skip = {".git", "tests", "test", "spec_tests", "spec_tests_soft", "check_tests", "repair_evidence", "__pycache__", "docs"}
+
+    def files(root: Path) -> dict[str, Path]:
+        out = {}
+        for p in root.rglob("*.py"):
+            rel = p.relative_to(root)
+            if any(part in skip for part in rel.parts) or rel.name.startswith("test_") or rel.name == "conftest.py":
+                continue
+            out[str(rel)] = p
+        return out
+
+    fa, fb = files(a), files(b)
+    chunks = []
+    for rel in sorted(set(fa) | set(fb))[:limit]:
+        ta = fa[rel].read_text(errors="replace").splitlines(keepends=True) if rel in fa else []
+        tb = fb[rel].read_text(errors="replace").splitlines(keepends=True) if rel in fb else []
+        if ta != tb:
+            chunks.append(f"diff --git a/{rel} b/{rel}\n" + "".join(difflib.unified_diff(ta, tb, f"a/{rel}", f"b/{rel}", n=2)))
+    return "\n".join(chunks)
 

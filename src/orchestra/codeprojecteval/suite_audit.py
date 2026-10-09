@@ -25,8 +25,26 @@ Rules:
 * ``symbol``: every project symbol the suite imports or calls through the
   package is in the allowed set (the lenient public-symbol set), when one is
   given.
-* ``import``: module top imports only ``pytest`` and the standard library
-  every supported interpreter has.
+* ``import``: module top imports only ``pytest``, ``adamas_testkit`` and the
+  standard library every supported interpreter has.
+* ``fake_io`` (author fake-object fix, 2026-10-09): no ``monkeypatch.setattr``,
+  ``mock.patch`` / ``patch.object`` or assignment replacing a network, process or
+  filesystem function of the standard library or a third-party client library
+  (``requests.*``, ``urllib.*``, ``socket.*``, ``subprocess.*``, ``shutil.*``,
+  ``os.*`` I/O, ...), also when reached through a project module
+  (``pkg.vcs.subprocess.run``), unless the replacement is
+  ``create_autospec(...)`` / ``Mock(spec=...)`` or the patch passes
+  ``autospec=True``.
+* ``env_path``: ``PATH`` is set only as a new directory followed by the original
+  ``PATH``; ``os.environ`` is never replaced or cleared as a whole.
+* ``fake_inject``: no hand-written double put into a project object: an
+  instance of a class the suite defines, or an unspecified ``Mock``, assigned
+  to an attribute of anything but ``self`` (``client._imap = ScriptedIMAP()``),
+  and no suite function or lambda assigned to such an object's private
+  attribute (also through ``setattr``).
+* ``call_assert``: no assertion on how a double was called
+  (``assert_called_with``, ``call_args``, ``call_count``, ...) unless a cited
+  sentence describes the call itself.
 """
 
 from __future__ import annotations
@@ -51,12 +69,28 @@ VERSION_DEPENDENT_STDLIB = frozenset({
     "ossaudiodev", "audioop", "aifc", "chunk", "mailcap", "imghdr", "lib2to3", "typing_extensions",
 })
 _STDLIB = frozenset(getattr(sys, "stdlib_module_names", ()))
-_ALWAYS_ALLOWED_TOP = frozenset({"pytest", "__future__"})
+_ALWAYS_ALLOWED_TOP = frozenset({"pytest", "__future__", "adamas_testkit"})
+
+# network / process / filesystem functions a suite must not replace with a hand-written double
+IO_MODULES = frozenset({"requests", "urllib", "urllib3", "httpx", "http", "socket", "ssl", "select", "selectors", "subprocess",
+                        "shutil", "smtplib", "ftplib", "imaplib", "poplib", "telnetlib", "asyncio", "aiohttp", "pycurl", "paramiko"})
+OS_IO_FUNCS = frozenset({"system", "popen", "execv", "execve", "execvp", "execvpe", "spawnv", "spawnvp", "fork", "kill",
+                         "listdir", "scandir", "walk", "remove", "unlink", "rmdir", "removedirs", "rename", "replace", "makedirs",
+                         "mkdir", "open", "stat", "lstat", "chmod", "chown", "access", "getcwd", "chdir", "symlink", "link",
+                         "readlink", "path", "environ", "getenv", "putenv", "unsetenv", "urandom"})
+ASYNCIO_IO = frozenset({"open_connection", "start_server", "create_subprocess_exec", "create_subprocess_shell", "open_unix_connection"})
+SPEC_FACTORIES = frozenset({"create_autospec", "mock.create_autospec", "unittest.mock.create_autospec"})
+MOCK_CLASSES = frozenset({"Mock", "MagicMock", "NonCallableMock", "NonCallableMagicMock", "AsyncMock"})
+CALL_ASSERTS = frozenset({"assert_called_with", "assert_called_once_with", "assert_any_call", "assert_has_calls", "assert_called",
+                          "assert_called_once", "assert_not_called", "assert_awaited_with", "assert_awaited_once_with"})
+CALL_ATTRS = frozenset({"call_args", "call_args_list", "call_count", "called", "mock_calls", "method_calls", "await_args"})
+CALL_WORDS_RE = re.compile(r"\b(call(?:s|ed|ing)?|invok\w*|pass(?:es|ed|ing)?|argument\w*|parameter\w*|keyword\w*|flag\w*|command\w*|"
+                           r"execut\w*|run(?:s|ning)?)\b", re.I)
 
 
 @dataclass(frozen=True)
 class Violation:
-    rule: str          # citation | private | error_path | shim | symbol | import
+    rule: str          # citation | private | error_path | shim | symbol | import | fake_io | fake_inject | env_path | call_assert
     file: str
     case: str          # test function name, "" for module level
     line: int
@@ -167,8 +201,68 @@ def _is_pytest_raises(call: ast.Call) -> bool:
     return isinstance(call.func, ast.Attribute) and call.func.attr == "raises" and _root_name(call.func) == "pytest"
 
 
+def io_target(dotted: str) -> str:
+    """The I/O function a dotted patch target names ('' when it names none).
+
+    ``requests.get``, ``socket.socket``, ``os.listdir``, ``asyncio.open_connection``,
+    and the same reached through a project module (``pkg.vcs.subprocess.run``).
+    """
+    parts = [p for p in dotted.split(".") if p]
+    for i, p in enumerate(parts):
+        rest = parts[i + 1:]
+        if p == "os" and rest and rest[0] in OS_IO_FUNCS:
+            return ".".join(parts[i:i + 2])
+        if p == "asyncio":
+            if rest and rest[0] in ASYNCIO_IO:
+                return ".".join(parts[i:i + 2])
+            continue
+        if p in IO_MODULES and (rest or i == len(parts) - 1):
+            return ".".join(parts[i:i + 2]) if rest else p
+        if p == "builtins" and rest and rest[0] == "open":
+            return "builtins.open"
+    return ""
+
+
+def _is_spec_double(node: ast.AST | None) -> bool:
+    """create_autospec(...) or Mock(spec=...)/MagicMock(spec_set=...): built from the real object."""
+    if not isinstance(node, ast.Call):
+        return False
+    name = _dotted(node.func)
+    if name in SPEC_FACTORIES or name.split(".")[-1] == "create_autospec":
+        return True
+    if name.split(".")[-1] in MOCK_CLASSES:
+        return any(k.arg in ("spec", "spec_set") and not (isinstance(k.value, ast.Constant) and k.value.value is None)
+                   for k in node.keywords) or bool(node.args)
+    return False
+
+
+def _refers_to_original_path(node: ast.AST) -> bool:
+    for n in ast.walk(node):
+        if isinstance(n, ast.Subscript) and _dotted(n.value) == "os.environ" and isinstance(n.slice, ast.Constant) and n.slice.value == "PATH":
+            return True
+        if isinstance(n, ast.Call) and _dotted(n.func) in ("os.environ.get", "os.getenv") and n.args and \
+                isinstance(n.args[0], ast.Constant) and n.args[0].value == "PATH":
+            return True
+    return False
+
+
+def _path_prepends(value: ast.AST, names_bound_to_path: set[str]) -> bool:
+    """``new + os.pathsep + os.environ["PATH"]`` (or an f-string / join with the original last)."""
+    def original(n: ast.AST) -> bool:
+        return _refers_to_original_path(n) or (isinstance(n, ast.Name) and n.id in names_bound_to_path)
+    if isinstance(value, ast.BinOp):
+        return original(value.right) and not original(value.left)
+    if isinstance(value, ast.JoinedStr):
+        vals = [v.value for v in value.values if isinstance(v, ast.FormattedValue)]
+        return bool(vals) and original(vals[-1]) and not any(original(v) for v in vals[:-1])
+    if isinstance(value, ast.Call) and _dotted(value.func).endswith(".join") and value.args and isinstance(value.args[0], (ast.List, ast.Tuple)):
+        elts = value.args[0].elts
+        return bool(elts) and original(elts[-1]) and not any(original(e) for e in elts[:-1])
+    return False
+
+
 def audit_file(path: Path, docs: Mapping[str, str], *, packages: Iterable[str], allowed_symbols: set[str] | None = None,
-               docs_norm: str | None = None) -> AuditResult:
+               docs_norm: str | None = None, fake_object_audit: bool = True) -> AuditResult:
     res = AuditResult()
     src = path.read_text(encoding="utf-8", errors="replace")
     lines = src.splitlines()
@@ -344,11 +438,163 @@ def audit_file(path: Path, docs: Mapping[str, str], *, packages: Iterable[str], 
                     else:
                         res.violations.append(Violation("error_path", fname, fn.name, call.lineno,
                                                         "pytest.raises in a test whose cited sentence mentions no error"))
+    if fake_object_audit:
+        res.violations.extend(fake_object_violations(tree, fname, res.citations))
     return res
 
 
+def fake_object_violations(tree: ast.AST, fname: str, citations: Mapping[str, list[str]]) -> list[Violation]:
+    """The ``fake_io``, ``env_path`` and ``call_assert`` rules over one parsed suite file."""
+    out: list[Violation] = []
+    funcs = sorted((n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))),
+                   key=lambda f: (f.lineno, -(f.end_lineno or f.lineno)))
+
+    def case_of(line: int) -> str:
+        best = ""
+        for f in funcs:
+            if f.lineno <= line <= (f.end_lineno or f.lineno) or any(d.lineno == line for d in f.decorator_list):
+                best = f.name if f.name.startswith("test") else f"<{f.name}>"
+        return best
+
+    def quotes_of(case: str) -> str:
+        return " ".join(q for k, qs in citations.items() if k.split("::")[-1] == case for q in qs)
+
+    suite_classes = {n.name for n in ast.walk(tree) if isinstance(n, ast.ClassDef)}
+    suite_funcs = {n.name for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    bound_to_double: set[str] = set()      # names assigned an instance of a suite class or a bare Mock
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Assign) and isinstance(n.value, ast.Call):
+            cn = _dotted(n.value.func).split(".")[-1]
+            if cn in suite_classes or (cn in MOCK_CLASSES and not _is_spec_double(n.value)):
+                bound_to_double.update(t.id for t in n.targets if isinstance(t, ast.Name))
+
+    def double_kind(value: ast.AST | None, private: bool) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, ast.Call):
+            cn = _dotted(value.func).split(".")[-1]
+            if cn in suite_classes:
+                return f"an instance of the suite's own class {cn}"
+            if cn in MOCK_CLASSES and not _is_spec_double(value):
+                return f"an unspecified {cn}()"
+        if isinstance(value, ast.Name):
+            if value.id in bound_to_double:
+                return f"the hand-written double {value.id}"
+            if private and (value.id in suite_funcs or value.id in suite_classes):
+                return f"the suite's own {value.id}"
+        if private and isinstance(value, ast.Lambda):
+            return "a lambda"
+        return ""
+
+    path_names: set[str] = set()
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Assign) and _refers_to_original_path(n.value):
+            path_names.update(t.id for t in n.targets if isinstance(t, ast.Name))
+
+    for n in ast.walk(tree):
+        line = getattr(n, "lineno", 0)
+        if isinstance(n, ast.Call):
+            name = _dotted(n.func)
+            leaf = name.split(".")[-1]
+            # monkeypatch.setattr("mod.attr", new) / monkeypatch.setattr(obj, "attr", new)
+            if leaf == "setattr" and name != "setattr" and n.args:
+                if isinstance(n.args[0], ast.Constant) and isinstance(n.args[0].value, str):
+                    target, new = n.args[0].value, (n.args[1] if len(n.args) > 1 else None)
+                else:
+                    attr = n.args[1].value if len(n.args) > 1 and isinstance(n.args[1], ast.Constant) else ""
+                    target, new = f"{_dotted(n.args[0])}.{attr}", (n.args[2] if len(n.args) > 2 else None)
+                    if _dotted(n.args[0]) == "os" and attr == "environ":
+                        out.append(Violation("env_path", fname, case_of(line), line, "replaces os.environ as a whole"))
+                        continue
+                io = io_target(target)
+                if io and not _is_spec_double(new):
+                    out.append(Violation("fake_io", fname, case_of(line), line,
+                                         f"replaces {io} with a hand-written double; use the testkit's local environment, or create_autospec / Mock(spec=...)"))
+                elif not io and not (target.endswith(".environ") or target == "os.environ"):
+                    kind = double_kind(new, True)
+                    if kind:
+                        out.append(Violation("fake_inject", fname, case_of(line), line,
+                                             f"replaces {target} with {kind}; a double must be create_autospec / Mock(spec=...) of the real object"))
+            if name == "setattr" and len(n.args) >= 3 and isinstance(n.args[1], ast.Constant) and isinstance(n.args[1].value, str) \
+                    and _root_name(n.args[0]) not in ("self", "cls", ""):
+                kind = double_kind(n.args[2], n.args[1].value.startswith("_"))
+                if kind:
+                    out.append(Violation("fake_inject", fname, case_of(line), line,
+                                         f"puts {kind} into {_dotted(n.args[0])}.{n.args[1].value}"))
+            # mock.patch("mod.attr", ...) / patch.object(obj, "attr", ...)
+            if leaf in ("patch", "object") and ("patch" in name):
+                if leaf == "object" and len(n.args) >= 2 and isinstance(n.args[1], ast.Constant):
+                    target, new = f"{_dotted(n.args[0])}.{n.args[1].value}", (n.args[2] if len(n.args) > 2 else None)
+                elif leaf == "patch" and n.args and isinstance(n.args[0], ast.Constant) and isinstance(n.args[0].value, str):
+                    target, new = n.args[0].value, (n.args[1] if len(n.args) > 1 else None)
+                else:
+                    target, new = "", None
+                kw = {k.arg: k.value for k in n.keywords}
+                new = kw.get("new", new)
+                autospec = isinstance(kw.get("autospec"), ast.Constant) and kw["autospec"].value is True
+                spec_kw = any(k in kw for k in ("spec", "spec_set", "new_callable")) and not isinstance(kw.get("new_callable"), ast.Name)
+                io = io_target(target)
+                if io and not (autospec or spec_kw or _is_spec_double(new)):
+                    out.append(Violation("fake_io", fname, case_of(line), line,
+                                         f"patches {io} without autospec; use the testkit's local environment, or autospec=True / create_autospec"))
+                elif target and not io and not (autospec or spec_kw or _is_spec_double(new)):
+                    kind = double_kind(new, True) if new is not None else "an unspecified MagicMock"
+                    if kind:
+                        out.append(Violation("fake_inject", fname, case_of(line), line,
+                                             f"patches {target} with {kind}; use autospec=True or create_autospec"))
+            # PATH set through monkeypatch.setenv / setitem
+            if leaf in ("setenv", "setitem") and n.args:
+                key_i = 0 if leaf == "setenv" else 1
+                if leaf == "setitem" and _dotted(n.args[0]) != "os.environ":
+                    key_i = -1
+                if key_i >= 0 and len(n.args) > key_i + 1 and isinstance(n.args[key_i], ast.Constant) and n.args[key_i].value == "PATH":
+                    if not _path_prepends(n.args[key_i + 1], path_names):
+                        out.append(Violation("env_path", fname, case_of(line), line,
+                                             "sets PATH without keeping the original after the new directory (new_dir + os.pathsep + os.environ['PATH'])"))
+            if name in ("os.environ.clear",):
+                out.append(Violation("env_path", fname, case_of(line), line, "clears os.environ"))
+            # assertions on how a double was called
+            if leaf in CALL_ASSERTS and isinstance(n.func, ast.Attribute):
+                case = case_of(line)
+                if not CALL_WORDS_RE.search(quotes_of(case)):
+                    out.append(Violation("call_assert", fname, case, line,
+                                         f"asserts how a double was called (.{leaf}) but no cited sentence describes the call"))
+        elif isinstance(n, ast.Attribute) and n.attr in CALL_ATTRS and isinstance(n.ctx, ast.Load):
+            parent_assert = any(isinstance(a, ast.Assert) and a.lineno <= line <= (a.end_lineno or a.lineno) for a in ast.walk(tree))
+            if parent_assert:
+                case = case_of(line)
+                if not CALL_WORDS_RE.search(quotes_of(case)):
+                    out.append(Violation("call_assert", fname, case, line,
+                                         f"asserts on .{n.attr} of a double but no cited sentence describes the call"))
+        elif isinstance(n, ast.Assign):
+            for t in n.targets:
+                d = _dotted(t.value) if isinstance(t, ast.Subscript) else _dotted(t)
+                if isinstance(t, ast.Subscript) and d == "os.environ" and isinstance(t.slice, ast.Constant) and t.slice.value == "PATH":
+                    if not _path_prepends(n.value, path_names):
+                        out.append(Violation("env_path", fname, case_of(line), line, "assigns os.environ['PATH'] without keeping the original after the new directory"))
+                elif d == "os.environ" and not isinstance(t, ast.Subscript):
+                    out.append(Violation("env_path", fname, case_of(line), line, "replaces os.environ as a whole"))
+                elif isinstance(t, ast.Attribute):
+                    io = io_target(d)
+                    if io and not _is_spec_double(n.value):
+                        out.append(Violation("fake_io", fname, case_of(line), line, f"assigns a hand-written double to {io}"))
+                    elif _root_name(t) not in ("self", "cls", "") and not (t.attr.startswith("__") and t.attr.endswith("__")):
+                        kind = double_kind(n.value, t.attr.startswith("_"))
+                        if kind:
+                            out.append(Violation("fake_inject", fname, case_of(line), line,
+                                                 f"puts {kind} into {d}; test through the documented interface and the testkit's local environment"))
+    # one entry per (case, rule, line)
+    seen, uniq = set(), []
+    for v in out:
+        k = (v.case, v.rule, v.line)
+        if k not in seen:
+            seen.add(k)
+            uniq.append(v)
+    return uniq
+
+
 def audit_suite(suite_dir: str | Path, docs: Mapping[str, str], *, packages: Iterable[str],
-                allowed_symbols: set[str] | None = None) -> AuditResult:
+                allowed_symbols: set[str] | None = None, fake_object_audit: bool = True) -> AuditResult:
     """Audit every ``*.py`` under ``suite_dir`` (recursively) and merge the results."""
     root = Path(suite_dir)
     total = AuditResult()
@@ -357,7 +603,8 @@ def audit_suite(suite_dir: str | Path, docs: Mapping[str, str], *, packages: Ite
     for p in sorted(root.rglob("*.py")):
         if "__pycache__" in p.parts:
             continue
-        r = audit_file(p, docs, packages=pkgs, allowed_symbols=allowed_symbols, docs_norm=docs_norm)
+        r = audit_file(p, docs, packages=pkgs, allowed_symbols=allowed_symbols, docs_norm=docs_norm,
+                       fake_object_audit=fake_object_audit)
         total.cases += r.cases
         total.cited += r.cited
         total.timeout_marks += r.timeout_marks
@@ -372,4 +619,4 @@ def audit_suite(suite_dir: str | Path, docs: Mapping[str, str], *, packages: Ite
     return total
 
 
-__all__ = ["AuditResult", "CITATION_RE", "VERSION_DEPENDENT_STDLIB", "Violation", "audit_file", "audit_suite", "normalise"]
+__all__ = ["AuditResult", "CITATION_RE", "fake_object_violations", "io_target", "VERSION_DEPENDENT_STDLIB", "Violation", "audit_file", "audit_suite", "normalise"]

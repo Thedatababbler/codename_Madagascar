@@ -180,7 +180,14 @@ prompt: |
   so a standard-library module added in a later Python (`tomllib`, 3.11) or a
   package the list does not name goes inside the one test that needs it, or
   is not used at all -- read a TOML file as text if you must. At module top
-  import only pytest and the standard library every supported Python has.
+  import only pytest, `adamas_testkit` and the standard library every supported
+  Python has. `adamas_testkit` is on the path of every gate run (never in the
+  repository): `local_http_server`, `local_git_repo`, `local_tcp_server`,
+  `temp_home`, `fake_command`. Keep the library the code under test calls real
+  and replace only the world behind it with one of these; never hand-write a
+  stand-in for `requests`, `socket`, `subprocess`, `shutil` or `os` I/O, never
+  replace `PATH` (prepend a directory to it), and a double you cannot avoid is
+  `unittest.mock.create_autospec(<real object>)`.
 
   Build the large structure once in a fixture and write many small assertions
   against it: the milestone is scored on the fraction of your suite that
