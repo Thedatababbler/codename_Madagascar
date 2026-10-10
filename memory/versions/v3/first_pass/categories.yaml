@@ -1,0 +1,48 @@
+- category_id: FP-TYPE
+  name: 协议或二进制数据的返回类型
+  definition: 文档描述了返回元组、列表或字段，但没有说明元素是字节还是字符串；实现者需要决定协议或二进制数据的原始类型
+  signals:
+  - 阶段实现网络协议、二进制格式或底层数据的客户端/解析器
+  - 文档中出现“返回 (x, y) 元组”“返回列表”而未说明元素类型
+  state: active
+  origin: human:spec 2026-10-09 §5.5 draft
+- category_id: FP-RAW-VS-STATUS
+  name: 返回服务器原文还是状态值
+  definition: 一个操作完成后，应返回对端给出的响应文本/数据，还是一个通用的状态值（如 OK、True）
+  signals:
+  - 文档写“返回服务器的响应”“返回命令结果”
+  - 操作对应一次请求-响应交互
+  state: active
+  origin: human:spec 2026-10-09 §5.5 draft
+- category_id: FP-RESP-FILTER
+  name: 响应内容的过滤规则
+  definition: 返回的响应集合应包含哪些行或条目：例如只要未标记的推送行，不要表示命令结束的标记行
+  signals:
+  - 文档区分 tagged/untagged、完成行/数据行、头部/正文等不同种类的响应
+  - 方法返回“收集到的响应”
+  state: active
+  origin: human:spec 2026-10-09 §5.5 draft
+- category_id: FP-DOC-EXC
+  name: 文档规定的异常类型
+  definition: 文档为某种失败情况点名了具体的异常类，实现必须抛出这个类，而不是相近的或通用的异常
+  signals:
+  - 文档写“若……则抛出 XxxException/XxxError”
+  - 同一模块定义了多个含义相近的异常类
+  state: active
+  origin: human:spec 2026-10-09 §5.5 draft
+- category_id: FP-EXT-CALL
+  name: 调用外部命令与第三方库的方式
+  definition: 实现需要调用外部命令或第三方库的函数时，调用的形式（参数、关键字、执行方式）会影响行为
+  signals:
+  - 阶段需要执行外部程序（版本控制、压缩工具等）
+  - 阶段需要用第三方网络或文件库下载、读取数据
+  state: active
+  origin: human:spec 2026-10-09 §5.5 draft
+- category_id: FP-INPUT-FORMS
+  name: 输入形式的完整覆盖
+  definition: 文档列出了同一入口可以接受的多种输入形式，实现需要全部支持，而不只是最简单的一种
+  signals:
+  - 文档写“可以是本地路径、URL 或缩写”之类的并列输入形式
+  - 一个入口函数要先判断输入属于哪一类再分派
+  state: active
+  origin: human:spec 2026-10-09 §5.5 draft

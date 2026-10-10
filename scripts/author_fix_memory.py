@@ -3,7 +3,8 @@
 
 Every text passes the memory validator (format, training identifiers, sources,
 held-out / verification substrings) before it is written; the write bumps the
-memory version and snapshots it. Idempotent: rules already present are kept.
+memory version and snapshots it. Each text stands alone: those that pass are written. Idempotent:
+rules already present are kept.
 
     uv run python scripts/author_fix_memory.py
 """
@@ -81,15 +82,18 @@ def main() -> int:
     skill_check = substring_check({"skill_section": SECTION})["skill_section"] if SECTION_TITLE not in skill else {"heldout": "PASS", "verification": "PASS"}
     report = {"rules": {v.entry_id: (v.ok, v.reasons) for v in verdicts}, "skill_section": skill_check}
     print(json.dumps(report, indent=1, ensure_ascii=False))
-    if not all(v.ok for v in verdicts) or "FAIL" in skill_check.values():
-        print("not written: a text failed validation")
-        return 1
-    if SECTION_TITLE not in skill:
+    # each text stands alone (2026-10-10): what passes is written, what fails stays out and is reported
+    if SECTION_TITLE not in skill and "FAIL" not in skill_check.values():
         skill_path.write_text(skill.rstrip() + "\n\n" + SECTION, encoding="utf-8")
-    if new:
-        v = commit_write(root, "author", "rules", rules + new, reason="author fake-object fix §6.1: skill section + four human rules",
-                         origin=f"human:{DATE}", changed_ids=[r["rule_id"] for r in new])
-        print("memory version", v)
+    ok = [r for r, v in zip(new, verdicts, strict=True) if v.ok]
+    if ok:
+        v = commit_write(root, "author", "rules", rules + ok, reason="author fake-object fix §6.1: human rules that pass validation",
+                         origin=f"human:{DATE}", changed_ids=[r["rule_id"] for r in ok])
+        print("memory version", v, "written", [r["rule_id"] for r in ok])
+    failed = [v.entry_id for v in verdicts if not v.ok] + (["skill_section"] if "FAIL" in skill_check.values() else [])
+    if failed:
+        print("not written (failed validation):", failed)
+        return 1
     return 0
 
 

@@ -8,6 +8,10 @@ configs/memory.yaml. Output, one line per entry and nothing else:
 
     <entry_id> heldout=PASS|FAIL verification=PASS|FAIL
 
+A window found in the sources of 3 or more distinct tasks is common phrasing
+(user decision): it is exempt, and listed (the memory text's own window, the
+entry id and the number of tasks; no source) for the caller's log.
+
 With ``--out`` the same verdicts are written as JSON. No held-out text, path or
 case id leaves this script.
 
@@ -36,38 +40,52 @@ def all_tasks() -> list[str]:
     return out
 
 
-def verification_dirs() -> list[Path]:
+def verification_dirs() -> list[tuple[str, Path]]:
+    """(task, suite dir) of every verification suite named by the manifests."""
     cfg = yaml.safe_load((ROOT / "configs" / "memory.yaml").read_text(encoding="utf-8")) or {}
-    dirs: list[Path] = []
+    out: set[tuple[str, Path]] = set()
     for rel in ((cfg.get("transfer") or {}).get("verification_manifests") or []):
         p = ROOT / rel
         if not p.is_file():
             continue
         data = json.loads(p.read_text(encoding="utf-8"))
-        items = data.values() if isinstance(data, dict) else [d.get("suite_dir") for d in data if isinstance(d, dict)]
-        dirs += [Path(str(d)) for d in items if d and Path(str(d)).is_dir()]
-    return sorted(set(dirs))
+        if isinstance(data, dict):
+            items = [(str(k).split(":", 1)[0], v) for k, v in data.items()]
+        else:
+            items = [(str(d.get("task") or ""), d.get("suite_dir")) for d in data if isinstance(d, dict)]
+        out |= {(t, Path(str(d))) for t, d in items if d and Path(str(d)).is_dir()}
+    return sorted(out)
+
+
+GENERIC_TASKS = 3     # a window found in this many distinct tasks' sources is common phrasing (user decision)
 
 
 def check(entries: dict[str, str], *, tasks: list[str] | None = None, n: int = SHINGLE,
-          extra_heldout: list[Path] | None = None) -> dict[str, dict[str, str]]:
-    """``extra_heldout``: directories treated as held-out too (the unit tests' fake samples)."""
+          extra_heldout: list[Path] | None = None, generic_tasks: int = GENERIC_TASKS) -> dict:
+    """Per entry PASS/FAIL against held-out and verification sources.
+
+    A window that occurs in the held-out or verification sources of at least
+    ``generic_tasks`` distinct tasks is common phrasing, not a leak: it does not
+    count as a hit, and it is listed under ``_exemptions`` (entry, window,
+    number of tasks) for the caller's log. ``extra_heldout``: directories
+    treated as held-out of one extra pseudo-task each (the unit tests' fake samples).
+    """
     windows: dict[str, set[str]] = {}
     for eid, text in entries.items():
         for w in _windows(str(text or ""), n):
             windows.setdefault(w, set()).add(eid)
-    bad = {"heldout": set(), "verification": set()}
+    seen: dict[str, dict[str, set[str]]] = {"heldout": {}, "verification": {}}   # kind -> window -> tasks
 
-    def scan(files, kind):
+    def scan(files, kind, task):
         for f in files:
             try:
                 src = " ".join(f.read_text(encoding="utf-8", errors="replace").split())
             except OSError:
                 continue
             for i in range(0, max(0, len(src) - n + 1)):
-                ids = windows.get(src[i : i + n])
-                if ids:
-                    bad[kind] |= ids
+                w = src[i : i + n]
+                if w in windows:
+                    seen[kind].setdefault(w, set()).add(task)
 
     for t in tasks or all_tasks():
         try:
@@ -75,12 +93,31 @@ def check(entries: dict[str, str], *, tasks: list[str] | None = None, n: int = S
         except (OSError, ValueError, KeyError):
             continue
         if d.is_dir():
-            scan(d.rglob("*.py"), "heldout")
-    for d in extra_heldout or []:
-        scan(Path(d).rglob("*.py"), "heldout")
-    for d in verification_dirs():
-        scan(d.rglob("*.py"), "verification")
-    return {eid: {k: ("FAIL" if eid in bad[k] else "PASS") for k in ("heldout", "verification")} for eid in entries}
+            scan(d.rglob("*.py"), "heldout", t)
+    for i, d in enumerate(extra_heldout or []):
+        scan(Path(d).rglob("*.py"), "heldout", f"__extra{i}")
+    for t, d in verification_dirs():
+        scan(d.rglob("*.py"), "verification", t or str(d))
+    res: dict = {}
+    exemptions = []
+    for eid in entries:
+        res[eid] = {}
+    for w, ids in windows.items():
+        all_tasks_w = seen["heldout"].get(w, set()) | seen["verification"].get(w, set())
+        generic = len(all_tasks_w) >= generic_tasks
+        for eid in ids:
+            for kind in ("heldout", "verification"):
+                if w in seen[kind]:
+                    if generic:
+                        exemptions.append({"entry": eid, "window": w, "tasks": len(all_tasks_w), "kind": kind})
+                    else:
+                        res[eid][kind] = "FAIL"
+    for eid in entries:
+        for kind in ("heldout", "verification"):
+            res[eid].setdefault(kind, "PASS")
+    uniq = {(e["entry"], e["window"]): e for e in exemptions}
+    res["_exemptions"] = sorted(uniq.values(), key=lambda e: (e["entry"], e["window"]))
+    return res
 
 
 def main() -> int:
@@ -93,7 +130,10 @@ def main() -> int:
     entries = json.loads(Path(a.entries).read_text(encoding="utf-8"))
     res = check(entries, tasks=[t for t in a.tasks.split(",") if t] or None, extra_heldout=[Path(p) for p in a.extra_heldout])
     for eid, r in res.items():
+        if eid == "_exemptions":
+            continue
         print(f"{eid} heldout={r['heldout']} verification={r['verification']}")
+    print(f"exempted windows (common phrasing, >= {GENERIC_TASKS} tasks): {len(res['_exemptions'])}")
     if a.out:
         Path(a.out).write_text(json.dumps(res, indent=1), encoding="utf-8")
     return 0

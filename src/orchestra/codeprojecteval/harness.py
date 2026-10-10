@@ -548,6 +548,13 @@ def _pytest_env(cwd, import_root=None):
         roots.append(str(testkit))
     existing = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = os.pathsep.join([p for p in roots + [existing] if p])
+    if os.environ.get("ADAMAS_SANDBOXED"):
+        # confined gate: pytest must not climb to an ancestor's config (the repository's pyproject) and
+        # collect from there, outside what it may list; ids are matched on file name + test either way
+        # the frozen suite sits in the run's harness directory (the import root only links to it)
+        link = Path(import_root) / "spec_tests" if import_root else None
+        rootdir = link.resolve().parent if link is not None and link.exists() else Path(cwd)
+        env["PYTEST_ADDOPTS"] = (env.get("PYTEST_ADDOPTS", "") + " --rootdir=" + str(rootdir) + " --confcutdir=" + str(rootdir)).strip()
     return env
 
 

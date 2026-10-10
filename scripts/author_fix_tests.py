@@ -23,7 +23,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 OUT = ROOT / "outputs" / "author_fix"
-NEW_RULES = ("fake_io", "env_path", "call_assert", "fake_inject")
+NEW_RULES = ("fake_io", "env_path", "call_assert", "fake_inject", "interface", "interface_signature")
+IFACE_RULES = ("interface", "interface_signature")
 SPEC_RULES = ("fake_io", "env_path", "call_assert")
 
 
@@ -153,13 +154,14 @@ def a1() -> dict:
         docs = load_docs(dataset_root(task) / task / "docs")
         pk = packages(task)
         for h, suite, mids in unique_suites(task):
-            res = audit_suite(suite, docs, packages=pk, fake_object_audit=True)
+            res = audit_suite(suite, docs, packages=pk, fake_object_audit=True, interface=True)
             flags = flagged_cases(suite, res.violations)
+            soft = {k.split("::")[0] + "::" + "::".join(k.split("::")[1:]) for k in res.soft_cases}
             ref = reference_cases(task, h, suite)
             for cid, info in (ref.get("cases") or {}).items():
                 k = norm_case(cid)
                 rows.append({"task": task, "suite": h, "milestones": mids, "case": k, "ref": info["ref"], "kind": info.get("kind"),
-                             "exc": info.get("exc"), "flags": flags.get(k, [])})
+                             "exc": info.get("exc"), "flags": flags.get(k, []), "soft": k in soft})
     fail = [r for r in rows if r["ref"] == "fail"]
     ok = [r for r in rows if r["ref"] == "pass"]
     caught = [r for r in fail if r["flags"]]
@@ -175,7 +177,24 @@ def a1() -> dict:
         return any(r["flags"] for r in cands), bool(cands)
     rej_hits = [hit(*k) for k in rej_cases]
     missed = collections.Counter(r["kind"] for r in fail if not r["flags"])
+    def grp(rules):
+        hit = lambda r: bool(set(r["flags"]) & set(rules))  # noqa: E731
+        return {"recall": f"{sum(1 for r in fail if hit(r))}/{len(fail)}",
+                "recall_by_kind": {k: f"{sum(1 for r in fail if r['kind'] == k and hit(r))}/{sum(1 for r in fail if r['kind'] == k)}"
+                                   for k in sorted({r["kind"] for r in fail})},
+                "false_flags": f"{sum(1 for r in ok if hit(r))}/{len(ok)}"}
+    iface = {
+        "violations": grp(IFACE_RULES),
+        "violation_or_soft_on_interface_kind": f"{sum(1 for r in fail if r['kind'] == 'other' and (set(r['flags']) & set(IFACE_RULES) or r['soft']))}"
+                                               f"/{sum(1 for r in fail if r['kind'] == 'other')}",
+        "soft_on_reference_failing": f"{sum(1 for r in fail if r['soft'])}/{len(fail)}",
+        "soft_on_reference_passing": f"{sum(1 for r in ok if r['soft'])}/{len(ok)}",
+        "violation_examples_on_passing": [{"task": r["task"], "case": r["case"], "rules": [f for f in r["flags"] if f in IFACE_RULES]}
+                                          for r in ok if set(r["flags"]) & set(IFACE_RULES)][:5],
+    }
     res = {
+        "fake_spec_rules": grp(SPEC_RULES), "fake_inject": grp(("fake_inject",)), "fake_all": grp(SPEC_RULES + ("fake_inject",)),
+        "interface": iface,
         "suites": len({(r["task"], r["suite"]) for r in rows}), "cases": len(rows), "reference_fail": len(fail), "reference_pass": len(ok),
         "recall": round(len(caught) / len(fail), 3) if fail else None, "caught": len(caught),
         "recall_spec_rules_only": round(sum(1 for r in fail if set(r["flags"]) & set(SPEC_RULES)) / len(fail), 3) if fail else None,

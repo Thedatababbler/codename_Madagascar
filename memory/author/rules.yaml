@@ -6,3 +6,11 @@
   evidence: {}
   origin: human:canary
   memory_version_added: 1
+- rule_id: AU-R-101
+  category_id: AU-MAIN_PATH
+  trigger: a behaviour uses the network, another process or the file system
+  rule: Do not replace network, process or file-system functions or classes of the standard library or of third-party libraries (requests, urllib, socket, subprocess, shutil, os I/O and the like); give the program a real local environment from adamas_testkit instead (local HTTP server, local git repository, local TCP server, temporary home, prepended fake command).
+  state: active
+  origin: human:2026-10-09
+  evidence:
+    source: author fake-object fix spec 2026-10-09

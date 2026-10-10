@@ -12,8 +12,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -95,9 +93,17 @@ def s1() -> dict:
         "codex_home_sessions": "/root/.codex/logs_2.sqlite",
         "global_tmp": "/tmp",
         "root_home": "/root",
+        # third-party packages of the system and other Pythons (a task's own project can sit there: PyJWT)
+        "system_jwt_source": "/usr/local/lib/python3.12/dist-packages/jwt/__init__.py",
+        "usr_lib_dist_packages_file": next((str(p) for p in Path("/usr/lib/python3/dist-packages").rglob("*.py")), "/usr/lib/python3/dist-packages/x.py"),
+        "uv_base_site_packages_file": next((str(p) for p in Path("/.uv/python_install/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/site-packages").rglob("*.py")),
+                                           "/.uv/python_install/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/site-packages/x.py"),
+        "other_venv_jwt": "/venv/mas/lib/python3.11/site-packages/jwt/__init__.py",
     }
     ws, priv, td = fresh()
-    allowed = {"workspace_file": str(ws / "hello.py"), "task_venv": str(VENV / "bin"), "usr_bin": "/usr/bin"}
+    allowed = {"workspace_file": str(ws / "hello.py"), "task_venv": str(VENV / "bin"), "usr_bin": "/usr/bin",
+               "task_venv_site_packages": str(next((VENV / "lib").glob("python3*/site-packages"))),
+               "stdlib": "/usr/lib/python3.12/os.py"}
     probe = priv / "probe.py"
     probe.write_text(PROBE)
     r = confined(["/usr/bin/python3", str(probe), json.dumps({**forbidden, **allowed})], workspace=ws, private=priv)
@@ -105,7 +111,10 @@ def s1() -> dict:
     # shell tools: cat / ls / find with the same launcher
     sh = confined([f"cat {forbidden['memory_file']} 2>&1 | head -1; ls {ROOT} 2>&1 | head -1; "
                    f"git -C {ws} status --short | head -1; echo GIT_RC=$?; "
-                   f"{VENV}/bin/python -c 'import pytest; print(\"pytest_ok\")'"], workspace=ws, private=priv, shell=True)
+                   f"{VENV}/bin/python -c 'import pytest; print(\"pytest_ok\")'; "
+                   "/usr/bin/python3 -c 'import jwt' 2>&1 | tail -1; "
+                   "PATH=" + str(VENV / "bin") + ":$PATH python -c 'import sys; print(\"python_is\", sys.prefix)'"],
+                  workspace=ws, private=priv, shell=True)
     find = confined(["find / -xdev \\( -name pitfalls.yaml -o -name VERSION -o -name 'unit_tests' -o -name '*.spec_tests' "
                      "-o -name sandbox.yaml -o -name 'logs_2.sqlite' \\) 2>/dev/null | head -50"], workspace=ws, private=priv,
                     shell=True, timeout=600)
@@ -114,8 +123,10 @@ def s1() -> dict:
                                                           ".codex", "spec_tests"))]
     td.cleanup()
     ok = all(res.get(k) in ("EACCES", "ENOENT", "EPERM") for k in forbidden) and all(res.get(k) == "READ" for k in allowed) \
-        and not leaky and "pytest_ok" in sh.stdout
-    return {"reads": res, "shell": sh.stdout.strip().splitlines(), "find_hits": found, "find_forbidden_hits": leaky, "pass": ok}
+        and not leaky and "pytest_ok" in sh.stdout and ("No module named 'jwt'" in sh.stdout or "PermissionError" in sh.stdout)
+    return {"reads": res, "shell": sh.stdout.strip().splitlines(), "find_hits": found, "find_forbidden_hits": leaky, "pass": ok,
+            "note": "system / uv dist-packages and site-packages directories list their names (readdir only, so Python's import scan works); "
+                    "no file in them can be read"}
 
 
 NET = r'''
@@ -163,8 +174,8 @@ def s2() -> dict:
         "git_clone_https": "git clone -q https://github.com/psf/requests.git $TMPDIR/req 2>&1 | tail -1; echo \"rc=${PIPESTATUS[0]}\"",
         # the network guard removed: only Landlock's port rules remain
         "no_ldpreload_curl_pypi": "env -u LD_PRELOAD curl -s -m 8 -o /dev/null -w '%{http_code}' https://pypi.org/simple/; echo \" rc=$?\"",
-        "no_ldpreload_tcp_1.1.1.1:53": f"env -u LD_PRELOAD /usr/bin/python3 -c \"import socket;s=socket.socket();s.settimeout(4);"
-                                       f"print(s.connect_ex(('1.1.1.1',53)))\"",
+        "no_ldpreload_tcp_1.1.1.1:53": "env -u LD_PRELOAD /usr/bin/python3 -c \"import socket;s=socket.socket();s.settimeout(4);"
+                                       "print(s.connect_ex(('1.1.1.1',53)))\"",
         "no_ldpreload_tcp_external_ephemeral": "env -u LD_PRELOAD /usr/bin/python3 -c \"import socket;s=socket.socket();s.settimeout(4);"
                                                "print(s.connect_ex(('1.1.1.1',40000)))\"",
     }.items():
@@ -197,64 +208,46 @@ def s3() -> dict:
         env = Path("/root/codex-benchmarks/nl2repo/envs" if nl2 else "/root/codex-benchmarks/cpe_envs") / t / "bin" / "python"
         pk = _top_level_packages(expected_modules(load_task(t, dataset_root=ds))) + [t.removeprefix("nl2_")]
         rows[t] = check(env, pk)
-    return {"tasks": rows, "pass": all(r["clean"] for r in rows.values())}
+    # copies installed elsewhere (system Pythons, other venvs): found unconfined, then read inside the sandbox
+    import subprocess as sp
+    pkgs = {t: [p for p in r["packages"] if "-" not in p] for t, r in rows.items()}
+    names = sorted({p for ps in pkgs.values() for p in ps})
+    found = sp.run(["find", "/", "-xdev", "(", "-path", "/proc", "-o", "-path", "/sys", "-o", "-path", str(ROOT), ")", "-prune", "-o",
+                    "-type", "d", "(", *sum([["-name", n, "-o"] for n in names], [])[:-1], ")", "-path", "*-packages/*", "-print"],
+                   capture_output=True, text=True, timeout=900).stdout.split()
+    elsewhere = {}
+    for t, ps in pkgs.items():
+        own = str(Path("/root/codex-benchmarks/nl2repo/envs" if t.startswith("nl2_") else "/root/codex-benchmarks/cpe_envs") / t)
+        # a real copy is an importable package directly in a *-packages dir (not a stub, not a submodule of another package)
+        elsewhere[t] = [f for f in found if Path(f).name in ps and not f.startswith(own + "/")
+                        and Path(f).parent.name in ("site-packages", "dist-packages") and (Path(f) / "__init__.py").is_file()]
+    ws, priv, td = fresh()
+    probe = priv / "probe.py"
+    probe.write_text(PROBE)
+    targets = {f"{t}:{i}": str(Path(f) / "__init__.py") for t, fs in elsewhere.items() for i, f in enumerate(fs)}
+    r = confined(["/usr/bin/python3", str(probe), json.dumps(targets)], workspace=ws, private=priv)
+    reads = json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else {"error": r.stderr[-300:]}
+    td.cleanup()
+    copies = {t: [{"path": f, "inside_sandbox": reads.get(f"{t}:{i}")} for i, f in enumerate(fs)] for t, fs in elsewhere.items() if fs}
+    readable = [c for cs in copies.values() for c in cs if c["inside_sandbox"] == "READ"]
+    return {"tasks": rows, "copies_elsewhere": copies, "readable_copies_inside_sandbox": readable,
+            "pass": all(r["clean"] for r in rows.values()) and not readable}
 
 
 # --------------------------------------------------------------------------- S5 part 1: command audit
 
-_EXTERNAL = re.compile(r"https?://(?!127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\])[^\s'\"]+")
-_INSTALL = re.compile(r"\b(pip3?|uv pip|python3? -m pip)\s+(install|download)\b|\bpoetry add\b|\bconda install\b|\bnpm install\b")
-_FORBIDDEN = {
-    "memory": str(ROOT / "memory") + "/", "configs": str(ROOT / "configs") + "/", "repo_source": str(ROOT / "src") + "/",
-    "dataset_cpe": "/root/codex-benchmarks/projectgen/", "dataset_nl2": "/root/codex-benchmarks/nl2repo/cpe_format",
-    "codex_home": "/root/.codex", "verification_suites": str(ROOT / "outputs" / "author_probe") + "/",
-}
-
-
-def _commands(items: list) -> list[str]:
-    out = []
-    for it in items:
-        if isinstance(it, dict):
-            for k in ("command", "cmd"):
-                v = it.get(k)
-                if isinstance(v, list):
-                    v = " ".join(map(str, v))
-                if isinstance(v, str):
-                    out.append(v)
-            for v in it.values():
-                if isinstance(v, (list, dict)):
-                    out += _commands(v if isinstance(v, list) else [v])
-    return out
-
-
 def s5a() -> dict:
-    files = sorted(ROOT.glob("outputs/**/backend_traces/*/*.items.json"))
-    findings = []
-    n_cmd = 0
-    for f in files:
-        try:
-            items = json.loads(f.read_text())
-        except ValueError:
-            continue
-        run_dir = str(f).split("/tasks/")[0]
-        batch_dir = str(Path(run_dir).parent)
-        for c in _commands(items):
-            n_cmd += 1
-            kinds = []
-            if _EXTERNAL.search(c):
-                kinds.append("external_network")
-            if _INSTALL.search(c):
-                kinds.append("package_install")
-            bad = [k for k, p in _FORBIDDEN.items() if p in c]
-            outs = [m for m in re.findall(re.escape(str(ROOT / "outputs")) + r"/[^\s'\":]+", c) if not m.startswith(batch_dir)]
-            if outs:
-                bad.append("other_run_outputs")
-            if bad:
-                kinds.append("forbidden_path:" + ",".join(sorted(set(bad))))
-            if kinds:
-                findings.append({"file": str(f.relative_to(ROOT)), "kinds": kinds, "command": c[:300]})
-    return {"items_files": len(files), "commands": n_cmd, "findings": findings,
-            "note": "only runs after the 2026-10-09 capture fix have turn items"}
+    from orchestra.sandbox.audit import audit_run
+
+    runs = sorted({p.split("/tasks/")[0] for p in map(str, ROOT.glob("outputs/**/backend_traces/*/*.items.json"))}
+                  | {p.split("/tasks/")[0] for p in map(str, ROOT.glob("outputs/**/backend_traces/*/.sandbox/*/codex_home/sessions/**/*.jsonl"))})
+    total, findings = 0, []
+    for rd in runs:
+        au = audit_run(Path(rd))
+        total += au["commands"]
+        findings += au["findings"]
+    return {"runs": len(runs), "commands": total, "findings": findings,
+            "note": "only runs after the 2026-10-09 capture fix have turn items or private Codex session logs"}
 
 
 def main() -> int:

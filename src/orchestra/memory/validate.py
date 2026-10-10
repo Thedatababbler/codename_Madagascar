@@ -236,7 +236,11 @@ def _dataset_root(task: str) -> Path:
 # --------------------------------------------------------------------------- 2. substrings (sealed)
 
 
-def substring_check(texts: Mapping[str, str], *, extra_heldout: Iterable[Path] = (), tasks: Iterable[str] = ()) -> dict[str, dict[str, str]]:
+DEFAULT_EXEMPTION_LOG = ROOT / "memory" / "transfer" / "leak_exemptions.yaml"
+
+
+def substring_check(texts: Mapping[str, str], *, extra_heldout: Iterable[Path] = (), tasks: Iterable[str] = (),
+                    log_path: Path | None = DEFAULT_EXEMPTION_LOG, log_context: str = "") -> dict[str, dict[str, str]]:
     """Run the sealed script; returns {id: {"heldout": PASS|FAIL, "verification": PASS|FAIL}}."""
     if not texts:
         return {}
@@ -251,7 +255,17 @@ def substring_check(texts: Mapping[str, str], *, extra_heldout: Iterable[Path] =
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=1800, cwd=str(ROOT))
         if proc.returncode != 0 or not out.is_file():
             raise RuntimeError(f"memory_leak_check failed: {proc.stderr[-500:]}")
-        return json.loads(out.read_text(encoding="utf-8"))
+        res = json.loads(out.read_text(encoding="utf-8"))
+    exemptions = res.pop("_exemptions", [])
+    if exemptions and log_path is not None:
+        # every exemption is logged (user decision): common phrasing found in >= 3 tasks' sources
+        from datetime import UTC, datetime
+
+        from orchestra.memory.store import read_yaml_list, write_yaml
+
+        stamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+        write_yaml(Path(log_path), read_yaml_list(Path(log_path)) + [{**e, "at": stamp, "context": log_context} for e in exemptions])
+    return res
 
 
 # --------------------------------------------------------------------------- 4. sources

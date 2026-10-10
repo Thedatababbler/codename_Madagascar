@@ -1,0 +1,19 @@
+- version: 1
+  date: '2026-10-09T01:57:07Z'
+  origin: memory_init
+  reason: store created; tables migrated
+  canary: CANARY-AU-6226febdd1f5a532
+  validation:
+    author/categories:
+      entries: 6
+      rejected: {}
+    author/rules:
+      entries: 1
+      rejected: {}
+- version: 3
+  date: '2026-10-10T23:33:01Z'
+  file: rules.yaml
+  origin: human:2026-10-09
+  reason: 'author fake-object fix §6.1: human rules that pass validation'
+  changed:
+  - AU-R-101

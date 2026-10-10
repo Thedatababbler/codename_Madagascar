@@ -93,7 +93,7 @@ def test_fake_inject_project_objects():
         monkeypatch.setattr(module, "LIMIT", 3)
     '''
     got = _rules(src)
-    assert got.count(("fake_inject", "test_x")) == 3
+    assert got.count(("fake_inject", "test_x")) == 2      # the suite class twice; the bare Mock is not a hand-written class
 
 
 # --------------------------------------------------------------------------- §6.4 accommodation

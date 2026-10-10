@@ -43,7 +43,7 @@ E5 was reached from `pytest.raises` in the source alone, E8 not at all.
 | cpe-20260916T160528Z-nl2_tablib | public_api_cli_packaging_integration | E3 | {'E3': 1} |
 | cpe-20260916T184425Z-nl2_python-pathspec | shared_contracts_and_utilities | E7, E3 | {'E7': 1, 'E3': 1} |
 | cpe-20260902T202959Z | implement_client_behaviour_and_public_surface | E3 | {'E3': 7, 'E7': 1} |
-| cpe-20260902T212653Z | crypto_and_jwk_contracts | E3 | {'E3': 3} |
+| cpe-20260902T212653Z (**suspicious**, 2026-10-10: final code 0.971 similar to the system-installed PyJWT 2.12.1; EXP-20261010-01) | crypto_and_jwk_contracts | E3 | {'E3': 3} |
 | cpe-20260902T222657Z | freeze_storage_and_node_contracts | E6, E3 | {'E6': 1, 'E3': 1} |
 | cpe-20260903T053028Z | freeze_shared_api_contracts | E9 | {'E6': 1, 'E3': 2, 'E7': 2} |
 | cpe-20260903T053028Z | implement_client_behaviour_and_public_surface | E3 | {'E3': 4, 'E7': 1, 'E6': 1} |

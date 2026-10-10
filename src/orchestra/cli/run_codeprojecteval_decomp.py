@@ -1066,6 +1066,14 @@ async def _run_one(
 
         summary["memory_audit"] = audit_run(run_dir)
         MemoryRun.deactivate()
+    if sandbox_on:
+        # second line of defence: every captured command of the run (sandbox spec A)
+        from orchestra.sandbox.audit import audit_run as sandbox_audit
+        from orchestra.sandbox.policy import write_manifest
+
+        sa = sandbox_audit(run_dir)
+        write_manifest(run_dir, {"kind": "audit", **sa})
+        summary["sandbox_audit"] = {"commands": sa["commands"], "findings": len(sa["findings"]), "ok": sa["ok"]}
     _write_json(run_dir / "summary.json", summary)
     _write_trace_md(run_dir=run_dir, plan=plan, state=state, summary=summary)
     try:

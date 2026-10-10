@@ -108,7 +108,6 @@ def run(cap: float) -> dict:
 
 def check() -> dict:
     from orchestra.memory.runtime import canary_hits
-    from sandbox_tests import _FORBIDDEN, _EXTERNAL, _INSTALL, _commands
 
     res: dict = {"jobs": {}}
     for jid, part in JOBS:
@@ -131,41 +130,16 @@ def check() -> dict:
         finals = sorted(rd.glob("tasks/**/backend_traces/*/*.final.txt"))
         r["agent_calls_with_reply"] = len(finals)
         r["agent_calls_captured"] = len(sorted(rd.glob("tasks/**/backend_traces/*/*.prompt.txt")))
-        findings, refusals, n_cmd = [], [], 0
-        sessions = sorted(rd.glob("tasks/*/backend_traces/*/.sandbox/*/codex_home/sessions/**/*.jsonl"))
-        r["codex_sessions"] = len(sessions)
-        for f in [*sorted(rd.glob("tasks/*/backend_traces/*/*.items.json")), *sessions]:
-            text = f.read_text(errors="replace")
-            refusals += re.findall(r"(adamas-netguard: [a-z]+ to a non-loopback address refused|Permission denied[^\"\\\\]{0,80})", text)
-            if f.suffix == ".jsonl":
-                cmds = []
-                for line in text.splitlines():
-                    try:
-                        e = json.loads(line)
-                    except ValueError:
-                        continue
-                    pl = e.get("payload") or {}
-                    if pl.get("type") == "function_call":
-                        try:
-                            args = json.loads(pl.get("arguments") or "{}")
-                        except ValueError:
-                            args = {"cmd": pl.get("arguments")}
-                        c = args.get("cmd") or args.get("command") or args.get("input") or ""
-                        cmds.append(" ".join(map(str, c)) if isinstance(c, list) else str(c))
-            else:
-                cmds = _commands(json.loads(text))
-            for c in cmds:
-                n_cmd += 1
-                bad = [k for k, p in _FORBIDDEN.items() if p in c]
-                if _EXTERNAL.search(c):
-                    bad.append("external_network")
-                if _INSTALL.search(c):
-                    bad.append("package_install")
-                outs = [x for x in re.findall(re.escape(str(ROOT / "outputs")) + r"/[^\s'\":]+", c) if not x.startswith(str(batch))]
-                if outs:
-                    bad.append("other_run_outputs")
-                if bad:
-                    findings.append({"kinds": bad, "command": c[:240]})
+        from orchestra.sandbox.audit import audit_run as _audit
+
+        refusals = []
+        for f in [*sorted(rd.glob("tasks/*/backend_traces/*/*.items.json")),
+                  *sorted(rd.glob("tasks/*/backend_traces/*/.sandbox/*/codex_home/sessions/**/*.jsonl"))]:
+            refusals += re.findall(r"(adamas-netguard: [a-z]+ to a non-loopback address refused|Permission denied[^\"\\\\]{0,80})",
+                                   f.read_text(errors="replace"))
+        r["codex_sessions"] = len(sorted(rd.glob("tasks/*/backend_traces/*/.sandbox/*/codex_home/sessions/**/*.jsonl")))
+        au = _audit(rd)
+        n_cmd, findings = au["commands"], au["findings"]
         r["commands"] = n_cmd
         r["out_of_bounds_attempts"] = findings
         r["refusals_seen"] = sorted(set(refusals))[:20]
@@ -180,13 +154,15 @@ def check() -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("what", choices=["run", "check"])
+    ap.add_argument("--cap", type=float, default=None, help="points for this attempt (default: sandbox.s6_budget_cap)")
     a = ap.parse_args()
     from orchestra.sandbox.policy import load_config
     from orchestra.settings import load_env_file
 
     load_env_file(ROOT / ".env")
     if a.what == "run":
-        print(json.dumps(run(float(load_config()["sandbox"].get("s6_budget_cap", 2))), indent=1))
+        cap = a.cap if a.cap is not None else float(load_config()["sandbox"].get("s6_budget_cap", 2))
+        print(json.dumps(run(cap), indent=1))
     print(json.dumps(check(), indent=1, default=str)[:6000])
     return 0
 

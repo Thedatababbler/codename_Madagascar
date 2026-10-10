@@ -418,3 +418,58 @@
   case: test_scoring_module_exports_documented_guess_functions
   note: gate case fails on the reference implementation
   date: '2026-10-09'
+- task: cookiecutter
+  suite: template_source_resolution.spec_tests
+  case: test_template_source_resolution.py::test_clone_raises_vcs_not_installed_before_clone_attempt
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-10'
+- task: cookiecutter
+  suite: template_source_resolution.spec_tests
+  case: test_template_source_resolution.py::test_clone_runs_git_clone_and_checkout_commands
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-10'
+- task: cookiecutter
+  suite: template_source_resolution.spec_tests
+  case: test_template_source_resolution.py::test_clone_subprocess_failure_raises_repository_clone_failed
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-10'
+- task: cookiecutter
+  suite: template_source_resolution.spec_tests
+  case: test_template_source_resolution.py::test_determine_repo_dir_applies_abbreviations_before_classifying_template
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-10'
+- task: cookiecutter
+  suite: template_source_resolution.spec_tests
+  case: test_template_source_resolution.py::test_determine_repo_dir_clones_remote_vcs_repositories
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-10'
+- task: cookiecutter
+  suite: template_source_resolution.spec_tests
+  case: test_template_source_resolution.py::test_determine_repo_dir_extracts_zip_repositories_and_marks_cleanup
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-10'
+- task: cookiecutter
+  suite: template_source_resolution.spec_tests
+  case: test_template_source_resolution.py::test_find_template_raises_unknown_template_dir_for_multiple_candidates
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-10'
+- task: cookiecutter
+  suite: template_source_resolution.spec_tests
+  case: test_template_source_resolution.py::test_identify_repo_infers_git_and_bitbucket_repositories
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-10'
+- task: cookiecutter
+  suite: template_source_resolution.spec_tests
+  case: test_template_source_resolution.py::test_is_vcs_installed_uses_expected_executable_names
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-10'
+- task: cookiecutter
+  suite: template_source_resolution.spec_tests
+  case: test_template_source_resolution.py::test_unzip_downloads_remote_zip_before_extracting
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-10'
+- task: cookiecutter
+  suite: template_source_resolution.spec_tests
+  case: test_template_source_resolution.py::test_unzip_extracts_local_zip_archive_to_template_directory
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-10'

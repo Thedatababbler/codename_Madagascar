@@ -37,11 +37,16 @@ Rules:
   ``autospec=True``.
 * ``env_path``: ``PATH`` is set only as a new directory followed by the original
   ``PATH``; ``os.environ`` is never replaced or cleared as a whole.
-* ``fake_inject``: no hand-written double put into a project object: an
-  instance of a class the suite defines, or an unspecified ``Mock``, assigned
-  to an attribute of anything but ``self`` (``client._imap = ScriptedIMAP()``),
-  and no suite function or lambda assigned to such an object's private
-  attribute (also through ``setattr``).
+* ``fake_inject``: no hand-written double class put into a project object or
+  module: an instance of a class the suite defines, or the class itself,
+  assigned, ``setattr``-ed or monkeypatched onto anything but ``self``
+  (``client._imap = ScriptedIMAP()``, ``monkeypatch.setattr(mod, "Client", FakeClient)``).
+  Doubles built from the real object, plain mocks and functions are left alone.
+* ``interface`` / ``interface_signature`` (2026-10-10): every call into the
+  project names a symbol the documents list (``interface``), with arguments
+  that fit a signature the documents give (``interface_signature``); a call to
+  a listed symbol whose signature the documents do not give makes the case
+  soft.
 * ``call_assert``: no assertion on how a double was called
   (``assert_called_with``, ``call_args``, ``call_count``, ...) unless a cited
   sentence describes the call itself.
@@ -90,7 +95,7 @@ CALL_WORDS_RE = re.compile(r"\b(call(?:s|ed|ing)?|invok\w*|pass(?:es|ed|ing)?|ar
 
 @dataclass(frozen=True)
 class Violation:
-    rule: str          # citation | private | error_path | shim | symbol | import | fake_io | fake_inject | env_path | call_assert
+    rule: str          # citation | private | error_path | shim | symbol | import | fake_io | fake_inject | env_path | call_assert | interface | interface_signature
     file: str
     case: str          # test function name, "" for module level
     line: int
@@ -262,7 +267,8 @@ def _path_prepends(value: ast.AST, names_bound_to_path: set[str]) -> bool:
 
 
 def audit_file(path: Path, docs: Mapping[str, str], *, packages: Iterable[str], allowed_symbols: set[str] | None = None,
-               docs_norm: str | None = None, fake_object_audit: bool = True) -> AuditResult:
+               docs_norm: str | None = None, fake_object_audit: bool = True, interface_symbols: set[str] | None = None,
+               signatures=None, interface_modules: Mapping[str, str] | None = None) -> AuditResult:
     res = AuditResult()
     src = path.read_text(encoding="utf-8", errors="replace")
     lines = src.splitlines()
@@ -440,6 +446,12 @@ def audit_file(path: Path, docs: Mapping[str, str], *, packages: Iterable[str], 
                                                         "pytest.raises in a test whose cited sentence mentions no error"))
     if fake_object_audit:
         res.violations.extend(fake_object_violations(tree, fname, res.citations))
+    if interface_symbols is not None:
+        iv, isoft = interface_check(tree, fname, packages=pkgs, documented=interface_symbols, signatures=signatures,
+                                    modules=interface_modules)
+        res.violations.extend(iv)
+        bad = {f"{fname}::{v.case}" for v in iv}
+        res.soft_cases.extend(k for k in isoft if k not in res.soft_cases and k.split("::")[0] + "::" + k.split("::")[-1] not in bad)
     return res
 
 
@@ -460,30 +472,28 @@ def fake_object_violations(tree: ast.AST, fname: str, citations: Mapping[str, li
         return " ".join(q for k, qs in citations.items() if k.split("::")[-1] == case for q in qs)
 
     suite_classes = {n.name for n in ast.walk(tree) if isinstance(n, ast.ClassDef)}
-    suite_funcs = {n.name for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
-    bound_to_double: set[str] = set()      # names assigned an instance of a suite class or a bare Mock
+    bound_to_double: set[str] = set()      # names assigned an instance of a suite class
     for n in ast.walk(tree):
         if isinstance(n, ast.Assign) and isinstance(n.value, ast.Call):
             cn = _dotted(n.value.func).split(".")[-1]
-            if cn in suite_classes or (cn in MOCK_CLASSES and not _is_spec_double(n.value)):
+            if cn in suite_classes:
                 bound_to_double.update(t.id for t in n.targets if isinstance(t, ast.Name))
 
     def double_kind(value: ast.AST | None, private: bool) -> str:
+        """Only a hand-written double class counts (2026-10-10): an instance of a class the suite defines, or the
+        class itself. Doubles generated from the real object (create_autospec, Mock(spec=...)) and plain mocks,
+        functions or lambdas do not."""
         if value is None:
             return ""
         if isinstance(value, ast.Call):
             cn = _dotted(value.func).split(".")[-1]
             if cn in suite_classes:
                 return f"an instance of the suite's own class {cn}"
-            if cn in MOCK_CLASSES and not _is_spec_double(value):
-                return f"an unspecified {cn}()"
         if isinstance(value, ast.Name):
             if value.id in bound_to_double:
                 return f"the hand-written double {value.id}"
-            if private and (value.id in suite_funcs or value.id in suite_classes):
-                return f"the suite's own {value.id}"
-        if private and isinstance(value, ast.Lambda):
-            return "a lambda"
+            if value.id in suite_classes:
+                return f"the suite's own class {value.id}"
         return ""
 
     path_names: set[str] = set()
@@ -538,7 +548,7 @@ def fake_object_violations(tree: ast.AST, fname: str, citations: Mapping[str, li
                     out.append(Violation("fake_io", fname, case_of(line), line,
                                          f"patches {io} without autospec; use the testkit's local environment, or autospec=True / create_autospec"))
                 elif target and not io and not (autospec or spec_kw or _is_spec_double(new)):
-                    kind = double_kind(new, True) if new is not None else "an unspecified MagicMock"
+                    kind = double_kind(new, True)
                     if kind:
                         out.append(Violation("fake_inject", fname, case_of(line), line,
                                              f"patches {target} with {kind}; use autospec=True or create_autospec"))
@@ -593,18 +603,176 @@ def fake_object_violations(tree: ast.AST, fname: str, citations: Mapping[str, li
     return uniq
 
 
+def _import_violations(tree: ast.AST, fname: str, pkgs: set[str], documented: set[str], leaves: set[str],
+                       modules: Mapping[str, str], case_of) -> list[Violation]:
+    """``interface``: a project import of a name the documents do not list, or from a module other than the one they name."""
+    out = []
+    for n in ast.walk(tree):
+        if not isinstance(n, ast.ImportFrom) or not n.module or n.module.split(".")[0] not in pkgs:
+            continue
+        mod_path = n.module.replace(".", "/")
+        for a in n.names:
+            if a.name == "*" or a.name.startswith("_"):
+                continue
+            if a.name not in documented and a.name not in leaves:
+                # a module imported by name is fine when the documents name it as a file
+                if not any(str(m).removesuffix(".py").removesuffix("/__init__").endswith(f"{mod_path}/{a.name}")
+                           for ms in modules.values() for m in ([ms] if isinstance(ms, str) else ms)):
+                    out.append(Violation("interface", fname, case_of(n.lineno), n.lineno, f"imports {n.module}.{a.name}, which the documents do not list"))
+                continue
+            wheres = modules.get(a.name) or ()
+            wheres = [wheres] if isinstance(wheres, str) else list(wheres)
+
+            def matches(w: str) -> bool:
+                w = w.removesuffix(".py").removesuffix("/__init__")
+                tail = lambda x: x.split("/", 1)[1] if "/" in x else x  # noqa: E731
+                # documents may prefix the repository directory, or root the tree at the repository name
+                return w == mod_path or w.endswith("/" + mod_path) or tail(w) == tail(mod_path)
+            if wheres and "." in n.module and not any(matches(w) for w in wheres):
+                out.append(Violation("interface", fname, case_of(n.lineno), n.lineno,
+                                     f"imports {a.name} from {n.module}, but the documents place it in {wheres[0]}"))
+    return out
+
+
+def interface_check(tree: ast.AST, fname: str, *, packages: Iterable[str], documented: set[str], signatures,
+                    modules: Mapping[str, str] | None = None) -> tuple[list[Violation], list[str]]:
+    """``interface`` / ``interface_signature`` violations and the soft cases ("file::[Cls::]test") of one suite file.
+
+    Calls into the project are the calls of names imported from the project
+    package, of attributes reached through a project module, and of methods on
+    variables a project call returned. ``documented`` holds the documents'
+    public symbols (``Class.method`` and plain names); ``signatures`` is a
+    ``doc_signatures.SignatureIndex``.
+    """
+    pkgs = {p for p in packages if p}
+    leaves = {n.split(".")[-1] for n in documented}
+    out: list[Violation] = []
+    soft: list[str] = []
+    owner = {id(m): c.name for c in getattr(tree, "body", []) if isinstance(c, ast.ClassDef) for m in c.body}
+    module_imports: dict[str, str] = {}
+    for n in getattr(tree, "body", []):
+        _collect_imports(n, pkgs, module_imports)
+    funcs = sorted((x for x in ast.walk(tree) if isinstance(x, (ast.FunctionDef, ast.AsyncFunctionDef))), key=lambda f: f.lineno)
+
+    def case_of(line: int) -> str:
+        best = ""
+        for f in funcs:
+            if f.lineno <= line <= (f.end_lineno or f.lineno):
+                best = f.name if f.name.startswith("test") else f"<{f.name}>"
+        return best
+
+    out.extend(_import_violations(tree, fname, pkgs, documented, leaves, modules or {}, case_of))
+    for fn in [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name.startswith("test")]:
+        key = f"{fname}::{owner[id(fn)]}::{fn.name}" if id(fn) in owner else f"{fname}::{fn.name}"
+        names = dict(module_imports)          # local name -> project dotted name
+        for n in ast.walk(fn):
+            _collect_imports(n, pkgs, names)
+        instances: dict[str, str] = {}        # variable -> project class / call it came from
+        is_soft = False
+        for n in sorted((x for x in ast.walk(fn) if isinstance(x, (ast.Assign, ast.Call, ast.With))), key=lambda x: (x.lineno, x.col_offset)):
+            if isinstance(n, ast.Assign):
+                if isinstance(n.value, ast.Call):
+                    target = _project_callee(n.value.func, names, instances)
+                    if target and target.split(".")[-1][:1].isupper():   # an instance of a project class
+                        for t in n.targets:
+                            if isinstance(t, ast.Name):
+                                instances[t.id] = target
+                continue                      # the call on the right is visited as its own node
+            if isinstance(n, ast.With):
+                for item in n.items:
+                    if isinstance(item.context_expr, ast.Call) and isinstance(item.optional_vars, ast.Name):
+                        target = _project_callee(item.context_expr.func, names, instances)
+                        if target and target.split(".")[-1][:1].isupper():
+                            instances[item.optional_vars.id] = target
+                continue
+            callee = _project_callee(n.func, names, instances)
+            if not callee:
+                continue
+            leaf = callee.split(".")[-1]
+            if leaf.startswith("_"):
+                continue                      # the private rule already covers it
+            qualified = [callee, ".".join(callee.split(".")[-2:])]
+            on_instance = isinstance(n.func, ast.Attribute) and isinstance(n.func.value, ast.Name) and n.func.value.id in instances
+            parts = callee.split(".")
+            # an attribute of a documented class (Model.objects.filter, View.as_view) or a method on a project
+            # object may come from a third-party base class the documents do not repeat
+            through_class = any(p[:1].isupper() for p in parts[:-1])
+            if not on_instance and not through_class and not any(q in documented for q in qualified) and leaf not in leaves:
+                out.append(Violation("interface", fname, fn.name, n.lineno, f"calls {callee}, which the documents do not list"))
+                continue
+            sigs = signatures.lookup(".".join(callee.split(".")[-2:])) if signatures is not None else []
+            if not sigs and signatures is not None:
+                sigs = signatures.lookup(leaf)
+            if not sigs:
+                is_soft = True
+                continue
+            star_args = any(isinstance(a, ast.Starred) for a in n.args)
+            star_kw = any(k.arg is None for k in n.keywords)
+            n_pos = sum(1 for a in n.args if not isinstance(a, ast.Starred))
+            kws = [k.arg for k in n.keywords if k.arg is not None]
+            verdicts = [sg.accepts(n_pos, kws, star_args=star_args, star_kw=star_kw) for sg in sigs]
+            if not any(ok for ok, _ in verdicts):
+                out.append(Violation("interface_signature", fname, fn.name, n.lineno, f"{callee}(...): {verdicts[0][1]}"))
+        if is_soft:
+            soft.append(key)
+    return out, soft
+
+
+def _collect_imports(node: ast.AST, pkgs: set[str], names: dict[str, str]) -> None:
+    if isinstance(node, ast.ImportFrom) and (node.module or "").split(".")[0] in pkgs:
+        for a in node.names:
+            if a.name != "*":
+                names[a.asname or a.name] = f"{node.module}.{a.name}"
+    elif isinstance(node, ast.Import):
+        for a in node.names:
+            if a.name.split(".")[0] in pkgs:
+                names[a.asname or a.name.split(".")[0]] = a.name if a.asname else a.name.split(".")[0]
+
+
+def _project_callee(func: ast.AST, names: Mapping[str, str], instances: Mapping[str, str]) -> str:
+    """The project dotted name a call reaches ('' when it is not a project call)."""
+    if isinstance(func, ast.Name):
+        return names.get(func.id, "")
+    if isinstance(func, ast.Attribute):
+        base = func.value
+        if isinstance(base, ast.Name):
+            if base.id in instances:
+                return f"{instances[base.id].split('.')[-1]}.{func.attr}"
+            if base.id in names:
+                return f"{names[base.id]}.{func.attr}"
+        d = _dotted(func)
+        root = d.split(".")[0]
+        if root in names:
+            return names[root] + d[len(root):]
+    return ""
+
+
 def audit_suite(suite_dir: str | Path, docs: Mapping[str, str], *, packages: Iterable[str],
-                allowed_symbols: set[str] | None = None, fake_object_audit: bool = True) -> AuditResult:
+                allowed_symbols: set[str] | None = None, fake_object_audit: bool = True, interface: bool = False) -> AuditResult:
     """Audit every ``*.py`` under ``suite_dir`` (recursively) and merge the results."""
     root = Path(suite_dir)
     total = AuditResult()
     docs_norm = _docs_text(docs)
     pkgs = list(packages)
+    iface_syms, sigs, iface_mods = None, None, None
+    if interface:
+        from orchestra.codeprojecteval.doc_signatures import derive_signatures
+        from orchestra.codeprojecteval.public_symbols import derive_public_symbols
+
+        inv = derive_public_symbols(docs)
+        iface_syms = inv.names() | (allowed_symbols or set())
+        iface_mods: dict[str, set[str]] = {}
+        for sym in inv.symbols:
+            if sym.module:
+                iface_mods.setdefault(sym.name, set()).add(sym.module)
+        sigs = derive_signatures(docs)
+        iface_syms |= set(sigs.by_name)
     for p in sorted(root.rglob("*.py")):
         if "__pycache__" in p.parts:
             continue
         r = audit_file(p, docs, packages=pkgs, allowed_symbols=allowed_symbols, docs_norm=docs_norm,
-                       fake_object_audit=fake_object_audit)
+                       fake_object_audit=fake_object_audit, interface_symbols=iface_syms, signatures=sigs,
+                       interface_modules=iface_mods)
         total.cases += r.cases
         total.cited += r.cited
         total.timeout_marks += r.timeout_marks
@@ -619,4 +787,4 @@ def audit_suite(suite_dir: str | Path, docs: Mapping[str, str], *, packages: Ite
     return total
 
 
-__all__ = ["AuditResult", "CITATION_RE", "fake_object_violations", "io_target", "VERSION_DEPENDENT_STDLIB", "Violation", "audit_file", "audit_suite", "normalise"]
+__all__ = ["AuditResult", "CITATION_RE", "fake_object_violations", "interface_check", "io_target", "VERSION_DEPENDENT_STDLIB", "Violation", "audit_file", "audit_suite", "normalise"]

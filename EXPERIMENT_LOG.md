@@ -280,7 +280,7 @@ twelve cases in 0.29s. Search's own margin over single is one case
 |---|---|---|---|---|---|---|
 | imapclient | suite visible, search on | 0.255 | 4.81 | 22 min | 2/2 | 1.00 |
 | imapclient | hidden, no search | 0.210 | 5.44 | 34 min | 1/2 | 0.727, gate failed |
-| imapclient | hidden, search on | **0.487** | 17.32 | 70 min | 2/2 | 0.837, 0.549 |
+| imapclient | hidden, search on | **0.487** ⚠ suspicious (EXP-20261010-01) | 17.32 | 70 min | 2/2 | 0.837, 0.549 |
 | simpy | suite visible, search on | 0.483 | 16.71 | 66 min | 2/2 | 1.00, 1.00 |
 | simpy | hidden, no search | 0.463 | 8.07 | 25 min | 2/2 | 0.667, 0.955 |
 | simpy | hidden, search on | 0.564 | 8.17 | 38 min | 2/2 | 0.920, 0.905 |
@@ -294,7 +294,9 @@ them tied and falling through to price.
 
 **Search paid on imapclient and did not run on simpy.** On imapclient it searched
 both milestones, committed one that the no-search arm left failing, and took the
-held-out rate from 0.210 to 0.487 for $5.44 -> $17.32, i.e. 3.2x the money for
+held-out rate from 0.210 to 0.487 (⚠ 2026-10-10: this run is marked suspicious, its second milestone
+is 0.36-0.43 similar to upstream IMAPClient copies that appeared in /tmp during the run; see EXP-20261010-01)
+for $5.44 -> $17.32, i.e. 3.2x the money for
 +0.277. On simpy it fired on neither milestone, because both scored 0.92 and 0.90
 against a trigger threshold of 0.9. **The simpy rows are therefore two samples of
 the same configuration, and the 0.463 -> 0.564 gap between them is n=1 variance,
@@ -5041,3 +5043,76 @@ A run pins a read-only snapshot (`versions/v<N>`), then: judge (temperature 0, s
 - **A3:** precision 1.0, recall 9.9% vs reference-fail (environment 8/16, fake 2/13).
 - **A5:** unit tests pass.
 - **Not written:** the four human author rules and the skill section to memory/. They fail the strict 20-character rule on generic English, the same open decision as EXP-20261009-01.
+
+## EXP-20261010-01 -- S6 retest, sandbox policy fixes, interface check, fake_inject refinement, common-phrasing exemption, suspicious runs (branch `rsi`)
+
+**Status:** open. S6 is still not passed and `sandbox.enforced` stays false. A4 has not run.
+- Quota: 2.0 points of the approved 2 (S6 try2 45->46%, try3 46->47%). No other paid calls.
+- No held-out text entered any model context. The exemption check and the reference similarity ran in `scripts/sealed/`.
+
+**S6 (retest, two attempts at 1 point each).**
+- **try2:** both jobs reached the gate, and the gate crashed: a PermissionError on mkdir `harness/package_shadow`.
+  - The earlier S6 write-up called this "a normal gate failure". That was wrong; the gate never graded under the sandbox.
+  - Fix: the gate may write the harness directory.
+  - Fix: under `ADAMAS_SANDBOXED=1` the check script passes `--rootdir/--confcutdir=<harness>`.
+  - Offline replay on 3 stored runs: confined and unconfined gate results are now identical.
+- **try3:** the cap stopped both jobs (returncode -15) before any candidate reached the gate.
+  - First run: 43 commands. Repair: 140 commands, 1 reply.
+  - 0 out-of-bounds, 0 canary hits, manifests complete, self-checks all denied.
+  - 1 point is not enough for a sandboxed milestone. A pass needs an attempt with a larger cap (user's call).
+- **Found by try3:** the repairer's prompt points at `../repair_evidence`, which the agent policy did not grant.
+  - The repairer got `Permission denied` on its own evidence.
+  - Fix: `agent_policy` grants read-only access to the sibling `repair_evidence`.
+  - Checked in a real Landlock sandbox: the evidence reads; writing to it and reading `../candidate_result.json` are refused.
+
+**Sandbox policy fixes (free).**
+- System `dist-packages`/`site-packages` are no longer readable. The system PyJWT 2.12.1 sat in `/usr/local/lib/python3.12/dist-packages`.
+  - `without_package_dirs` splits roots around the package dirs.
+  - Split directories stay readdir-only (`Policy.list_dirs`), so Python's import scan still works.
+- Symlinks: a link whose target is or holds a package dir now splits its parent, and a link to a file inside a package dir is dropped.
+  - Found by a new unit test. On this machine the grants are identical before and after, so try3 ran under an equivalent policy.
+- S1/S2/S3 rerun after the fixes: pass. Real package copies found elsewhere (deprecated, zxcvbn, flask, rsa, python-jose) are EACCES inside the sandbox.
+- After-the-fact audit (`orchestra.sandbox.audit`, user decision): any command that unsets, overrides or exports `LD_PRELOAD` is out-of-bounds (`ld_preload_tamper`).
+  - S5a: 7 runs, 1331 commands, 0 findings.
+- PATH entries under the AdaMAS root are stripped from agent environments; the venv bin comes first.
+- **Note (not retroactively fixable):** before 2026-10-10, agents' and gates' pytest runs found AdaMAS's own `pyproject.toml` pytest config as the ancestor config.
+  - This affected rootdir, collection and `addopts`, and applies to every earlier run.
+  - It cannot be corrected after the fact; results stand as recorded.
+
+**Interface signature check (free; replay on 168 historical gate suites, 2775 cases: 754 reference-failing, 2021 reference-passing).**
+- `doc_signatures.derive_signatures` takes signatures only from what the documents state: backticked calls, UML members and `def` lines.
+- Rules:
+  - a call to a project function the documents do not list is `interface`, a violation that goes back to the author;
+  - a call that does not fit a documented signature is `interface_signature`, also a violation;
+  - a documented function without a signature makes the case soft.
+- Violations: 36/754 reference-failing overall, **26/406** on the interface-mismatch class. False flags: **55/2021**.
+- Violation or soft: 190/406 interface-mismatch cases. Soft is wide: 754/2021 (37%) of reference-passing cases become soft, and 261/754 reference-failing ones.
+
+**fake_inject refinement (user decision: only hand-written double classes count).**
+- Now flags only instances of suite-defined classes, or those classes themselves, put into anything other than `self`. Doubles from `create_autospec` / `Mock(spec=)` / `MagicMock` no longer count.
+- Recall 49/754 (fake-object class **19/98**), false flags **11/2021**. EXP-20261009-02 recorded 3.2% false flags for the spec rules plus the old fake_inject.
+- All four fake rules together: 93/754 (fake 28/98), false flags 40.
+
+**Common-phrasing exemption (user decision: >= 3 distinct tasks).**
+- Implemented in `scripts/sealed/memory_leak_check.py`. Each exemption is logged to `memory/transfer/leak_exemptions.yaml`; 9 so far, for "environment variable", "configuration file" and "the parent director".
+- Recheck:
+  - AU-R-101 now passes and is written (memory v3);
+  - AU-R-102/103/104 still fail, each on windows found in only 1-2 tasks;
+  - the skill section fails both the verification and the held-out check;
+  - all 5 migrated repair rows and all 13 pending suggestions still fail.
+- The verification suites cover only 14 tasks, so a generic phrase seldom reaches 3.
+
+**Suspicious runs (marked suspicious, user decision; evidence from free checks).**
+- **pyjwt `outputs/cpe_official_continuation/cpe-20260902T212653Z`** (multi arm, gpt-5.4; final code 0.904 similar to the reference):
+  - its M1 commit adds 3036 lines, against 1200-1700 for M1 elsewhere;
+  - the final package is 0.971 similar to the system-installed PyJWT 2.12.1 (installed 2026-05-21, readable then: no sandbox), and 0.946 to `/venv/mas`; other runs are about 0.41;
+  - almost certainly copied from the installed package;
+  - the earlier pyjwt scores did **not** use this run: 0.813 is `cpe_official_continuation/cpe-20260908T081547Z` (0.378 to the system PyJWT), and 0.779 is `cpe_milestones/cpe-20260914T161457Z-pyjwt` (0.453 to the reference);
+  - it appears only as a row of `docs/reports/error_class_distribution.md`, now annotated.
+- **imapclient `outputs/cpe_tuning_multi/ab-imapclient-multi.test_first-r1-20260811T062809Z`** (0.569 to the reference):
+  - no IMAPClient was installed in any site-packages;
+  - during the run, upstream IMAPClient copies appeared in world-readable /tmp: a 2.3.0 wheel in `/tmp/imapclient_upstream` at 06:48 and `/tmp/imapclient_pkg` at 06:52, unpacked to `/tmp/imapclient_ref` at 06:57, and 3.1.0 into `/tmp/imapclient_upstream` at 07:30. The run started at 06:28;
+  - M1 (committed 07:22) is 0.10-0.14 similar to them, like the control runs (about 0.11). The final code after M2 (07:37) is 0.36 similar to 2.3.0 and 0.43 to 3.1.0;
+  - no surviving trace shows who downloaded them; this run kept no command log;
+  - **this run is the "imapclient hidden, search on 0.487" result of EXP-20260811-02**, which is annotated in place. Its conclusion "search paid on imapclient" rests on it.
+  - /tmp is not readable under the current sandbox.

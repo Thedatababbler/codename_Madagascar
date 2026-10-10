@@ -116,6 +116,10 @@ def _sandboxed_config(request: AgentRequest, context: BackendExecutionContext, w
         args += ["--config", kv]
     args += ["app-server", "--listen", "stdio://"]
     env = SB.launcher_env(SB.private_env(private))
+    venv = os.environ.get(SB.VENV_ENV) or ""
+    if venv:
+        # `python` / `pytest` resolve to the task venv, not to a system Python whose packages are hidden
+        env["PATH"] = f"{venv}/bin" + os.pathsep + env.get("PATH", "")
     # pytest searches every ancestor for its config and starts collecting at the rootdir it finds;
     # the workspace lives under the repository, whose tree the agent may not list
     if testkit:

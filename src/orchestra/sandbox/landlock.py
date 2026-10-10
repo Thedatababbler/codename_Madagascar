@@ -71,16 +71,17 @@ class Policy:
     connect_ports: list[int] = field(default_factory=list)   # TCP ports connect() may reach
     restrict_net: bool = True
     restrict_fs: bool = True     # False: network rules only (held-out scoring keeps its file access)
+    list_dirs: list[str] = field(default_factory=list)  # names may be listed (readdir), no file in them read
 
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> Policy:
         return cls(read=list(d.get("read") or []), write=list(d.get("write") or []),
                    connect_ports=[int(p) for p in d.get("connect_ports") or []], restrict_net=bool(d.get("restrict_net", True)),
-                   restrict_fs=bool(d.get("restrict_fs", True)))
+                   restrict_fs=bool(d.get("restrict_fs", True)), list_dirs=list(d.get("list_dirs") or []))
 
     def to_dict(self) -> dict[str, Any]:
         return {"read": self.read, "write": self.write, "connect_ports": self.connect_ports, "restrict_net": self.restrict_net,
-                "restrict_fs": self.restrict_fs}
+                "restrict_fs": self.restrict_fs, "list_dirs": self.list_dirs}
 
 
 def _add_path(ruleset: int, path: str, access: int) -> bool:
@@ -120,6 +121,9 @@ def apply(policy: Policy) -> dict[str, Any]:
             (granted["write"] if _add_path(ruleset, p, WRITE & handled_fs) else granted["missing"]).append(p)
         for p in policy.read:
             (granted["read"] if _add_path(ruleset, p, READ & handled_fs) else granted["missing"]).append(p)
+        for p in policy.list_dirs:
+            if os.path.isdir(p):
+                _add_path(ruleset, p, FS["read_dir"] & handled_fs)
         if handled_net:
             for port in sorted(set(policy.connect_ports)):
                 na = _NetPort(allowed_access=NET_CONNECT, port=port)

@@ -1,0 +1,950 @@
+- pattern_id: U-N1
+  category_id: RP-ANY
+  category_ids:
+  - RP-ANY
+  action:
+    instruction: null
+    add_readonly_role: null
+    template: null
+    budget_delta: null
+  intent: flaky failures made deterministic by re-sampling the node that owns them
+  row:
+    row_id: U-N1
+    table: repair
+    error_classes:
+    - '*'
+    action: N
+    target_template: null
+    slot_edits: []
+    instruction: null
+    evidence_routing:
+    - improver
+    budget_delta: null
+    preconditions:
+    - kind: high_variance
+      value: ''
+    from_incumbent: true
+    preventive_variant: null
+    source_rows: []
+    origin: pb_q_node_resample
+    intent: flaky failures made deterministic by re-sampling the node that owns them
+    state: active
+    legacy_id: pb_q_node_resample
+  state: active
+  evidence:
+    migrated_from: configs/playbook_v2/repair.yaml
+    legacy_id: pb_q_node_resample
+  origin: migrated:playbook_v2
+  memory_version_added: 1
+- pattern_id: U-S1
+  category_id: RP-ANY
+  category_ids:
+  - RP-ANY
+  action:
+    instruction: null
+    add_readonly_role: null
+    template: null
+    budget_delta: null
+  intent: the upstream writer, not the repairer, fixes what it caused
+  row:
+    row_id: U-S1
+    table: repair
+    error_classes:
+    - '*'
+    action: S
+    target_template: null
+    slot_edits: []
+    instruction: null
+    evidence_routing:
+    - upstream
+    budget_delta: null
+    preconditions:
+    - kind: blamed_before_repairer
+      value: ''
+    from_incumbent: true
+    preventive_variant: null
+    source_rows: []
+    origin: pb_failures_to_agent
+    intent: the upstream writer, not the repairer, fixes what it caused
+    state: candidate
+    legacy_id: ''
+  state: candidate
+  evidence:
+    migrated_from: configs/playbook_v2/repair.yaml
+    legacy_id: null
+  origin: migrated:playbook_v2
+  memory_version_added: 1
+- pattern_id: U-B1
+  category_id: RP-ANY
+  category_ids:
+  - RP-ANY
+  action:
+    instruction: null
+    add_readonly_role: null
+    template: null
+    budget_delta: &id001
+      steps: 2
+      seconds: 30
+  intent: a writer that hit its cap reaches a later stage
+  row:
+    row_id: U-B1
+    table: repair
+    error_classes:
+    - '*'
+    action: B
+    target_template: null
+    slot_edits: []
+    instruction: null
+    evidence_routing:
+    - improver
+    budget_delta: *id001
+    preconditions:
+    - kind: writer_hit_cap
+      value: ''
+    from_incumbent: true
+    preventive_variant: null
+    source_rows: []
+    origin: pb_budget_steps_time_small
+    intent: a writer that hit its cap reaches a later stage
+    state: active
+    legacy_id: ''
+  state: active
+  evidence:
+    migrated_from: configs/playbook_v2/repair.yaml
+    legacy_id: null
+  origin: migrated:playbook_v2
+  memory_version_added: 1
+- pattern_id: E1-B2
+  category_id: RP-E1
+  category_ids:
+  - RP-E1
+  action:
+    instruction: Reach a minimum passing implementation first. Do not polish, refactor, or add features the gate did not name.
+    add_readonly_role: null
+    template: null
+    budget_delta: &id002
+      steps: 8
+      seconds: 300
+  intent: a minimum passing implementation is reached before polish
+  row:
+    row_id: E1-B2
+    table: repair
+    error_classes:
+    - E1
+    action: B
+    target_template: null
+    slot_edits: []
+    instruction: Reach a minimum passing implementation first. Do not polish, refactor, or add features the gate did not name.
+    evidence_routing:
+    - improver
+    budget_delta: *id002
+    preconditions: []
+    from_incumbent: true
+    preventive_variant: null
+    source_rows: []
+    origin: pb_budget_steps_time_large
+    intent: a minimum passing implementation is reached before polish
+    state: active
+    legacy_id: ''
+  state: active
+  evidence:
+    migrated_from: configs/playbook_v2/repair.yaml
+    legacy_id: null
+  origin: migrated:playbook_v2
+  memory_version_added: 1
+- pattern_id: E1-T1
+  category_id: RP-E1
+  category_ids:
+  - RP-E1
+  action:
+    instruction: null
+    add_readonly_role: null
+    template: continuation_chain
+    budget_delta: null
+  intent: contract pass then implementation pass finish what one writer could not
+  row:
+    row_id: E1-T1
+    table: repair
+    error_classes:
+    - E1
+    action: T
+    target_template: continuation_chain
+    slot_edits:
+    - slot: first
+      role: contract_author
+      mode: insert
+      read_only: false
+    instruction: null
+    evidence_routing:
+    - first
+    - improver
+    budget_delta: null
+    preconditions:
+    - kind: focus_files_min
+      value: '6'
+    from_incumbent: true
+    preventive_variant: F5
+    source_rows: []
+    origin: chain
+    intent: contract pass then implementation pass finish what one writer could not
+    state: candidate
+    legacy_id: ''
+  state: candidate
+  evidence:
+    migrated_from: configs/playbook_v2/repair.yaml
+    legacy_id: null
+  origin: migrated:playbook_v2
+  memory_version_added: 1
+- pattern_id: E1-T2
+  category_id: RP-E1
+  category_ids:
+  - RP-E1
+  action:
+    instruction: null
+    add_readonly_role: null
+    template: continuation
+    budget_delta: &id003
+      steps: 4
+      seconds: 120
+  intent: the reviewer's budget goes to the writer
+  row:
+    row_id: E1-T2
+    table: repair
+    error_classes:
+    - E1
+    action: T
+    target_template: continuation
+    slot_edits: []
+    instruction: null
+    evidence_routing:
+    - improver
+    budget_delta: *id003
+    preconditions:
+    - kind: has_readonly_role
+      value: ''
+    from_incumbent: true
+    preventive_variant: null
+    source_rows: []
+    origin: pb_rtf_drop_reviewer
+    intent: the reviewer's budget goes to the writer
+    state: candidate
+    legacy_id: ''
+  state: candidate
+  evidence:
+    migrated_from: configs/playbook_v2/repair.yaml
+    legacy_id: null
+  origin: migrated:playbook_v2
+  memory_version_added: 1
+- pattern_id: E2-S1
+  category_id: RP-E2
+  category_ids:
+  - RP-E2
+  action:
+    instruction: 'Before editing, write down the interface this milestone must expose: from the architecture document and the directory tree, list every public module, class, function and its documented signature and import path. Check each item against the repository as it is now (import it, inspect the signature) and mark the ones that differ or are missing. Fix the marked items first, one at a time, re-running the named failures after each; only then touch behaviour.'
+    add_readonly_role: null
+    template: null
+    budget_delta: null
+  intent: interface checklist first, then the fix
+  row:
+    row_id: E2-S1
+    table: repair
+    error_classes:
+    - E2
+    action: S
+    target_template: null
+    slot_edits: []
+    instruction: null
+    evidence_routing:
+    - improver
+    budget_delta: null
+    preconditions: []
+    from_incumbent: true
+    preventive_variant: null
+    source_rows: []
+    origin: new
+    intent: interface checklist first, then the fix
+    state: candidate
+    legacy_id: ''
+  state: candidate
+  evidence:
+    migrated_from: configs/playbook_v2/repair.yaml
+    legacy_id: null
+  origin: migrated:playbook_v2
+  memory_version_added: 1
+- pattern_id: E2-R1
+  category_id: RP-E2
+  category_ids:
+  - RP-E2
+  action:
+    instruction: null
+    add_readonly_role: contract_critic
+    template: continuation_reviewed
+    budget_delta: null
+  intent: a contract reading raises the repair's fix rate on interface failures
+  row:
+    row_id: E2-R1
+    table: repair
+    error_classes:
+    - E2
+    action: R
+    target_template: continuation_reviewed
+    slot_edits:
+    - slot: reviewer
+      role: contract_critic
+      mode: insert
+      read_only: true
+    instruction: null
+    evidence_routing:
+    - reviewer
+    - improver
+    budget_delta: null
+    preconditions:
+    - kind: lacks_role
+      value: contract_critic
+    from_incumbent: true
+    preventive_variant: F1
+    source_rows: []
+    origin: pb_tf_diagnose_before_repair
+    intent: a contract reading raises the repair's fix rate on interface failures
+    state: active
+    legacy_id: ''
+  state: active
+  evidence:
+    migrated_from: configs/playbook_v2/repair.yaml
+    legacy_id: null
+  origin: migrated:playbook_v2
+  memory_version_added: 1
+- pattern_id: E3-R1
+  category_id: RP-E3
+  category_ids:
+  - RP-E3
+  action:
+    instruction: null
+    add_readonly_role: behaviour_critic
+    template: continuation_reviewed
+    budget_delta: null
+  intent: a behaviour reading raises the repair's fix rate
+  row:
+    row_id: E3-R1
+    table: repair
+    error_classes:
+    - E3
+    action: R
+    target_template: continuation_reviewed
+    slot_edits:
+    - slot: reviewer
+      role: behaviour_critic
+      mode: insert
+      read_only: true
+    instruction: null
+    evidence_routing:
+    - reviewer
+    - improver
+    budget_delta: null
+    preconditions:
+    - kind: lacks_role
+      value: behaviour_critic
+    from_incumbent: true
+    preventive_variant: null
+    source_rows: []
+    origin: test_first_diagnosed
+    intent: a behaviour reading raises the repair's fix rate
+    state: candidate
+    legacy_id: ''
+  state: candidate
+  evidence:
+    migrated_from: configs/playbook_v2/repair.yaml
+    legacy_id: null
+  origin: migrated:playbook_v2
+  memory_version_added: 1
+- pattern_id: E3-T1
+  category_id: RP-E3
+  category_ids:
+  - RP-E3
+  action:
+    instruction: null
+    add_readonly_role: null
+    template: continuation_double
+    budget_delta: null
+  intent: what the first round leaves, the second fixes
+  row:
+    row_id: E3-T1
+    table: repair
+    error_classes:
+    - E3
+    action: T
+    target_template: continuation_double
+    slot_edits: []
+    instruction: null
+    evidence_routing:
+    - improver
+    - second_improver
+    budget_delta: null
+    preconditions: []
+    from_incumbent: true
+    preventive_variant: null
+    source_rows: []
+    origin: pb_tf_second_repairer
+    intent: what the first round leaves, the second fixes
+    state: active
+    legacy_id: ''
+  state: active
+  evidence:
+    migrated_from: configs/playbook_v2/repair.yaml
+    legacy_id: null
+  origin: migrated:playbook_v2
+  memory_version_added: 1
+- pattern_id: E4-R1
+  category_id: RP-E4
+  category_ids:
+  - RP-E4
+  action:
+    instruction: null
+    add_readonly_role: spec_auditor
+    template: continuation_reviewed
+    budget_delta: null
+  intent: a spec reading of the state machine before the fix
+  row:
+    row_id: E4-R1
+    table: repair
+    error_classes:
+    - E4
+    action: R
+    target_template: continuation_reviewed
+    slot_edits:
+    - slot: reviewer
+      role: spec_auditor
+      mode: insert
+      read_only: true
+    instruction: null
+    evidence_routing:
+    - reviewer
+    - improver
+    budget_delta: null
+    preconditions:
+    - kind: lacks_role
+      value: spec_auditor
+    from_incumbent: true
+    preventive_variant: F3
+    source_rows: []
+    origin: new
+    intent: a spec reading of the state machine before the fix
+    state: candidate
+    legacy_id: ''
+  state: candidate
+  evidence:
+    migrated_from: configs/playbook_v2/repair.yaml
+    legacy_id: null
+  origin: migrated:playbook_v2
+  memory_version_added: 1
+- pattern_id: E5-S1
+  category_id: RP-E5
+  category_ids:
+  - RP-E5
+  action:
+    instruction: 'Collect from the documents the exceptions this milestone must raise: the exception type, the condition that triggers it, and where in the hierarchy it sits. For each named failure, compare what the code does on that input with the documented exception; make the code raise exactly the documented type under exactly the documented condition, and nothing else.'
+    add_readonly_role: null
+    template: null
+    budget_delta: null
+  intent: the documented exception list drives the fix
+  row:
+    row_id: E5-S1
+    table: repair
+    error_classes:
+    - E5
+    action: S
+    target_template: null
+    slot_edits: []
+    instruction: null
+    evidence_routing:
+    - improver
+    budget_delta: null
+    preconditions: []
+    from_incumbent: true
+    preventive_variant: F2
+    source_rows: []
+    origin: new
+    intent: the documented exception list drives the fix
+    state: candidate
+    legacy_id: ''
+  state: candidate
+  evidence:
+    migrated_from: configs/playbook_v2/repair.yaml
+    legacy_id: null
+  origin: migrated:playbook_v2
+  memory_version_added: 1
+- pattern_id: E6-R1
+  category_id: RP-E6
+  category_ids:
+  - RP-E6
+  action:
+    instruction: null
+    add_readonly_role: behaviour_critic
+    template: continuation_reviewed
+    budget_delta: null
+  intent: a boundary-focused reading before the fix
+  row:
+    row_id: E6-R1
+    table: repair
+    error_classes:
+    - E6
+    action: R
+    target_template: continuation_reviewed
+    slot_edits:
+    - slot: reviewer
+      role: behaviour_critic
+      mode: insert
+      read_only: true
+    instruction: null
+    evidence_routing:
+    - reviewer
+    - improver
+    budget_delta: null
+    preconditions:
+    - kind: lacks_role
+      value: behaviour_critic
+    from_incumbent: true
+    preventive_variant: null
+    source_rows: []
+    origin: new
+    intent: a boundary-focused reading before the fix
+    state: candidate
+    legacy_id: ''
+  state: candidate
+  evidence:
+    migrated_from: configs/playbook_v2/repair.yaml
+    legacy_id: null
+  origin: migrated:playbook_v2
+  memory_version_added: 1
+- pattern_id: E7-T1
+  category_id: RP-E7
+  category_ids:
+  - RP-E7
+  action:
+    instruction: null
+    add_readonly_role: null
+    template: continuation_audited
+    budget_delta: null
+  intent: two angles surface the cross-module defect one reviewer misses
+  row:
+    row_id: E7-T1
+    table: repair
+    error_classes:
+    - E7
+    action: T
+    target_template: continuation_audited
+    slot_edits: []
+    instruction: null
+    evidence_routing:
+    - spec_review
+    - contract_review
+    - improver
+    budget_delta: null
+    preconditions: []
+    from_incumbent: true
+    preventive_variant: F4
+    source_rows: []
+    origin: parallel_audit / pb_rtf_second_angle
+    intent: two angles surface the cross-module defect one reviewer misses
+    state: active
+    legacy_id: ''
+  state: active
+  evidence:
+    migrated_from: configs/playbook_v2/repair.yaml
+    legacy_id: null
+  origin: migrated:playbook_v2
+  memory_version_added: 1
+- pattern_id: E7-R1
+  category_id: RP-E7
+  category_ids:
+  - RP-E7
+  action:
+    instruction: null
+    add_readonly_role: null
+    template: continuation_reviewed
+    budget_delta: null
+  intent: an integrator wires the modules together
+  row:
+    row_id: E7-R1
+    table: repair
+    error_classes:
+    - E7
+    action: R
+    target_template: continuation_reviewed
+    slot_edits:
+    - slot: improver
+      role: integrator
+      mode: replace
+      read_only: false
+    instruction: null
+    evidence_routing:
+    - improver
+    budget_delta: null
+    preconditions:
+    - kind: lacks_role
+      value: integrator
+    from_incumbent: true
+    preventive_variant: null
+    source_rows: []
+    origin: pb_chain_fill_third
+    intent: an integrator wires the modules together
+    state: candidate
+    legacy_id: ''
+  state: candidate
+  evidence:
+    migrated_from: configs/playbook_v2/repair.yaml
+    legacy_id: null
+  origin: migrated:playbook_v2
+  memory_version_added: 1
+- pattern_id: E7-S1
+  category_id: RP-E7
+  category_ids:
+  - RP-E7
+  action:
+    instruction: 'For each named failure, trace the call chain from the test through every module it crosses: which module receives the call, what it hands to the next, and where the value or state stops matching the documents. Fix at the module where the chain first goes wrong, not at the module where the test observes it, and re-run the failure to confirm the chain now holds end to end.'
+    add_readonly_role: null
+    template: null
+    budget_delta: null
+  intent: the call chain traced module by module
+  row:
+    row_id: E7-S1
+    table: repair
+    error_classes:
+    - E7
+    action: S
+    target_template: null
+    slot_edits: []
+    instruction: null
+    evidence_routing:
+    - improver
+    budget_delta: null
+    preconditions: []
+    from_incumbent: true
+    preventive_variant: null
+    source_rows: []
+    origin: new
+    intent: the call chain traced module by module
+    state: candidate
+    legacy_id: ''
+  state: candidate
+  evidence:
+    migrated_from: configs/playbook_v2/repair.yaml
+    legacy_id: null
+  origin: migrated:playbook_v2
+  memory_version_added: 1
+- pattern_id: E8-B1
+  category_id: RP-E8
+  category_ids:
+  - RP-E8
+  action:
+    instruction: null
+    add_readonly_role: null
+    template: null
+    budget_delta: &id004
+      steps: 0
+      seconds: 300
+  intent: the repairer gets the clock a profiling pass needs
+  row:
+    row_id: E8-B1
+    table: repair
+    error_classes:
+    - E8
+    action: B
+    target_template: null
+    slot_edits: []
+    instruction: null
+    evidence_routing:
+    - improver
+    budget_delta: *id004
+    preconditions: []
+    from_incumbent: true
+    preventive_variant: null
+    source_rows: []
+    origin: new
+    intent: the repairer gets the clock a profiling pass needs
+    state: candidate
+    legacy_id: ''
+  state: candidate
+  evidence:
+    migrated_from: configs/playbook_v2/repair.yaml
+    legacy_id: null
+  origin: migrated:playbook_v2
+  memory_version_added: 1
+- pattern_id: E9-T2
+  category_id: RP-E9
+  category_ids:
+  - RP-E9
+  action:
+    instruction: null
+    add_readonly_role: contract_critic
+    template: continuation_reviewed
+    budget_delta: null
+  intent: a reader between the writers converts findings into fixes
+  row:
+    row_id: E9-T2
+    table: repair
+    error_classes:
+    - E9
+    action: T
+    target_template: continuation_reviewed
+    slot_edits:
+    - slot: reviewer
+      role: contract_critic
+      mode: insert
+      read_only: true
+    instruction: null
+    evidence_routing:
+    - reviewer
+    - improver
+    budget_delta: null
+    preconditions:
+    - kind: writers_min
+      value: '2'
+    from_incumbent: true
+    preventive_variant: null
+    source_rows: []
+    origin: pb_chain_to_review_fix
+    intent: a reader between the writers converts findings into fixes
+    state: candidate
+    legacy_id: ''
+  state: candidate
+  evidence:
+    migrated_from: configs/playbook_v2/repair.yaml
+    legacy_id: null
+  origin: migrated:playbook_v2
+  memory_version_added: 1
+- pattern_id: E9-S1
+  category_id: RP-E9
+  category_ids:
+  - RP-E9
+  action:
+    instruction: 'The named failures are scattered. Group them by the module and behaviour they share, pick the largest group, and fix only that group in this round: reproduce, locate, fix, re-run. Leave the other groups untouched and say in your final answer which groups remain.'
+    add_readonly_role: null
+    template: null
+    budget_delta: null
+  intent: the largest cluster fixed this round, the rest left
+  row:
+    row_id: E9-S1
+    table: repair
+    error_classes:
+    - E9
+    action: S
+    target_template: null
+    slot_edits: []
+    instruction: null
+    evidence_routing:
+    - improver
+    budget_delta: null
+    preconditions: []
+    from_incumbent: true
+    preventive_variant: null
+    source_rows: []
+    origin: new
+    intent: the largest cluster fixed this round, the rest left
+    state: candidate
+    legacy_id: ''
+  state: candidate
+  evidence:
+    migrated_from: configs/playbook_v2/repair.yaml
+    legacy_id: null
+  origin: migrated:playbook_v2
+  memory_version_added: 1
+- pattern_id: E9-T1
+  category_id: RP-E9
+  category_ids:
+  - RP-E9
+  action:
+    instruction: null
+    add_readonly_role: null
+    template: null
+    budget_delta: null
+  intent: a different first-pass shape reaches what this one cannot
+  row:
+    row_id: E9-T1
+    table: repair
+    error_classes:
+    - E9
+    action: T
+    target_template: null
+    slot_edits: []
+    instruction: null
+    evidence_routing:
+    - improver
+    budget_delta: null
+    preconditions:
+    - kind: gate_failed
+      value: ''
+    - kind: stuck
+      value: ''
+    from_incumbent: false
+    preventive_variant: null
+    source_rows: []
+    origin: pb_solo_* generalised
+    intent: a different first-pass shape reaches what this one cannot
+    state: active
+    legacy_id: ''
+  state: active
+  evidence:
+    migrated_from: configs/playbook_v2/repair.yaml
+    legacy_id: null
+  origin: migrated:playbook_v2
+  memory_version_added: 1
+- pattern_id: pb_solo_to_gate_repair
+  category_id: RP-ANY
+  category_ids:
+  - RP-ANY
+  action:
+    instruction: null
+    add_readonly_role: null
+    template: null
+    budget_delta: null
+  intent: ''
+  row:
+    row_id: pb_solo_to_gate_repair
+    table: legacy
+    error_classes:
+    - '*'
+    action: T
+    target_template: null
+    slot_edits: []
+    instruction: null
+    evidence_routing:
+    - improver
+    budget_delta: null
+    preconditions: []
+    from_incumbent: true
+    preventive_variant: null
+    source_rows: []
+    origin: pb_solo_to_gate_repair
+    intent: ''
+    state: active
+    legacy_id: pb_solo_to_gate_repair
+  state: active
+  evidence:
+    migrated_from: configs/playbook_v2/repair.yaml
+    legacy_id: pb_solo_to_gate_repair
+  origin: migrated:playbook_v2
+  memory_version_added: 1
+- pattern_id: pb_solo_to_review_fix
+  category_id: RP-ANY
+  category_ids:
+  - RP-ANY
+  action:
+    instruction: null
+    add_readonly_role: null
+    template: null
+    budget_delta: null
+  intent: ''
+  row:
+    row_id: pb_solo_to_review_fix
+    table: legacy
+    error_classes:
+    - '*'
+    action: T
+    target_template: null
+    slot_edits: []
+    instruction: null
+    evidence_routing:
+    - improver
+    budget_delta: null
+    preconditions: []
+    from_incumbent: true
+    preventive_variant: null
+    source_rows: []
+    origin: pb_solo_to_review_fix
+    intent: ''
+    state: active
+    legacy_id: pb_solo_to_review_fix
+  state: active
+  evidence:
+    migrated_from: configs/playbook_v2/repair.yaml
+    legacy_id: pb_solo_to_review_fix
+  origin: migrated:playbook_v2
+  memory_version_added: 1
+- pattern_id: pb_solo_specialist
+  category_id: RP-ANY
+  category_ids:
+  - RP-ANY
+  action:
+    instruction: null
+    add_readonly_role: null
+    template: null
+    budget_delta: null
+  intent: ''
+  row:
+    row_id: pb_solo_specialist
+    table: legacy
+    error_classes:
+    - '*'
+    action: T
+    target_template: null
+    slot_edits: []
+    instruction: null
+    evidence_routing:
+    - improver
+    budget_delta: null
+    preconditions: []
+    from_incumbent: true
+    preventive_variant: null
+    source_rows: []
+    origin: pb_solo_specialist
+    intent: ''
+    state: active
+    legacy_id: pb_solo_specialist
+  state: active
+  evidence:
+    migrated_from: configs/playbook_v2/repair.yaml
+    legacy_id: pb_solo_specialist
+  origin: migrated:playbook_v2
+  memory_version_added: 1
+- pattern_id: pb_solo_budget
+  category_id: RP-ANY
+  category_ids:
+  - RP-ANY
+  action:
+    instruction: null
+    add_readonly_role: null
+    template: null
+    budget_delta: null
+  intent: ''
+  row:
+    row_id: pb_solo_budget
+    table: legacy
+    error_classes:
+    - '*'
+    action: T
+    target_template: null
+    slot_edits: []
+    instruction: null
+    evidence_routing:
+    - improver
+    budget_delta: null
+    preconditions: []
+    from_incumbent: true
+    preventive_variant: null
+    source_rows: []
+    origin: pb_solo_budget
+    intent: ''
+    state: active
+    legacy_id: pb_solo_budget
+  state: active
+  evidence:
+    migrated_from: configs/playbook_v2/repair.yaml
+    legacy_id: pb_solo_budget
+  origin: migrated:playbook_v2
+  memory_version_added: 1
+- pattern_id: RP-CANARY
+  category_id: RP-ANY
+  category_ids:
+  - RP-ANY
+  action:
+    instruction: retired canary entry CANARY-RP-1cb4418efce500a2
+    add_readonly_role: null
+    template: null
+    budget_delta: null
+  intent: canary
+  row: null
+  state: retired
+  evidence: {}
+  origin: human:canary
+  memory_version_added: 1

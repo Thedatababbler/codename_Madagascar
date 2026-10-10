@@ -1,0 +1,66 @@
+- entry: AU-R-103
+  window: ' environment variabl'
+  tasks: 4
+  kind: verification
+  at: '2026-10-10T23:02:25Z'
+  context: ''
+- entry: AU-R-103
+  window: environment variable
+  tasks: 4
+  kind: verification
+  at: '2026-10-10T23:02:25Z'
+  context: ''
+- entry: pend-10
+  window: ' configuration file '
+  tasks: 4
+  kind: verification
+  at: '2026-10-10T23:02:29Z'
+  context: ''
+- entry: pend-12
+  window: ' configuration file '
+  tasks: 4
+  kind: verification
+  at: '2026-10-10T23:02:29Z'
+  context: ''
+- entry: pend-2
+  window: ' the parent director'
+  tasks: 3
+  kind: heldout
+  at: '2026-10-10T23:02:29Z'
+  context: ''
+- entry: pend-3
+  window: ' the parent director'
+  tasks: 3
+  kind: heldout
+  at: '2026-10-10T23:02:29Z'
+  context: ''
+- entry: pend-9
+  window: ' environment variabl'
+  tasks: 4
+  kind: verification
+  at: '2026-10-10T23:02:29Z'
+  context: ''
+- entry: pend-9
+  window: environment variable
+  tasks: 4
+  kind: verification
+  at: '2026-10-10T23:02:29Z'
+  context: ''
+- entry: pend-9
+  window: nvironment variables
+  tasks: 3
+  kind: verification
+  at: '2026-10-10T23:02:29Z'
+  context: ''
+- entry: AU-R-103
+  window: ' environment variabl'
+  tasks: 4
+  kind: verification
+  at: '2026-10-10T23:33:00Z'
+  context: ''
+- entry: AU-R-103
+  window: environment variable
+  tasks: 4
+  kind: verification
+  at: '2026-10-10T23:33:00Z'
+  context: ''

@@ -56,6 +56,103 @@ DEV_WRITE = ["/dev"]
 EPHEMERAL = (32768, 60999)
 
 
+BLOCKED_DIR_NAMES = ("dist-packages", "site-packages")
+_EXPANDED: dict[tuple[str, ...], list[str]] = {}
+_LISTED: dict[tuple[str, ...], list[str]] = {}
+
+
+def without_package_dirs(roots: list[str]) -> list[str]:
+    """``roots`` expanded so that no system ``dist-packages`` / ``site-packages`` is readable (2026-10-10).
+
+    Third-party packages installed for the system or uv Pythons may include a
+    task's own project (PyJWT sits in /usr/local/lib/python3.12/dist-packages).
+    Landlock only allows, it cannot carve a hole, so a root that contains a
+    blocked directory is replaced by its children, recursively, minus the
+    blocked ones. Only the task's own venv keeps its site-packages.
+    """
+    key = tuple(roots)
+    if key in _EXPANDED:
+        return _EXPANDED[key]
+    blocked: set[str] = set()
+    links: set[str] = set()        # symlinks whose target is or holds a blocked directory: their parent must split
+    seen_real: set[str] = set()
+    listed: set[str] = set()
+    holds_cache: dict[str, bool] = {}
+
+    def _holds_blocked(real: str, depth: int = 0) -> bool:
+        if real in holds_cache:
+            return holds_cache[real]
+        holds_cache[real] = False      # cycle guard
+        found = any(part in BLOCKED_DIR_NAMES for part in Path(real).parts)
+        if not found and os.path.isdir(real) and depth < 8:
+            for dirpath, dirnames, filenames in os.walk(real, followlinks=False):
+                if any(d in BLOCKED_DIR_NAMES for d in dirnames) or any(
+                        os.path.islink(os.path.join(dirpath, x)) and _holds_blocked(os.path.realpath(os.path.join(dirpath, x)), depth + 1)
+                        for x in dirnames + filenames):
+                    found = True
+                    break
+        holds_cache[real] = found
+        return found
+
+    def _collect_blocked(r: str) -> None:
+        if not os.path.isdir(r):
+            return
+        for dirpath, dirnames, filenames in os.walk(r, followlinks=False):
+            if dirpath.startswith(("/proc", "/sys")):
+                dirnames[:] = []
+                continue
+            for d in list(dirnames):
+                if d in BLOCKED_DIR_NAMES:
+                    blocked.add(os.path.join(dirpath, d))
+                    dirnames.remove(d)
+            # Landlock follows links: one pointing into (or at) a package tree must not be granted with its parent
+            for x in dirnames + filenames:
+                full = os.path.join(dirpath, x)
+                if os.path.islink(full) and _holds_blocked(os.path.realpath(full)):
+                    links.add(full)
+
+    for r in roots:
+        _collect_blocked(os.path.realpath(r))
+
+    def expand(p: str, depth: int = 0) -> list[str]:
+        if os.path.islink(p):
+            # Landlock follows the link: judge (and expand) the target, so a link cannot open a blocked tree
+            real = os.path.realpath(p)
+            if depth > 8 or not os.path.exists(real) or any(part in BLOCKED_DIR_NAMES for part in Path(real).parts):
+                return []
+            if real not in seen_real:
+                seen_real.add(real)
+                _collect_blocked(real)
+                return expand(real, depth + 1)
+            return []
+        if p in blocked:
+            return []
+        if not any(b.startswith(p.rstrip("/") + "/") for b in blocked | links):
+            return [p]
+        try:
+            children = sorted(os.listdir(p))
+        except OSError:
+            return []
+        listed.add(p)          # a split directory still lists its names (Python's import scans it)
+        out: list[str] = []
+        for c in children:
+            out += expand(os.path.join(p, c))
+        return out
+
+    result: list[str] = []
+    for r in roots:
+        result += expand(os.path.realpath(r))
+    _EXPANDED[key] = sorted(set(result))
+    _LISTED[key] = sorted(listed)
+    return _EXPANDED[key]
+
+
+def listed_dirs(roots: list[str]) -> list[str]:
+    """Directories without_package_dirs split open: their names stay listable (readdir only)."""
+    without_package_dirs(roots)
+    return _LISTED.get(tuple(roots), [])
+
+
 def load_config(experiment: dict[str, Any] | None = None) -> dict[str, Any]:
     base = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8")) if CONFIG_PATH.is_file() else {}
     cfg = {k: dict(v or {}) for k, v in (base or {}).items()}
@@ -123,14 +220,27 @@ def git_dirs(workspace: Path) -> list[str]:
 
 
 def venv_reads(venv: str | Path | None) -> list[str]:
+    """The task venv (whole, its own site-packages included) and the interpreter it links to (minus its site-packages)."""
     if not venv:
         return []
     v = Path(venv)
     out = [str(v)]
     py = v / "bin" / "python"
     if py.exists():
-        out.append(str(Path(os.path.realpath(py)).parent.parent))
+        out += without_package_dirs([str(Path(os.path.realpath(py)).parent.parent)])
     return out
+
+
+def system_reads() -> list[str]:
+    return without_package_dirs(SYSTEM_READ)
+
+
+def list_only(venv: str | Path | None) -> list[str]:
+    """readdir-only directories of a policy: the split-open system roots and interpreter tree."""
+    out = list(listed_dirs(SYSTEM_READ))
+    if venv and (Path(venv) / "bin" / "python").exists():
+        out += listed_dirs([str(Path(os.path.realpath(Path(venv) / "bin" / "python")).parent.parent)])
+    return sorted(set(out))
 
 
 def net_ports() -> list[int]:
@@ -139,20 +249,25 @@ def net_ports() -> list[int]:
 
 def agent_policy(*, workspace: str | Path, private: str | Path, venv: str | Path | None, codex_bin: str | Path | None = None,
                  extra_read: list[str] | None = None) -> Policy:
-    read = SYSTEM_READ + venv_reads(venv) + [str(ensure_netguard().parent)]
+    read = system_reads() + venv_reads(venv) + [str(ensure_netguard().parent)]
     if codex_bin:
         read.append(str(Path(os.path.realpath(codex_bin)).parent))
     read += list(extra_read or []) + ancestor_configs(workspace)
+    # a repairer's prompt points at ../repair_evidence (fast_loop.repair_evidence): readable, not writable
+    evidence = Path(workspace).parent / "repair_evidence"
+    if evidence.is_dir():
+        read.append(str(evidence))
     write = [str(workspace), *git_dirs(Path(workspace)), str(private), *DEV_WRITE]
-    return Policy(read=read, write=write, connect_ports=net_ports())
+    return Policy(read=read, write=write, connect_ports=net_ports(), list_dirs=list_only(venv))
 
 
 def gate_policy(*, workspace: str | Path, private: str | Path, venv: str | Path | None, harness_dir: str | Path,
                 testkit_dir: str | Path | None = None) -> Policy:
-    read = SYSTEM_READ + venv_reads(venv) + [str(harness_dir), str(ensure_netguard().parent)] + ancestor_configs(workspace)
+    read = system_reads() + venv_reads(venv) + [str(harness_dir), str(ensure_netguard().parent)] + ancestor_configs(workspace)
     if testkit_dir:
         read.append(str(testkit_dir))
-    return Policy(read=read, write=[str(workspace), *git_dirs(Path(workspace)), str(private), *DEV_WRITE], connect_ports=net_ports())
+    return Policy(read=read, write=[str(workspace), *git_dirs(Path(workspace)), str(private), *DEV_WRITE], connect_ports=net_ports(),
+                  list_dirs=list_only(venv))
 
 
 def scoring_policy() -> Policy:
@@ -178,6 +293,8 @@ def private_env(private: Path, *, base: dict[str, str] | None = None) -> dict[st
     env = dict(base if base is not None else os.environ)
     for sub in ("home", "tmp", "codex_home"):
         (private / sub).mkdir(parents=True, exist_ok=True)
+    # nothing of the repository on the confined PATH (uv run puts AdaMAS's own .venv/bin first)
+    env["PATH"] = os.pathsep.join(p for p in (env.get("PATH") or "/usr/bin:/bin").split(os.pathsep) if p and not p.startswith(str(ROOT)))
     env.update({"HOME": str(private / "home"), "TMPDIR": str(private / "tmp"), "TMP": str(private / "tmp"),
                 "TEMP": str(private / "tmp"), "CODEX_HOME": str(private / "codex_home"),
                 "LD_PRELOAD": str(ensure_netguard()), "PIP_NO_INDEX": "1", "PIP_DISABLE_PIP_VERSION_CHECK": "1",
@@ -203,7 +320,7 @@ def confine_command(command: list[str], *, cwd: str | Path, env: dict[str, str] 
     private = Path(tempfile.mkdtemp(prefix="adamas-run-"))
     py = Path(command[0])
     venv = py.parent.parent if py.parent.name == "bin" else None
-    read = SYSTEM_READ + venv_reads(venv) + [str(ensure_netguard().parent)]
+    read = system_reads() + venv_reads(venv) + [str(ensure_netguard().parent)]
     if venv is None and py.is_absolute():
         read.append(str(py.parent))
     cands = [a.split("::", 1)[0] for a in command[1:]] + (base_env.get("PYTHONPATH") or "").split(os.pathsep)
@@ -212,9 +329,16 @@ def confine_command(command: list[str], *, cwd: str | Path, env: dict[str, str] 
             for x in {a, os.path.realpath(a)}:          # a symlinked suite is checked at its real path
                 read.append(x if os.path.isdir(x) else str(Path(x).parent))
     read += ancestor_configs(cwd)
-    pol = Policy(read=read, write=[str(cwd), *git_dirs(Path(cwd)), str(private), *DEV_WRITE], connect_ports=net_ports())
+    write = [str(cwd), *git_dirs(Path(cwd)), str(private), *DEV_WRITE]
+    # the gate's check script keeps its state beside itself in the run's harness directory
+    # (package shadow, custody of the authored suite, the vacuous baseline repository)
+    write += [str(Path(a).parent) for a in command[1:] if a.endswith("adamas_cpe_check.py") and os.path.isfile(a)]
+    pol = Policy(read=read, write=write, connect_ports=net_ports(),
+                 list_dirs=list_only(venv))
     pol_path = write_policy(pol, private / "policy.json")
-    return [*launcher(pol_path), *command], launcher_env(private_env(private, base=base_env)), private
+    env = launcher_env(private_env(private, base=base_env))
+    env["ADAMAS_SANDBOXED"] = "1"
+    return [*launcher(pol_path), *command], env, private
 
 
 def write_policy(policy: Policy, path: Path) -> Path:
