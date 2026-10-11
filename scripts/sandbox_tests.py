@@ -200,12 +200,16 @@ def s3() -> dict:
     from orchestra.memory.store import load_config
     from orchestra.sandbox.venv_check import check
 
-    tr = load_config()["transfer"]
+    # every task of both dataset roots (2026-10-11: the 14 transfer tasks alone missed portalocker,
+    # nl2_stamina and nl2_pytorch-grad-cam, whose own venvs imported their original project)
+    all_tasks = sorted(p.name for ds in (CPE, NL2) for p in Path(ds).iterdir() if (p / "config.json").is_file())
     rows = {}
-    for t in tr["train_tasks"] + tr["test_tasks"]:
+    for t in all_tasks:
         nl2 = t.startswith("nl2_")
         ds = NL2 if nl2 else CPE
         env = Path("/root/codex-benchmarks/nl2repo/envs" if nl2 else "/root/codex-benchmarks/cpe_envs") / t / "bin" / "python"
+        if not env.exists():
+            continue
         pk = _top_level_packages(expected_modules(load_task(t, dataset_root=ds))) + [t.removeprefix("nl2_")]
         rows[t] = check(env, pk)
     # copies installed elsewhere (system Pythons, other venvs): found unconfined, then read inside the sandbox
@@ -225,12 +229,34 @@ def s3() -> dict:
     probe = priv / "probe.py"
     probe.write_text(PROBE)
     targets = {f"{t}:{i}": str(Path(f) / "__init__.py") for t, fs in elsewhere.items() for i, f in enumerate(fs)}
+    # every original-project copy the machine-wide sweep found that is still on disk (scripts/sealed/copy_sweep.py)
+    sweep = ROOT / "outputs" / "sandbox" / "copy_sweep" / "summary.json"
+    swept: list[str] = []
+    if sweep.is_file():
+        sw = json.loads(sweep.read_text())
+        cands = [p["path"] for p in sw["package_dirs"] if p["similarity"] >= 0.65] + \
+                [a["path"] for a in sw["archives"] if a["similarity"] >= 0.65]
+        for c in sorted(set(cands)):
+            if c.startswith(str(ROOT)) or not Path(c).exists():
+                continue
+            f = next((x for x in sorted(Path(c).rglob("*.py"))), None) if Path(c).is_dir() else Path(c)
+            if f is not None:
+                swept.append(str(f))
+        targets.update({f"sweep:{i}": f for i, f in enumerate(swept)})
     r = confined(["/usr/bin/python3", str(probe), json.dumps(targets)], workspace=ws, private=priv)
     reads = json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else {"error": r.stderr[-300:]}
     td.cleanup()
     copies = {t: [{"path": f, "inside_sandbox": reads.get(f"{t}:{i}")} for i, f in enumerate(fs)] for t, fs in elsewhere.items() if fs}
-    readable = [c for cs in copies.values() for c in cs if c["inside_sandbox"] == "READ"]
-    return {"tasks": rows, "copies_elsewhere": copies, "readable_copies_inside_sandbox": readable,
+    swept_reads = {f: reads.get(f"sweep:{i}") for i, f in enumerate(swept)}
+    # the probe's own venv is readable by design; a dependency there exposes only another task's project, never the
+    # venv task's own (checked above for every task): counted apart, not a failure
+    probe_venv = str(Path(VENV).resolve()) + "/"
+    own_venv_deps = {f: v for f, v in swept_reads.items() if f.startswith(probe_venv)}
+    swept_reads = {f: v for f, v in swept_reads.items() if f not in own_venv_deps}
+    readable = [c for cs in copies.values() for c in cs if c["inside_sandbox"] == "READ" and not c["path"].startswith(probe_venv)] + \
+               [{"path": f, "inside_sandbox": v} for f, v in swept_reads.items() if v == "READ"]
+    return {"tasks": rows, "copies_elsewhere": copies, "sweep_copies_inside_sandbox": swept_reads,
+            "probe_venv_dependencies": own_venv_deps, "readable_copies_inside_sandbox": readable,
             "pass": all(r["clean"] for r in rows.values()) and not readable}
 
 

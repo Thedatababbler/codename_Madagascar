@@ -64,3 +64,808 @@
   kind: verification
   at: '2026-10-10T23:33:00Z'
   context: ''
+- entry: AU-R-102
+  window: ' function or class b'
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:46Z'
+  context: ''
+- entry: AU-R-103
+  window: ' environment variabl'
+  tasks: 4
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:46Z'
+  context: ''
+- entry: AU-R-103
+  window: d environment variab
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:46Z'
+  context: ''
+- entry: AU-R-103
+  window: ed environment varia
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:46Z'
+  context: ''
+- entry: AU-R-103
+  window: environment variable
+  tasks: 4
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:46Z'
+  context: ''
+- entry: AU-R-103
+  window: 'nvironment variable '
+  tasks: 2
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:46Z'
+  context: ''
+- entry: AU-R-103
+  window: r environment variab
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:46Z'
+  context: ''
+- entry: AU-R-104
+  window: ' documents describe '
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:46Z'
+  context: ''
+- entry: skill_section
+  window: ' implementation that'
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:46Z'
+  context: ''
+- entry: skill_section
+  window: 'ded to the original '
+  tasks: 1
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-11T04:08:46Z'
+  context: ''
+- entry: skill_section
+  window: 'implementation that '
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:46Z'
+  context: ''
+- entry: E3-S1
+  window: ' the line where the '
+  tasks: 1
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-11T04:08:52Z'
+  context: ''
+- entry: E4-S1
+  window: ' documents describe '
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:52Z'
+  context: ''
+- entry: E5-R1
+  window: ' exception hierarchy'
+  tasks: 1
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-11T04:08:52Z'
+  context: ''
+- entry: E6-S1
+  window: he documents specify
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:52Z'
+  context: ''
+- entry: E8-S1
+  window: ' documents do not de'
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:52Z'
+  context: ''
+- entry: E8-S1
+  window: cuments do not descr
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:52Z'
+  context: ''
+- entry: E8-S1
+  window: documents do not des
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:52Z'
+  context: ''
+- entry: E8-S1
+  window: e documents do not d
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:52Z'
+  context: ''
+- entry: E8-S1
+  window: ents do not describe
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:52Z'
+  context: ''
+- entry: E8-S1
+  window: 'he documents do not '
+  tasks: 2
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:52Z'
+  context: ''
+- entry: E8-S1
+  window: ments do not describ
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:52Z'
+  context: ''
+- entry: E8-S1
+  window: ocuments do not desc
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:52Z'
+  context: ''
+- entry: E8-S1
+  window: uments do not descri
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:52Z'
+  context: ''
+- entry: pend-0
+  window: ' the next available '
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-10
+  window: ' configuration file '
+  tasks: 4
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-10
+  window: ' default configurati'
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-10
+  window: default configuratio
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-10
+  window: efault configuration
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-10
+  window: 'fault configuration '
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-11
+  window: ' default configurati'
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-11
+  window: default configuratio
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-11
+  window: efault configuration
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-12
+  window: ' configuration file '
+  tasks: 4
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-12
+  window: ' default configurati'
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-12
+  window: default configuratio
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-12
+  window: efault configuration
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-12
+  window: 'fault configuration '
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-13
+  window: 'ed according to the '
+  tasks: 1
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-14
+  window: ' and return the serv'
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-14
+  window: and return the serve
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-14
+  window: nd return the server
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-14
+  window: t and return the ser
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-16
+  window: ' from the server res'
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-16
+  window: ' the server response'
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-16
+  window: from the server resp
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-16
+  window: m the server respons
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-16
+  window: n the server respons
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-16
+  window: om the server respon
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-16
+  window: rom the server respo
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-16
+  window: 'the server response '
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-2
+  window: ' create the parent d'
+  tasks: 1
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-2
+  window: ' parent directories '
+  tasks: 2
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-2
+  window: ' reading and writing'
+  tasks: 2
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-2
+  window: ' the parent director'
+  tasks: 3
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-2
+  window: ate the parent direc
+  tasks: 1
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-2
+  window: create the parent di
+  tasks: 1
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-2
+  window: e parent directories
+  tasks: 1
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-2
+  window: e the parent directo
+  tasks: 2
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-2
+  window: eate the parent dire
+  tasks: 1
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-2
+  window: 'he parent directory '
+  tasks: 2
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-2
+  window: reate the parent dir
+  tasks: 1
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-2
+  window: te the parent direct
+  tasks: 1
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-2
+  window: the parent directory
+  tasks: 2
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-3
+  window: ' the parent director'
+  tasks: 3
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-3
+  window: 'he parent directory '
+  tasks: 2
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-3
+  window: the parent directory
+  tasks: 2
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-4
+  window: ' returns the next av'
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-4
+  window: ' the next available '
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-4
+  window: eturns the next avai
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-4
+  window: ns the next availabl
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-4
+  window: returns the next ava
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-4
+  window: rns the next availab
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-4
+  window: s the next available
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-4
+  window: turns the next avail
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-4
+  window: urns the next availa
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-6
+  window: ' automatic node spli'
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-6
+  window: automatic node split
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-7
+  window: ly available through
+  tasks: 1
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-9
+  window: ' an independent copy'
+  tasks: 1
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-9
+  window: ' configuration value'
+  tasks: 2
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-9
+  window: ' default configurati'
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-9
+  window: ' environment variabl'
+  tasks: 4
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-9
+  window: ' independent copy of'
+  tasks: 1
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-9
+  window: ad environment varia
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-9
+  window: 'an independent copy '
+  tasks: 1
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-9
+  window: ault configuration v
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-9
+  window: configuration values
+  tasks: 2
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-9
+  window: d environment variab
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-9
+  window: default configuratio
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-9
+  window: dependent copy of th
+  tasks: 1
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-9
+  window: efault configuration
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-9
+  window: environment variable
+  tasks: 4
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-9
+  window: ependent copy of the
+  tasks: 1
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-9
+  window: 'fault configuration '
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-9
+  window: 'independent copy of '
+  tasks: 1
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-9
+  window: lt configuration val
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-9
+  window: n independent copy o
+  tasks: 1
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-9
+  window: ndependent copy of t
+  tasks: 1
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-9
+  window: nvironment variables
+  tasks: 3
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-9
+  window: 'pendent copy of the '
+  tasks: 1
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-9
+  window: t configuration valu
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: pend-9
+  window: ult configuration va
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T04:08:54Z'
+  context: ''
+- entry: P-1
+  window: alpha beta gamma del
+  tasks: 2
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T05:04:44Z'
+  context: ''
+- entry: P-1
+  window: lpha beta gamma delt
+  tasks: 2
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T05:04:44Z'
+  context: ''
+- entry: P-1
+  window: pha beta gamma delta
+  tasks: 2
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T05:04:44Z'
+  context: ''
+- entry: P-1
+  window: alpha beta gamma del
+  tasks: 2
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T07:07:07Z'
+  context: ''
+- entry: P-1
+  window: lpha beta gamma delt
+  tasks: 2
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T07:07:07Z'
+  context: ''
+- entry: P-1
+  window: pha beta gamma delta
+  tasks: 2
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T07:07:07Z'
+  context: ''
+- entry: P-1
+  window: alpha beta gamma del
+  tasks: 2
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T07:09:42Z'
+  context: ''
+- entry: P-1
+  window: lpha beta gamma delt
+  tasks: 2
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T07:09:42Z'
+  context: ''
+- entry: P-1
+  window: pha beta gamma delta
+  tasks: 2
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T07:09:42Z'
+  context: ''
+- entry: P-1
+  window: alpha beta gamma del
+  tasks: 2
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T07:13:57Z'
+  context: ''
+- entry: P-1
+  window: lpha beta gamma delt
+  tasks: 2
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T07:13:57Z'
+  context: ''
+- entry: P-1
+  window: pha beta gamma delta
+  tasks: 2
+  kind: verification
+  reason: plain_english
+  at: '2026-10-11T07:13:57Z'
+  context: ''

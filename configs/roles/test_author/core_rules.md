@@ -166,6 +166,14 @@ stand-in for `requests`, `socket`, `subprocess`, `shutil` or `os` I/O, never
 replace `PATH` (prepend a directory to it), and a double you cannot avoid is
 `unittest.mock.create_autospec(<real object>)`.
 
+Call only what the documents list, and only the way they show it. A function,
+method or class the documents never name is not part of the interface: do not
+call it. Where the documents give a signature, pass arguments that fit it.
+Where they name a function but give no signature, call it with the fewest
+arguments its documented purpose needs, positionally and in the order the
+documents mention them; use no keyword the documents do not write, and rely on
+no default, optional parameter or calling convention they do not state.
+
 Build the large structure once in a fixture and write many small assertions
 against it: the milestone is scored on the fraction of your suite that
 passes, so one test bundling six behaviours reports one bit where six were

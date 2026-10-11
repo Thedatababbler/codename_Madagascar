@@ -206,6 +206,7 @@ async def review_and_fix(
     *, workspace: str | Path, milestone_id: str, docs: Mapping[str, str], packages: Iterable[str],
     allowed_symbols: set[str] | None, inventory: Inventory, hard_min: float, max_rounds: int,
     run_fix: Callable[[str], Awaitable[bool]], soft_dest: str | Path | None, record_path: str | Path | None = None,
+    interface: bool = False, fake_object_audit: bool = True,
 ) -> ReviewRecord:
     ws = Path(workspace)
     spec = ws / SPEC_DIR
@@ -216,7 +217,8 @@ async def review_and_fix(
         if not spec.is_dir():
             rec.rounds.append({"round": rnd, "missing_suite": True})
             break
-        audit = audit_suite(spec, docs, packages=pk, allowed_symbols=allowed_symbols)
+        audit = audit_suite(spec, docs, packages=pk, allowed_symbols=allowed_symbols, interface=interface,
+                            fake_object_audit=fake_object_audit)
         cov = coverage(audit, inventory)
         rec.rounds.append({"round": rnd, "cases": audit.cases, "violations": len(audit.violations), "by_rule": audit.by_rule(),
                            "hard_covered": cov.hard_covered, "hard_total": cov.hard_total,

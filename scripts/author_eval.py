@@ -51,6 +51,9 @@ GROUPS = {
     "A": {"config": "configs/experiments/author_probe.yaml", "pool": None},
     "B": {"config": "configs/experiments/author_probe.yaml", "pool": "outputs/roles_v11"},
     "C": {"config": "configs/experiments/author_probe_inventory.yaml", "pool": None},
+    # A4 (author fake-object fix, 2026-10-11): C's layer with the new fixed rules (testkit, signature rule) and the
+    # fake + interface audit in the fix rounds; the author run, and only it, inside the sandbox
+    "A4": {"config": "configs/experiments/author_probe_inventory.yaml", "pool": None, "env": {"ADAMAS_SANDBOX_ENFORCED": "1"}},
 }
 _LINE = re.compile(r"^(PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS) (\S+)")
 
@@ -134,7 +137,8 @@ def generate(args) -> None:
 
     def one(tm):
         t, m = tm
-        suite, note = probe.run_probe(t, m, tag=tag, plans_dir=PLANS, config=group["config"], role_pool_dir=group["pool"])
+        suite, note = probe.run_probe(t, m, tag=tag, plans_dir=PLANS, config=group["config"], role_pool_dir=group["pool"],
+                                      extra_env=group.get("env"))
         run_dir = probe.OUTPUT_ROOT / note.split()[0] / t
         softs = sorted(str(p) for p in (run_dir / "author_inventory" / m).glob("*.spec_tests_soft"))
         reviews = sorted((run_dir / "author_inventory" / m).glob("*.review.json"))

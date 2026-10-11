@@ -56,7 +56,9 @@ DEV_WRITE = ["/dev"]
 EPHEMERAL = (32768, 60999)
 
 
-BLOCKED_DIR_NAMES = ("dist-packages", "site-packages")
+BLOCKED_DIR_NAMES = ("dist-packages", "site-packages", "python-wheels")
+# ensurepip/_bundled holds pip wheels, and pip vendors task projects (tenacity): blocked like a package dir
+BLOCKED_SUBDIRS = (("ensurepip", "_bundled"),)
 _EXPANDED: dict[tuple[str, ...], list[str]] = {}
 _LISTED: dict[tuple[str, ...], list[str]] = {}
 
@@ -102,7 +104,7 @@ def without_package_dirs(roots: list[str]) -> list[str]:
                 dirnames[:] = []
                 continue
             for d in list(dirnames):
-                if d in BLOCKED_DIR_NAMES:
+                if d in BLOCKED_DIR_NAMES or (os.path.basename(dirpath), d) in BLOCKED_SUBDIRS:
                     blocked.add(os.path.join(dirpath, d))
                     dirnames.remove(d)
             # Landlock follows links: one pointing into (or at) a package tree must not be granted with its parent
@@ -167,7 +169,15 @@ def load_config(experiment: dict[str, Any] | None = None) -> dict[str, Any]:
 
 
 def enforced() -> bool:
-    return (os.environ.get(ENFORCED_ENV) or "").strip().lower() in ("1", "true", "yes", "on")
+    """``ADAMAS_SANDBOX_ENFORCED`` when set, else ``sandbox.enforced`` in configs/sandbox.yaml (true since
+    2026-10-11), so entry points that never load an experiment config are confined too."""
+    flag = (os.environ.get(ENFORCED_ENV) or "").strip().lower()
+    if flag:
+        return flag in ("1", "true", "yes", "on")
+    try:
+        return bool((load_config().get("sandbox") or {}).get("enforced", False))
+    except Exception:  # noqa: BLE001 -- an unreadable config never weakens an explicit flag; default off
+        return False
 
 
 def proxy_port() -> int:

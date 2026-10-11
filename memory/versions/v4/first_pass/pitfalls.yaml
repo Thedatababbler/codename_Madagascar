@@ -1,0 +1,89 @@
+- pitfall_id: P-0000
+  category_id: FP-TYPE
+  symptom: retired canary entry CANARY-FP-3cf4c3653f455b5b
+  cause: never recalled
+  lesson: never recalled
+  applies_when: {}
+  evidence:
+    source_records: []
+    fixes_observed: 0
+    milestones_observed: 0
+  state: retired
+  origin: human:canary
+  memory_version_added: 1
+- category_id: FP-RAW-VS-STATUS
+  symptom: 'A state-changing message-marker operation returned the wrong kind of result and/or used the wrong protocol variant: the normal form did not expose the updated marker set, while the quiet form did not suppress the response value as expected.'
+  cause: The implementation treated related mutating commands too uniformly, ignoring the documented distinction between ordinary operations that return parsed server state and quiet/silent operations that are only acknowledgements. It also needed to construct the protocol command variant consistently with that distinction.
+  lesson: 'When an API offers both normal and silent variants of a protocol mutation, implement them as separate semantic cases: the normal variant should send the non-silent protocol command and parse the server''s updated state into the documented return shape, preserving documented byte/string token conventions; the silent variant should send the silent protocol modifier and return no value if the documentation says the operation is quiet.'
+  applies_when:
+    domain_tags:
+    - network_protocol
+    position:
+    - middle
+  evidence:
+    source_records:
+    - R-7ff4b4e52d
+    fixes_observed: 1
+    milestones_observed: 1
+  state: trial
+  single_source: true
+  origin: transfer:2026-10-09
+  pitfall_id: P-0001
+  memory_version_added: 2
+- category_id: FP-RESP-FILTER
+  symptom: A network client successfully received the peer's reply, but the value returned to the caller omitted the protocol framing bytes, so it did not match the complete response as sent on the wire.
+  cause: The implementation treated the incoming response as a decoded message body and stripped the transport envelope before returning it, while the expected contract was to return the raw framed response bytes after sending a properly framed request.
+  lesson: For framed network protocols, distinguish clearly between low-level transport APIs and higher-level message parsers. If the documented client operation represents a wire-level send/receive primitive, it should wrap outgoing payloads with the required frame delimiters and return the complete raw response frame unless the documentation explicitly says to decode or strip framing.
+  applies_when:
+    domain_tags:
+    - network_protocol
+    position:
+    - middle
+  evidence:
+    source_records:
+    - R-b2d73670dc
+    fixes_observed: 1
+    milestones_observed: 1
+  state: trial
+  single_source: true
+  origin: transfer:2026-10-09
+  pitfall_id: P-0002
+  memory_version_added: 2
+- category_id: FP-RESP-FILTER
+  symptom: A splitter for an aggregate structured-data file returned the file and batch envelope records as separate items instead of returning only the contained logical messages, so the first returned item was metadata rather than a payload message.
+  cause: 'The implementation treated every segment-like line as an output unit and did not distinguish envelope/control records from actual message records. It also failed to define the splitter’s output granularity: logical messages, not raw file records.'
+  lesson: When implementing utilities for a structured file format that has file-level or batch-level wrappers, make the split operation return the documented logical payload units. Skip header/trailer wrapper records, start a new item at each message header, preserve the message’s internal segment delimiters as expected by the format, and normalize common line-ending variants before splitting. For generated identifiers, enforce the documented shape explicitly, such as fixed length and allowed character set.
+  applies_when:
+    domain_tags:
+    - file_format
+    position:
+    - middle
+  evidence:
+    source_records:
+    - R-16a9ad7355
+    fixes_observed: 1
+    milestones_observed: 1
+  state: trial
+  single_source: true
+  origin: transfer:2026-10-09
+  pitfall_id: P-0003
+  memory_version_added: 2
+- category_id: FP-TYPE
+  symptom: A protocol response containing a nested message metadata block was not returned as the documented structured object; nested address entries, absent optional fields, message identifiers, and parsed date values were missing or left unconverted.
+  cause: The initial implementation treated server responses as simple raw tokens or placeholders instead of recursively parsing the protocol grammar and converting the specific metadata block into the documented typed structure. It did not consistently preserve byte-valued fields, map protocol nulls to null optional fields, parse dates, or build nested address objects.
+  lesson: When documentation promises structured objects for a protocol response, implement the full conversion contract, not just token collection. Parse nested parenthesized lists, preserve raw protocol text as bytes where the documented fields are byte-valued, convert protocol null markers to null for optional fields, parse documented date fields into date/time objects, validate field counts, and recursively convert nested address lists into the documented element type.
+  applies_when:
+    domain_tags:
+    - network_protocol
+    position:
+    - middle
+  evidence:
+    source_records:
+    - R-6facd152b7
+    fixes_observed: 1
+    milestones_observed: 1
+  state: trial
+  single_source: true
+  origin: transfer:2026-10-09
+  pitfall_id: P-0004
+  memory_version_added: 2

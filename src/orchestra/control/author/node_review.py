@@ -86,6 +86,9 @@ async def run_author_review(*, review_dir: Path, request: Any, backend: Any, bac
     allowed = lenient_symbols(docs, os.environ.get(PLAN_FILE_ENV) or "", mid, list(meta.get("focus_paths") or []))
     hard_min = float(os.environ.get(HARD_MIN_ENV) or 1.0)
     max_rounds = int(os.environ.get(MAX_ROUNDS_ENV) or 2)
+    from orchestra.sandbox.policy import load_config as _sb_config
+
+    author_cfg = _sb_config().get("author") or {}
     state = {"result": first, "usage": first.usage, "fix_usage": []}
     tag = request.request_id[:8]
 
@@ -110,6 +113,7 @@ async def run_author_review(*, review_dir: Path, request: Any, backend: Any, bac
         workspace=backend_context.workspace_ref, milestone_id=mid, docs=docs, packages=packages, allowed_symbols=allowed,
         inventory=inventory, hard_min=hard_min, max_rounds=max_rounds, run_fix=run_fix,
         soft_dest=review_dir / mid / f"{tag}.spec_tests_soft", record_path=review_dir / mid / f"{tag}.review.json",
+        interface=bool(author_cfg.get("interface_audit", False)), fake_object_audit=bool(author_cfg.get("fake_object_audit", True)),
     )
     result = state["result"]
     if state["fix_usage"]:

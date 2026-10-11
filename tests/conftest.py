@@ -15,6 +15,10 @@ from orchestra.schemas.task import AgentVisibleLCBTask
 # about this codebase.
 collect_ignore_glob = ["fixtures/*"]
 
+# configs/sandbox.yaml turns the sandbox on for every run (2026-10-11). The test suite is not an agent run and
+# drives harnesses in tmp directories; it runs unconfined unless a test sets the flag itself (the sandbox tests do).
+os.environ.setdefault("ADAMAS_SANDBOX_ENFORCED", "0")
+
 
 @pytest.fixture
 def visible_echo_task():

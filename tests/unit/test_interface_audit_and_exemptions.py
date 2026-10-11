@@ -1,4 +1,4 @@
-"""Interface check, LD_PRELOAD audit, package-dir blocking and the common-phrasing exemption (2026-10-10)."""
+"""Interface check, LD_PRELOAD audit, package-dir blocking and the plain-English exemption (2026-10-10)."""
 
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ def test_undocumented_function_is_a_violation():
     assert ("interface", "test_a") in rules
 
 
-def test_documented_without_signature_is_soft():
+def test_documented_without_signature_is_counted_not_violation():
     v, soft = _check("from pkg import fetch\n\ndef test_b():\n    fetch(3)\n")
     assert not v and soft == ["test_x.py::test_b"]
 
@@ -139,7 +139,7 @@ def test_without_package_dirs_follows_symlinks(tmp_path):
     assert str(real / "lib" / "abc") in resolved
 
 
-# --------------------------------------------------------------------------- common-phrasing exemption
+# --------------------------------------------------------------------------- plain-English exemption
 
 
 def _leak_module():
@@ -149,36 +149,41 @@ def _leak_module():
     return mod
 
 
-def test_window_in_three_tasks_is_exempt_and_listed(tmp_path, monkeypatch):
+def _one_task_hit(tmp_path, monkeypatch, entries: dict[str, str], source: str):
     mod = _leak_module()
     monkeypatch.setattr(mod, "verification_dirs", lambda: [])
-    common = "set the environment variable before running"
-    rare = "zq_unique_fixture_phrase_9481 appears once"
-    dirs = []
-    for i in range(3):
-        d = tmp_path / f"t{i}"
-        d.mkdir()
-        (d / "a.py").write_text(f"# {common}\n" + (f"# {rare}\n" if i == 0 else ""))
-        dirs.append(d)
-    res = mod.check({"e_common": common, "e_rare": rare}, tasks=["__no_such_task__"], extra_heldout=dirs)
-    assert res["e_common"]["heldout"] == "PASS"
-    assert res["e_rare"]["heldout"] == "FAIL"
-    ex = res["_exemptions"]
-    assert ex and all(e["entry"] == "e_common" and e["tasks"] == 3 for e in ex)
+    d = tmp_path / "t0"
+    d.mkdir()
+    (d / "a.py").write_text(source)
+    return mod.check(entries, tasks=["__no_such_task__"], extra_heldout=[d])
 
 
-def test_window_in_two_tasks_still_fails(tmp_path, monkeypatch):
-    mod = _leak_module()
-    monkeypatch.setattr(mod, "verification_dirs", lambda: [])
+def test_plain_english_window_is_exempt_even_in_one_task(tmp_path, monkeypatch):
     phrase = "set the environment variable before running"
-    dirs = []
-    for i in range(2):
-        d = tmp_path / f"t{i}"
-        d.mkdir()
-        (d / "a.py").write_text(f"# {phrase}\n")
-        dirs.append(d)
-    res = mod.check({"e": phrase}, tasks=["__no_such_task__"], extra_heldout=dirs)
-    assert res["e"]["heldout"] == "FAIL" and not res["_exemptions"]
+    res = _one_task_hit(tmp_path, monkeypatch, {"e": phrase}, f"# {phrase}\n")
+    assert res["e"]["heldout"] == "PASS"
+    assert res["_exemptions"] and all(x["reason"] == "plain_english" for x in res["_exemptions"])
+
+
+@pytest.mark.parametrize("text", [
+    "assert client.fetch_messages(limit=3) == []",        # dots, parentheses, digits
+    "the parse_header_value helper returns",             # underscore
+    "call parseHeaderValue on every line here",          # camelCase
+    "raises ValueError when the key is missing",          # camelCase
+    "the zqxjvbnw qpzlxkcv mrtplqzz frobnitz",           # not common words
+])
+def test_code_shaped_window_still_fails(tmp_path, monkeypatch, text):
+    res = _one_task_hit(tmp_path, monkeypatch, {"e": text}, f"x = 1  # {text}\n")
+    assert res["e"]["heldout"] == "FAIL"
+
+
+def test_plain_english_form_check():
+    mod = _leak_module()
+    assert mod.plain_english("nvironment variable ")          # cut word at the left edge
+    assert mod.plain_english("the documents do not")
+    assert not mod.plain_english("the documents do no.")
+    assert not mod.plain_english("an HTTPServer object")
+    assert not mod.plain_english("returns 3 documents ")
 
 
 def test_without_package_dirs_drops_file_link_into_package_tree(tmp_path):
@@ -204,3 +209,58 @@ def test_agent_policy_reads_sibling_repair_evidence(tmp_path):
     bare = tmp_path / "ws"
     bare.mkdir()
     assert not any(p.endswith("repair_evidence") for p in SB.agent_policy(workspace=bare, private=tmp_path / "p2", venv=None).read)
+
+
+# --------------------------------------------------------------------------- copy sweep helpers
+
+
+def _sweep_module():
+    import sys as _sys
+
+    _sys.path.insert(0, str(ROOT / "scripts" / "sealed"))
+    spec = importlib.util.spec_from_file_location("copy_sweep", ROOT / "scripts" / "sealed" / "copy_sweep.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_copy_sweep_classifies_locations():
+    mod = _sweep_module()
+    assert mod.classify_location("/usr/local/lib/python3.12/dist-packages/jwt") == "system_site_packages"
+    assert mod.classify_location("/root/codex-benchmarks/cpe_envs/flask/lib/python3.11/site-packages/jwt") == "venv_site_packages"
+    assert mod.classify_location("/root/.cache/pip/http-v2/a/b/c") == "package_cache"
+    assert mod.classify_location("/tmp/imapclient_ref/imapclient") == "tmp"
+    assert mod.classify_location("/tmp/claude-0/x/scratchpad/y") == "assistant_scratch"
+
+
+def test_copy_sweep_reads_wheel_members(tmp_path):
+    import zipfile
+
+    mod = _sweep_module()
+    whl = tmp_path / "Pkg-1.0-py3-none-any.whl"
+    with zipfile.ZipFile(whl, "w") as z:
+        z.writestr("pkg/__init__.py", "def f(x):\n    return x + 1\n")
+        z.writestr("pkg-1.0.dist-info/METADATA", "Name: pkg\n")
+    names = [n for n, _ in mod.archive_members(whl)]
+    assert names == ["pkg/__init__.py"]
+    assert mod.grams_from_texts(["def f(x):\n    return x + 1\n"])
+
+
+def test_without_package_dirs_blocks_bundled_wheels(tmp_path):
+    root = tmp_path / "py"
+    (root / "lib" / "python3.11" / "ensurepip" / "_bundled").mkdir(parents=True)
+    (root / "lib" / "python3.11" / "ensurepip" / "__init__.py").write_text("")
+    (root / "share" / "python-wheels").mkdir(parents=True)
+    (root / "share" / "doc").mkdir(parents=True)
+    out = SB.without_package_dirs([str(root)])
+    assert not any("_bundled" in p or "python-wheels" in p for p in out)
+    assert str(root / "share" / "doc") in out and str(root / "lib" / "python3.11" / "ensurepip" / "__init__.py") in out
+
+
+def test_enforced_follows_config_when_env_unset(monkeypatch):
+    monkeypatch.delenv(SB.ENFORCED_ENV, raising=False)
+    assert SB.enforced() == bool(SB.load_config()["sandbox"].get("enforced"))
+    monkeypatch.setenv(SB.ENFORCED_ENV, "0")
+    assert SB.enforced() is False
+    monkeypatch.setenv(SB.ENFORCED_ENV, "1")
+    assert SB.enforced() is True

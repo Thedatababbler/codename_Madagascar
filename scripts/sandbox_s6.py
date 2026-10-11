@@ -41,6 +41,8 @@ CHECKPOINT = ROOT / "outputs/cpe_evolution/cpe-20261001T021833Z-cookiecutter/coo
 TASK, MID = "cookiecutter", "template_source_resolution"
 EMPTY_TABLE = ROOT / "configs/playbook_v2/experiments/firstpass_from_repair_20261008/first_pass.empty.yaml"
 JOBS = [("s6-fr", "first_run"), ("s6-rp", "repair")]
+R0_ONLY = False
+SEED = ""   # a stored first-stage workspace to replay (default: the checkpoint's workspaces/<milestone>/repo)
 
 
 def predecessor() -> tuple[str, str]:
@@ -52,7 +54,11 @@ def predecessor() -> tuple[str, str]:
         sha, _, subj = line.partition(" ")
         if subj.startswith("canonical commit "):
             commits[subj.removeprefix("canonical commit ").strip()] = sha
-    return str(canon), commits[order[order.index(MID) - 1]]
+        elif subj.strip() == "dataset inputs only":
+            commits["__base__"] = sha
+    idx = order.index(MID)
+    # the plan's first milestone starts from the dataset-inputs commit
+    return str(canon), commits[order[idx - 1]] if idx > 0 else commits["__base__"]
 
 
 def job(jid: str, part: str) -> tuple[list[str], dict[str, str]]:
@@ -65,31 +71,31 @@ def job(jid: str, part: str) -> tuple[list[str], dict[str, str]]:
     if part == "first_run":
         env["ADAMAS_FIRST_RUN_ONLY"] = "1"
     else:
-        env.update({"ADAMAS_SEED_FIRST_RUN": str(next(CHECKPOINT.glob(f"tasks/rb_*/workspaces/{MID}/repo"))),
+        env.update({"ADAMAS_SEED_FIRST_RUN": SEED or str(next(CHECKPOINT.glob(f"tasks/rb_*/workspaces/{MID}/repo"))),
                     "ADAMAS_SEED_MILESTONE": MID, "ADAMAS_PAIR_ONLY": "1"})
+        if R0_ONLY:
+            # a forced row id no table holds: the selection is empty ("not applicable"), so only R0 runs
+            env["ADAMAS_FORCE_ROW"] = "__s6_r0_only__"
     return cmd, env
 
 
 def run(cap: float) -> dict:
-    from joint_experiment import read_window
+    from quota_spend import Spend
 
     OUT.mkdir(parents=True, exist_ok=True)
-    w0 = read_window()
-    if w0 is None:
-        raise SystemExit("cannot read the quota window; refusing to spend")
+    spend = Spend()
+    w0 = spend.w0
     procs = {}
     for jid, part in JOBS:
         cmd, env = job(jid, part)
         procs[jid] = subprocess.Popen(cmd, cwd=str(ROOT), env={**os.environ, **env}, stdout=open(OUT / f"{jid}.log", "w"),
                                       stderr=subprocess.STDOUT, start_new_session=True)
         time.sleep(20)
-    stop, last = "", w0
+    stop = ""
     while any(p.poll() is None for p in procs.values()):
         time.sleep(60)
-        w = read_window()
-        last = w if w is not None else last
-        if last - w0 >= cap:
-            stop = f"budget cap {cap} reached ({w0} -> {last})"
+        if spend.poll() >= cap:
+            stop = f"budget cap {cap} reached ({w0} -> {spend.last}, resets {spend.resets})"
             for p in procs.values():
                 if p.poll() is None:
                     os.killpg(p.pid, signal.SIGTERM)
@@ -99,8 +105,8 @@ def run(cap: float) -> dict:
             p.wait(timeout=120)
         except subprocess.TimeoutExpired:
             os.killpg(p.pid, signal.SIGKILL)
-    w1 = read_window() or last
-    rec = {"window_start": w0, "window_end": w1, "points_used": round(w1 - w0, 2), "cap": cap, "stop": stop,
+    spend.poll()
+    rec = {"window_start": w0, "window_end": spend.last, "resets": spend.resets, "points_used": spend.used(), "cap": cap, "stop": stop,
            "returncodes": {j: p.returncode for j, p in procs.items()}}
     (OUT / "spend.json").write_text(json.dumps(rec, indent=1))
     return rec
@@ -155,7 +161,19 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("what", choices=["run", "check"])
     ap.add_argument("--cap", type=float, default=None, help="points for this attempt (default: sandbox.s6_budget_cap)")
+    ap.add_argument("--task", default=None)
+    ap.add_argument("--milestone", default=None)
+    ap.add_argument("--checkpoint", default=None, help="<evolution run>/<task> directory holding the stored first run")
+    ap.add_argument("--repair-only", action="store_true", help="run the repair job only, R0 alone (2026-10-11 retest)")
+    ap.add_argument("--seed", default="", help="workspace to replay as the first stage; workspaces/<milestone>/repo holds the "
+                    "committed code after the search, so a failing first stage needs a stored probe or candidate workspace")
     a = ap.parse_args()
+    global TASK, MID, CHECKPOINT, JOBS, R0_ONLY, SEED
+    SEED = str(Path(a.seed).resolve()) if a.seed else ""
+    if a.task:
+        TASK, MID, CHECKPOINT = a.task, a.milestone, Path(a.checkpoint).resolve()
+    if a.repair_only:
+        JOBS, R0_ONLY = [("s6-rp", "repair")], True
     from orchestra.sandbox.policy import load_config
     from orchestra.settings import load_env_file
 

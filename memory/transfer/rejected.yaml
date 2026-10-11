@@ -41,6 +41,7 @@
   - shares a 20-character substring with a held-out source
   stage: migration
   date: '2026-10-09T01:57:06Z'
+  resolved: '2026-10-10: passes under the common-phrasing exemption; added back'
 - bank: repair
   file: patterns
   entry:
@@ -84,6 +85,7 @@
   - shares a 20-character substring with a verification suite
   stage: migration
   date: '2026-10-09T01:57:06Z'
+  resolved: '2026-10-10: passes under the common-phrasing exemption; added back'
 - bank: repair
   file: patterns
   entry:
@@ -134,6 +136,7 @@
   - shares a 20-character substring with a held-out source
   stage: migration
   date: '2026-10-09T01:57:06Z'
+  resolved: '2026-10-10: passes under the common-phrasing exemption; added back'
 - bank: repair
   file: patterns
   entry:
@@ -177,6 +180,7 @@
   - shares a 20-character substring with a verification suite
   stage: migration
   date: '2026-10-09T01:57:06Z'
+  resolved: '2026-10-10: passes under the common-phrasing exemption; added back'
 - bank: repair
   file: patterns
   entry:
@@ -220,6 +224,7 @@
   - shares a 20-character substring with a verification suite
   stage: migration
   date: '2026-10-09T01:57:06Z'
+  resolved: '2026-10-10: passes under the common-phrasing exemption; added back'
 - record_id: R-14afdb29ec
   stage: reference
   reason: the case fails on the reference implementation (suite error)

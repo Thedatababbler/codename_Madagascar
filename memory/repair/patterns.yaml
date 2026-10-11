@@ -948,3 +948,190 @@
   evidence: {}
   origin: human:canary
   memory_version_added: 1
+- pattern_id: E3-S1
+  category_id: RP-E3
+  category_ids:
+  - RP-E3
+  action:
+    instruction: For each named failure, first write a minimal reproduction script (a few lines that call the documented API the way the test does and print what comes back), run it, and locate the line where the observed behaviour diverges from the documented one. Fix that divergence, re-run the reproduction and the named failure, then move to the next. Do not change code a reproduction did not lead you to.
+    add_readonly_role: null
+    template: null
+    budget_delta: null
+  intent: a reproduction before every fix
+  row:
+    row_id: E3-S1
+    table: repair
+    error_classes:
+    - E3
+    action: S
+    target_template: null
+    slot_edits: []
+    instruction: null
+    evidence_routing:
+    - improver
+    budget_delta: null
+    preconditions: []
+    from_incumbent: true
+    preventive_variant: null
+    source_rows: []
+    origin: new
+    intent: a reproduction before every fix
+    state: candidate
+    legacy_id: ''
+  state: candidate
+  evidence:
+    migrated_from: configs/playbook_v2/repair.yaml
+    legacy_id: null
+  origin: migrated:playbook_v2
+  memory_version_added: 1
+- pattern_id: E4-S1
+  category_id: RP-E4
+  category_ids:
+  - RP-E4
+  action:
+    instruction: 'Extract the state machine the documents describe for the objects under test: every state, every transition, and what triggers it (an operation, a threshold, a close/reopen). Write it as a checklist. Walk each named failure through that checklist to find the transition the code gets wrong, fix that transition, and confirm the surrounding transitions still behave as listed.'
+    add_readonly_role: null
+    template: null
+    budget_delta: null
+  intent: the documented state machine as a checklist
+  row:
+    row_id: E4-S1
+    table: repair
+    error_classes:
+    - E4
+    action: S
+    target_template: null
+    slot_edits: []
+    instruction: null
+    evidence_routing:
+    - improver
+    budget_delta: null
+    preconditions: []
+    from_incumbent: true
+    preventive_variant: F3
+    source_rows: []
+    origin: new
+    intent: the documented state machine as a checklist
+    state: candidate
+    legacy_id: ''
+  state: candidate
+  evidence:
+    migrated_from: configs/playbook_v2/repair.yaml
+    legacy_id: null
+  origin: migrated:playbook_v2
+  memory_version_added: 1
+- pattern_id: E5-R1
+  category_id: RP-E5
+  category_ids:
+  - RP-E5
+  action:
+    instruction: null
+    add_readonly_role: contract_critic
+    template: continuation_reviewed
+    budget_delta: null
+  intent: exception hierarchy checked against the base milestone's definitions
+  row:
+    row_id: E5-R1
+    table: repair
+    error_classes:
+    - E5
+    action: R
+    target_template: continuation_reviewed
+    slot_edits:
+    - slot: reviewer
+      role: contract_critic
+      mode: insert
+      read_only: true
+    instruction: null
+    evidence_routing:
+    - reviewer
+    - improver
+    budget_delta: null
+    preconditions:
+    - kind: lacks_role
+      value: contract_critic
+    from_incumbent: true
+    preventive_variant: F1
+    source_rows: []
+    origin: new
+    intent: exception hierarchy checked against the base milestone's definitions
+    state: candidate
+    legacy_id: ''
+  state: candidate
+  evidence:
+    migrated_from: configs/playbook_v2/repair.yaml
+    legacy_id: null
+  origin: migrated:playbook_v2
+  memory_version_added: 1
+- pattern_id: E6-S1
+  category_id: RP-E6
+  category_ids:
+  - RP-E6
+  action:
+    instruction: 'Check the objects under test against the object protocol the documents specify, one item at a time: equality and hashing, iteration and length, containment, repr, and behaviour on empty or boundary input. For each named failure, identify which protocol item it exercises, implement or correct that item, and verify the others still hold.'
+    add_readonly_role: null
+    template: null
+    budget_delta: null
+  intent: the object protocol checked item by item
+  row:
+    row_id: E6-S1
+    table: repair
+    error_classes:
+    - E6
+    action: S
+    target_template: null
+    slot_edits: []
+    instruction: null
+    evidence_routing:
+    - improver
+    budget_delta: null
+    preconditions: []
+    from_incumbent: true
+    preventive_variant: F6
+    source_rows: []
+    origin: new
+    intent: the object protocol checked item by item
+    state: candidate
+    legacy_id: ''
+  state: candidate
+  evidence:
+    migrated_from: configs/playbook_v2/repair.yaml
+    legacy_id: null
+  origin: migrated:playbook_v2
+  memory_version_added: 1
+- pattern_id: E8-S1
+  category_id: RP-E8
+  category_ids:
+  - RP-E8
+  action:
+    instruction: 'For each timed-out case, find the hot spot: run the case under a profiler or with timing prints, identify the operation whose cost grows with the input size, and compare its complexity with what the documents imply for ordinary use. Replace the algorithm or data structure at that spot; do not raise timeouts, skip work, or cache results the documents do not describe.'
+    add_readonly_role: null
+    template: null
+    budget_delta: null
+  intent: the hot spot found and its complexity fixed
+  row:
+    row_id: E8-S1
+    table: repair
+    error_classes:
+    - E8
+    action: S
+    target_template: null
+    slot_edits: []
+    instruction: null
+    evidence_routing:
+    - improver
+    budget_delta: null
+    preconditions: []
+    from_incumbent: true
+    preventive_variant: null
+    source_rows: []
+    origin: new
+    intent: the hot spot found and its complexity fixed
+    state: candidate
+    legacy_id: ''
+  state: candidate
+  evidence:
+    migrated_from: configs/playbook_v2/repair.yaml
+    legacy_id: null
+  origin: migrated:playbook_v2
+  memory_version_added: 1

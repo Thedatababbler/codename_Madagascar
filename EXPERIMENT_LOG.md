@@ -2652,7 +2652,7 @@ in progress; bugs found so far: task-id validation against the wrong
 root, yaml-pinned dataset root, tree/dependency/tag parsing (fixed).
 
 **Pilot, nl2_aiofiles on gpt-5.5, third attempt `cpe-20260908T111133Z`
-(11:11-13:27): held-out 0.919 (194/211, 7 failed, 2 errors, 8 skipped).**
+(11:11-13:27): held-out 0.919 (194/211, 7 failed, 2 errors, 8 skipped).** ⚠ suspicious (EXP-20261011-01): the final code holds a byte-identical copy of the reference's `threadpool/binary.py`.
 Both milestones committed; the LLM diagnosis ran (two 200s). The
 pipeline runs end to end on an NL2Repo task. Bugs the three attempts
 found, all fixed and committed:
@@ -2699,7 +2699,7 @@ and dataset ceilings the chain exposed, all fixed or recorded:
 
 Held-out so far: bplustree 0.89, imapclient 0.356, pyjwt 0.813, simpy
 0.765, csvs-to-sqlite 0.72, deprecated 0.585, simplejwt 0.565, flask
-0.639, parsel 0.272 (ceiling), portalocker unscoreable (ceiling),
+0.639 (⚠ suspicious run, EXP-20261011-01), parsel 0.272 (ceiling), portalocker unscoreable (ceiling),
 python-hl7 0.53 (M1 only; M2 refused), rsa -- (infra). Continuations:
 5 armed, 3 fixed-and-committed (bplustree M1 1/1, imapclient M2 6/6,
 pyjwt M2 5/5), pyjwt M1 0/14 (suite-wide collapse), csvs-to-sqlite 0/2
@@ -2723,7 +2723,7 @@ drafts (saved under outputs/cpe_full55/plans/) for the rest. Baselines:
 | csvs-to-sqlite | 0.720 | quality | 2 | — | — | C | 0.000 | 0.000 | 0.640 | 0.560 | 0.600 |  |
 | deprecated | 0.585 | none | — | — | — | C | 0.585 | 0.585 | 0.574 | 0.591 | 0.614 |  |
 | djangorestframework-simplejwt | 0.565 | failure/none | — | — | — | CC | 0.031 | 0.031 | 0.026 | 0.031 | 0.000 |  |
-| flask | 0.639 | failure | — | — | — | C | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | conftest imports undocumented flask.globals.app_ctx (env pytest<8 pinned) |
+| flask | 0.639 ⚠ | failure | — | — | — | C | 0.000 | 0.000 | 0.000 | 0.000 | 0.000 | conftest imports undocumented flask.globals.app_ctx (env pytest<8 pinned); ⚠ run suspicious (EXP-20261011-01: an uncommitted candidate copied 8 reference files verbatim; final code not affected) |
 | parsel | 0.272 | none | — | — | — | C | 0.084 | 0.096 | 0.096 | 0.088 | 0.096 | test_selector imports undocumented LXML_SUPPORTS_HUGE_TREE (162/250 unreachable) |
 | portalocker | 0.00* | none/quality | 0 | — | — | CC | 0.00* | 0.00* | 0.00* | 0.00* | 0.00* | conftest imports undocumented LockerType (63/63 unreachable) |
 | python-hl7 | 0.530 | quality | 3 | 1.00✓ | 3/3 | C | 0.340 | 0.470 | 0.480 | 0.340 | 0.440 |  |
@@ -3093,7 +3093,7 @@ the feature plans on the CPE tasks that were multi-milestone under the
 risk-first planner, bplustree and tinydb excluded (already run, before
 the breadth brief): pyjwt (2-ms 0.813 / best baseline 0.748), simpy
 (0.765 / 0.765), imapclient (0.356 / 0.390), python-hl7 (0.530 / 0.480),
-djangorestframework-simplejwt (0.565 / 0.031), flask (0.639 / 0.000),
+djangorestframework-simplejwt (0.565 / 0.031), flask (0.639 ⚠ suspicious run, EXP-20261011-01 / 0.000),
 trailscraper (0.60* / 0.65*, static pin), portalocker (0.00* all methods,
 undocumented LockerType ceiling -- last). Each task resumes itself across
 account windows (up to 3), and stops on a task-level failure (guard,
@@ -3137,7 +3137,7 @@ condition callback removal). Net +6 cases.
 | imapclient | 5 | 0.97 / 0.94 / 0.82 / 0.65 / 0.79 | 199 | 0.412 | 0.356 | 0.390 |
 | python-hl7 | 5 | 0.95 / 0.73 / 0.92 / 0.91 / 1.00 | 109 | 0.530 | 0.530 | 0.480 |
 | drf-simplejwt | 5 | 1.00 / 1.00 / 0.96 / 1.00 / 1.00 | 153 | 0.759 | 0.565 | 0.031 |
-| flask | 5 | 1.00 / 1.00 / 1.00 / 1.00 / 0.91 | 198 | 0.763 | 0.639 | 0.000 |
+| flask | 5 | 1.00 / 1.00 / 1.00 / 1.00 / 0.91 | 198 | 0.763 | 0.639 ⚠ (suspicious run, EXP-20261011-01) | 0.000 |
 | trailscraper | 5 | 1.00 / 1.00 / 0.62 / 1.00 / 1.00 | 205 | 0.67* (62/93) | 0.60* | 0.65* |
 | portalocker | 5 | 1.00 / 1.00 / 1.00 / 0.44 / 0.86 | 153 | 0.00* | 0.00* | 0.00* |
 | **mean (7)** | | | | **0.722** | **0.667** | 0.597 |
@@ -5116,3 +5116,74 @@ A run pins a read-only snapshot (`versions/v<N>`), then: judge (temperature 0, s
   - no surviving trace shows who downloaded them; this run kept no command log;
   - **this run is the "imapclient hidden, search on 0.487" result of EXP-20260811-02**, which is annotated in place. Its conclusion "search paid on imapclient" rests on it.
   - /tmp is not readable under the current sandbox.
+
+## EXP-20261011-01 -- original-project copies swept and removed; interface rule and plain-English exemption; A4; S6 (branch `rsi`)
+
+**Status:** closed 2026-10-11. Reports `docs/reports/copy_sweep_20261011.md`, `docs/reports/a4_s6_20261011.md`.
+- Quota: A4 booked at its full 4.0 (3 measured after a window reset, plus an upper-bound 1.0 estimate before it); S6 under 1 point (the reading did not move).
+
+**1. Machine-wide sweep (no quota; sealed scripts `copy_sweep.py`, `copy_delete.py`, `copy_similarity.py`).**
+- **Walk:** 2.84 M files. Fingerprints: sha256 of every reference, held-out and check_tests file, plus reference 5-grams, for all 33 tasks.
+- **Three task venvs imported their own original project:**
+  - portalocker 4.1.0;
+  - stamina 26.1.0;
+  - pytorch-grad-cam, an editable install of `nl2repo/upstream`.
+  - The 10-09 S3 had checked the 14 transfer tasks only.
+  - All three are removed. S3 now checks all 33 tasks, and all are clean.
+- **Mechanism, on record:** three 08-14 portalocker runs left an empty repository, and 56/63 held-out tests passed against the installed original. The evaluator's `source_dir_present` guard kept these "unscored".
+- **Recorded, then deleted:** 176 directories under /tmp (13,645 files, 351 MB, 775 reference files, 2,325 held-out-only files). They include:
+  - `/tmp/cpe_probe_repos`: its `*/check_tests` held no held-out-only file; 254 held-out-only files sat elsewhere in the tree, beside full reference copies of 19 tasks;
+  - the four /tmp IMAPClient copies;
+  - 41 `audit_ref_bplustree_*`;
+  - 33 `spec-axis-*`;
+  - 44 of my own scratch directories.
+- **Record fault:** the per-file deletion record was lost to a key clash. All 4,896 copy files are listed again from the sweep manifest; the other 8,749 files are kept as counts only.
+- **Not deleted, needs a decision:** copies in system Python, other venvs, other projects, `nl2repo/upstream` (tests included) and realbench data. All 96 are EACCES inside the sandbox.
+- **Sandbox:** now also blocks `ensurepip/_bundled` and `python-wheels`, because pip vendors tenacity.
+- **No held-out-only file exists under `outputs/`.** Every held-out match there is shared with check_tests.
+- **Cannot be settled:** whether earlier agents read the /tmp held-out copies (in place from 08-08). No command logs exist before 10-09.
+
+**History audit against every genuine copy** (≥ 0.65 to the reference, outside agent-output trees):
+- **outliers:** only the two runs already marked;
+- **verbatim reference files** add two runs, now marked suspicious:
+  - **nl2_aiofiles `cpe-20260908T111133Z`:** the final code holds the reference `threadpool/binary.py`. This is the NL2Repo pilot "0.919", annotated.
+  - **flask `cpe-20260908T130718Z`:** an uncommitted candidate holds 8 reference files verbatim. The final code is not affected (0.28). Its 0.639 is annotated in 5 places.
+
+**2. Rule changes (no quota).**
+- **Interface check:**
+  - the soft conversion is removed; a call to a documented name without a documented signature is only counted (`signatureless_cases`);
+  - undocumented calls and signature mismatches stay violations;
+  - the author review now runs the interface and fake audits (`author.interface_audit`).
+- **New fixed author rule** in `core_rules.md` and `test_author.yaml`: a function the documents name without a signature is called with the fewest arguments, positionally, with no undocumented keyword or default.
+- **Substring exemption:** a window is exempt when it consists only of common English words and spaces (`configs/memory/common_english_words.txt`: google-10000-english, filtered to 9,519 words). It contains no digit, `_ . ( )`, quote or camelCase, and a word cut at either edge must be a prefix or suffix of a listed word. This replaces the ≥ 3-task rule, and every exemption is logged (103 so far).
+- **Recheck under the new exemption:**
+  - AU-R-102/103/104 and the skill section pass and are written (memory v4);
+  - the 5 migrated repair rows pass and are added back (v5);
+  - 16/19 pending suggestions pass; 3 still fail, one of them (pend-13) on held-out text. They stay pending for the category review.
+
+**3. A4 (4 points; author runs sandboxed, global switch untouched).**
+- **Coverage:** 7 of 12 authorings (6 milestones once, cookiecutter twice). The cap stopped sample 1.
+- **Reference-fail rate**, historical gate suites (A6) vs A4 sample 0, mean 0.50 → 0.42 (without simplejwt 0.55 → 0.31):
+  - cookiecutter template_source 0.44 → 0.05 (s1 0.00);
+  - hl7 mllp 0.42 → 0.00;
+  - imapclient transport 0.91 → 0.69 and mailbox 0.79 → 0.52;
+  - hl7 hierarchical 0.17 → 0.29 (2/7);
+  - **simplejwt 0.29 → 0.95**, all one environment mistake: pytest-django's `django_db_blocker` fixture is `None` there.
+- **Full-audit violations 44 → 21.** 4/6 A4 suites have none; cookiecutter s0 (17 uncited) and imapclient transport (1 `fake_io`) hit the 2-round fix cap.
+- **Cases** 99 → 133.
+- **Miss on stored final code:** true miss 1.0 → 1.0 (n = 3); milestone-level miss 1.0 → 0.33.
+- **Sandbox:** 7 manifests, 773 commands, 0 findings.
+- **Incidents:**
+  - a Codex startup healthcheck failure with 3 parallel starts (no model call; redone);
+  - **the quota window reset mid-run (47% → 1%)**, which disabled the cap's arithmetic. Spend accounting is now reset-aware (`scripts/quota_spend.py`), and the driver was restarted with 1.0 booked.
+
+**4. S6 (2 points approved; repair job only, R0 only).**
+- Tries 4–5 (tinydb) did not reach R0.
+  - The checkpoint's `workspaces/<m>/repo` holds the committed code (21/21).
+  - A stored probe scored 20/21, which clears the gate; confined = unconfined there, same failing case.
+- **Try 6 (cookiecutter template_source_resolution) passed:**
+  - the gate failed the seeded first attempt;
+  - R0 ran in the sandbox and was committed;
+  - confined and unconfined gates are case-for-case identical on the seed (12/14) and on R0 (14/14);
+  - 144 commands, 0 out-of-bounds, 0 canary, manifest complete.
+- **`sandbox.enforced: true`.** `enforced()` falls back to the config when the env flag is unset, and the test suite pins it to 0.

@@ -44,9 +44,11 @@ Rules:
   Doubles built from the real object, plain mocks and functions are left alone.
 * ``interface`` / ``interface_signature`` (2026-10-10): every call into the
   project names a symbol the documents list (``interface``), with arguments
-  that fit a signature the documents give (``interface_signature``); a call to
-  a listed symbol whose signature the documents do not give makes the case
-  soft.
+  that fit a signature the documents give (``interface_signature``). A call to
+  a listed symbol whose signature the documents do not give is only counted
+  (``signatureless_cases``); it no longer makes the case soft (2026-10-11: that
+  softened 37% of good cases). The author rule "fewest arguments, no
+  undocumented keyword" covers it instead.
 * ``call_assert``: no assertion on how a double was called
   (``assert_called_with``, ``call_args``, ``call_count``, ...) unless a cited
   sentence describes the call itself.
@@ -112,6 +114,7 @@ class AuditResult:
     timeout_marks: int = 0
     violations: list[Violation] = field(default_factory=list)
     soft_cases: list[str] = field(default_factory=list)     # "file::test" whose error path is unnamed
+    signatureless_cases: list[str] = field(default_factory=list)  # calls a documented name with no documented signature (counted only)
     citations: dict[str, list[str]] = field(default_factory=dict)  # "file::test" -> normalised quotes
 
     @property
@@ -450,8 +453,7 @@ def audit_file(path: Path, docs: Mapping[str, str], *, packages: Iterable[str], 
         iv, isoft = interface_check(tree, fname, packages=pkgs, documented=interface_symbols, signatures=signatures,
                                     modules=interface_modules)
         res.violations.extend(iv)
-        bad = {f"{fname}::{v.case}" for v in iv}
-        res.soft_cases.extend(k for k in isoft if k not in res.soft_cases and k.split("::")[0] + "::" + k.split("::")[-1] not in bad)
+        res.signatureless_cases.extend(isoft)    # counted only; no longer made soft (user decision 2026-10-11)
     return res
 
 
@@ -778,6 +780,7 @@ def audit_suite(suite_dir: str | Path, docs: Mapping[str, str], *, packages: Ite
         total.timeout_marks += r.timeout_marks
         total.violations.extend(r.violations)
         total.soft_cases.extend(r.soft_cases)
+        total.signatureless_cases.extend(r.signatureless_cases)
         total.citations.update(r.citations)
     # package-shaped directories inside the suite
     for d in root.rglob("*"):

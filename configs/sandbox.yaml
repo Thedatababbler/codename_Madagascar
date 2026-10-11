@@ -1,13 +1,14 @@
 # Sandbox isolation and author fake-object fixes (spec pasted 2026-10-09). An experiment
 # yaml may override either block; ADAMAS_SANDBOX_ENFORCED=1/0 overrides `enforced` for a run.
 sandbox:
-  enforced: false          # set true once S1-S6 pass
+  enforced: true           # 2026-10-11: S1-S6 passed (EXP-20261011-01); every run is sandboxed
   allow_loopback: true
   allow_external_network: false
   s6_budget_cap: 2
 author:
   testkit: true
   fake_object_audit: true
+  interface_audit: true      # 2026-10-11: undocumented call / signature mismatch = violation; no soft conversion
   accommodation_check: true
   train_reference_filter: true
   a4_budget_cap: 4

@@ -203,7 +203,7 @@ def _single_milestone_plan(plan_path: Path, milestone_id: str, dest: Path) -> Pa
 
 
 def run_probe(task: str, milestone_id: str, *, tag: str, plans_dir: Path, config: str,
-              role_pool_dir: str | None = None) -> tuple[Path | None, str]:
+              role_pool_dir: str | None = None, extra_env: dict[str, str] | None = None) -> tuple[Path | None, str]:
     plan = _single_milestone_plan(plans_dir / f"{task}.plan.json", milestone_id,
                                   OUTPUT_ROOT / "plans" / tag / f"{task}.{milestone_id}.plan.json")
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -216,6 +216,7 @@ def run_probe(task: str, milestone_id: str, *, tag: str, plans_dir: Path, config
     env = dict(os.environ)
     if role_pool_dir:
         env["ORCHESTRA_ROLE_POOL_DIR"] = str(Path(role_pool_dir).resolve())
+    env.update(extra_env or {})
     with (log_dir / f"{task}.{milestone_id}.log").open("w") as log:
         proc = subprocess.run(cmd, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, text=True, env=env)
     suite = OUTPUT_ROOT / run_id / task / "harness" / f"{milestone_id}.spec_tests"

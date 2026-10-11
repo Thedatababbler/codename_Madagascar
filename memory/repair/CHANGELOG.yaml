@@ -20,3 +20,14 @@
         - shares a 20-character substring with a verification suite
         E8-S1:
         - shares a 20-character substring with a verification suite
+- version: 5
+  date: '2026-10-11T04:08:52Z'
+  file: patterns.yaml
+  origin: recheck:2026-10-10
+  reason: migrated rows re-validated under the common-phrasing exemption
+  changed:
+  - E3-S1
+  - E4-S1
+  - E5-R1
+  - E6-S1
+  - E8-S1

@@ -8,9 +8,13 @@ configs/memory.yaml. Output, one line per entry and nothing else:
 
     <entry_id> heldout=PASS|FAIL verification=PASS|FAIL
 
-A window found in the sources of 3 or more distinct tasks is common phrasing
-(user decision): it is exempt, and listed (the memory text's own window, the
-entry id and the number of tasks; no source) for the caller's log.
+A window made only of common English words and spaces is plain phrasing (user
+decision 2026-10-11, replacing the earlier "3 or more tasks" rule): it is exempt,
+and listed (the memory text's own window, the entry id and the reason; no
+source) for the caller's log. The test looks at the window's own form only:
+letters and spaces, no camelCase, every whole word in
+configs/memory/common_english_words.txt, and a cut word at either end a
+prefix / suffix of a listed word.
 
 With ``--out`` the same verdicts are written as JSON. No held-out text, path or
 case id leaves this script.
@@ -57,17 +61,54 @@ def verification_dirs() -> list[tuple[str, Path]]:
     return sorted(out)
 
 
-GENERIC_TASKS = 3     # a window found in this many distinct tasks' sources is common phrasing (user decision)
+WORDS_PATH = ROOT / "configs" / "memory" / "common_english_words.txt"
+_WORDS: tuple[frozenset[str], frozenset[str], frozenset[str]] | None = None
+
+
+def _word_sets() -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
+    global _WORDS
+    if _WORDS is None:
+        words = {w.strip() for w in WORDS_PATH.read_text(encoding="utf-8").splitlines() if w.strip() and not w.startswith("#")}
+        prefixes = {w[:i] for w in words for i in range(1, len(w) + 1)}
+        suffixes = {w[i:] for w in words for i in range(len(w))}
+        _WORDS = (frozenset(words), frozenset(prefixes), frozenset(suffixes))
+    return _WORDS
+
+
+def plain_english(window: str) -> bool:
+    """True when the window is ordinary prose: common English words and spaces, nothing code-shaped."""
+    if not window.strip() or any(not (c.isascii() and (c.isalpha() or c == " ")) for c in window):
+        return False                      # digits, _ . ( ) quotes, punctuation: code features
+    words, prefixes, suffixes = _word_sets()
+    toks = window.split(" ")
+    for i, tok in enumerate(toks):
+        if not tok:
+            continue
+        if any(c.isupper() for c in tok[1:]):
+            return False                  # camelCase / CONSTANT
+        low = tok.lower()
+        cut_left = i == 0 and not window.startswith(" ")
+        cut_right = i == len(toks) - 1 and not window.endswith(" ")
+        if cut_left and cut_right:
+            ok = any(low in w for w in words)
+        elif cut_left:
+            ok = low in suffixes
+        elif cut_right:
+            ok = low in prefixes
+        else:
+            ok = low in words
+        if not ok:
+            return False
+    return True
 
 
 def check(entries: dict[str, str], *, tasks: list[str] | None = None, n: int = SHINGLE,
-          extra_heldout: list[Path] | None = None, generic_tasks: int = GENERIC_TASKS) -> dict:
+          extra_heldout: list[Path] | None = None) -> dict:
     """Per entry PASS/FAIL against held-out and verification sources.
 
-    A window that occurs in the held-out or verification sources of at least
-    ``generic_tasks`` distinct tasks is common phrasing, not a leak: it does not
-    count as a hit, and it is listed under ``_exemptions`` (entry, window,
-    number of tasks) for the caller's log. ``extra_heldout``: directories
+    A hit whose window is plain English (``plain_english``) is not a leak: it
+    does not count, and it is listed under ``_exemptions`` (entry, window,
+    number of tasks it was found in, kind, reason) for the caller's log. ``extra_heldout``: directories
     treated as held-out of one extra pseudo-task each (the unit tests' fake samples).
     """
     windows: dict[str, set[str]] = {}
@@ -104,12 +145,13 @@ def check(entries: dict[str, str], *, tasks: list[str] | None = None, n: int = S
         res[eid] = {}
     for w, ids in windows.items():
         all_tasks_w = seen["heldout"].get(w, set()) | seen["verification"].get(w, set())
-        generic = len(all_tasks_w) >= generic_tasks
+        generic = bool(all_tasks_w) and plain_english(w)
         for eid in ids:
             for kind in ("heldout", "verification"):
                 if w in seen[kind]:
                     if generic:
-                        exemptions.append({"entry": eid, "window": w, "tasks": len(all_tasks_w), "kind": kind})
+                        exemptions.append({"entry": eid, "window": w, "tasks": len(all_tasks_w), "kind": kind,
+                                           "reason": "plain_english"})
                     else:
                         res[eid][kind] = "FAIL"
     for eid in entries:
@@ -133,7 +175,7 @@ def main() -> int:
         if eid == "_exemptions":
             continue
         print(f"{eid} heldout={r['heldout']} verification={r['verification']}")
-    print(f"exempted windows (common phrasing, >= {GENERIC_TASKS} tasks): {len(res['_exemptions'])}")
+    print(f"exempted windows (plain English): {len(res['_exemptions'])}")
     if a.out:
         Path(a.out).write_text(json.dumps(res, indent=1), encoding="utf-8")
     return 0

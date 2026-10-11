@@ -17,3 +17,12 @@
   reason: 'author fake-object fix §6.1: human rules that pass validation'
   changed:
   - AU-R-101
+- version: 4
+  date: '2026-10-11T04:08:46Z'
+  file: rules.yaml
+  origin: human:2026-10-09
+  reason: 'author fake-object fix §6.1: human rules that pass validation'
+  changed:
+  - AU-R-102
+  - AU-R-103
+  - AU-R-104
