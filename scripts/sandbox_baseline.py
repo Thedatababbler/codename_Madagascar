@@ -77,6 +77,7 @@ def run_task(task: str, spend, cap: float) -> dict:
     cmd = [str(ROOT / ".venv" / "bin" / "python"), "-m", "orchestra.cli.run_codeprojecteval_decomp", "--config", CONFIG,
            "--task-id", task, "--arm", "sandbox_baseline", "--run-id", batch.name, "--output-root", str(OUT),
            "--dataset-root", DATASET, "--plan-file", str(ROOT / "configs/datasets/cpe_feature_plans" / f"{task}.plan.json")]
+    OUT.mkdir(parents=True, exist_ok=True)
     log = OUT / f"{batch.name}.log"
     proc = subprocess.Popen(cmd, cwd=str(ROOT), env=_env(), stdout=open(log, "w"), stderr=subprocess.STDOUT,
                             start_new_session=True)
