@@ -16,6 +16,11 @@ from orchestra.backends.base import (
 from orchestra.backends.smolagents_code import SmolagentsCodeBackend
 from orchestra.backends.workers.smolagents_worker import run_codeagent
 
+# sandbox-only rule (2026-10-11): these tests start a real smolagents CodeAgent worker, which executes model-written
+# code in a process the sandbox launcher cannot confine; the backend refuses it (tests/unit/test_sandbox_only_rule.py)
+pytestmark = pytest.mark.skip(reason="smolagents_code is refused by the sandbox-only rule")
+
+
 
 def _fixture_response(answer: str = "4") -> str:
     return json.dumps({"thought": "compute with tools", "code": f"final_answer({answer})"})

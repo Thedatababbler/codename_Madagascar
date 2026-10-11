@@ -54,10 +54,8 @@ def _build_codex_config(*, workspace_path: str | None = None) -> Any:
     return CodexConfig(config_overrides=tuple(overrides))
 
 
-def _default_client_factory(*, workspace_path: str | None = None) -> Any:
-    from openai_codex import AsyncCodex
-
-    return AsyncCodex(config=_build_codex_config(workspace_path=workspace_path))
+# (an unconfined default client factory lived here until 2026-10-11; every Codex client is built by
+# _sandboxed_config now -- sandbox-only rule)
 
 
 _TRANSIENT_TRANSPORT_MARKERS = (
@@ -95,44 +93,19 @@ def _transient_retry_budget() -> int:
 
 
 def _sandboxed_config(request: AgentRequest, context: BackendExecutionContext, workspace_path: str) -> Any:
-    """The CodexConfig that runs app-server (and every command it starts) confined, or None when
-    ``ADAMAS_SANDBOX_ENFORCED`` is off (sandbox spec A)."""
+    """The CodexConfig that runs app-server (and every command it starts) confined (sandbox spec A).
+
+    Always confined since 2026-10-11 (sandbox-only rule): raises ``SandboxRequiredError`` when the
+    sandbox cannot be in force or the launch it built is not confined."""
     from orchestra.sandbox import policy as SB
+    from orchestra.sandbox.guard import sandboxed_codex_config
 
-    if not SB.enforced():
-        return None
-    from openai_codex import CodexConfig
-    from openai_codex.client import _resolve_codex_bin
-
-    base = _build_codex_config(workspace_path=workspace_path)
-    codex_bin = str(_resolve_codex_bin(base))
-    private = Path(context.trace_dir or ".") / ".sandbox" / request.request_id
-    testkit = _author_testkit(request, context)
-    pol = SB.agent_policy(workspace=workspace_path, private=private, venv=os.environ.get(SB.VENV_ENV) or None, codex_bin=codex_bin,
-                          extra_read=[testkit] if testkit else None)
-    pol_path = SB.write_policy(pol, private / "policy.json")
-    args = [codex_bin]
-    for kv in (*base.config_overrides, 'shell_environment_policy.inherit="all"'):
-        args += ["--config", kv]
-    args += ["app-server", "--listen", "stdio://"]
-    env = SB.launcher_env(SB.private_env(private))
-    venv = os.environ.get(SB.VENV_ENV) or ""
-    if venv:
-        # `python` / `pytest` resolve to the task venv, not to a system Python whose packages are hidden
-        env["PATH"] = f"{venv}/bin" + os.pathsep + env.get("PATH", "")
-    # pytest searches every ancestor for its config and starts collecting at the rootdir it finds;
-    # the workspace lives under the repository, whose tree the agent may not list
-    if testkit:
-        # the author's own test runs import adamas_testkit; the launcher restores this PYTHONPATH after confining
-        env["ADAMAS_SANDBOX_ORIG_PYTHONPATH"] = os.pathsep.join(x for x in (testkit, env.get("ADAMAS_SANDBOX_ORIG_PYTHONPATH", "")) if x)
-    env["PYTEST_ADDOPTS"] = " ".join(x for x in (env.get("PYTEST_ADDOPTS", ""), f"--rootdir={workspace_path}",
-                                                f"--confcutdir={workspace_path}") if x)
-    run_dir = _run_dir_of(context)
-    if run_dir is not None:
-        SB.write_manifest(run_dir, {"kind": "agent", "node_id": request.node_id, "request_id": request.request_id,
-                                    "task_id": request.task_id, "policy": pol.to_dict() | {"connect_ports": "see network"},
-                                    "private_dir": str(private), "workspace": workspace_path})
-    return CodexConfig(launch_args_override=(*SB.launcher(pol_path), *args), env=env, cwd=workspace_path)
+    return sandboxed_codex_config(
+        workspace_path, Path(context.trace_dir or ".") / ".sandbox" / request.request_id,
+        base_config=_build_codex_config(workspace_path=workspace_path), role=str(request.node_id or "agent"),
+        venv=os.environ.get(SB.VENV_ENV) or None, run_dir=_run_dir_of(context), testkit=_author_testkit(request, context),
+        manifest={"node_id": request.node_id, "request_id": request.request_id, "task_id": request.task_id},
+    )
 
 
 def _author_testkit(request: AgentRequest, context: BackendExecutionContext) -> str:
@@ -221,8 +194,18 @@ class CodexSDKBackend:
                 return BackendHealth(healthy=True, backend_id=self.backend_id)
             from openai_codex import AsyncCodex
 
-            async with AsyncCodex(config=_build_codex_config()) as client:
-                _ = client
+            # the healthcheck starts the same confined app-server a call gets, in a throwaway workspace
+            # with a private CODEX_HOME (it used to start one unconfined under /root/.codex)
+            import tempfile
+            from types import SimpleNamespace
+
+            with tempfile.TemporaryDirectory(prefix="adamas-codex-health-") as tmp:
+                ws = Path(tmp) / "ws"
+                ws.mkdir()
+                probe = SimpleNamespace(node_id="healthcheck", request_id="healthcheck", task_id="healthcheck")
+                cfg = _sandboxed_config(probe, SimpleNamespace(trace_dir=str(Path(tmp) / "trace")), str(ws))
+                async with AsyncCodex(config=cfg) as client:
+                    _ = client
             return BackendHealth(
                 healthy=True,
                 backend_id=self.backend_id,
@@ -363,22 +346,24 @@ class CodexSDKBackend:
                     metadata={"codex_failure_class": "infra"},
                 )
 
-            sandbox_config = _sandboxed_config(request, context, workspace.path)
+            # sandbox-only rule (2026-10-11): a real Codex session starts confined or not at all
+            from orchestra.sandbox.guard import SandboxRequiredError
 
-            author_tk = _author_testkit(request, context) if sandbox_config is None else ""
+            try:
+                sandbox_config = _sandboxed_config(request, context, workspace.path)
+            except SandboxRequiredError as exc:
+                return self._fail(
+                    request,
+                    AgentRunStatus.BACKEND_INIT_FAILURE,
+                    f"sandbox required: {exc}",
+                    latency_ms=int((time.perf_counter() - started) * 1000),
+                    metadata={"codex_failure_class": "sandbox"},
+                )
 
             def client_factory() -> Any:
                 from openai_codex import AsyncCodex
 
-                if sandbox_config is not None:
-                    return AsyncCodex(config=sandbox_config)
-                if author_tk:
-                    from dataclasses import replace as _replace
-
-                    base = _build_codex_config(workspace_path=workspace.path)
-                    pp = os.pathsep.join(x for x in (author_tk, os.environ.get("PYTHONPATH", "")) if x)
-                    return AsyncCodex(config=_replace(base, env={**(base.env or {}), "PYTHONPATH": pp}))
-                return _default_client_factory(workspace_path=workspace.path)
+                return AsyncCodex(config=sandbox_config)
         else:
             client_factory = self._client_factory
 

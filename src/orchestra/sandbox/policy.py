@@ -56,6 +56,50 @@ DEV_WRITE = ["/dev"]
 EPHEMERAL = (32768, 60999)
 
 
+# Paths no confined policy may grant (user decision 2026-10-11): copies of task projects found by the machine-wide
+# sweep stay on disk and the sandbox keeps them out. Landlock only allows, so this list is enforced by refusing
+# any policy that grants one of them, or a directory above one (``check_explicit_deny``), and probed by S1.
+SEALED_ARCHIVE_DIR = Path("/root/.adamas_sealed")
+EXPLICIT_DENY = (
+    "/usr/local/lib/python3.12/dist-packages",       # system Python packages (PyJWT, flask, dotenv, pathspec, portalocker)
+    "/usr/lib/python3/dist-packages",
+    "/usr/share/python-wheels",
+    "/.uv/python_install/*/lib/python*/site-packages",  # uv-managed interpreters' own packages
+    "/venv",                                         # /venv/mas, /venv/medskill, /venv/livecodebench, ... (other environments)
+    "/opt/portal-aio",
+    "/opt/miniforge3",
+    "/root/projects/mas-baselines",
+    "/root/projects/EvoMAS",
+    "/root/projects/Mini-Agent",
+    "/root/codex-benchmarks/realbench_codex_vanilla",  # realbench data
+    str(ROOT / "data" / "realbench"),
+    "/root/data/.dataproc",
+    "/root/codex-benchmarks/nl2repo/upstream",       # moved to SEALED_ARCHIVE_DIR on 2026-10-11; kept here should it return
+    str(SEALED_ARCHIVE_DIR),
+)
+
+
+def explicit_deny_paths() -> list[str]:
+    import glob as _glob
+
+    out: list[str] = []
+    for d in EXPLICIT_DENY:
+        out += sorted(_glob.glob(d)) if any(c in d for c in "*?[") else [d]
+    return out
+
+
+def check_explicit_deny(policy: Policy) -> None:
+    """Raise when a filesystem-restricting policy grants a denied path or a directory that contains one."""
+    if not policy.restrict_fs:
+        return
+    deny = [os.path.realpath(d) for d in explicit_deny_paths()]
+    for p in [*policy.read, *policy.write]:
+        rp = os.path.realpath(p)
+        for d in deny:
+            if rp == d or rp.startswith(d + "/") or d.startswith(rp.rstrip("/") + "/"):
+                raise SandboxRequiredError(f"sandbox policy grants {p}, which is or contains the denied path {d}")
+
+
 BLOCKED_DIR_NAMES = ("dist-packages", "site-packages", "python-wheels")
 # ensurepip/_bundled holds pip wheels, and pip vendors task projects (tenacity): blocked like a package dir
 BLOCKED_SUBDIRS = (("ensurepip", "_bundled"),)
@@ -135,7 +179,11 @@ def without_package_dirs(roots: list[str]) -> list[str]:
             children = sorted(os.listdir(p))
         except OSError:
             return []
-        listed.add(p)          # a split directory still lists its names (Python's import scans it)
+        # a split directory keeps readdir only when it is an interpreter's stdlib directory (os.py): Python's import
+        # scan needs it, and Landlock grants it for the whole tree below, so every other split directory stays
+        # unlistable (2026-10-11: /usr/share and /usr/local/lib/python3.12 no longer list their package dirs)
+        if os.path.isfile(os.path.join(p, "os.py")):
+            listed.add(p)
         out: list[str] = []
         for c in children:
             out += expand(os.path.join(p, c))
@@ -160,24 +208,38 @@ def load_config(experiment: dict[str, Any] | None = None) -> dict[str, Any]:
     cfg = {k: dict(v or {}) for k, v in (base or {}).items()}
     for k in ("sandbox", "author"):
         cfg.setdefault(k, {}).update(((experiment or {}).get(k) or {}) if isinstance((experiment or {}).get(k), dict) else {})
-    flag = (os.environ.get(ENFORCED_ENV) or "").strip().lower()
-    if flag in ("1", "true", "yes", "on"):
-        cfg["sandbox"]["enforced"] = True
-    elif flag in ("0", "false", "no", "off"):
-        cfg["sandbox"]["enforced"] = False
+    # sandbox-only rule (2026-10-11): neither an experiment yaml nor the environment can turn the sandbox off
+    if (experiment or {}).get("sandbox", {}) and (experiment or {})["sandbox"].get("enforced") is False:
+        raise SandboxRequiredError("an experiment config sets sandbox.enforced: false; the sandbox cannot be turned off")
+    cfg["sandbox"]["enforced"] = bool((base or {}).get("sandbox", {}).get("enforced"))
     return cfg
 
 
+class SandboxRequiredError(RuntimeError):
+    """An agent or workspace-code run was about to start without the sandbox (sandbox-only rule, 2026-10-11)."""
+
+
+TEST_UNCONFINED_ENV = "ADAMAS_SANDBOX_TEST_UNCONFINED"
+
+
+def _test_unconfined() -> bool:
+    """The one exemption: inside a pytest process, during a test, when the test suite asked for it
+    (``tests/conftest.py``). It covers driver-side runs of code that start no agent (harness tests in tmp
+    directories); agent launches ignore it (``guard.require_sandbox``)."""
+    import sys as _sys
+
+    return ((os.environ.get(TEST_UNCONFINED_ENV) or "").strip() == "1" and "pytest" in _sys.modules
+            and bool(os.environ.get("PYTEST_CURRENT_TEST")))
+
+
 def enforced() -> bool:
-    """``ADAMAS_SANDBOX_ENFORCED`` when set, else ``sandbox.enforced`` in configs/sandbox.yaml (true since
-    2026-10-11), so entry points that never load an experiment config are confined too."""
-    flag = (os.environ.get(ENFORCED_ENV) or "").strip().lower()
-    if flag:
-        return flag in ("1", "true", "yes", "on")
-    try:
-        return bool((load_config().get("sandbox") or {}).get("enforced", False))
-    except Exception:  # noqa: BLE001 -- an unreadable config never weakens an explicit flag; default off
+    """Always true (sandbox-only rule, 2026-10-11). ``sandbox.enforced`` must be true in configs/sandbox.yaml,
+    and no environment variable can turn it off; ``ADAMAS_SANDBOX_ENFORCED`` is no longer read."""
+    if _test_unconfined():
         return False
+    if not bool((load_config().get("sandbox") or {}).get("enforced")):
+        raise SandboxRequiredError("configs/sandbox.yaml: sandbox.enforced must be true (sandbox-only rule); refusing to run")
+    return True
 
 
 def proxy_port() -> int:
@@ -295,7 +357,11 @@ def confine_scoring(command: list[str], env: dict[str, str]) -> tuple[list[str],
     pol_path = write_policy(scoring_policy(), private / "policy.json")
     out = launcher_env(dict(env))
     out["LD_PRELOAD"] = str(ensure_netguard())
-    return [*launcher(pol_path), *command], out, private
+    full = [*launcher(pol_path), *command]
+    from orchestra.sandbox.guard import assert_confined_launch
+
+    assert_confined_launch(full, out, role="heldout_scoring", allow_open_fs=True)
+    return full, out, private
 
 
 def private_env(private: Path, *, base: dict[str, str] | None = None) -> dict[str, str]:
@@ -327,9 +393,12 @@ def confine_command(command: list[str], *, cwd: str | Path, env: dict[str, str] 
         return command, base_env, None
     import tempfile
 
+    command = _pin_pytest_root(list(command))
     private = Path(tempfile.mkdtemp(prefix="adamas-run-"))
     py = Path(command[0])
-    venv = py.parent.parent if py.parent.name == "bin" else None
+    # a venv is a directory with pyvenv.cfg; /usr/bin/python3 is not one (taking /usr as its "venv" granted all
+    # of /usr, system dist-packages included -- caught by check_explicit_deny on 2026-10-11)
+    venv = py.parent.parent if py.parent.name == "bin" and (py.parent.parent / "pyvenv.cfg").is_file() else None
     read = system_reads() + venv_reads(venv) + [str(ensure_netguard().parent)]
     if venv is None and py.is_absolute():
         read.append(str(py.parent))
@@ -348,10 +417,32 @@ def confine_command(command: list[str], *, cwd: str | Path, env: dict[str, str] 
     pol_path = write_policy(pol, private / "policy.json")
     env = launcher_env(private_env(private, base=base_env))
     env["ADAMAS_SANDBOXED"] = "1"
-    return [*launcher(pol_path), *command], env, private
+    full = [*launcher(pol_path), *command]
+    from orchestra.sandbox.guard import assert_confined_launch
+
+    assert_confined_launch(full, env, role="workspace_code")
+    return full, env, private
+
+
+def _pin_pytest_root(command: list[str]) -> list[str]:
+    """A pytest run whose targets sit outside its cwd roots itself at their common ancestor and lists it, which the
+    sandbox refuses ("ERROR collecting ."). Pin ``--rootdir``/``--confcutdir`` to the targets' own common directory."""
+    if "pytest" not in command[1:3] or any(a.startswith("--rootdir") for a in command):
+        return command
+    dirs = []
+    for a in command[3:]:
+        p = a.split("::", 1)[0]
+        if os.path.isabs(p) and os.path.exists(p):
+            dirs.append(p if os.path.isdir(p) else os.path.dirname(p))
+    if not dirs:
+        return command
+    root = os.path.commonpath(dirs)
+    i = command.index("pytest") + 1
+    return [*command[:i], f"--rootdir={root}", f"--confcutdir={root}", *command[i:]]
 
 
 def write_policy(policy: Policy, path: Path) -> Path:
+    check_explicit_deny(policy)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(policy.to_dict()), encoding="utf-8")
     return path
@@ -444,7 +535,8 @@ def clean_private(private: Path) -> None:
 
 
 __all__ = [
-    "CONFIG_PATH", "ENFORCED_ENV", "VENV_ENV", "agent_policy", "confine_command", "confine_scoring", "default_probes", "enforced", "ensure_netguard", "gate_policy",
+    "CONFIG_PATH", "ENFORCED_ENV", "EXPLICIT_DENY", "SEALED_ARCHIVE_DIR", "SandboxRequiredError", "check_explicit_deny",
+    "explicit_deny_paths", "TEST_UNCONFINED_ENV", "VENV_ENV", "agent_policy", "confine_command", "confine_scoring", "default_probes", "enforced", "ensure_netguard", "gate_policy",
     "git_dirs", "launcher", "launcher_env", "load_config", "net_ports", "private_env", "proxy_port", "scoring_policy",
     "self_check", "write_manifest", "write_policy",
 ]

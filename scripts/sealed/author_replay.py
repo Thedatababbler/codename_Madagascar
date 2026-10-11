@@ -44,6 +44,8 @@ from orchestra.control.fast_loop.prior_suites import PriorSuite, gate_command_of
 from orchestra.harness.progress import behaviour_failures, behaviour_passed, parse_progress
 from orchestra.ir.graph import OrchestraGraph
 
+from orchestra.sandbox.guard import run_confined  # noqa: E402  (sandbox-only rule, 2026-10-11)
+
 _LINE = re.compile(r"^(PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS) (\S+)")
 SKIP_CANDIDATES = {"node_resample_blame", "persistent_blame"}
 
@@ -93,7 +95,7 @@ def suite_cases(workspace: Path, command: list[str], suite_dir: Path, timeout: f
     prior = PriorSuite(milestone_id="", spec_dir=str(Path(suite_dir).resolve()), contracts=contracts, level=level,
                        committed_passed=frozenset(), committed_failed=frozenset())
     cmd = rewrite_command(command, prior)
-    proc = subprocess.run(cmd, cwd=str(workspace), capture_output=True, text=True, timeout=timeout, check=False,
+    proc = run_confined(mode="scoring", role="author_replay", cmd=cmd, cwd=str(workspace), capture_output=True, text=True, timeout=timeout, check=False,
                           env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
     stdout = proc.stdout
     _score, stages, _furthest = parse_progress(stdout)
@@ -122,7 +124,7 @@ def heldout_cases(task_id: str, workspace: Path, cases: list[str], *, per_test_t
         # parameters; run the files and keep the reported ids that match
         files = sorted({f"{task.unit_tests}/{c.split('::', 1)[0]}" for c in cases})
         wanted = {c for c in cases}
-        proc = subprocess.run(
+        proc = run_confined(mode="scoring", role="author_replay", cmd=
             [str(python), "-m", "pytest", *files, "-q", "-rA", "--no-header", "-p", "no:cacheprovider", "-o", "addopts=",
              "--continue-on-collection-errors", f"--timeout={per_test_timeout}", "--timeout-method=signal"],
             cwd=repo, capture_output=True, text=True, timeout=3600, check=False,

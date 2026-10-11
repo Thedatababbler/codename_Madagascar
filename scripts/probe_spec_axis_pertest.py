@@ -34,11 +34,13 @@ from probe_spec_axis_signal import (
 from orchestra.codeprojecteval import load_task
 from orchestra.codeprojecteval.dataset import DEFAULT_ENV_ROOT, build_agent_workspace
 
+from orchestra.sandbox.guard import run_confined  # noqa: E402  (sandbox-only rule, 2026-10-11)
+
 
 def outcomes(python: Path, repo: Path) -> dict[str, bool]:
     """nodeid -> passed, for every test the suite collected in `repo`."""
     report = repo / "junit.xml"
-    subprocess.run(
+    run_confined(mode="scoring", role="probe_spec_axis_pertest", cmd=
         [
             str(python), "-m", "pytest", "spec_tests", "-q", "--no-header",
             "-p", "no:cacheprovider", "-o", "addopts=",

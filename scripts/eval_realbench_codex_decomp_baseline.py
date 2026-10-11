@@ -381,6 +381,10 @@ def write_summary_md(summary: dict[str, Any], rows: list[dict[str, Any]], path: 
 
 
 def main() -> int:
+    # sandbox-only rule (2026-10-11): this evaluator pip-installs the agent's repository (running its setup code)
+    # and needs the network to do so; it cannot run confined as written, so it refuses until it is redesigned
+    raise SystemExit("eval_realbench_codex_decomp_baseline: refused by the sandbox-only rule (installs and runs agent code "
+                     "unconfined); see EXP-20261011-02")
     ap = argparse.ArgumentParser()
     ap.add_argument(
         "--batch-dir",

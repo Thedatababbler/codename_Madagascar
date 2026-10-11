@@ -90,6 +90,9 @@ class SmolagentsCodeBackend:
         )
 
     async def healthcheck(self) -> BackendHealth:
+        if self._worker_runner is None:
+            return BackendHealth(healthy=False, backend_id=self.backend_id,
+                                 detail="sandbox required: smolagents_code cannot run confined; refused (sandbox-only rule)")
         try:
             import smolagents  # noqa: F401
             from smolagents import OpenAIServerModel  # noqa: F401
@@ -282,6 +285,16 @@ class SmolagentsCodeBackend:
         context: BackendExecutionContext,
     ) -> AgentResult:
         started = time.perf_counter()
+        if self._worker_runner is None:
+            # sandbox-only rule (2026-10-11): the CodeAgent executes model-written Python in a multiprocessing
+            # worker, which cannot start through the Landlock launcher (no LD_PRELOAD network guard, no
+            # manifest), so it is refused rather than run unconfined
+            return self._fail(
+                request,
+                AgentRunStatus.BACKEND_INIT_FAILURE,
+                "sandbox required: smolagents_code executes code in a worker the sandbox launcher cannot confine; refused",
+                latency_ms=0,
+            )
         if request.backend_config.get("managed_agents") not in (None,):
             return self._fail(
                 request,

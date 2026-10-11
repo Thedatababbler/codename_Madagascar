@@ -24,13 +24,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from _guard import reference_root, task_python  # noqa: E402
 
+from orchestra.sandbox.guard import run_confined  # noqa: E402  (sandbox-only rule, 2026-10-11)
+
 _LINE = re.compile(r"^(PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS) (\S+)")
 _IGNORE = ("bin", "lib", "lib64", "include", "share", "pyvenv.cfg", ".venv", "venv", "__pycache__", ".git", "unit_tests", "check_tests")
 
 
 def _collect(python: Path, suite: Path, cwd: Path) -> list[str]:
     try:
-        proc = subprocess.run([str(python), "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider", "-o", "addopts=", str(suite)],
+        proc = run_confined(mode="scoring", role="reference_check", cmd=[str(python), "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider", "-o", "addopts=", str(suite)],
                               cwd=cwd, capture_output=True, text=True, timeout=300, check=False)
     except subprocess.TimeoutExpired:
         return []
@@ -49,7 +51,7 @@ def suite_on_reference(task: str, suite: Path, *, per_test_timeout: int = 60, ti
         holder.mkdir()
         shutil.copytree(suite, holder / "spec_tests", ignore=shutil.ignore_patterns("__pycache__"))
         try:
-            proc = subprocess.run(
+            proc = run_confined(mode="scoring", role="reference_check", cmd=
                 [str(python), "-m", "pytest", str(holder / "spec_tests"), "-q", "-rA", "--no-header", "-p", "no:cacheprovider",
                  "-o", "addopts=", "--continue-on-collection-errors", f"--timeout={per_test_timeout}", "--timeout-method=signal"],
                 cwd=ref, capture_output=True, text=True, timeout=timeout, check=False,
@@ -88,7 +90,7 @@ def probe_audit_on_reference(task: str, suite: Path, docs_text: str) -> dict:
         shutil.copytree(suite, repo / "spec_tests", ignore=shutil.ignore_patterns("__pycache__"))
         roots = [str(repo)] + ([str(repo / "src")] if (repo / "src").is_dir() else [])
         try:
-            proc = subprocess.run(
+            proc = run_confined(mode="scoring", role="reference_check", cmd=
                 [str(python), "-m", "pytest", str(repo / "spec_tests"), "-q", "-p", "no:cacheprovider",
                  "-o", "addopts=", "--continue-on-collection-errors", "-rfE", "--timeout=120"],
                 cwd=repo, capture_output=True, text=True, timeout=1200,

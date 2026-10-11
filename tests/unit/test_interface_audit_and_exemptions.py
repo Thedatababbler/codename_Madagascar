@@ -257,10 +257,19 @@ def test_without_package_dirs_blocks_bundled_wheels(tmp_path):
     assert str(root / "share" / "doc") in out and str(root / "lib" / "python3.11" / "ensurepip" / "__init__.py") in out
 
 
-def test_enforced_follows_config_when_env_unset(monkeypatch):
-    monkeypatch.delenv(SB.ENFORCED_ENV, raising=False)
-    assert SB.enforced() == bool(SB.load_config()["sandbox"].get("enforced"))
-    monkeypatch.setenv(SB.ENFORCED_ENV, "0")
-    assert SB.enforced() is False
-    monkeypatch.setenv(SB.ENFORCED_ENV, "1")
-    assert SB.enforced() is True
+def test_enforced_cannot_be_turned_off(monkeypatch):
+    monkeypatch.delenv(SB.TEST_UNCONFINED_ENV, raising=False)
+    for flag in (None, "0", "false", "1"):
+        if flag is None:
+            monkeypatch.delenv(SB.ENFORCED_ENV, raising=False)
+        else:
+            monkeypatch.setenv(SB.ENFORCED_ENV, flag)
+        assert SB.enforced() is True
+    monkeypatch.setattr(SB, "load_config", lambda *a, **k: {"sandbox": {"enforced": False}})
+    with pytest.raises(SB.SandboxRequiredError):
+        SB.enforced()
+
+
+def test_experiment_config_cannot_turn_the_sandbox_off():
+    with pytest.raises(SB.SandboxRequiredError):
+        SB.load_config({"sandbox": {"enforced": False}})

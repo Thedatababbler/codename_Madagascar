@@ -127,6 +127,12 @@ class OfficialLCBProcessRunner:
                 os.chmod(tmp, 0o700)
                 os.chown(request_path, nobody.pw_uid, nobody.pw_gid)
                 os.chmod(request_path, 0o400)
+            # sandbox-only rule (2026-10-11): this executor cannot start through the Landlock launcher (the worker
+            # imports AdaMAS itself), so model-written code is refused here outside the test suite's exemption
+            from orchestra.sandbox.policy import SandboxRequiredError, enforced
+
+            if enforced():
+                raise SandboxRequiredError("lcb_official.py: executes model-written code outside the sandbox launcher; refused")
             process = await asyncio.create_subprocess_exec(
                 sys.executable,
                 "-m",

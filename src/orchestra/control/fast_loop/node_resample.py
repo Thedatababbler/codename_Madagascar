@@ -123,7 +123,8 @@ def traceback_frames(repo: Path, failures: list[str], python: str, timeout: int 
     from orchestra.sandbox.policy import confine_command
 
     cmd, env, _private = confine_command([python, "-m", "pytest", "-q", "--no-header", "-p", "no:cacheprovider", "-o", "addopts=",
-                                          "--tb=short", "-rN", *node_ids], cwd=repo, env=env)
+                                          "--tb=short", "-rN", f"--rootdir={holder}", f"--confcutdir={holder}",
+                                          *node_ids], cwd=repo, env=env)   # rooted beside the repo: see repair_evidence
     try:
         proc = subprocess.run(cmd, cwd=str(repo), env=env, capture_output=True, text=True, timeout=timeout)
         out = proc.stdout

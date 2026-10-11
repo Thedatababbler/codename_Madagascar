@@ -496,12 +496,10 @@ def _start_sandbox(config: dict[str, Any], *, run_dir: Path, harness_dir: Path, 
     """
     from orchestra.sandbox import policy as SB
 
-    cfg = SB.load_config(config)
-    on = bool((cfg.get("sandbox") or {}).get("enforced"))
-    os.environ[SB.ENFORCED_ENV] = "1" if on else "0"
-    if not on:
-        os.environ.pop(SB.VENV_ENV, None)
-        return False
+    from orchestra.sandbox.guard import require_sandbox
+
+    SB.load_config(config)          # raises when the experiment tries to turn the sandbox off
+    require_sandbox(f"run {task_id}")
     from orchestra.sandbox.venv_check import check as venv_check
 
     # the after-the-fact audit (second line of defence) reads the captured prompts and turn items
@@ -1074,6 +1072,16 @@ async def _run_one(
         sa = sandbox_audit(run_dir)
         write_manifest(run_dir, {"kind": "audit", **sa})
         summary["sandbox_audit"] = {"commands": sa["commands"], "findings": len(sa["findings"]), "ok": sa["ok"]}
+        # breach log (2026-10-11): every event to <run>/sandbox_breach.log and outputs/sandbox/breach_index.jsonl;
+        # a CRITICAL event voids the run (outputs/sandbox/void_runs.jsonl), 5+ WARNINGs ask for manual review
+        from orchestra.sandbox.breach import scan_run
+
+        bs = scan_run(run_dir, run_id=f"{run_dir.parent.name}/{run_dir.name}")
+        summary["sandbox_breach"] = {k: v for k, v in bs.items() if k != "critical_events"} | {
+            "critical_events": [{k: e[k] for k in ("role", "event", "target", "command")} for e in bs["critical_events"]]}
+        if bs["void"]:
+            summary["sandbox_void"] = True
+            print(f"SANDBOX VOID: {bs['critical']} CRITICAL event(s); this run's results count nowhere", flush=True)
     _write_json(run_dir / "summary.json", summary)
     _write_trace_md(run_dir=run_dir, plan=plan, state=state, summary=summary)
     try:

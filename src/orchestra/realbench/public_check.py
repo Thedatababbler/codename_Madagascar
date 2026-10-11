@@ -210,18 +210,23 @@ def _run_pytest(cwd, target, *, timeout, import_root=None):
         "addopts=",
         "--continue-on-collection-errors",
         "-rfE",
+        # sandboxed: pytest roots itself at the common ancestor of cwd and the suite and lists it, which the
+        # policy does not allow; root it at the suite itself
+        f"--rootdir={Path(target).resolve()}",
+        f"--confcutdir={Path(target).resolve()}",
         str(target),
     ]
     try:
-        proc = subprocess.run(
-            command,
-            cwd=str(cwd),
-            env=env,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
+        # sandbox-only rule (2026-10-11): agent-written code runs confined
+        from orchestra.sandbox.guard import run_confined
+        from orchestra.sandbox.policy import enforced
+
+        if enforced():
+            proc = run_confined(command, cwd=cwd, env=env, role="realbench_public_check", capture_output=True, text=True,
+                                timeout=timeout, check=False)
+        else:
+            proc = subprocess.run(command, cwd=str(cwd), env=env, capture_output=True, text=True, timeout=timeout,
+                                  check=False)
     except subprocess.TimeoutExpired:
         return 0, 0, 0, "timed out", set()
     passed, total, ran = _pytest_counts(proc.stdout)

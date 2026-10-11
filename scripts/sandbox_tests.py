@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from orchestra.sandbox import policy as SB  # noqa: E402
+from orchestra.sandbox.policy import BLOCKED_DIR_NAMES  # noqa: E402
 
 OUT = ROOT / "outputs" / "sandbox"
 CPE = Path("/root/codex-benchmarks/projectgen/datasets/CodeProjectEval/python-subset")
@@ -100,6 +101,13 @@ def s1() -> dict:
                                            "/.uv/python_install/cpython-3.11.15-linux-x86_64-gnu/lib/python3.11/site-packages/x.py"),
         "other_venv_jwt": "/venv/mas/lib/python3.11/site-packages/jwt/__init__.py",
     }
+    # the explicit deny list (2026-10-11): every listed directory, and a file inside it when there is one
+    for d in SB.explicit_deny_paths():
+        key = "deny:" + d
+        forbidden[key] = d
+        f = next((str(x) for x in Path(d).rglob("*.py")), None) if Path(d).is_dir() else None
+        if f:
+            forbidden[key + ":file"] = f
     ws, priv, td = fresh()
     allowed = {"workspace_file": str(ws / "hello.py"), "task_venv": str(VENV / "bin"), "usr_bin": "/usr/bin",
                "task_venv_site_packages": str(next((VENV / "lib").glob("python3*/site-packages"))),
@@ -122,9 +130,16 @@ def s1() -> dict:
     leaky = [ln for ln in found if any(k in ln for k in ("/memory/", "python-subset", "cpe_format", "/outputs/", "/configs/",
                                                           ".codex", "spec_tests"))]
     td.cleanup()
-    ok = all(res.get(k) in ("EACCES", "ENOENT", "EPERM") for k in forbidden) and all(res.get(k) == "READ" for k in allowed) \
+    # a denied package directory under an interpreter's stdlib tree stays listable (names only): Landlock grants
+    # readdir on the stdlib directory for the whole hierarchy below it, and Python cannot import without it.
+    # Accepted only when a file inside it is refused.
+    names_only = sorted(k for k in forbidden if k.startswith("deny:") and not k.endswith(":file") and res.get(k) == "READ"
+                        and any(b in k for b in BLOCKED_DIR_NAMES) and res.get(k + ":file") in ("EACCES", "EPERM"))
+    ok = all(res.get(k) in ("EACCES", "ENOENT", "EPERM") or k in names_only for k in forbidden) \
+        and all(res.get(k) == "READ" for k in allowed) \
         and not leaky and "pytest_ok" in sh.stdout and ("No module named 'jwt'" in sh.stdout or "PermissionError" in sh.stdout)
-    return {"reads": res, "shell": sh.stdout.strip().splitlines(), "find_hits": found, "find_forbidden_hits": leaky, "pass": ok,
+    return {"reads": res, "names_only_dirs": names_only, "shell": sh.stdout.strip().splitlines(), "find_hits": found,
+            "find_forbidden_hits": leaky, "pass": ok,
             "note": "system / uv dist-packages and site-packages directories list their names (readdir only, so Python's import scan works); "
                     "no file in them can be read"}
 

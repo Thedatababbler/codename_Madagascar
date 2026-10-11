@@ -318,15 +318,15 @@ def _build_repository_tools(context: ToolBuildContext) -> dict[str, Any]:
                     for tok in ("API_KEY", "SECRET", "TOKEN", "PASSWORD", "CREDENTIAL")
                 ):
                     env.pop(key, None)
-            proc = subprocess.run(
-                command,
-                cwd=str(root),
-                capture_output=True,
-                text=True,
-                timeout=120,
-                env=env,
-                check=False,
-            )
+            # sandbox-only rule (2026-10-11): the check runs the workspace's code, so it runs confined
+            from orchestra.sandbox.guard import run_confined
+            from orchestra.sandbox.policy import enforced
+
+            if enforced():
+                proc = run_confined(command, cwd=root, env=env, role="public_check_tool", capture_output=True, text=True,
+                                    timeout=120, check=False)
+            else:
+                proc = subprocess.run(command, cwd=str(root), capture_output=True, text=True, timeout=120, env=env, check=False)
             stdout = (proc.stdout or "")[-2000:]
             stderr = (proc.stderr or "")[-2000:]
             return (

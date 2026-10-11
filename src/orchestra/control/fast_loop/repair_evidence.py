@@ -215,6 +215,9 @@ def _build(repo: Path, failures: list[str], *, env_python: str | None, timeout: 
     command = [
         python, "-m", "pytest", "-q", "--no-header", "-p", "no:cacheprovider",
         "-o", "addopts=", "--continue-on-collection-errors", "-rfE", "--tb=short",
+        # rooted at the evidence directory: pytest otherwise roots at the common ancestor of the repository and the
+        # evidence and lists it, which the sandbox refuses ("ERROR collecting ." in every evidence run since 10-11)
+        f"--rootdir={evidence}", f"--confcutdir={evidence}",
         *_timeout_flags(python), *node_ids,
     ]
     env = dict(os.environ)
@@ -223,6 +226,7 @@ def _build(repo: Path, failures: list[str], *, env_python: str | None, timeout: 
     )
     from orchestra.sandbox.policy import confine_command
 
+    inner = list(command)          # what the repairer runs itself (inside its own sandbox): no launcher prefix
     command, env, _private = confine_command(command, cwd=repo, env=env)
     try:
         proc = subprocess.run(
@@ -232,7 +236,7 @@ def _build(repo: Path, failures: list[str], *, env_python: str | None, timeout: 
         output = (proc.stdout or "") + (("\n[stderr]\n" + proc.stderr) if proc.stderr else "")
     except subprocess.TimeoutExpired:
         output = f"(the evidence run did not finish inside {timeout}s)"
-    shown = " ".join(command[1:])
+    shown = " ".join(inner[1:])
     listed = "\n".join(f"- `{n}`" for n in node_ids)
     (evidence / "README.md").write_text(
         "# Repair evidence\n\n"

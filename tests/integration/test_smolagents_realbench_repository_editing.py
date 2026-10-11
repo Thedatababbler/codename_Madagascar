@@ -37,6 +37,11 @@ from orchestra.schemas.artifacts import ProblemArtifact, RepositoryChangeArtifac
 from orchestra.storage.artifacts import FileArtifactStore
 from orchestra.storage.events import AppendOnlyEventWriter
 
+# sandbox-only rule (2026-10-11): these tests start a real smolagents CodeAgent worker, which executes model-written
+# code in a process the sandbox launcher cannot confine; the backend refuses it (tests/unit/test_sandbox_only_rule.py)
+pytestmark = pytest.mark.skip(reason="smolagents_code is refused by the sandbox-only rule")
+
+
 CONTRACTS = "configs/contracts"
 
 

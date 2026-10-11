@@ -54,6 +54,12 @@ class DockerSandbox(CodeSandbox):
     async def _run(
         self, workdir: str, stdin: str, *command: str, timeout_seconds: float
     ):
+        # sandbox-only rule (2026-10-11): this executor cannot start through the Landlock launcher (the worker
+        # imports AdaMAS itself), so model-written code is refused here outside the test suite's exemption
+        from orchestra.sandbox.policy import SandboxRequiredError, enforced
+
+        if enforced():
+            raise SandboxRequiredError("docker.py: executes model-written code outside the sandbox launcher; refused")
         process = await asyncio.create_subprocess_exec(
             *self._command(workdir, *command),
             stdin=asyncio.subprocess.PIPE,

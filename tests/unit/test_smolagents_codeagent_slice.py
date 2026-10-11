@@ -256,9 +256,10 @@ def test_bbeh_evaluator_and_adapter(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_backend_healthcheck_requires_smolagents():
+async def test_backend_healthcheck_refused_by_sandbox_rule():
+    # sandbox-only rule (2026-10-11): the CodeAgent worker cannot start through the sandbox launcher
     health = await SmolagentsCodeBackend().healthcheck()
-    assert health.healthy is True
+    assert health.healthy is False and "sandbox required" in health.detail
     assert health.backend_id == "smolagents_code"
 
 

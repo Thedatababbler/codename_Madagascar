@@ -15,7 +15,9 @@ pytestmark = pytest.mark.skipif(L.abi_version() < 4, reason="needs Landlock ABI 
 
 
 @pytest.fixture(autouse=True)
-def _env():
+def _env(monkeypatch):
+    # these tests exercise the real sandbox: the test suite's exemption does not apply here
+    monkeypatch.delenv(SB.TEST_UNCONFINED_ENV, raising=False)
     old = os.environ.get(SB.ENFORCED_ENV)
     yield
     if old is None:
@@ -71,11 +73,12 @@ def test_git_dirs_of_a_worktree(tmp_path):
     assert any(d.endswith("worktrees/wt") for d in dirs) and str((main / ".git").resolve()) in dirs
 
 
-def test_confine_command_is_identity_when_off(tmp_path):
+def test_env_flag_cannot_turn_the_sandbox_off(tmp_path):
+    # sandbox-only rule (2026-10-11): ADAMAS_SANDBOX_ENFORCED=0 is ignored
     os.environ[SB.ENFORCED_ENV] = "0"
-    cmd = ["python", "-c", "print(1)"]
-    out, env, private = SB.confine_command(cmd, cwd=tmp_path, env={"A": "1"})
-    assert out == cmd and env == {"A": "1"} and private is None
+    assert SB.enforced() is True
+    out, env, private = SB.confine_command(["/usr/bin/python3", "-c", "print(1)"], cwd=tmp_path, env={"A": "1"})
+    assert out[1:4] == ["-m", "orchestra.sandbox.exec", "--policy"] and private is not None
 
 
 def test_confine_command_wraps_when_on(tmp_path):
@@ -94,8 +97,13 @@ def test_scoring_policy_keeps_files_restricts_network(tmp_path):
     assert "readable" in r.stdout and "13" in r.stdout
 
 
-def test_codex_config_unchanged_when_off():
+def test_codex_config_is_always_confined(tmp_path):
+    from types import SimpleNamespace
+
     from orchestra.backends import codex_sdk as C
 
     os.environ[SB.ENFORCED_ENV] = "0"
-    assert C._sandboxed_config(None, None, "/x") is None
+    req = SimpleNamespace(node_id="n1:implementer", request_id="r1", task_id="t")
+    cfg = C._sandboxed_config(req, SimpleNamespace(trace_dir=str(tmp_path / "trace")), str(tmp_path))
+    assert list(cfg.launch_args_override[1:4]) == ["-m", "orchestra.sandbox.exec", "--policy"]
+    assert cfg.env["LD_PRELOAD"].endswith(".so")

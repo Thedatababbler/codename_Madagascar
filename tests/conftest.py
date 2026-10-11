@@ -15,9 +15,19 @@ from orchestra.schemas.task import AgentVisibleLCBTask
 # about this codebase.
 collect_ignore_glob = ["fixtures/*"]
 
-# configs/sandbox.yaml turns the sandbox on for every run (2026-10-11). The test suite is not an agent run and
-# drives harnesses in tmp directories; it runs unconfined unless a test sets the flag itself (the sandbox tests do).
-os.environ.setdefault("ADAMAS_SANDBOX_ENFORCED", "0")
+# Sandbox-only rule (2026-10-11): the sandbox cannot be turned off. The one exemption is this test process, for
+# driver-side code that starts no agent (harness tests in tmp directories): orchestra.sandbox.policy honours
+# ADAMAS_SANDBOX_TEST_UNCONFINED only inside pytest during a test. Agent launches ignore it; tests of the sandbox
+# itself unset it.
+os.environ.setdefault("ADAMAS_SANDBOX_TEST_UNCONFINED", "1")
+
+
+@pytest.fixture(autouse=True)
+def _no_writes_to_the_real_exemption_log(tmp_path, monkeypatch):
+    """Tests never append to memory/transfer/leak_exemptions.yaml (they did until 2026-10-11)."""
+    from orchestra.memory import validate
+
+    monkeypatch.setattr(validate, "DEFAULT_EXEMPTION_LOG", tmp_path / "leak_exemptions.yaml")
 
 
 @pytest.fixture

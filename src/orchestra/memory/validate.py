@@ -240,7 +240,7 @@ DEFAULT_EXEMPTION_LOG = ROOT / "memory" / "transfer" / "leak_exemptions.yaml"
 
 
 def substring_check(texts: Mapping[str, str], *, extra_heldout: Iterable[Path] = (), tasks: Iterable[str] = (),
-                    log_path: Path | None = DEFAULT_EXEMPTION_LOG, log_context: str = "") -> dict[str, dict[str, str]]:
+                    log_path: Path | None | str = "default", log_context: str = "") -> dict[str, dict[str, str]]:
     """Run the sealed script; returns {id: {"heldout": PASS|FAIL, "verification": PASS|FAIL}}."""
     if not texts:
         return {}
@@ -257,6 +257,8 @@ def substring_check(texts: Mapping[str, str], *, extra_heldout: Iterable[Path] =
             raise RuntimeError(f"memory_leak_check failed: {proc.stderr[-500:]}")
         res = json.loads(out.read_text(encoding="utf-8"))
     exemptions = res.pop("_exemptions", [])
+    if log_path == "default":
+        log_path = DEFAULT_EXEMPTION_LOG      # resolved per call, so the test suite can redirect it
     if exemptions and log_path is not None:
         # every exemption is logged (user decision): common phrasing found in >= 3 tasks' sources
         from datetime import UTC, datetime

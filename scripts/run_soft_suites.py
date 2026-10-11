@@ -22,6 +22,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from orchestra.sandbox.guard import run_confined  # noqa: E402  (sandbox-only rule, 2026-10-11)
+
 ENV_ROOT = Path(os.environ.get("CPE_ENV_ROOT") or "/root/codex-benchmarks/cpe_envs")
 _LINE = re.compile(r"^(PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS) (\S+)")
 
@@ -30,7 +32,7 @@ def run_suite(repo: Path, suite: Path, python: Path, *, timeout: int = 900) -> d
     with tempfile.TemporaryDirectory() as tmp:
         holder = Path(tmp)
         (holder / "spec_tests").symlink_to(suite.resolve(), target_is_directory=True)
-        proc = subprocess.run(
+        proc = run_confined(mode="workspace", role="run_soft_suites", cmd=
             [str(python), "-m", "pytest", str(holder / "spec_tests"), "-q", "-rA", "--no-header", "-p", "no:cacheprovider",
              "-o", "addopts=", "--continue-on-collection-errors", "--timeout=60", "--timeout-method=signal"],
             cwd=repo, capture_output=True, text=True, timeout=timeout, check=False,

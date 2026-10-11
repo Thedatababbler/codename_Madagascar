@@ -22,6 +22,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _guard import reference_root, task_python  # noqa: E402
 from reference_check import _IGNORE  # noqa: E402
 
+from orchestra.sandbox.guard import run_confined  # noqa: E402  (sandbox-only rule, 2026-10-11)
+
 _EXC = re.compile(r"^E\s+([A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception|Exit|Interrupt|Failed|Warning))\b", re.M)
 
 
@@ -37,7 +39,7 @@ def main() -> int:
         holder = Path(tmp) / "specroot"
         holder.mkdir()
         shutil.copytree(a.suite, holder / "spec_tests", ignore=shutil.ignore_patterns("__pycache__"))
-        proc = subprocess.run(
+        proc = run_confined(mode="scoring", role="reference_failure_kinds", cmd=
             [str(python), "-m", "pytest", str(holder / "spec_tests"), "-q", "--no-header", "-p", "no:cacheprovider", "-o", "addopts=",
              "--continue-on-collection-errors", "--timeout=60", "--timeout-method=signal", "--tb=short"],
             cwd=ref, capture_output=True, text=True, timeout=900, check=False,

@@ -31,6 +31,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _guard import reference_root, task_python  # noqa: E402
 from reference_check import _IGNORE  # noqa: E402
 
+from orchestra.sandbox.guard import run_confined  # noqa: E402  (sandbox-only rule, 2026-10-11)
+
 _RES = re.compile(r"^(PASSED|FAILED|ERROR|XPASS|XFAIL|SKIPPED) (\S+)")
 _HDR = re.compile(r"^_{3,} (?:ERROR at \w+ of )?(\S+?) _{3,}$")
 _EXC = re.compile(r"^(?:E\s+)?([A-Za-z_][\w.]*(?:Error|Exception|Exit|Failed|Warning|Interrupt))\b", re.M)
@@ -70,7 +72,7 @@ def run(task: str, suite: Path) -> dict:
         paths = [str(holder), str(ref), str(ref / "src") if (ref / "src").is_dir() else "", str(tk) if tk.is_dir() else ""]
         xml = Path(tmp) / "report.xml"
         try:
-            subprocess.run(
+            run_confined(mode="scoring", role="reference_case_kinds", cmd=
                 [str(python), "-m", "pytest", str(holder / "spec_tests"), "-q", "--no-header", "-p", "no:cacheprovider",
                  "-o", "addopts=", "-o", "junit_family=xunit1", "--continue-on-collection-errors", "--timeout=60",
                  "--timeout-method=signal", "--tb=short", f"--junitxml={xml}"],

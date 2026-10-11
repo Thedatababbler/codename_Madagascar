@@ -29,6 +29,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _guard import DATASET_ROOT, ENV_ROOT, heldout_dir, reference_root  # noqa: E402
+
+from orchestra.sandbox.guard import run_confined  # noqa: E402  (sandbox-only rule, 2026-10-11)
 DATASET = DATASET_ROOT  # documents only; the reference is reached through reference_root()
 ENVS = ENV_ROOT
 
@@ -50,7 +52,7 @@ DEPTH_PATTERNS = {
 def _run_suite(repo: Path, suite: Path, py: Path) -> tuple[int, int, str]:
     holder = Path(tempfile.mkdtemp(prefix="audit_specroot_"))
     (holder / "spec_tests").symlink_to(suite.resolve(), target_is_directory=True)
-    proc = subprocess.run(
+    proc = run_confined(mode="scoring", role="audit_authored_suites", cmd=
         [str(py), "-m", "pytest", str(suite.resolve()), "-q", "-p", "no:cacheprovider",
          "-o", "addopts=", "--continue-on-collection-errors", "-rfE"],
         cwd=repo, capture_output=True, text=True, timeout=900,

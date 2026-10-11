@@ -41,6 +41,8 @@ from orchestra.backends.codex_sdk import CodexSDKBackend
 from orchestra.codeprojecteval import cpe_brief, load_task
 from orchestra.codeprojecteval.dataset import DEFAULT_ENV_ROOT, build_agent_workspace
 
+from orchestra.sandbox.guard import run_confined  # noqa: E402  (sandbox-only rule, 2026-10-11)
+
 TASK_ID = "imapclient"
 CANDIDATE_ROOT = Path("outputs/cpe_tuning/design")
 HIDDEN_PER_CANDIDATE = Path("outputs/cpe_tuning/hidden_per_candidate.json")
@@ -143,7 +145,7 @@ async def _author_suite(out_dir: Path) -> None:
 
 def _run_suite(python: Path, repo: Path) -> tuple[int, int]:
     """(passed, collected) for the authored suite inside `repo`."""
-    proc = subprocess.run(
+    proc = run_confined(mode="scoring", role="probe_spec_axis_signal", cmd=
         [
             str(python), "-m", "pytest", "spec_tests", "-q", "--no-header",
             "-p", "no:cacheprovider", "-o", "addopts=",

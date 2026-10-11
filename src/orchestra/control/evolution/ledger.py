@@ -250,17 +250,24 @@ def write_search_ledger(
     )
 
 
-def read_jsonl(path: Path) -> list[dict[str, Any]]:
+def read_jsonl(path: Path, *, include_void: bool = False) -> list[dict[str, Any]]:
+    """Records of a JSON-lines file. A record from a run voided by a CRITICAL sandbox event
+    (``orchestra.sandbox.breach``) is dropped: such a run counts in no statistic (2026-10-11)."""
     if not Path(path).is_file():
         return []
+    from orchestra.sandbox.breach import is_void
+
     out = []
     for line in Path(path).read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if line:
             try:
-                out.append(json.loads(line))
+                rec = json.loads(line)
             except ValueError:
                 continue
+            if not include_void and isinstance(rec, dict) and rec.get("run_dir") and is_void(rec["run_dir"]):
+                continue
+            out.append(rec)
     return out
 
 

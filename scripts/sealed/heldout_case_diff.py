@@ -33,6 +33,8 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _guard import DATASET_ROOT, ENV_ROOT, heldout_dir, reference_root  # noqa: E402
+
+from orchestra.sandbox.guard import run_confined  # noqa: E402  (sandbox-only rule, 2026-10-11)
 _LINE = re.compile(r"^(PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS) (\S+)")
 
 
@@ -52,7 +54,7 @@ def per_case(task_id: str, batch: Path, *, per_test_timeout: int = 30, timeout: 
         if (repo / task.unit_tests).exists():
             shutil.rmtree(repo / task.unit_tests)
         shutil.copytree(src, repo / task.unit_tests)
-        proc = subprocess.run(
+        proc = run_confined(mode="scoring", role="heldout_case_diff", cmd=
             [str(python), "-m", "pytest", task.unit_tests, "-q", "-rA", "--no-header", "-p", "no:cacheprovider", "-o", "addopts=",
              "--continue-on-collection-errors", f"--timeout={per_test_timeout}", "--timeout-method=signal"],
             cwd=repo, capture_output=True, text=True, timeout=timeout, check=False,

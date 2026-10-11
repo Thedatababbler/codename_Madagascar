@@ -24,7 +24,20 @@ import sys
 from pathlib import Path
 
 BENCH = Path("/root/codex-benchmarks/nl2repo/NL2RepoBench/test_files")
-UPSTREAM = Path("/root/codex-benchmarks/nl2repo/upstream")
+# The upstream clones (reference + upstream tests) live in the sealed directory since 2026-10-11, outside every
+# sandbox policy (orchestra.sandbox.policy.EXPLICIT_DENY): the archive is unpacked there on demand and new
+# clones go there too. Only this driver script and sealed scripts read it.
+SEALED = Path("/root/.adamas_sealed")
+UPSTREAM_ARCHIVE = SEALED / "nl2repo_upstream.tar.gz"
+UPSTREAM = SEALED / "work" / "upstream"
+
+
+def ensure_upstream() -> Path:
+    if not UPSTREAM.is_dir() and UPSTREAM_ARCHIVE.is_file():
+        UPSTREAM.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["tar", "-xzf", str(UPSTREAM_ARCHIVE), "-C", str(UPSTREAM.parent)], check=True)
+    UPSTREAM.mkdir(parents=True, exist_ok=True)
+    return UPSTREAM
 DATASET_ROOT = Path("/root/codex-benchmarks/nl2repo/cpe_format")
 ENV_ROOT = Path("/root/codex-benchmarks/nl2repo/envs")
 URLS = Path("/root/projects/AdaMAS/outputs/nl2repo/upstream_urls.json")
@@ -212,7 +225,7 @@ def main() -> int:
     # the CodeProjectEval environments carry it.
     run(["uv", "pip", "install", "-q", "--python", str(epy), "pytest", "pytest-timeout"])
     # upstream
-    up = UPSTREAM / task
+    up = ensure_upstream() / task
     if not up.exists():
         r = run(["git", "clone", "-q", url, str(up)])
         if r.returncode: print(r.stderr[-400:], file=sys.stderr); return 5
@@ -239,6 +252,17 @@ def main() -> int:
     tag, n = best
     run(["git", "checkout", "-q", "-f", tag], cwd=up)
     run(["uv", "pip", "uninstall", "-q", "--python", str(epy), task], )
+    # every editable install that points into the upstream clone leaves the env, whatever its distribution name
+    # (the task name missed pytorch-grad-cam's `grad-cam`, whose editable install stayed until 2026-10-11)
+    listed = run(["uv", "pip", "list", "--python", str(epy), "--format", "json"])
+    try:
+        pkgs = json.loads(listed.stdout or "[]")
+    except ValueError:
+        pkgs = []
+    for pkg in pkgs:
+        loc = str(pkg.get("editable_project_location") or "")
+        if loc and Path(loc).resolve().is_relative_to(UPSTREAM.resolve()):
+            run(["uv", "pip", "uninstall", "-q", "--python", str(epy), pkg["name"]])
     # The upstream suite's own extras (aiohttp for aiofiles' server tests, ...):
     # the document pins the runtime, not what the tests need.
     extras = test_extras(up)

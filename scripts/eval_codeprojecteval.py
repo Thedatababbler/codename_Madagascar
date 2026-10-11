@@ -33,6 +33,8 @@ from orchestra.codeprojecteval.dataset import (
 )
 from orchestra.codeprojecteval.suite_sizes import load_pinned_suite_sizes
 
+from orchestra.sandbox.guard import run_confined  # noqa: E402  (sandbox-only rule, 2026-10-11)
+
 # Files AdaMAS or the dataset owns; never counted as agent output.
 SKIP_NAMES = {
     ".git",
@@ -187,7 +189,7 @@ def score_task(
 
         source_present = bool(task.source_dir) and (repo / task.source_dir).exists()
         try:
-            proc = subprocess.run(
+            proc = run_confined(mode="scoring", role="eval_codeprojecteval", cmd=
                 [
                     str(python), "-m", "pytest", task.unit_tests, "-q", "--no-header",
                     "-p", "no:cacheprovider", "-o", "addopts=",

@@ -34,6 +34,8 @@ from orchestra.codeprojecteval.dataset import load_task  # noqa: E402
 from orchestra.control.evolution.ledger import read_jsonl, split_of  # noqa: E402
 from orchestra.control.evolution.tripwire import record_tripwire  # noqa: E402
 
+from orchestra.sandbox.guard import run_confined  # noqa: E402  (sandbox-only rule, 2026-10-11)
+
 
 
 def subset_pass_rate(task_id: str, workspace: Path, cases: list[str], *, timeout: int = 1800) -> float | None:
@@ -48,7 +50,7 @@ def subset_pass_rate(task_id: str, workspace: Path, cases: list[str], *, timeout
         if src.is_dir():
             shutil.copytree(src, repo / task.unit_tests, dirs_exist_ok=True)
         node_ids = [f"{task.unit_tests}/{c}" for c in cases]
-        proc = subprocess.run(
+        proc = run_confined(mode="scoring", role="heldout_tripwire_record", cmd=
             [str(python), "-m", "pytest", *node_ids, "-q", "--no-header", "-p", "no:cacheprovider", "-o", "addopts=",
              "--continue-on-collection-errors", "--timeout=30", "--timeout-method=signal"],
             cwd=repo, capture_output=True, text=True, timeout=timeout, check=False,

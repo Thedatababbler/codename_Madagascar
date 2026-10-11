@@ -96,7 +96,9 @@ def runs_of(task: str) -> list[Path]:
         for d in glob.glob(str(ROOT / p)):
             if glob.glob(d + "/tasks/*/task_execution.json"):
                 out.add(Path(d))
-    return sorted(out)
+    from orchestra.sandbox.breach import is_void
+
+    return sorted(r for r in out if not is_void(r))      # a run voided by a CRITICAL sandbox event teaches nothing
 
 
 def kind_of(cid: str, meta: dict) -> str | None:

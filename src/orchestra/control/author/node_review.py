@@ -114,6 +114,7 @@ async def run_author_review(*, review_dir: Path, request: Any, backend: Any, bac
         inventory=inventory, hard_min=hard_min, max_rounds=max_rounds, run_fix=run_fix,
         soft_dest=review_dir / mid / f"{tag}.spec_tests_soft", record_path=review_dir / mid / f"{tag}.review.json",
         interface=bool(author_cfg.get("interface_audit", False)), fake_object_audit=bool(author_cfg.get("fake_object_audit", True)),
+        fixture_check=_fixture_check(backend_context.workspace_ref, review_dir, packages) if author_cfg.get("fixture_check", True) else None,
     )
     result = state["result"]
     if state["fix_usage"]:
@@ -122,6 +123,24 @@ async def run_author_review(*, review_dir: Path, request: Any, backend: Any, bac
                "hard_total": rec.hard_total, "soft_cases": len(rec.soft_cases), "soft_dest": rec.soft_dest,
                "violations_final": len(rec.violations_final), "record": str(review_dir / mid / f"{tag}.review.json")}
     return result, summary
+
+
+def _fixture_check(workspace: str | Path, review_dir: Path, packages: list[str]):
+    """The fixture-preparation check for this author's suite, or None when the task venv is unknown."""
+    from orchestra.codeprojecteval.harness import TESTKIT_SRC
+    from orchestra.control.author.fixture_check import check
+    from orchestra.sandbox.policy import VENV_ENV
+
+    venv = (os.environ.get(VENV_ENV) or "").strip()
+    if not venv or not (Path(venv) / "bin" / "python").exists():
+        return None
+    run_tk = Path(review_dir).parent / "harness" / "testkit"
+    testkit = run_tk if (run_tk / "adamas_testkit").is_dir() else TESTKIT_SRC
+
+    def run() -> list:
+        return check(workspace, python=Path(venv) / "bin" / "python", packages=packages, testkit=testkit)[0]
+
+    return run
 
 
 __all__ = ["FIX_HEADER", "author_review_dir", "lenient_symbols", "run_author_review"]
