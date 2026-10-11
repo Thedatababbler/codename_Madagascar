@@ -26,6 +26,10 @@ class EdgeCondition(BaseModel):
             return current == self.value
         if self.operator == "not_equals":
             return current != self.value
+        if self.operator in ("greater_than", "less_than") and (current is None or self.value is None):
+            # a missing value (e.g. no behaviour stage in the gate's output) satisfies neither comparison; it used
+            # to raise TypeError and fail the whole attempt as "infra" (deprecated M1, 2026-10-11)
+            return False
         if self.operator == "greater_than":
             return current > self.value
         if self.operator == "less_than":

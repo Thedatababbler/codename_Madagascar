@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import json
 
 import asyncio
@@ -1514,6 +1516,7 @@ class ReadySubtaskScheduler:
                 context=run_context,
             )
         except Exception as exc:  # noqa: BLE001
+            logging.getLogger(__name__).exception("subtask %s attempt %s raised", subtask_id, attempt_id)
             status, reason, message = await classify_subtask_outcome(
                 result=None,
                 artifact_store=self.artifact_store,

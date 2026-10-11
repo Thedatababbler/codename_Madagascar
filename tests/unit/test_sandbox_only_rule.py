@@ -184,3 +184,23 @@ def test_nl2repo_upstream_moved():
     assert not Path("/root/codex-benchmarks/nl2repo/upstream").exists()
     archive = SB.SEALED_ARCHIVE_DIR / "nl2repo_upstream.tar.gz"
     assert archive.is_file() and (SB.SEALED_ARCHIVE_DIR / "nl2repo_upstream.tar.gz.sha256").is_file()
+
+
+def test_edge_comparison_with_missing_value_is_false():
+    from orchestra.ir.edges import EdgeCondition
+
+    cond = EdgeCondition(source_field="behaviour_failed_count", operator="greater_than", value=0)
+    assert cond.evaluate({"behaviour_failed_count": None}) is False
+    assert cond.evaluate({"behaviour_failed_count": 2}) is True
+
+
+def test_custody_collection_roots_pytest_at_the_target(tmp_path, monkeypatch):
+    # sandboxed custody collects <tmp holder>/spec_tests: pytest must be rooted where that path lives
+    src = __import__("orchestra.codeprojecteval.harness", fromlist=["x"])._check_script_source()
+    ns: dict = {"__name__": "check_script_probe", "__file__": str(tmp_path / "adamas_cpe_check.py")}
+    exec(compile(src, "adamas_cpe_check.py", "exec"), ns)
+    monkeypatch.setenv("ADAMAS_SANDBOXED", "1")
+    holder = tmp_path / "holder"
+    (holder / "spec_tests").mkdir(parents=True)
+    env = ns["_pytest_env"](tmp_path, holder, target=holder / "spec_tests")
+    assert f"--rootdir={holder}" in env["PYTEST_ADDOPTS"]

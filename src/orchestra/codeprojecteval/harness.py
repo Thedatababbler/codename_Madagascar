@@ -522,7 +522,7 @@ def _per_test_timeout_flags():
     return ["-p", "timeout", "--timeout=120", "--timeout-method=signal"]
 
 
-def _pytest_env(cwd, import_root=None):
+def _pytest_env(cwd, import_root=None, target=None):
     env = dict(os.environ)
     roots = [str(import_root or cwd)]
     if import_root is not None and str(import_root) != str(cwd):
@@ -552,8 +552,13 @@ def _pytest_env(cwd, import_root=None):
         # confined gate: pytest must not climb to an ancestor's config (the repository's pyproject) and
         # collect from there, outside what it may list; ids are matched on file name + test either way
         # the frozen suite sits in the run's harness directory (the import root only links to it)
+        # pytest walks from its rootdir down to each target and lists every directory on the way: the rootdir must
+        # contain the target as written (custody collects <tmp holder>/spec_tests, the graded run the frozen copy)
         link = Path(import_root) / "spec_tests" if import_root else None
-        rootdir = link.resolve().parent if link is not None and link.exists() else Path(cwd)
+        if target is not None:
+            rootdir = Path(target).parent
+        else:
+            rootdir = link.resolve().parent if link is not None and link.exists() else Path(cwd)
         env["PYTEST_ADDOPTS"] = (env.get("PYTEST_ADDOPTS", "") + " --rootdir=" + str(rootdir) + " --confcutdir=" + str(rootdir)).strip()
     return env
 
@@ -590,7 +595,7 @@ def _collect_only(cwd, frozen, *, project, timeout):
         ]
         try:
             proc = subprocess.run(
-                command, cwd=str(cwd), env=_pytest_env(cwd, holder),
+                command, cwd=str(cwd), env=_pytest_env(cwd, holder, target=holder / "spec_tests"),
                 capture_output=True, text=True, timeout=timeout, check=False,
             )
         except subprocess.TimeoutExpired:
