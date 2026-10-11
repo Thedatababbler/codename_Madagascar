@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import ast
 import glob
+import os
 import hashlib
 import json
 import re
@@ -89,8 +90,15 @@ def _norm_case(case: str) -> str:
     return parts[0].rsplit("/", 1)[-1] + "::" + "::".join(parts[1:])
 
 
+RUN_GLOB_ENV = "ADAMAS_TRANSFER_RUN_GLOB"
+
+
 def runs_of(task: str) -> list[Path]:
-    pats = [f"outputs/*/cpe-*-{task}/{task}", f"outputs/*/cpe-*/{task}", f"outputs/evolution/reruns/*{task}*/{task}"]
+    """The task's runs. ``ADAMAS_TRANSFER_RUN_GLOB`` (``{task}`` substituted, relative to the repository) limits the
+    channel to one batch, e.g. the sandboxed baseline, so pre-sandbox records never mix in (2026-10-11)."""
+    custom = (os.environ.get(RUN_GLOB_ENV) or "").strip()
+    pats = [custom.format(task=task)] if custom else \
+        [f"outputs/*/cpe-*-{task}/{task}", f"outputs/*/cpe-*/{task}", f"outputs/evolution/reruns/*{task}*/{task}"]
     out = set()
     for p in pats:
         for d in glob.glob(str(ROOT / p)):

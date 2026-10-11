@@ -27,7 +27,12 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--collect-only", action="store_true")
     ap.add_argument("--workers", type=int, default=6)
+    ap.add_argument("--runs-glob", default="", help="only these runs, e.g. 'outputs/cpe_sandbox_baseline/cpe-*-{task}/{task}'")
     a = ap.parse_args()
+    if a.runs_glob:
+        import os
+
+        os.environ["ADAMAS_TRANSFER_RUN_GLOB"] = a.runs_glob
     cfg = load_config()
     tr = cfg.get("transfer") or {}
     train, test = list(tr.get("train_tasks") or []), list(tr.get("test_tasks") or [])
