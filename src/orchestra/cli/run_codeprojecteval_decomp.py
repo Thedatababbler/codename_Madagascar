@@ -266,8 +266,13 @@ def build_cpe_task_plan(
             draft, docs_text=docs_text, thresholds=tuning_evolution.thr, seed=task_id,
         )
         _write_json(plan_path.parent / "first_pass_decision.json", decisions)
-    if os.environ.get("ADAMAS_MEMORY_RUN") and not blind:
-        # memory banks (memory spec §3.1): judge, recall and assembly per milestone
+    from orchestra.memory.store import load_config as _memory_config
+
+    first_pass_recall = (_memory_config().get("memory") or {}).get("first_pass_recall", True) \
+        and (os.environ.get("ADAMAS_FIRST_PASS_RECALL") or "").strip() != "0"
+    if os.environ.get("ADAMAS_MEMORY_RUN") and not blind and first_pass_recall:
+        # memory banks (memory spec §3.1): judge, recall and assembly per milestone; memory.first_pass_recall:
+        # false keeps the repair and author banks on and the first pass empty (the sandboxed baseline, 2026-10-11)
         from orchestra.memory.firstpass import apply_first_pass_memory, full_docs
 
         draft = apply_first_pass_memory(draft, docs=full_docs(task), task_id=task_id,

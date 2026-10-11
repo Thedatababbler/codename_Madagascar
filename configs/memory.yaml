@@ -3,6 +3,7 @@
 # turns the banks on for one run. With enabled: false nothing changes anywhere.
 memory:
   enabled: false
+  first_pass_recall: true     # false: repair/author banks recalled, first pass left empty (2026-10-11)
   root: memory/
   recall:
     max_pitfalls: 5

@@ -5198,3 +5198,25 @@ A run pins a read-only snapshot (`versions/v<N>`), then: judge (temperature 0, s
   - confined and unconfined gates are case-for-case identical on the seed (12/14) and on R0 (14/14);
   - 144 commands, 0 out-of-bounds, 0 canary, manifest complete.
 - **`sandbox.enforced: true`.** `enforced()` falls back to the config when the env flag is unset, and the test suite pins it to 0.
+
+## EXP-20261011-02 -- sandbox-only rule, breach log, fixture check; baseline batch prepared (branch `rsi`)
+
+**Status:** Parts 1–2 done; Part 3 prepared, waiting for approval. Report `docs/reports/sandbox_only_prep_20261011.md`. No quota used.
+
+- **Rule enforced in code (`orchestra.sandbox.guard`):**
+  - no agent start (Codex calls and healthcheck) or run of agent-written code (gate, evidence, resample, public checks, scripts) without the sandbox;
+  - the launcher verifies its own confinement and exits 126 otherwise;
+  - `enforced()` cannot be turned off (pytest-only exemption for code that starts no agent);
+  - smolagents_code, the LCB executors and the RealBench evaluator are refused;
+  - mas-baselines runners confined (uncommitted in that repo).
+- **Explicit deny list checked on every policy.** It found that `/usr/bin/python3` was granted all of `/usr`, system dist-packages included (fixed). Readdir is now only on stdlib dirs.
+- **`nl2repo/upstream`:** archived to `/root/.adamas_sealed` (sha256 de159e82…ef44) and removed.
+- **Defects found and fixed:**
+  - under the sandbox, repair evidence and the RealBench public check collected nothing (pytest rooted at a parent it may not list; root pinned);
+  - the repair-evidence README showed the launcher-wrapped command.
+- **Breach log (`orchestra.sandbox.breach`):**
+  - 9 event types; per-run log + global index; CRITICAL voids the run (ledger and transfer drop it); 5+ WARNINGs → review.
+  - **Scan of all 18 sandboxed runs so far:** 70 WARNINGs (S6 tries 1–3), 1 CRITICAL. S6 try 6's repairer ran the launcher command our README showed. **That run is void.** The gate verdict rests on the offline confined = unconfined comparison, repeated today.
+- **Fixture check** before freezing a gate suite (`pytest --setup-only` + `None` plugin fixtures). It catches A4's simplejwt suite (19 + 19); hl7 mllp shows 0.
+- **Tests no longer write** to `memory/transfer/leak_exemptions.yaml`; 12 test entries were removed from it.
+- **Baseline batch proposal:** 8 training tasks, cheapest first; about 53 points plus margin; proposed cap 60; new evolution root `outputs/evolution_sandbox`; `ADAMAS_FIRST_PASS_RECALL=0`.
