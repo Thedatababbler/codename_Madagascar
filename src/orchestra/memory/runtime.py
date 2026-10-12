@@ -170,13 +170,20 @@ class MemoryRun:
 # ---------------------------------------------------------------------- node checks
 
 
-def node_bank(*, task_id: str, role: str, expected: dict[str, Any] | None) -> str:
+def _is_test_author(role: str, node_id: str) -> bool:
+    """The contract role is a title ("Specification test author"); the node id carries the slot (test_author)."""
+    return "test_author" in str(node_id) or "test author" in str(role).lower() or role == "test_author"
+
+
+def node_bank(*, task_id: str, role: str, expected: dict[str, Any] | None, node_id: str = "") -> str:
+    # a test author belongs to the author bank wherever it runs: repair candidates (cand_feedback probes)
+    # re-run the whole milestone graph, author included (cross_bank false positive, 2026-10-12)
+    if _is_test_author(role, node_id):
+        return "author"
     if "__candidate__" in task_id:
         return "repair"
     if expected:
         return str(expected.get("bank"))
-    if role == "test_author":
-        return "author"
     return "first_pass"
 
 
@@ -191,7 +198,7 @@ def before_send(run: MemoryRun, *, node_id: str, contract_id: str, task_id: str,
         missing = [t for t in expected.get("tags") or [] if t not in tags]
         if missing:
             run.violation("tag_missing", f"recalled entries not in the backend prompt: {missing}", **ctx)
-    bank = node_bank(task_id=task_id, role=role, expected=expected)
+    bank = node_bank(task_id=task_id, role=role, expected=expected, node_id=node_id)
     foreign = [t for t in tags if run.bank_of(t) not in (bank, None)]
     unknown = [t for t in tags if run.bank_of(t) is None]
     if foreign:

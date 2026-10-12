@@ -204,3 +204,13 @@ def test_custody_collection_roots_pytest_at_the_target(tmp_path, monkeypatch):
     (holder / "spec_tests").mkdir(parents=True)
     env = ns["_pytest_env"](tmp_path, holder, target=holder / "spec_tests")
     assert f"--rootdir={holder}" in env["PYTEST_ADDOPTS"]
+
+
+def test_author_node_in_a_repair_candidate_is_author_bank():
+    from orchestra.memory.runtime import node_bank
+
+    assert node_bank(task_id="rb_x__m1__candidate__cand_feedback", role="Specification test author", expected=None,
+                     node_id="agent_1_test_author_test_author") == "author"
+    assert node_bank(task_id="rb_x__m1__candidate__cand_R0", role="Gate repairer", expected=None,
+                     node_id="agent_1_improver_gate_repairer") == "repair"
+    assert node_bank(task_id="rb_x__subtask__m1", role="Builder", expected=None, node_id="agent_2_builder_implementer") == "first_pass"
