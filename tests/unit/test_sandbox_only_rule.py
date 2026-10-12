@@ -214,3 +214,14 @@ def test_author_node_in_a_repair_candidate_is_author_bank():
     assert node_bank(task_id="rb_x__m1__candidate__cand_R0", role="Gate repairer", expected=None,
                      node_id="agent_1_improver_gate_repairer") == "repair"
     assert node_bank(task_id="rb_x__subtask__m1", role="Builder", expected=None, node_id="agent_2_builder_implementer") == "first_pass"
+
+
+def test_strip_first_pass_keeps_ack_when_author_rules_remain():
+    from orchestra.memory.assemble import ACK_REQUIREMENT, rules_block, strip_first_pass
+
+    sys_msg = "You write tests.\n\n" + rules_block([{"rule_id": "AU-R-101", "rule": "use the testkit"}])
+    msgs = [{"role": "system", "content": sys_msg}, {"role": "user", "content": "Do it.\n\n" + ACK_REQUIREMENT}]
+    out = strip_first_pass(msgs)
+    assert "AU-R-101" in out[0]["content"] and ACK_REQUIREMENT in out[1]["content"]
+    plain = strip_first_pass([{"role": "system", "content": "Build."}, {"role": "user", "content": "Go.\n\n" + ACK_REQUIREMENT}])
+    assert ACK_REQUIREMENT not in plain[1]["content"]

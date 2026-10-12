@@ -76,8 +76,12 @@ def strip_first_pass(messages: list[dict]) -> list[dict]:
             cut = [c for c in cut if c >= 0 and TAG_RE.search(text[c:])]
             if cut:
                 text = text[: min(cut)]
-        text = text.replace("\n\n" + ACK_REQUIREMENT, "")
         out[i]["content"] = text
+    # the acknowledgement line goes only when no memory entry is left: a test author re-run inside a candidate keeps
+    # its author-bank rules, and with them the duty to acknowledge them (2026-10-12, bplustree cand_feedback)
+    if not any(TAG_RE.search(str(m.get("content") or "")) for m in out[:2]):
+        for m in out[:2]:
+            m["content"] = str(m.get("content") or "").replace("\n\n" + ACK_REQUIREMENT, "")
     return out
 
 
