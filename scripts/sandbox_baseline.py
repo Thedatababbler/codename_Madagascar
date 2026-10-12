@@ -160,7 +160,7 @@ def run_task(task: str, spend, cap: float) -> dict:
     return rec
 
 
-def run(cap: float) -> dict:
+def run(cap: float, skip: tuple[str, ...] = ()) -> dict:
     from quota_spend import Spend
     from orchestra.sandbox.guard import require_sandbox
 
@@ -169,6 +169,8 @@ def run(cap: float) -> dict:
     spend = Spend(float(st.get("spend", {}).get("used") or 0.0))
     done_est = done_used = 0.0
     for i, (task, est) in enumerate(TASKS):
+        if task in skip:
+            continue
         if task in st["tasks"] and not st["tasks"][task].get("stop"):
             done_est += est
             done_used += st["tasks"][task].get("points_total") or 0
@@ -206,8 +208,9 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("what", choices=["run", "status"])
     ap.add_argument("--cap", type=float, default=60.0)
+    ap.add_argument("--skip", nargs="*", default=[], help="tasks left for later (e.g. waiting for a decision)")
     a = ap.parse_args()
-    st = run(a.cap) if a.what == "run" else _state()
+    st = run(a.cap, tuple(a.skip)) if a.what == "run" else _state()
     print(json.dumps(st, indent=1, default=str))
     return 0
 

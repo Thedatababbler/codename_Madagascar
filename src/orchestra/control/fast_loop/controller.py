@@ -2476,6 +2476,9 @@ class FastLoopController:
         if blame.position not in ("first", "last") or not blame.node_id:
             fl_state.notes.append("node_resample: declined (v1 handles first/last editing node only)")
             return None
+        # the incumbent's node outputs: the frozen prefix the resampled suffix starts from (the definition was lost in
+        # the v2 refactor, so this branch raised NameError; bplustree M2 in the sandboxed baseline, 2026-10-12)
+        outputs = getattr(getattr(graph_result, "state", None), "node_outputs", None) or {}
         try:
             suffix, injected, dropped = nr.suffix_graph(base_graph, blame.node_id, outputs)
         except ValueError as exc:
