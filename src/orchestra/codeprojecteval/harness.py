@@ -1265,6 +1265,10 @@ def main() -> int:
         # Name the failures, so this stage can serve as the behavioural axis on a
         # milestone that authored no suite of its own.
         "-rfE",
+        # sandboxed: pytest would climb to the repository's own pyproject.toml (an ancestor config the policy lets it
+        # read) and root itself at /root/projects/AdaMAS, which it may not list ("ERROR collecting ."; csvs-to-sqlite
+        # cli_full_integration, 2026-10-12): root it at the workspace
+        *(["--rootdir=" + str(root), "--confcutdir=" + str(root)] if os.environ.get("ADAMAS_SANDBOXED") else []),
         *selection,
     ]
     try:

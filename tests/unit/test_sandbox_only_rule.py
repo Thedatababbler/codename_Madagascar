@@ -225,3 +225,11 @@ def test_strip_first_pass_keeps_ack_when_author_rules_remain():
     assert "AU-R-101" in out[0]["content"] and ACK_REQUIREMENT in out[1]["content"]
     plain = strip_first_pass([{"role": "system", "content": "Build."}, {"role": "user", "content": "Go.\n\n" + ACK_REQUIREMENT}])
     assert ACK_REQUIREMENT not in plain[1]["content"]
+
+
+def test_check_tests_stage_pins_pytest_root_when_sandboxed():
+    # the visible check_tests stage climbed to the repository's pyproject.toml and listed /root/projects/AdaMAS
+    src = __import__("orchestra.codeprojecteval.harness", fromlist=["x"])._check_script_source()
+    stage = src[src.index('selection = [t for t in args.tests.split(",")'):]
+    stage = stage[: stage.index("proc = subprocess.run(")]
+    assert '"--rootdir=" + str(root)' in stage and 'os.environ.get("ADAMAS_SANDBOXED")' in stage
