@@ -70,6 +70,50 @@ def _watch(proc: subprocess.Popen, spend, cap: float) -> str:
     return ""
 
 
+PROXY_ERRORS = ("auth_unavailable", "usage_limit_reached", "cooling down", "invalid_prompt")
+
+
+def proxy_ready() -> str:
+    """'' when the model answers a small request, else why not (2026-10-12: a tripped proxy failed a task in a minute)."""
+    import urllib.error
+    import urllib.request
+
+    from orchestra.settings import load_env_file
+
+    load_env_file(ROOT / ".env")
+    base = (os.environ.get("OPENAI_BASE_URL") or "").rstrip("/")
+    body = json.dumps({"model": os.environ.get("CODEX_MODEL") or "gpt-5.5", "input": "Reply with ok.", "max_output_tokens": 16})
+    req = urllib.request.Request(base + "/responses", data=body.encode(), headers={
+        "Authorization": f"Bearer {os.environ.get('OPENAI_API_KEY', '')}", "Content-Type": "application/json"})
+    try:
+        urllib.request.urlopen(req, timeout=120).read()
+        return ""
+    except urllib.error.HTTPError as exc:
+        return f"HTTP {exc.code}: {exc.read()[:200]!r}"
+    except Exception as exc:  # noqa: BLE001
+        return f"{type(exc).__name__}: {exc}"
+
+
+DISCARD = ROOT / "outputs" / "cpe_sandbox_baseline_discarded_20261011"
+
+
+def _discard(batch: Path, why: str) -> None:
+    """A run cut off by the channel or the cap leaves the batch (and the new ledger) so nothing counts it."""
+    import shutil
+
+    DISCARD.mkdir(parents=True, exist_ok=True)
+    for p in (batch, batch.with_name(batch.name + ".log")):
+        if p.exists():
+            shutil.move(str(p), str(DISCARD / p.name))
+    for f in EVOLUTION_ROOT.rglob("*.jsonl"):
+        lines = f.read_text().splitlines()
+        keep = [ln for ln in lines if batch.name not in ln]
+        if len(keep) != len(lines):
+            f.write_text("\n".join(keep) + ("\n" if keep else ""))
+    with (DISCARD / "README.md").open("a") as fh:
+        fh.write(f"\n- {batch.name}: discarded by the driver ({why})\n")
+
+
 def run_task(task: str, spend, cap: float) -> dict:
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     batch = OUT / f"cpe-{stamp}-{task}"
@@ -84,7 +128,13 @@ def run_task(task: str, spend, cap: float) -> dict:
     rec["stop"] = _watch(proc, spend, cap)
     rec["returncode"] = proc.returncode
     rec["points_run"] = round(spend.poll() - rec["points_before"], 2)
+    if not rec["stop"] and proc.returncode != 0:
+        text = log.read_text(errors="replace")
+        hit = next((e for e in PROXY_ERRORS if e in text), "")
+        if hit:
+            rec["stop"] = f"model channel failed during the run ({hit}); the task will be re-run when it is back"
     if rec["stop"]:
+        _discard(batch, rec["stop"])
         return rec
     # held-out scoring (confined, sealed reads); no model call
     ev = subprocess.run([str(ROOT / ".venv" / "bin" / "python"), str(ROOT / "scripts" / "eval_codeprojecteval.py"), str(batch)],
@@ -125,6 +175,10 @@ def run(cap: float) -> dict:
             continue
         if spend.poll() >= cap:
             st["stop"] = f"budget cap {cap} reached before {task}"
+            break
+        why = proxy_ready()
+        if why:
+            st["stop"] = f"model channel not ready before {task}: {why}"
             break
         rec = run_task(task, spend, cap)
         st["tasks"][task] = rec
