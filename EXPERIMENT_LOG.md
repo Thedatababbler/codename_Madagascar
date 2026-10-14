@@ -5220,3 +5220,23 @@ A run pins a read-only snapshot (`versions/v<N>`), then: judge (temperature 0, s
 - **Fixture check** before freezing a gate suite (`pytest --setup-only` + `None` plugin fixtures). It catches A4's simplejwt suite (19 + 19); hl7 mllp shows 0.
 - **Tests no longer write** to `memory/transfer/leak_exemptions.yaml`; 12 test entries were removed from it.
 - **Baseline batch proposal:** 8 training tasks, cheapest first; about 53 points plus margin; proposed cap 60; new evolution root `outputs/evolution_sandbox`; `ADAMAS_FIRST_PASS_RECALL=0`.
+
+## EXP-20261014-01 -- clean baseline: per-case comparison and repair statistics (memory replay, branch `rsi`)
+
+**Status:** done. Report `docs/reports/clean_baseline_comparison_20261014.md`. No agent started, no quota used. Held out read only by `scripts/sealed/clean_baseline_cases.py` (case id, pass/fail, milestone, failure category).
+
+- **Batch (EXP-20261011-03, 7 tasks, 46 of 60 points, 0 CRITICAL):** deprecated 0.585, csvs 0.80, rsa 0.71, simplejwt 0.623, voluptuous 0.565, zxcvbn 0.516 (observed), hl7 0.54. bplustree skipped pending a decision.
+- **Repair (new vs 10-01/02):** gate cases 371 vs 562; R0 8 runs / 1 committed / 3 cases fixed (2 fail on the reference) vs 4 / 2 / 7 (4); rows 10 / 2 vs 4 / 1; resample 1 / 1 vs 2 / 0. Genuine fixes: 4 hl7 cases (1 by R0 + row, 3 by node resample).
+- **Correction:** R0 and rows did win in the batch (csvs row, rsa R0, hl7 row + resample). The hl7 transfer wrote 3 FP-DOC-EXC facts (memory v6), not 0.
+- **Defects found, not fixed:**
+  - every `cand_v2:*` row's repair evidence collected nothing, because the colon splits PYTHONPATH and the sandbox doesn't grant the dir;
+  - in 5 of 8 R0 runs, the gate's persistent failures pass when re-run alone.
+- **Decline causes:**
+
+  | task | conclusion | evidence |
+  |---|---|---|
+  | rsa | normal variation; the 10-01/02 0.82 is the high run; gate 22 → 6 | strong |
+  | voluptuous | first-pass errors in utilities_and_humanize that repair did not fix | medium |
+  | zxcvbn | soft split shrank the scoring gate from 49 to 1 | strong |
+
+  No evidence of sandbox interception, a pytest config change or contamination. Old /tmp/cpe_probe_repos exposure cannot be excluded.
