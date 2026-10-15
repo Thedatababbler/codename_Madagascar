@@ -87,3 +87,64 @@
   origin: transfer:2026-10-09
   pitfall_id: P-0004
   memory_version_added: 2
+- category_id: FP-DOC-EXC
+  symptom: A stream parser encountering malformed protocol framing or an over-size message failed to raise the exact documented exception types for those failure modes.
+  cause: The implementation treated parsing failures generically instead of mapping each documented error condition to its specified exception contract.
+  lesson: 'When documentation names concrete exception behavior for protocol framing errors and size-limit violations, implementers should encode those distinctions explicitly: malformed framing must surface the documented framing exception, while exceeding the configured block limit must surface the documented size-limit exception, rather than a nearby parser, EOF, or generic error.'
+  applies_when:
+    domain_tags:
+    - network_protocol
+    position:
+    - middle
+  evidence:
+    source_records:
+    - R-afac40c4fb
+    fixes_observed: 1
+    milestones_observed: 1
+  state: trial
+  single_source: true
+  origin: transfer:2026-10-12
+  source_batch: outputs/cpe_sandbox_baseline/cpe-20261012T165502Z-python-hl7 (sandbox baseline EXP-20261011-03, mllp_transport node resample)
+  pitfall_id: P-0005
+  memory_version_added: 6
+- category_id: FP-DOC-EXC
+  symptom: A stream-reading operation reached end-of-input while waiting for a required message terminator, but did not raise the specific exception promised by the documentation.
+  cause: The implementation treated premature EOF as a generic empty read, partial result, or normal termination path instead of mapping the documented incomplete-separator condition to the documented exception type.
+  lesson: When documentation names a concrete exception for EOF before a complete protocol separator, implement the delimiter-scanning logic so that any EOF with unmatched buffered data or a partially matched separator raises exactly that exception, not a nearby generic error or a silent return.
+  applies_when:
+    domain_tags:
+    - network_protocol
+    position:
+    - middle
+  evidence:
+    source_records:
+    - R-d81db9f69a
+    fixes_observed: 1
+    milestones_observed: 1
+  state: trial
+  single_source: true
+  origin: transfer:2026-10-12
+  source_batch: outputs/cpe_sandbox_baseline/cpe-20261012T165502Z-python-hl7 (sandbox baseline EXP-20261011-03, mllp_transport node resample)
+  pitfall_id: P-0006
+  memory_version_added: 6
+- category_id: FP-DOC-EXC
+  symptom: When a framed binary message contained a payload longer than the configured maximum, the read operation did not raise the documented exception type for an exceeded limit.
+  cause: The implementation treated the size violation as a lower-level parsing or buffering condition instead of translating it into the specific exception promised by the public contract.
+  lesson: When documentation names a concrete exception for a limit violation, enforce the limit at the documented boundary and raise exactly that exception type, even if underlying stream or parser utilities would naturally raise a different error.
+  applies_when:
+    domain_tags:
+    - network_protocol
+    - data_validation
+    position:
+    - middle
+  evidence:
+    source_records:
+    - R-949c1ece54
+    fixes_observed: 1
+    milestones_observed: 1
+  state: trial
+  single_source: true
+  origin: transfer:2026-10-12
+  source_batch: outputs/cpe_sandbox_baseline/cpe-20261012T165502Z-python-hl7 (sandbox baseline EXP-20261011-03, mllp_transport node resample)
+  pitfall_id: P-0007
+  memory_version_added: 6

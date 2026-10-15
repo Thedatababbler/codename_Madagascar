@@ -528,3 +528,168 @@
   case: test_template_source_resolution.py::test_unzip_extracts_local_zip_archive_to_template_directory
   note: gate case fails on the reference implementation (removed from the gate)
   date: '2026-10-11'
+- task: bplustree
+  suite: node_hierarchy.spec_tests
+  case: test_node_hierarchy_spec.py::test_default_order_internal_node_stores_references_for_each_serializer_and_order
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: bplustree
+  suite: node_hierarchy.spec_tests
+  case: test_node_hierarchy_spec.py::test_default_order_leaf_node_stores_records_for_each_serializer_and_order
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: bplustree
+  suite: node_hierarchy.spec_tests
+  case: test_node_hierarchy_spec.py::test_leaf_node_capacity_boundaries_are_based_on_documented_order
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: djangorestframework-simplejwt
+  suite: request_authentication.spec_tests
+  case: test_request_authentication_spec.py::test_default_user_authentication_rule_respects_user_presence_and_active_setting
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: djangorestframework-simplejwt
+  suite: request_authentication.spec_tests
+  case: test_request_authentication_spec.py::test_get_raw_token_returns_none_for_missing_or_improperly_formatted_headers
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: djangorestframework-simplejwt
+  suite: request_authentication.spec_tests
+  case: test_request_authentication_spec.py::test_outstanding_token_queries_are_ordered_by_user_by_default
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: djangorestframework-simplejwt
+  suite: request_authentication.spec_tests
+  case: test_request_authentication_spec.py::test_outstanding_token_string_uses_documented_format
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: voluptuous
+  suite: errors_markers_contracts.spec_tests
+  case: test_schema_builder_contracts.py::test_remove_call_returns_shared_remove_sentinel_not_the_input_value
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: voluptuous
+  suite: errors_markers_contracts.spec_tests
+  case: test_schema_builder_contracts.py::test_remove_voluptuous_compile_compiles_underlying_key_schema
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: voluptuous
+  suite: errors_markers_contracts.spec_tests
+  case: test_schema_builder_contracts.py::test_undefined_is_falsey_and_reprs_as_ellipsis
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: voluptuous
+  suite: schema_compiler_core.spec_tests
+  case: test_schema_compiler_core.py::test_default_factory_and_undefined_protocols
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: voluptuous
+  suite: schema_compiler_core.spec_tests
+  case: test_schema_compiler_core.py::test_dict_schema_validates_required_optional_defaults_and_nested_error_paths
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: voluptuous
+  suite: schema_compiler_core.spec_tests
+  case: test_schema_compiler_core.py::test_remove_marker_call_returns_remove_sentinel
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: voluptuous
+  suite: schema_compiler_core.spec_tests
+  case: test_schema_compiler_core.py::test_remove_marker_strips_documented_keys_and_extra_matches_wildcard_keys
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: voluptuous
+  suite: schema_compiler_core.spec_tests
+  case: test_schema_compiler_core.py::test_schema_repr_includes_schema_and_configuration_settings
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: voluptuous
+  suite: schema_compiler_core.spec_tests
+  case: test_schema_compiler_core.py::test_self_token_supports_recursive_schema_and_direct_call_raises_schema_error
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: voluptuous
+  suite: utilities_and_humanize.spec_tests
+  case: test_utilities_and_humanize.py::test_all_passes_each_validator_result_to_next_and_raises_allinvalid
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: voluptuous
+  suite: utilities_and_humanize.spec_tests
+  case: test_utilities_and_humanize.py::test_any_returns_first_passing_validator_value_and_raises_if_none_pass
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: voluptuous
+  suite: utilities_and_humanize.spec_tests
+  case: test_utilities_and_humanize.py::test_default_to_repr_shows_default_value
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: voluptuous
+  suite: utilities_and_humanize.spec_tests
+  case: test_utilities_and_humanize.py::test_fqdn_url_accepts_url_with_domain_dot
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: voluptuous
+  suite: utilities_and_humanize.spec_tests
+  case: test_utilities_and_humanize.py::test_schema_repr_includes_schema_and_configuration_settings
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: voluptuous
+  suite: utilities_and_humanize.spec_tests
+  case: test_utilities_and_humanize.py::test_union_uses_discriminant_selected_validators
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: voluptuous
+  suite: utilities_and_humanize.spec_tests
+  case: test_utilities_and_humanize.py::test_validate_with_humanized_errors_returns_valid_data_and_raises_contextual_error
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: voluptuous
+  suite: public_api_integration.spec_tests
+  case: test_public_api_integration.py::test_coerce_truth_and_composite_validators_follow_documented_execution_rules
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: voluptuous
+  suite: public_api_integration.spec_tests
+  case: test_public_api_integration.py::test_humanize_validation_reports_context_for_nested_public_schema_errors
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: voluptuous
+  suite: public_api_integration.spec_tests
+  case: test_public_api_integration.py::test_package_root_reexports_documented_public_symbols_from_owning_modules
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: voluptuous
+  suite: public_api_integration.spec_tests
+  case: test_public_api_integration.py::test_required_validator_library_behaviours_and_error_paths_from_root
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: voluptuous
+  suite: public_api_integration.spec_tests
+  case: test_public_api_integration.py::test_utilities_undefined_self_default_factory_raises_truth_and_validate_are_public
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: zxcvbn
+  suite: feedback_and_public_estimator.spec_tests
+  case: test_feedback_and_public_estimator.py::test_omnimatch_runs_all_matchers_and_returns_sorted_patterns
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: zxcvbn
+  suite: cli_packaging_and_full_integration.spec_tests
+  case: test_cli_packaging_integration.py::test_omnimatch_runs_matchers_and_returns_identified_patterns
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: python-hl7
+  suite: parsing_batch_file_support.spec_tests
+  case: test_parser_batch_file_support.py::test_batch_string_includes_header_trailer_and_rejects_unpaired_control_segment
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: python-hl7
+  suite: parsing_batch_file_support.spec_tests
+  case: test_parser_batch_file_support.py::test_parse_normalizes_cr_lf_and_crlf_segment_endings
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'
+- task: python-hl7
+  suite: parsing_batch_file_support.spec_tests
+  case: test_parser_batch_file_support.py::test_sequence_callable_gets_and_sets_with_one_based_indices
+  note: gate case fails on the reference implementation (removed from the gate)
+  date: '2026-10-12'

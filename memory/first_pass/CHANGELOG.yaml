@@ -23,3 +23,14 @@
   - P-0002
   - P-0003
   - P-0004
+- version: 6
+  date: '2026-10-12T19:52:55Z'
+  file: pitfalls.yaml
+  origin: transfer:2026-10-12
+  reason: transfer channel 2026-10-12
+  source_batch: outputs/cpe_sandbox_baseline/cpe-20261012T165502Z-python-hl7 (sandbox baseline EXP-20261011-03, mllp_transport node resample)
+  state: trial (committed 2026-10-15 by user decision; stays trial)
+  changed:
+  - P-0005
+  - P-0006
+  - P-0007

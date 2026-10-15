@@ -1,0 +1,40 @@
+- rule_id: AU-R-000
+  category_id: AU-MAIN_PATH
+  trigger: never
+  rule: retired canary entry CANARY-AU-81f80b791d9ea616
+  state: retired
+  evidence: {}
+  origin: human:canary
+  memory_version_added: 1
+- rule_id: AU-R-101
+  category_id: AU-MAIN_PATH
+  trigger: a behaviour uses the network, another process or the file system
+  rule: Do not replace network, process or file-system functions or classes of the standard library or of third-party libraries (requests, urllib, socket, subprocess, shutil, os I/O and the like); give the program a real local environment from adamas_testkit instead (local HTTP server, local git repository, local TCP server, temporary home, prepended fake command).
+  state: active
+  origin: human:2026-10-09
+  evidence:
+    source: author fake-object fix spec 2026-10-09
+- rule_id: AU-R-102
+  category_id: AU-MAIN_PATH
+  trigger: no local environment can stand in for a dependency
+  rule: Build the double with unittest.mock.create_autospec(<real object>) or Mock(spec=<real object>); never write a stand-in function or class by hand, and never put one into an object of the project.
+  state: active
+  origin: human:2026-10-09
+  evidence:
+    source: author fake-object fix spec 2026-10-09
+- rule_id: AU-R-103
+  category_id: AU-MAIN_PATH
+  trigger: a test needs a fake external command or a changed environment variable
+  rule: Never replace PATH or any other environment variable as a whole; put the directory of the fake command in front of the original PATH and run the fake command with an absolute-path interpreter (adamas_testkit.fake_command does both).
+  state: active
+  origin: human:2026-10-09
+  evidence:
+    source: author fake-object fix spec 2026-10-09
+- rule_id: AU-R-104
+  category_id: AU-MAIN_PATH
+  trigger: a test involves a dependency the program calls
+  rule: Assert only results the documents describe as observable (return values, file contents, state changes, raised exceptions); do not assert how the program called its dependency (arguments, keywords, call counts) unless the documents prescribe the call.
+  state: active
+  origin: human:2026-10-09
+  evidence:
+    source: author fake-object fix spec 2026-10-09

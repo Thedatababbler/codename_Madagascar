@@ -922,3 +922,21 @@
   milestone: implement_zxcvbn_library
   case: test_scoring_module_exports_documented_guess_functions
   kind: R0
+- record_id: R-afac40c4fb
+  task: python-hl7
+  split: train
+  milestone: mllp_transport
+  case: test_hl7_stream_reader_readmessage_raises_documented_mllp_errors
+  kind: resample
+- record_id: R-d81db9f69a
+  task: python-hl7
+  split: train
+  milestone: mllp_transport
+  case: test_mllp_stream_reader_readblock_raises_incomplete_read_on_eof_before_separator
+  kind: resample
+- record_id: R-949c1ece54
+  task: python-hl7
+  split: train
+  milestone: mllp_transport
+  case: test_mllp_stream_reader_readblock_raises_value_error_when_payload_limit_exceeded
+  kind: resample

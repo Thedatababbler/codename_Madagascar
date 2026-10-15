@@ -785,3 +785,59 @@
   reason: plain_english
   at: '2026-10-11T04:08:54Z'
   context: ''
+- entry: T-0000
+  window: ' exception types for'
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-12T19:52:44Z'
+  context: ''
+- entry: T-0000
+  window: 'exception types for '
+  tasks: 1
+  kind: verification
+  reason: plain_english
+  at: '2026-10-12T19:52:44Z'
+  context: ''
+- entry: T-0001
+  window: ' specific exception '
+  tasks: 3
+  kind: verification
+  reason: plain_english
+  at: '2026-10-12T19:52:44Z'
+  context: ''
+- entry: T-0001
+  window: ' while waiting for a'
+  tasks: 1
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-12T19:52:44Z'
+  context: ''
+- entry: T-0001
+  window: hile waiting for a r
+  tasks: 1
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-12T19:52:44Z'
+  context: ''
+- entry: T-0001
+  window: ile waiting for a re
+  tasks: 1
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-12T19:52:44Z'
+  context: ''
+- entry: T-0001
+  window: 'while waiting for a '
+  tasks: 1
+  kind: heldout
+  reason: plain_english
+  at: '2026-10-12T19:52:44Z'
+  context: ''
+- entry: T-0002
+  window: ' specific exception '
+  tasks: 3
+  kind: verification
+  reason: plain_english
+  at: '2026-10-12T19:52:44Z'
+  context: ''
