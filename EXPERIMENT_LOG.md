@@ -5296,3 +5296,33 @@ CLAUDE.md now requires the control before any run after a pipeline change.
 **memory v6:** committed, trial status, source batch noted.
 
 **Targeted rerun (offline):** with the corrected diagnosis, 5 of the 8 affected milestones have an empty repair list. Only csvs, rsa and hl7 would dispatch a repairer, with 1 case each, and only hl7's passes on the reference. Waiting for the user's decision.
+
+## EXP-20261015-03 -- NL2Repo ceiling decomposition: held-out failures by documentation level (branch `rsi`)
+
+**Status:** done. Report `docs/reports/nl2repo_ceiling_20261015.md`; script `scripts/sealed/nl2_ceiling.py`; data `outputs/nl2_ceiling/`.
+
+**Setup**
+- **Scope:** 29 complete gpt-5.5 runs across 9 NL2Repo Medium tasks. Excluded:
+  - aiofiles 09-08 (suspicious);
+  - 5 incomplete runs;
+  - 2 unscored pilots;
+  - the gpt-5.6-sol tablib run.
+- **Held-out:** re-run per case on each final repository, confined.
+- **Labels:** three-level script labels (`doc_label`) for every failing case. A sealed judge (gpt-5.6-luna) labelled ≤40 failing cases per task, 275 in total.
+- **Judge model:** gpt-5.5 was withdrawn from the subscription channel on 2026-10-15 ("not supported when using Codex with a ChatGPT account"). That ends the gpt-5.5 series on this channel.
+
+**Results**
+- **Judge:** A (documents give the detail) 19%, B 71%, C 9%, unclassifiable 1%. The ceiling (B+C) is 80% (81% without voluptuous).
+- **Script:** A 33%, B 48%, C 3%, unclassifiable 16%.
+- **Comparison:** CPE was 59-65% ceiling by script and 76% by judge. NL2Repo is not markedly higher in A.
+- **Judge-A split:**
+  - not tested 36%;
+  - tested, not caught 20%;
+  - caught, not fixed 13% (4% without voluptuous);
+  - suite without citations 31%.
+- **Most A failures per run:** tablib 20.5, jose 11.4, emoji 9.2. voluptuous (35.5) is a whole-suite collection failure.
+- **Script vs judge agreement:** 0.49 three-level, 0.67 A-vs-not.
+
+**Cost and cleanup**
+- Judge: 30 calls, 565k tokens. The luna window read 0% before and after.
+- Failed judge calls (62, no spend) left their prompts, which contain held-out test source, in `~/.cli-proxy-api/logs/`. They were deleted. That directory is denied to agents.
