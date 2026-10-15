@@ -5266,3 +5266,33 @@ A run pins a read-only snapshot (`versions/v<N>`), then: judge (temperature 0, s
 **Correction:** the 10-14 report's voluptuous "16/16 persistent failures in files last written by the gate repairer" rested on these fake regressions and is withdrawn (marked in the report).
 
 Not fixed: analysis only.
+
+## EXP-20261015-02 -- four pipeline defects fixed, whole-pipeline positive control, evidence-invalid marks (branch `rsi`)
+
+**Status:** done. No agent, no quota. Report `docs/reports/pipeline_fixes_20261015.md`.
+
+**Fixes (user decision 2026-10-15), each with unit tests (`tests/unit/control/test_pipeline_defects_20261015.py`, 31):**
+- **Diagnosis workspace:** the diagnosis runs on base + the incumbent's patch, never on `source_repo`. A predecessor run that does not compile is "not run", not a regression.
+- **Evidence:** covers every suite (one `spec_tests` root per suite; cap 60, with truncation stated). A delivery check (exists, not empty, collected, nothing unresolved, readable under the repairer's sandbox) gates every repairer, and `audit_run` checks it.
+- **Gate result:** goes through `--results-file`, never a stdout tail. Pytest verdicts come from junit.
+- **Candidate ids:** no colons.
+
+**Positive control** (`scripts/pipeline_positive_control.py`, 17 checks, ~24 s, real sandbox): all pass. Its first run caught two problems, both fixed:
+- a node-id spelling regression from the junit change;
+- a delivery check that let unresolved cases through.
+
+CLAUDE.md now requires the control before any run after a pipeline change.
+
+**Ledger:** 15 candidates marked evidence-invalid (7 R0 with fake regressions, 8 rows without evidence).
+
+| batch repair stats | before | after exclusion |
+|---|---|---|
+| R0 runs / committed | 8 / 1 | 1 / 0 |
+| rows | 10 | 2 |
+| genuine fixes | 4 | 3 (all from the hl7 mllp resample) |
+
+**bplustree:** gate tests may write /tmp (its `check_tests/conftest.py` hard-codes it); agents may not. Files are cleaned before and after each run, with one run at a time per task.
+
+**memory v6:** committed, trial status, source batch noted.
+
+**Targeted rerun (offline):** with the corrected diagnosis, 5 of the 8 affected milestones have an empty repair list. Only csvs, rsa and hl7 would dispatch a repairer, with 1 case each, and only hl7's passes on the reference. Waiting for the user's decision.
