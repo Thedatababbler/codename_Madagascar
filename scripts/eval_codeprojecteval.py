@@ -188,6 +188,10 @@ def score_task(
                 shutil.copytree(src, repo / name, dirs_exist_ok=True)
 
         source_present = bool(task.source_dir) and (repo / task.source_dir).exists()
+        from orchestra.sandbox import gate_tmp
+
+        tmp_session = gate_tmp.session(task_id)        # /tmp files the dataset tests hard-code: cleaned, one run at a time
+        tmp_session.__enter__()
         try:
             proc = run_confined(mode="scoring", role="eval_codeprojecteval", cmd=
                 [
@@ -237,6 +241,8 @@ def score_task(
                 "tests_total": ceiling.tests_total,
                 "tests_reachable": ceiling.tests_reachable,
             }
+        finally:
+            tmp_session.__exit__(None, None, None)
 
     tail = (proc.stdout or "")[-6000:]
     stderr_tail = (proc.stderr or "")[-6000:]

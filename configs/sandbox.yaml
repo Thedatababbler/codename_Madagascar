@@ -6,6 +6,11 @@ sandbox:
   allow_loopback: true
   allow_external_network: false
   s6_budget_cap: 2
+  # user decision 2026-10-15: tasks whose dataset tests hard-code /tmp. Their gate tests (and held-out scoring, which
+  # already has free file access) may write /tmp; agents never may. Files matching the globs are removed before and
+  # after each run; runs of one task never overlap (orchestra.sandbox.gate_tmp).
+  gate_tmp:
+    bplustree: ["/tmp/bplustree-testfile*"]
 author:
   testkit: true
   fake_object_audit: true
