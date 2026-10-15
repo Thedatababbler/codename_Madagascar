@@ -6,7 +6,10 @@ no agent. Per milestone: whether the first run passed the gate, why a search ran
 rows and node resamples that ran, why each uncommitted candidate lost, the source of the committed result, and how
 many gate cases the training-task reference filter took out. Output: outputs/clean_baseline_cmp/repair_stats.json.
 
-    uv run python scripts/clean_baseline_repair_stats.py
+    uv run python scripts/clean_baseline_repair_stats.py [--exclude-invalid]
+
+``--exclude-invalid`` leaves out the candidates marked evidence-invalid (outputs/sandbox/evidence_invalid.jsonl,
+2026-10-15) and writes repair_stats_valid.json.
 """
 
 from __future__ import annotations
@@ -40,7 +43,7 @@ def kind_of(cid: str) -> str:
         return "probe"
     if cid == "cand_R0":
         return "R0"
-    if cid.startswith(("cand_v2:", "cand_pb_")):
+    if cid.startswith(("cand_v2:", "cand_v2-", "cand_pb_")):
         return "row"
     if cid.startswith(("cand_node_resample", "cand_reauthor", "node_resample")):
         return "resample"
@@ -112,7 +115,9 @@ def loss_reason(c: dict, rec: dict | None) -> str:
     return "fixed_but_not_better_than_incumbent"
 
 
-def run_stats(task: str, which: str) -> dict:
+def run_stats(task: str, which: str, *, exclude_invalid: bool = False) -> dict:
+    from orchestra.control.evolution.ledger import is_evidence_invalid
+
     out_root, led = ROOTS[which]
     batch = (NEW if which == "new" else OLD)[task]
     run = out_root / batch / task
@@ -124,6 +129,8 @@ def run_stats(task: str, which: str) -> dict:
         sub = te["subtasks"][mid]
         fl = (te.get("fast_loop_states") or {}).get(mid) or {}
         cands = fl.get("candidates") or []
+        excluded = [c["candidate_id"] for c in cands if exclude_invalid and is_evidence_invalid(run, mid, c["candidate_id"])]
+        cands = [c for c in cands if c["candidate_id"] not in excluded]
         msr = ms_led.get(mid) or {}
         inc = next((c for c in cands if c["candidate_id"] == "incumbent_first_pass"), None)
         first_attempt = (sub.get("attempts") or [{}])[0]
@@ -143,12 +150,14 @@ def run_stats(task: str, which: str) -> dict:
         kinds = Counter(kind_of(c["candidate_id"]) for c in cands if c["candidate_id"] != "incumbent_first_pass")
         committed = next((c for c in cands if c.get("status") == "committed"), None)
         source = kind_of(committed["candidate_id"]) if committed else ("first_run" if sub.get("status") == "committed" else "none")
+        if not committed and any(c.get("status") == "committed" for c in fl.get("candidates") or [] if c["candidate_id"] in excluded):
+            source = "excluded_invalid"
         losses = {}
         for c in cands:
             if c is committed or c["candidate_id"] == "incumbent_first_pass":
                 continue
             losses[c["candidate_id"]] = loss_reason(c, cands_led.get((mid, c["candidate_id"])))
-        r0 = cands_led.get((mid, "cand_R0"))
+        r0 = None if "cand_R0" in excluded else cands_led.get((mid, "cand_R0"))
         m = re.search(r"reference filter: (\d+) gate case", notes)
         size, removed = gate_size(run / "harness", mid)
         res.append({
@@ -162,17 +171,18 @@ def run_stats(task: str, which: str) -> dict:
             "committed_candidate": committed["candidate_id"] if committed else None,
             "committed_fixed": list((cands_led.get((mid, committed["candidate_id"])) or {}).get("fixed") or []) if committed else [],
             "loss_reasons": losses, "gate_cases": size, "reference_filter_removed": int(m.group(1)) if m else removed,
-            "notes": fl.get("notes") or [],
+            "notes": fl.get("notes") or [], "excluded_invalid": excluded,
         })
     return {"task": task, "which": which, "batch": batch, "milestones": res}
 
 
 def main() -> int:
+    exclude = "--exclude-invalid" in sys.argv
     out = {"new": {}, "old": {}}
     for t in NEW:
         for w in ("new", "old"):
-            out[w][t] = run_stats(t, w)
-    p = ROOT / "outputs" / "clean_baseline_cmp" / "repair_stats.json"
+            out[w][t] = run_stats(t, w, exclude_invalid=exclude)
+    p = ROOT / "outputs" / "clean_baseline_cmp" / ("repair_stats_valid.json" if exclude else "repair_stats.json")
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(out, indent=1, default=str))
     for w in ("new", "old"):

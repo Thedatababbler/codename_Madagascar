@@ -195,6 +195,8 @@ def _positions(task: str) -> dict[str, str]:
 
 def collect_facts(train_tasks: Iterable[str]) -> tuple[list[Fact], int]:
     """(unique facts, number of raw facts)."""
+    from orchestra.control.evolution.ledger import is_evidence_invalid
+
     facts: dict[tuple[str, str, str], Fact] = {}
     raw = 0
     for task in train_tasks:
@@ -213,6 +215,8 @@ def collect_facts(train_tasks: Iterable[str]) -> tuple[list[Fact], int]:
                         k = kind_of(c["candidate_id"], meta)
                         if not k:
                             continue
+                        if is_evidence_invalid(run, mid, c["candidate_id"]):
+                            continue        # its repairer got invalid evidence: it teaches nothing (2026-10-15)
                         fixed = {_norm_case(x) for x in inc.get("behaviour_failures") or []} - {_norm_case(x) for x in c.get("behaviour_failures") or []}
                         suite = run / "harness" / f"{mid}.spec_tests"
                         srcs = case_sources(suite) if fixed else {}

@@ -250,13 +250,71 @@ def write_search_ledger(
     )
 
 
-def read_jsonl(path: Path, *, include_void: bool = False) -> list[dict[str, Any]]:
+#: candidates whose repairer got invalid evidence (user decision 2026-10-15): they count in no statistic.
+#: One JSON line per candidate: run_dir, milestone_id, candidate_id, reason, marked_at, report.
+EVIDENCE_INVALID = Path(__file__).resolve().parents[4] / "outputs" / "sandbox" / "evidence_invalid.jsonl"
+
+
+def _run_key(run_dir: str | Path) -> str:
+    """A run directory spelled the same whether it was recorded absolute, relative or with a trailing task dir."""
+    p = Path(str(run_dir))
+    p = p if p.is_absolute() else (EVIDENCE_INVALID.parents[2] / p)
+    return str(p.resolve(strict=False)).rstrip("/")
+
+
+def invalid_candidates(path: Path | None = None) -> dict[tuple[str, str, str], dict[str, Any]]:
+    """(run dir, milestone, candidate id) -> its mark."""
+    p = Path(path or EVIDENCE_INVALID)
+    out: dict[tuple[str, str, str], dict[str, Any]] = {}
+    if not p.is_file():
+        return out
+    for line in p.read_text(encoding="utf-8").splitlines():
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        out[(_run_key(r["run_dir"]), str(r["milestone_id"]), str(r["candidate_id"]))] = r
+    return out
+
+
+def is_evidence_invalid(run_dir: str | Path, milestone_id: str, candidate_id: str, *, path: Path | None = None) -> bool:
+    marks = invalid_candidates(path)
+    key = _run_key(run_dir)
+    for (run, mid, cand) in marks:
+        if mid == milestone_id and cand == candidate_id and (key == run or key.startswith(run + "/") or run.startswith(key + "/")):
+            return True
+    return False
+
+
+def mark_evidence_invalid(entries: list[dict[str, Any]], *, path: Path | None = None) -> int:
+    """Append marks not already present; returns how many were added."""
+    p = Path(path or EVIDENCE_INVALID)
+    have = invalid_candidates(p)
+    added = 0
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with p.open("a", encoding="utf-8") as fh:
+        for e in entries:
+            if (_run_key(e["run_dir"]), str(e["milestone_id"]), str(e["candidate_id"])) in have:
+                continue
+            fh.write(json.dumps(e, ensure_ascii=False) + "\n")
+            added += 1
+    return added
+
+
+def _record_cid(rec: dict[str, Any]) -> str:
+    rid = str(rec.get("record_id") or "")
+    return rid.split(":", 2)[-1] if rid.count(":") >= 2 else str(rec.get("candidate_id") or "")
+
+
+def read_jsonl(path: Path, *, include_void: bool = False, include_invalid: bool = False) -> list[dict[str, Any]]:
     """Records of a JSON-lines file. A record from a run voided by a CRITICAL sandbox event
-    (``orchestra.sandbox.breach``) is dropped: such a run counts in no statistic (2026-10-11)."""
+    (``orchestra.sandbox.breach``) is dropped: such a run counts in no statistic (2026-10-11).
+    A candidate record marked evidence-invalid (``EVIDENCE_INVALID``) is dropped too (2026-10-15)."""
     if not Path(path).is_file():
         return []
     from orchestra.sandbox.breach import is_void
 
+    marks = {} if include_invalid else invalid_candidates()
     out = []
     for line in Path(path).read_text(encoding="utf-8").splitlines():
         line = line.strip()
@@ -267,11 +325,15 @@ def read_jsonl(path: Path, *, include_void: bool = False) -> list[dict[str, Any]
                 continue
             if not include_void and isinstance(rec, dict) and rec.get("run_dir") and is_void(rec["run_dir"]):
                 continue
+            if marks and isinstance(rec, dict) and rec.get("run_dir") and rec.get("milestone_id") and _record_cid(rec):
+                if is_evidence_invalid(rec["run_dir"], str(rec["milestone_id"]), _record_cid(rec)):
+                    continue
             out.append(rec)
     return out
 
 
 __all__ = [
     "EVOLUTION_ROOT_ENV", "LEDGER_ROOT", "SPLIT_FILE", "evolution_root", "ledger_root_default", "append_jsonl", "candidate_kind", "candidate_records", "milestone_record",
-    "read_jsonl", "split_of", "write_search_ledger",
+    "read_jsonl", "split_of", "write_search_ledger", "EVIDENCE_INVALID", "invalid_candidates", "is_evidence_invalid",
+    "mark_evidence_invalid",
 ]
