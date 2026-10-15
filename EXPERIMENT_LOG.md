@@ -5240,3 +5240,29 @@ A run pins a read-only snapshot (`versions/v<N>`), then: judge (temperature 0, s
   | zxcvbn | soft split shrank the scoring gate from 49 to 1 | strong |
 
   No evidence of sandbox interception, a pytest config change or contamination. Old /tmp/cpe_probe_repos exposure cannot be excluded.
+
+## EXP-20261015-01 -- why R0's persistent failures pass in the repair-evidence run (tests only, branch `rsi`)
+
+**Status:** done. Report `docs/reports/repair_evidence_mismatch_20261015.md`. No agent, no quota, no held out; all runs confined; reference read only by `scripts/sealed/reference_check.py`.
+
+**Scope:** the 5 R0 runs whose evidence passed every listed failure (simplejwt request_authentication; voluptuous utilities_and_humanize, public_api_integration; zxcvbn feedback_and_public_estimator, cli_packaging_and_full_integration).
+
+**What R0 was given:**
+- Not the milestone's own gate failures. Those were all removed by the training-task reference filter.
+- Only "predecessor regressions" (`regression_by_current`): 22, 16, 16, 4, 5 cases.
+
+**Cause: the diagnosis ran the predecessor suites in the wrong directory.**
+- `_route_and_classify` uses `source_repo`, which is the run's task-level initial workspace (dataset inputs only, no code). It does not use the incumbent workspace.
+- Replay in the initial workspace reproduces the recorded regressions exactly.
+- The same command on the incumbent: 0 regressions in 2/2 runs.
+- 61 of the 63 cases pass on the reference. The other 2 (one zxcvbn case counted twice) fail on the reference but pass on the incumbent.
+- So neither test interdependence nor global state: the runs used different conditions.
+- The same defect hit rsa command_line_tools (41 fake regressions) and hl7 parsing_batch_file_support (16).
+
+**Also found:**
+- Evidence keeps only the first frozen suite's failures (22 → 10, 16 → 11, 4 → 2, 5 → 2).
+- `run_authoritative_harness_command` keeps only the last 4000 chars of output, so suites of 30+ cases parse as "not run" and their regressions are never checked.
+
+**Correction:** the 10-14 report's voluptuous "16/16 persistent failures in files last written by the gate repairer" rested on these fake regressions and is withdrawn (marked in the report).
+
+Not fixed: analysis only.
