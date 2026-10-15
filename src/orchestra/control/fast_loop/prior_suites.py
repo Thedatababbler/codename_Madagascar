@@ -20,8 +20,8 @@ from typing import Any
 
 from orchestra.control.fast_loop.committed_cases import read_committed_cases
 from orchestra.control.fast_loop.persistence import failure_key
-from orchestra.harness.command_runner import run_authoritative_harness_command
-from orchestra.harness.progress import behaviour_failures, behaviour_passed, parse_progress
+from orchestra.harness.command_runner import run_harness
+from orchestra.harness.progress import behaviour_failures, behaviour_passed, progress_from_payload
 from orchestra.ir.graph import OrchestraGraph, load_graph
 from orchestra.ir.nodes import NodeKind
 
@@ -132,12 +132,17 @@ async def run_prior_suite(
 ) -> dict[str, Any]:
     """``{"regressions": [...], "failed": [...], "passed_count": n, "ran": bool}`` for one predecessor."""
     cmd = rewrite_command(command, prior)
-    _passed, _code, stdout, _stderr = await run_authoritative_harness_command(
-        cwd=workspace_path, command=cmd, timeout_seconds=timeout_seconds
-    )
-    score, stages, _furthest = parse_progress(stdout)
+    run = await run_harness(cwd=workspace_path, command=cmd, timeout_seconds=timeout_seconds)
+    score, stages, _furthest = progress_from_payload(run.payload)
     if score is None and not stages:
-        return {"regressions": [], "failed": [], "passed_count": 0, "ran": False}
+        return {"regressions": [], "failed": [], "passed_count": 0, "ran": False,
+                "error": f"no structured result (exit {run.exit_code})"}
+    compile_stage = next((s for s in stages if s.stage == "compile"), None)
+    if compile_stage is not None and compile_stage.passed_units < compile_stage.total_units:
+        # the incumbent passed its own gate's compile stage, so a predecessor run that does not compile ran on some
+        # other tree (10-12: the task's initial workspace, dataset inputs only -> every committed case a "regression")
+        return {"regressions": [], "failed": [], "passed_count": 0, "ran": False,
+                "error": "the diagnosis workspace does not compile; not the incumbent's code"}
     failed = {failure_key(n) for n in behaviour_failures(stages)}
     passed = {failure_key(n) for n in behaviour_passed(stages)}
     regressions = sorted(k for k in prior.committed_passed if k in failed)
@@ -169,12 +174,10 @@ async def rerun_own_suite(*, workspace_path: str, command: list[str], timeout_se
     out: list[dict[str, Any]] = []
     for _ in range(max(1, times)):
         try:
-            _passed, _code, stdout, _stderr = await run_authoritative_harness_command(
-                cwd=workspace_path, command=cmd, timeout_seconds=timeout_seconds
-            )
-            _score, stages, _furthest = parse_progress(stdout)
+            run = await run_harness(cwd=workspace_path, command=cmd, timeout_seconds=timeout_seconds)
+            _score, stages, _furthest = progress_from_payload(run.payload)
             if not stages:
-                out.append({"failed": [], "passed_count": 0, "ran": False})
+                out.append({"failed": [], "passed_count": 0, "ran": False, "error": f"no structured result (exit {run.exit_code})"})
                 continue
             out.append({"failed": sorted(failure_key(n) for n in behaviour_failures(stages)),
                         "passed_count": len(behaviour_passed(stages)), "ran": True})

@@ -252,17 +252,18 @@ class Progress:
         for entry in self.stages:
             entry["weight"] = weights.get(entry["stage"], 0.0)
         reached = [e["stage"] for e in self.stages if e["passed_units"]]
-        print(
-            "ADAMAS_HARNESS_SCORE "
-            + json.dumps(
-                {
-                    "score": self.score(),
-                    "level": self.level,
-                    "stages": self.stages,
-                    "furthest_stage": reached[-1] if reached else "",
-                }
-            )
-        )
+        payload = {
+            "score": self.score(),
+            "level": self.level,
+            "stages": self.stages,
+            "furthest_stage": reached[-1] if reached else "",
+        }
+        # The structured result (2026-10-15): the caller reads this file, never a tail of stdout. A 4000-character
+        # tail cut the score line of every suite with 30+ cases, which then read as "not run" (voluptuous 10-12).
+        results_file = getattr(self, "results_file", "")
+        if results_file:
+            Path(results_file).write_text(json.dumps(payload), encoding="utf-8")
+        print("ADAMAS_HARNESS_SCORE " + json.dumps(payload))
 
 
 def _pytest_counts(output):
@@ -671,6 +672,45 @@ def _suspect_key(node):
     return (Path(head).name + "::" + rest).split("[", 1)[0]
 
 
+def _junit_results(xml_path):
+    """(passed ids, failed ids, errors) from a pytest junit report, or None when it is missing or unreadable.
+
+    The structured report, not the text summary (2026-10-15). Ids are spelled as pytest's own node ids (``file::Class::
+    test[param]``, file relative to the rootdir), the way ``-v`` prints them; a collection error stands for its file.
+    Skipped cases count as neither, as in the text summary.
+    """
+    import xml.etree.ElementTree as ET
+
+    try:
+        tree = ET.parse(xml_path)
+    except (OSError, ET.ParseError):
+        return None
+    passed, failed, errors = set(), set(), 0
+    for case in tree.getroot().iter("testcase"):
+        file = case.get("file") or ""
+        name = case.get("name") or ""
+        classname = case.get("classname") or ""
+        if case.find("skipped") is not None:
+            continue
+        if not file and not classname:
+            # a module pytest could not collect: junit names it by its path
+            failed.add(name)
+            errors += 1
+            continue
+        module = file[:-3].replace("/", ".") if file.endswith(".py") else ""
+        cls = classname[len(module) + 1:] if module and classname.startswith(module + ".") else ""
+        node = file + "::" + (cls.replace(".", "::") + "::" if cls else "") + name
+        bad_error = case.find("error")
+        bad_fail = case.find("failure")
+        if bad_error is not None or bad_fail is not None:
+            failed.add(node)
+            if bad_error is not None and bad_fail is None:
+                errors += 1
+        else:
+            passed.add(node)
+    return passed, failed, errors
+
+
 def _run_pytest(cwd, target, *, timeout, import_root=None):
     """Run one suite: (passed, total, ran, tail, failed_ids, passed_ids). Never raises.
 
@@ -707,6 +747,10 @@ def _run_pytest(cwd, target, *, timeout, import_root=None):
         *_per_test_timeout_flags(),
         str(target),
     ]
+    junit = tempfile.NamedTemporaryFile(prefix="adamas_pytest_", suffix=".xml", delete=False)
+    junit.close()
+    os.unlink(junit.name)
+    command[-1:-1] = ["-o", "junit_family=xunit1", "--junitxml=" + junit.name]
     log = tempfile.NamedTemporaryFile(prefix="adamas_pytest_", suffix=".log", delete=False)
     log.close()
     timed_out = False
@@ -720,11 +764,36 @@ def _run_pytest(cwd, target, *, timeout, import_root=None):
                 proc.kill()
                 proc.wait()
         out = Path(log.name).read_text(encoding="utf-8", errors="replace")
+        structured = None if timed_out else _junit_results(junit.name)
     finally:
-        try:
-            os.unlink(log.name)
-        except OSError:
-            pass
+        for leftover in (log.name, junit.name):
+            try:
+                os.unlink(leftover)
+            except OSError:
+                pass
+    if structured is not None and (structured[0] or structured[1]):
+        ok_ids, bad_ids, errors = structured
+        # spell each case the way collection spelled it (junit's file may be rooted differently from -v's node id)
+        def _jkey(nid):
+            file, _, rest = nid.partition("::")
+            return file.rsplit("/", 1)[-1] + "::" + rest
+        # the spelling is pytest's own (-v lines, the short summary, collection); the verdict is junit's.
+        # junit's file is relative to the rootdir, -v's node id to the invocation, and downstream code locates the
+        # frozen file from that node id (the positive control caught the difference, 2026-10-15)
+        printed = set(re.findall(r"^(\S+::\S+) (?:PASSED|FAILED|ERROR)", out, re.M)) | _failed_test_ids(out)
+        spelled = {_jkey(n): n for n in ids if "::" in n}
+        spelled.update({_jkey(n): n for n in printed if "::" in n})       # what pytest printed wins over collection
+        spelled_files = {n.rsplit("/", 1)[-1]: n for n in printed if "::" not in n}
+        ok_ids = {spelled.get(_jkey(n), n) for n in ok_ids}
+        bad_ids = {spelled.get(_jkey(n), n) if "::" in n else spelled_files.get(n.rsplit("/", 1)[-1], n) for n in bad_ids}
+        return (
+            len(ok_ids),
+            len(ok_ids) + len(bad_ids),
+            len(ok_ids) + len(bad_ids) - errors,
+            (out or "")[-2000:],
+            bad_ids,
+            ok_ids,
+        )
     passed, total, ran = _pytest_counts(out)
     aborted = (not timed_out) and total == 0 and bool(ids) and not re.search(r"\\d+ (?:passed|failed|error)", out)
     if timed_out or aborted:
@@ -919,6 +988,11 @@ def main() -> int:
         help="runner-owned directory holding this milestone's frozen authored suite",
     )
     parser.add_argument(
+        "--results-file",
+        default="",
+        help="write the structured result (the score payload) to this file as JSON",
+    )
+    parser.add_argument(
         "--take-custody",
         action="store_true",
         help="only move the authored suite out of the workspace, then exit 0",
@@ -1006,6 +1080,7 @@ def main() -> int:
         # the cause is upstream of the score.
         print("NOTE no authored suite at " + spec_dir_rel + "; behaviour ungraded")
     progress = Progress(args.level, spec_tests=spec_frozen is not None)
+    progress.results_file = args.results_file
     graded_spec = [False]
 
     def finish(code):

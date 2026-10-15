@@ -34,6 +34,7 @@ from orchestra.control.fast_loop.playbooks import (
     playbook_applies,
     playbooks_for,
 )
+from orchestra.control.fast_loop.workspace import path_safe_id
 from orchestra.control.fast_loop.schemas import (
     CandidateRejectionReason,
     FailureDiagnosis,
@@ -204,7 +205,7 @@ class PlaybookCandidateGenerator:
         parent_hash: str,
         budget: FastLoopBudget,
     ) -> LocalCandidate:
-        candidate_id = f"cand_{playbook.playbook_id}"
+        candidate_id = path_safe_id(f"cand_{playbook.playbook_id}")
         if playbook.layer == "plan":
             return self._recompile(playbook, ctx, parent_hash, candidate_id)
         try:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -12,6 +13,19 @@ from typing import Protocol
 from orchestra.control.fast_loop.schemas import RenameRecord, WorkspaceChangeSet
 from orchestra.workspaces.base import WorkspaceRef
 
+
+
+_UNSAFE = re.compile(r"[^A-Za-z0-9_.\-]")
+
+
+def path_safe_id(candidate_id: str) -> str:
+    """A candidate id as it may appear in a directory name.
+
+    ``cand_v2:E3-T1`` once named a directory: the colon is the PYTHONPATH separator, so the repair evidence beside it
+    was split off PYTHONPATH, the sandbox never granted it, and every row's evidence run collected nothing (sandbox
+    baseline 10-12, 8/8 rows). Anything outside ``[A-Za-z0-9_.-]`` becomes ``-``; idempotent.
+    """
+    return _UNSAFE.sub("-", str(candidate_id))
 
 class CandidateWorkspaceError(RuntimeError):
     pass
@@ -187,7 +201,7 @@ class GitCandidateWorkspaceManager:
             / "subtasks"
             / subtask_id
             / "candidates"
-            / candidate_id
+            / path_safe_id(candidate_id)
             / "repo"
         )
 

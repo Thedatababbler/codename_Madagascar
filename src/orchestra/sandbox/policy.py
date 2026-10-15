@@ -380,12 +380,14 @@ def private_env(private: Path, *, base: dict[str, str] | None = None) -> dict[st
     return env
 
 
-def confine_command(command: list[str], *, cwd: str | Path, env: dict[str, str] | None) -> tuple[list[str], dict[str, str], Path | None]:
+def confine_command(command: list[str], *, cwd: str | Path, env: dict[str, str] | None,
+                    extra_write: list[str] | None = None) -> tuple[list[str], dict[str, str], Path | None]:
     """Wrap a driver-side run of workspace code (gate, repair evidence, resample frames) when enforced.
 
     Reads: system trees, the interpreter's venv, every existing path named on the
     command line or in PYTHONPATH (the harness script, suites, evidence copies);
-    writes: ``cwd`` (the workspace) and a private tmp. Network as for agents.
+    writes: ``cwd`` (the workspace), a private tmp and ``extra_write`` (the driver's own result-file directories,
+    never a workspace of another run). Network as for agents.
     Returns (command, env, private dir to remove afterwards or None).
     """
     base_env = dict(os.environ if env is None else env)
@@ -408,7 +410,7 @@ def confine_command(command: list[str], *, cwd: str | Path, env: dict[str, str] 
             for x in {a, os.path.realpath(a)}:          # a symlinked suite is checked at its real path
                 read.append(x if os.path.isdir(x) else str(Path(x).parent))
     read += ancestor_configs(cwd)
-    write = [str(cwd), *git_dirs(Path(cwd)), str(private), *DEV_WRITE]
+    write = [str(cwd), *git_dirs(Path(cwd)), str(private), *DEV_WRITE, *[str(w) for w in (extra_write or [])]]
     # the gate's check script keeps its state beside itself in the run's harness directory
     # (package shadow, custody of the authored suite, the vacuous baseline repository)
     write += [str(Path(a).parent) for a in command[1:] if a.endswith("adamas_cpe_check.py") and os.path.isfile(a)]

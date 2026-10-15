@@ -69,7 +69,13 @@ from orchestra.control.evolution.ledger import write_search_ledger
 from orchestra.control.evolution.rerun import forced_row_for
 from orchestra.control.fast_loop.quality_trigger import quality_search_diagnosis
 from orchestra.roles.pool import default_role_pool
-from orchestra.control.fast_loop.repair_evidence import build_repair_evidence, resolve_failure
+from orchestra.control.fast_loop.repair_evidence import (
+    build_repair_evidence,
+    record_evidence_delivery as _record_evidence_delivery_at,
+    relocate_evidence,
+    resolve_failure,
+    verify_delivery,
+)
 from orchestra.control.fast_loop import node_resample as nr
 from orchestra.control.fast_loop.persistence import (
     apply_role_floor,
@@ -98,6 +104,7 @@ from orchestra.control.fast_loop.selector import (
 from orchestra.control.fast_loop.workspace import (
     CandidateWorkspaceError,
     GitCandidateWorkspaceManager,
+    path_safe_id,
 )
 from orchestra.control.task_state import (
     BackendSessionRecord,
@@ -176,7 +183,17 @@ def candidate_task_id(task_id: str, subtask_id: str, candidate_id: str) -> str:
     candidate of the second search in milliseconds and leaves that milestone
     falling back to its incumbent with nothing to compare against.
     """
-    return f"{task_id}__{subtask_id}__candidate__{candidate_id}"
+    return f"{task_id}__{subtask_id}__candidate__{path_safe_id(candidate_id)}"
+
+
+def _record_evidence_delivery(context: Any, candidate_id: str, check: dict) -> None:
+    run_dir = getattr(context, "run_dir", None)
+    if run_dir:
+        _record_evidence_delivery_at(Path(run_dir), candidate_id, check)
+
+
+#: candidate id of the scratch workspace the diagnosis runs tests in (the incumbent's code)
+DIAGNOSIS_WORKSPACE = "diag_incumbent"
 
 
 #: joint experiment: end every milestone at its first gate (no probe, no repair, no row)
@@ -523,7 +540,7 @@ class FastLoopController:
             repair_list, error_classes = await self._route_and_classify(
                 state=state, fl_state=fl_state, sub=sub, subtask_id=subtask_id,
                 base_graph=base_graph, summary=summary, source_repo=source_repo, base_ws=base_ws,
-                context=context,
+                context=context, incumbent_artifact=incumbent_artifact,
             )
         if summary.persistent and not collects_nothing and not repair_list:
             fl_state.notes.append("routing: every persistent failure was routed away; nothing for this milestone to repair")
@@ -812,7 +829,7 @@ class FastLoopController:
                 fl_state.notes.append(f"v2 filtered {row.row_id}: no shape left to switch to")
                 continue
             playbooks.append(pb)
-            chosen_meta[f"cand_{pb.playbook_id}"] = {"row_id": row.row_id, "state": row.state}
+            chosen_meta[path_safe_id(f"cand_{pb.playbook_id}")] = {"row_id": row.row_id, "state": row.state}
             if "upstream" in row.evidence_routing:
                 upstream_ids.add(pb.playbook_id)
         if not playbooks:
@@ -888,19 +905,69 @@ class FastLoopController:
         except Exception as exc:  # noqa: BLE001 -- the ledger never fails a search
             fl_state.notes.append(f"ledger: not written ({str(exc)[:120]})")
 
+    async def _incumbent_patch(self, fl_state: FastLoopState, artifact_id: str | None) -> str | None:
+        """The incumbent's recorded change: a candidate's patch (``candidate:<id>``) or a change artifact's."""
+        if not artifact_id:
+            return None
+        if str(artifact_id).startswith("candidate:"):
+            base = next((c for c in fl_state.candidates if c.candidate_id == str(artifact_id)[len("candidate:"):]), None)
+            return base.patch if base is not None and base.patch else None
+        try:
+            artifact = await self.artifact_store.get(str(artifact_id))
+        except Exception:  # noqa: BLE001 -- no artifact, no diagnosis workspace
+            return None
+        return (getattr(artifact, "payload", None) or {}).get("patch") or None
+
+    async def _diagnosis_repo(
+        self, *, state, fl_state, subtask_id: str, base_ws: Any, incumbent_artifact: str | None, context: Any,
+    ) -> Path | None:
+        """The incumbent's code, for every diagnosis step that runs tests: the milestone base plus the incumbent's patch.
+
+        Never the run's ``source_repo``: that is the task's initial workspace (dataset inputs only). On 10-12 the
+        predecessor suites ran there, every committed case read as a regression, and seven R0 runs were handed a list
+        of cases that pass on the incumbent (docs/reports/repair_evidence_mismatch_20261015.md).
+        """
+        run_dir = getattr(context, "run_dir", None)
+        if base_ws is None or not run_dir:
+            return None
+        patch = await self._incumbent_patch(fl_state, incumbent_artifact)
+        if not patch:
+            return None
+        try:
+            ws = await self.workspace_manager.fork_candidate_workspace(
+                base=base_ws, run_dir=str(run_dir), task_id=state.task_id,
+                subtask_id=subtask_id, candidate_id=DIAGNOSIS_WORKSPACE,
+            )
+            await self.workspace_manager.apply_patch(ws, str(patch))
+        except Exception as exc:  # noqa: BLE001 -- no workspace: the diagnosis says so and runs nothing
+            fl_state.notes.append(f"diagnosis: incumbent workspace not built ({str(exc)[:160]})")
+            return None
+        return Path(ws.path)
+
     async def _route_and_classify(
         self, *, state, fl_state, sub, subtask_id, base_graph, summary, source_repo, base_ws, context=None,
+        incumbent_artifact: str | None = None,
     ) -> tuple[list[str], list[str]]:
         """P2: routing (§2.2.2) and error classes (§2.2.3) for the persistent set.
 
         Returns the list the repairer is given (kept cases plus the
         predecessor cases the incumbent regressed, spelled with their frozen
         path so the repair evidence can find them) and the main error classes.
+        Everything here that runs tests runs on the incumbent's code (``_diagnosis_repo``).
         """
-        repo = Path(source_repo) if source_repo else (Path(base_ws.path) if base_ws is not None else None)
         persistent = list(summary.persistent)
         ref_removed = self._reference_filter(state=state, fl_state=fl_state, base_graph=base_graph)
+        repo = await self._diagnosis_repo(
+            state=state, fl_state=fl_state, subtask_id=subtask_id, base_ws=base_ws,
+            incumbent_artifact=incumbent_artifact, context=context,
+        )
+        fl_state.routing["diagnosis_workspace"] = str(repo) if repo else ""
         if repo is None or not repo.is_dir():
+            fl_state.notes.append("diagnosis: no incumbent workspace; routing and the predecessor check skipped")
+            if ref_removed:
+                from orchestra.control.fast_loop.reference_filter import _key as _ref_key
+
+                persistent = [c for c in persistent if _ref_key(c) not in set(ref_removed)]
             return persistent, []
         docs = docs_text_of(repo)
         index = nr.repo_symbol_index(repo)
@@ -1357,20 +1424,32 @@ class FastLoopController:
         record.metadata["continued_on"] = str(artifact_id)
         return True
 
-    async def _stage_repair_evidence(self, record: CandidateRecord, cand_ws: Any) -> None:
-        """The persistent tests, their output, and how to run them -- beside the repo.
+    async def _stage_repair_evidence(self, record: CandidateRecord, cand_ws: Any, context: Any = None) -> bool:
+        """The persistent tests, their output, and how to run them -- beside the repo -- and the delivery check.
 
         Only for continuations, and only the persistent set: the rest of the
-        exam stays sealed and grading reads the frozen copy. Failing to stage
-        is the old behaviour, so it never rejects the candidate.
+        exam stays sealed and grading reads the frozen copy. False (the
+        candidate is rejected, no agent runs) when the evidence does not pass
+        the delivery check: missing, empty, collecting nothing, or unreadable
+        under the repairer's sandbox (2026-10-15: all 8 rows of the sandbox
+        baseline ran on evidence that collected nothing).
         """
         failures = list(record.metadata.get("persistent_failures") or [])
         if not failures or not cand_ws:
-            return
+            return True
         path = await asyncio.to_thread(
             build_repair_evidence, Path(cand_ws.path), failures
         )
         record.metadata["repair_evidence"] = str(path) if path else ""
+        check = await asyncio.to_thread(verify_delivery, Path(cand_ws.path), path, expected=len(failures))
+        record.metadata["evidence_delivery"] = check
+        _record_evidence_delivery(context, record.candidate_id, check)
+        if not check["ok"]:
+            record.status = CandidateStatus.REJECTED
+            record.rejection_reason = CandidateRejectionReason.OTHER
+            record.rejection_message = "repair evidence not delivered: " + "; ".join(check["problems"])[:400]
+            return False
+        return True
 
     @staticmethod
     def _best_base(
@@ -2182,7 +2261,8 @@ class FastLoopController:
                 # would be an anchor's, filed under the continuation's name.
                 if not await self._replay_incumbent(record, cand_ws, fl_state):
                     return
-                await self._stage_repair_evidence(record, cand_ws)
+                if not await self._stage_repair_evidence(record, cand_ws, context):
+                    return
 
         run_context = RunContext(
             run_id=f"{context.run_id}:{record.candidate_id}",
@@ -2567,6 +2647,13 @@ class FastLoopController:
                 dst = Path(ws.path).parent / "repair_evidence"
                 shutil.rmtree(dst, ignore_errors=True)
                 shutil.copytree(meta["evidence_dir"], dst)
+                relocate_evidence(dst, src=Path(meta["evidence_dir"]), repo=Path(ws.path))
+                check = await asyncio.to_thread(verify_delivery, Path(ws.path), dst, expected=len(meta.get("targets") or []) or None)
+                _record_evidence_delivery(context, sid, check)
+                if not check["ok"]:
+                    samples.append({"index": i, "ws": ws, "error": "repair evidence not delivered: " + "; ".join(check["problems"])[:300],
+                                    "gate": False, "harness": None, "behaviour": None, "failed": set(), "stages": [], "furthest": ""})
+                    continue
             run_context = RunContext(
                 run_id=f"{context.run_id}:{sid}", task_id=candidate_task_id(context.task_id, subtask_id, sid),
                 run_dir=context.run_dir, limits=context.limits, semaphores=context.semaphores,

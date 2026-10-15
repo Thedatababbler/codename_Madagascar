@@ -290,6 +290,42 @@ def canary_hits(run_dir: Path, *, extra_dirs: list[Path] | None = None) -> list[
     return hits
 
 
+#: candidates whose repairer is promised the persistent tests (fast_loop.repair_evidence)
+EVIDENCE_CANDIDATES = ("cand_R0", "cand_v2-")
+
+
+def evidence_delivery(run_dir: Path, nodes: list[dict[str, Any]]) -> dict[str, Any]:
+    """The evidence item of the delivery check (2026-10-15).
+
+    Every hand-over the fast loop recorded must be ok (directory present, not empty, collected, readable by the
+    repairer's sandbox); and an R0 or table-row repairer that ran must have a recorded, ok hand-over -- in the sandbox
+    baseline all 8 rows ran on evidence that collected nothing and no check said so.
+    """
+    log = Path(run_dir) / "repair_evidence_delivery.jsonl"
+    records: dict[str, dict[str, Any]] = {}
+    if log.is_file():
+        for line in log.read_text(encoding="utf-8").splitlines():
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            records[str(r.get("candidate_id"))] = r
+    # a failed hand-over rejects the candidate before any agent runs: reported, not a violation by itself
+    warnings = [f"repair evidence for {c}: {'; '.join(r.get('problems') or [])}"
+                for c, r in records.items() if not r.get("ok")]
+    problems: list[str] = []
+    ran = {str(n.get("task_id", "")).rsplit("__candidate__", 1)[-1] for n in nodes if "__candidate__" in str(n.get("task_id", ""))}
+    for cand in sorted(ran):
+        if cand.startswith(EVIDENCE_CANDIDATES):
+            if cand not in records:
+                problems.append(f"repairer {cand} ran with no recorded evidence hand-over")
+            elif not records[cand].get("ok"):
+                problems.append(f"repairer {cand} ran although its evidence failed the delivery check")
+    by_candidate = {c: {"ok": bool(r.get("ok")), "staged": r.get("staged"), "truncated": r.get("truncated"),
+                        "problems": r.get("problems") or []} for c, r in records.items()}
+    return {"by_candidate": by_candidate, "problems": problems, "warnings": warnings}
+
+
 def audit_run(run_dir: Path, *, required_roles: dict[str, list[str]] | None = None) -> dict[str, Any]:
     """Merge node records into memory_delivery.json and check what can only be checked after the run."""
     run_dir = Path(run_dir)
@@ -328,6 +364,8 @@ def audit_run(run_dir: Path, *, required_roles: dict[str, list[str]] | None = No
             if not all(set(rp.get("tags") or []) <= set(n.get("tags_in_prompt") or []) for n in ran):
                 problems.append(f"repair {cand}: recalled {rp.get('tags')} not all in the prompt")
         delivery["repair"][key]["state"] = rp_state
+    evidence = evidence_delivery(run_dir, nodes)
+    problems += evidence["problems"]
     captured_empty = [n for n in nodes if not n.get("seeded") and not n.get("captured_prompt")]
     if captured_empty:
         problems.append(f"{len(captured_empty)} agent calls without a prompt capture")
@@ -343,6 +381,7 @@ def audit_run(run_dir: Path, *, required_roles: dict[str, list[str]] | None = No
             vp.write_text(json.dumps(items, indent=1, ensure_ascii=False), encoding="utf-8")
     violations = json.loads((run_dir / VIOLATION_FILE).read_text(encoding="utf-8")) if (run_dir / VIOLATION_FILE).is_file() else []
     audit = {"at": _now(), "nodes": len(nodes), "contracts": contracts, "violations": violations,
+             "repair_evidence": evidence["by_candidate"], "repair_evidence_warnings": evidence["warnings"],
              "canary_hits": canaries, "problems": problems, "ok": not problems and not violations}
     delivery["nodes"] = nodes
     delivery["audit"] = audit
@@ -352,5 +391,5 @@ def audit_run(run_dir: Path, *, required_roles: dict[str, list[str]] | None = No
 
 __all__ = [
     "CANARY_RE", "CAPTURE_ENV", "DELIVERY_FILE", "MemoryDeliveryError", "MemoryRun", "RUN_ENV", "VIOLATION_FILE",
-    "after_result", "audit_run", "before_send", "canary_hits", "memory_access_in", "node_bank",
+    "after_result", "audit_run", "before_send", "canary_hits", "evidence_delivery", "memory_access_in", "node_bank",
 ]

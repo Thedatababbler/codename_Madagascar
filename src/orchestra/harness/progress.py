@@ -118,6 +118,13 @@ def parse_progress(stdout: str) -> tuple[float | None, list[HarnessStageResult],
     return None, [], ""
 
 
+def progress_from_payload(payload: Mapping[str, Any] | None) -> tuple[float | None, list[HarnessStageResult], str]:
+    """``parse_progress`` for the structured result file (``orchestra.harness.results_file``)."""
+    if not payload:
+        return None, [], ""
+    return parse_progress(MARKER + json.dumps(dict(payload)))
+
+
 async def best_harness_progress(
     result: Any, artifact_store: Any
 ) -> tuple[float | None, list[HarnessStageResult], str]:

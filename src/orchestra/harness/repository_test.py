@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 
 from orchestra.harness.env_redaction import build_harness_env
-from orchestra.harness.progress import behaviour_failed_count, parse_progress
+from orchestra.harness.progress import behaviour_failed_count, parse_progress, progress_from_payload
 from orchestra.ir.artifacts import ArtifactEnvelope, create_artifact
 from orchestra.ir.nodes import HarnessNodeSpec
 from orchestra.runtime.backend import RunContext
@@ -113,7 +113,14 @@ class RepositoryTestHarnessExecutor:
 
         from orchestra.sandbox.policy import confine_command
 
-        command, harness_env, _private = confine_command(list(command), cwd=cwd, env=harness_env)
+        from orchestra.harness import results_file
+        from orchestra.sandbox import gate_tmp
+
+        tmp_session = gate_tmp.session_for_command(list(command))
+        tmp_grant = await tmp_session.__aenter__()
+        command, holder = results_file.attach(list(command))
+        command, harness_env, _private = confine_command(list(command), cwd=cwd, env=harness_env,
+                                                         extra_write=[*([str(holder)] if holder else []), *tmp_grant] or None)
 
         async def _run() -> tuple[int, str, str]:
             proc = await asyncio.create_subprocess_exec(
@@ -141,10 +148,18 @@ class RepositoryTestHarnessExecutor:
                 stderr_b.decode("utf-8", errors="replace"),
             )
 
-        async with context.semaphores.sandbox:
-            exit_code, stdout, stderr = await _run()
+        try:
+            async with context.semaphores.sandbox:
+                exit_code, stdout, stderr = await _run()
+        finally:
+            await tmp_session.__aexit__(None, None, None)
         duration_ms = int((time.perf_counter() - started) * 1000)
-        score, stages, furthest = parse_progress(stdout)
+        structured = results_file.read(holder)
+        if holder is not None:
+            # the check script's structured result; a run that wrote none has no score (never a parse of its output)
+            score, stages, furthest = progress_from_payload(structured)
+        else:
+            score, stages, furthest = parse_progress(stdout)   # a check script from before 2026-10-15, or plain pytest
         payload = RepositoryHarnessResultArtifact(
             passed=exit_code == 0,
             exit_code=exit_code,

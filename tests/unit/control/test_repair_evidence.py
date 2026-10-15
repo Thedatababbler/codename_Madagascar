@@ -83,14 +83,18 @@ def test_build_stages_only_persistent_tests_and_runs_them(tmp_path):
     evidence = build_repair_evidence(repo, [f"{rel}::test_sub", f"{rel}::TestMul::test_mul"])
     assert evidence == repo.parent / EVIDENCE_DIRNAME
     assert not (repo / EVIDENCE_DIRNAME).exists()  # beside the repo, never inside
-    staged = (evidence / "spec_tests" / "test_ops.py").read_text()
+    # one holder per suite, the suite inside it keeps its ``spec_tests`` package root
+    staged = (evidence / "m1" / "spec_tests" / "test_ops.py").read_text()
     assert "def test_sub" in staged and "def test_add" not in staged
-    assert (evidence / "spec_tests" / "helpers.py").exists()
+    assert (evidence / "m1" / "spec_tests" / "helpers.py").exists()
     readme = (evidence / "README.md").read_text()
     assert "::test_sub" in readme and "::TestMul::test_mul" in readme and "-m pytest" in readme
     failures = (evidence / "failures.md").read_text()
     assert "test_sub" in failures and "1 failed, 1 passed" in failures
-    mode = stat.S_IMODE((evidence / "spec_tests" / "test_ops.py").stat().st_mode)
+    manifest = json.loads((evidence / "evidence.json").read_text())
+    assert manifest["staged"] == 2 and manifest["truncated"] == 0
+    assert manifest["suites"][0]["counts"] == {"passed": 1, "failed": 1, "errors": 0, "skipped": 0}
+    mode = stat.S_IMODE((evidence / "m1" / "spec_tests" / "test_ops.py").stat().st_mode)
     assert mode & stat.S_IWUSR == 0  # read-only bits (os.access lies for root)
     # the frozen copy is untouched
     assert (frozen / "test_ops.py").read_text() == SUITE

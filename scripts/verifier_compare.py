@@ -61,7 +61,7 @@ def main() -> None:
                     kind = "R0"
                 elif n.startswith("cand_node_resample"):
                     kind = "resample"
-                elif n.startswith("cand_v2:") or n.startswith("cand_pb_"):
+                elif n.startswith(("cand_v2:", "cand_v2-")) or n.startswith("cand_pb_"):
                     kind, row = "row", n.split("cand_", 1)[-1].replace("v2:", "")
             fail = set(w["suite_failed"])
             fixed = len(inc_fail - fail)
