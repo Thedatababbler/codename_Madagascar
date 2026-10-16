@@ -1,7 +1,8 @@
 # NL2Repo hard-level comparison, full AdaMAS arm (user decisions 2026-10-16): the formal configuration of
 # cpe_sandbox_baseline.yaml unchanged except the output root; model gpt-5.6-luna through the env (CODEX_MODEL and the
 # diagnosis model follow it); first-pass recall off; no reference filter (the hard tasks are not training tasks);
-# evolution root outputs/evolution_nl2hard. Driven by scripts/nl2_hard_pilot.py.
+# evolution root outputs/evolution_nl2hard; behaviour inventory OFF (deviation, see evolution.author). Driven by
+# scripts/nl2_hard_pilot.py.
 # Sandboxed baseline batch (EXP-20261011-03, user approval 2026-10-11): the standard self-evolution procedure,
 # every run inside the sandbox, with
 #   - the author's layer on: inventory, audit (fake + interface rules), up to 2 fix rounds, fixture-preparation
@@ -80,6 +81,10 @@ evolution:
   author:
     enabled: true
     inventory: true
+    # NL2Repo deviation from the formal configuration (user decision 2026-10-16): no behaviour inventory is
+    # extracted -- the documents give the extractor no symbol attribution -- while the author review (fixed rules,
+    # fake-object / interface audits, fixture check) still runs on an empty inventory
+    inventory_extract: false
     coverage:
       hard_min: 1.0
       max_rounds: 2

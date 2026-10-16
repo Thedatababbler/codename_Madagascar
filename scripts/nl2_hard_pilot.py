@@ -132,6 +132,9 @@ def run_job(task: str, arm: str, spend, per_run_cap: float, total_cap: float, to
     batch = OUT / run_id
     rec: dict = {"task": task, "arm": arm, "run_id": run_id, "batch": str(batch), "model": MODEL, "started": stamp,
                  "points_before": spend.used(), "versions": _versions(),
+                 "deviations": (["NL2Repo: behaviour inventory not extracted (evolution.author.inventory_extract: false); "
+                                 "author review, fixed rules, fake-object / interface audits and fixture check still on"]
+                                if arm == "full" else []),
                  "limits": {"token_cap_prompt": 60_000_000, "per_run_points_cap": per_run_cap,
                             "codex_steps": "not limited (the Codex backend has no step limit)",
                             "wall_clock": (f"{SINGLE_TIMEOUT} s for the one session" if arm == "single"

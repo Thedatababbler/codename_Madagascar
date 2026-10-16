@@ -47,6 +47,9 @@ def assemble_prompt(core_rules: str, rules_text: str = "", inventory_text: str =
     return "\n\n".join(parts)
 
 
+INVENTORY_OFF_ENV = "ADAMAS_AUTHOR_INVENTORY_OFF"
+
+
 def milestone_inventory(milestone, *, env: dict | None = None):
     """The milestone's inventory (extracted once, then read from the run's inventory directory),
     or None when the inventory feature is off."""
@@ -55,9 +58,14 @@ def milestone_inventory(milestone, *, env: dict | None = None):
     docs_dir = (e.get(DOCS_DIR_ENV) or "").strip()
     if not inv_dir or not docs_dir or milestone is None:
         return None
-    from orchestra.codeprojecteval.behaviour_inventory import extract_inventory
+    from orchestra.codeprojecteval.behaviour_inventory import Inventory, extract_inventory
     from orchestra.codeprojecteval.public_symbols import load_docs
 
+    if (e.get(INVENTORY_OFF_ENV) or "").strip() not in ("", "0", "false"):
+        # extraction off (evolution.author.inventory_extract: false): an empty inventory, saved so the review finds it
+        inv = Inventory(task=(e.get(TASK_ENV) or ""), milestone_id=milestone.milestone_id, model="(inventory off)")
+        inv.save(Path(inv_dir) / f"{milestone.milestone_id}.inventory.json")
+        return inv
     acceptance = getattr(milestone, "acceptance", None)
     criteria = list(getattr(acceptance, "criteria", None) or [])
     return extract_inventory(
@@ -118,4 +126,4 @@ def _author_prompt(default_prompt: str, *, env: dict | None = None, milestone=No
     return assemble_prompt(load_core_rules(), render_rules(doc.rendered()), inventory)
 
 
-__all__ = ["CORE_RULES_PATH", "DOCS_DIR_ENV", "HARD_MIN_ENV", "INVENTORY_DIR_ENV", "INVENTORY_ENV", "MAX_ROUNDS_ENV", "PACKAGES_ENV", "PLAN_FILE_ENV", "RULES_DOC_ENV", "TASK_ENV", "milestone_inventory", "record_author_contract", "assemble_prompt", "author_prompt", "load_core_rules"]
+__all__ = ["CORE_RULES_PATH", "DOCS_DIR_ENV", "INVENTORY_OFF_ENV", "HARD_MIN_ENV", "INVENTORY_DIR_ENV", "INVENTORY_ENV", "MAX_ROUNDS_ENV", "PACKAGES_ENV", "PLAN_FILE_ENV", "RULES_DOC_ENV", "TASK_ENV", "milestone_inventory", "record_author_contract", "assemble_prompt", "author_prompt", "load_core_rules"]

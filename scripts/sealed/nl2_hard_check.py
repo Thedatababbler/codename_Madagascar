@@ -97,7 +97,7 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__" and not (len(sys.argv) > 1 and sys.argv[1] == "--probe"):
+if __name__ == "__main__" and not (len(sys.argv) > 1 and sys.argv[1] in ("--probe", "--kinds")):
     raise SystemExit(main())
 
 
@@ -177,3 +177,92 @@ def probe_task(task: str, run_repo: str | None = None) -> dict:
 
 if __name__ == "__main__" and len(sys.argv) > 2 and sys.argv[1] == "--probe":
     print(json.dumps(probe_task(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None)))
+
+
+def failure_kinds(task: str, repo_src: Path, file_timeout: int = 600) -> dict:
+    """Held-out outcome by failure category on a run's repository, one confined pytest per test file (junit types).
+    Categories: import / attr_name / type / assertion / timeout / other, plus collection failures of whole files
+    (counted at their pinned size) and hung files. Counts only."""
+    import os
+    import re
+    import shutil
+    import subprocess
+    import xml.etree.ElementTree as ET
+
+    from orchestra.sandbox.guard import run_confined
+
+    def cat(t: str, msg: str) -> str:
+        t = t or ""
+        if t.endswith(("ImportError", "ModuleNotFoundError")):
+            return "import"
+        if t.endswith(("AttributeError", "NameError")):
+            return "attr_name"
+        if t.endswith("TypeError"):
+            return "type"
+        if t.endswith("AssertionError") or msg.lstrip().startswith("assert") or "DID NOT RAISE" in msg:
+            return "assertion"
+        if "Timeout" in t or "Timeout" in msg:
+            return "timeout"
+        return "other"
+
+    py = G.task_python(task)
+    sub = G.heldout_subdir_name(task)
+    pinned = json.loads((ROOT / "configs" / "codeprojecteval_suite_sizes.json").read_text())["tasks"].get(task) or {}
+    out = {"passed": 0, "failed_by_kind": {}, "collection_failed_cases": 0, "collection_failed_files": 0,
+           "collection_kinds": {}, "hung_files": 0, "hung_cases": 0, "files": 0}
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp) / task
+        shutil.copytree(repo_src, repo, ignore=shutil.ignore_patterns("__pycache__", sub, ".git"))
+        shutil.copytree(G.heldout_dir(task), repo / sub)
+        env = {"PYTHONPATH": os.pathsep.join(p for p in [str(repo), str(repo / "src") if (repo / "src").is_dir() else ""] if p),
+               "PATH": f"{py.parent}:/usr/bin:/bin", "HOME": str(repo), "PYTHONDONTWRITEBYTECODE": "1"}
+        for mod, n in sorted(pinned.items()):
+            if mod.startswith("Test:") or not n:
+                continue
+            out["files"] += 1
+            rel = mod.split(f"{sub}/", 1)[-1]
+            xml = Path(tmp) / "r.xml"
+            xml.unlink(missing_ok=True)
+            hung = False
+            try:
+                r = run_confined([str(py), "-m", "pytest", f"{sub}/{rel}", "-q", "--no-header", "-p", "no:cacheprovider", "-o", "addopts=",
+                                  "--continue-on-collection-errors", "--timeout=30", "--timeout-method=signal",
+                                  "-o", "junit_family=xunit1", f"--junitxml={xml}"],
+                                 cwd=repo, mode="scoring", role="nl2_hard_check", capture_output=True, text=True,
+                                 timeout=file_timeout, check=False, env=env)
+                text = r.stdout + r.stderr
+            except subprocess.TimeoutExpired:
+                hung = True
+                text = ""
+            seen = 0
+            if xml.is_file():
+                for tc in ET.parse(xml).getroot().iter("testcase"):
+                    bad = tc.find("failure")
+                    if bad is None:
+                        bad = tc.find("error")
+                    if tc.find("skipped") is not None:
+                        seen += 1
+                        continue
+                    if not tc.get("classname") and not tc.get("file") and bad is not None:
+                        continue                                   # a collection error entry, counted below
+                    seen += 1
+                    if bad is None:
+                        out["passed"] += 1
+                    else:
+                        k = cat(bad.get("type") or "", bad.get("message") or "")
+                        out["failed_by_kind"][k] = out["failed_by_kind"].get(k, 0) + 1
+            if hung:
+                out["hung_files"] += 1
+                out["hung_cases"] += max(0, n - seen)
+            elif seen < n:
+                out["collection_failed_cases"] += n - seen
+                out["collection_failed_files"] += 1
+                m = re.findall(r"^E\s+([A-Za-z_][\w.]*(?:Error|Exception))", text, re.M)
+                k = cat(m[-1] if m else "", "")
+                out["collection_kinds"][k] = out["collection_kinds"].get(k, 0) + 1
+    out["total_pinned"] = sum(v for k, v in pinned.items() if not k.startswith("Test:"))
+    return out
+
+
+if __name__ == "__main__" and len(sys.argv) > 2 and sys.argv[1] == "--kinds":
+    print(json.dumps(failure_kinds(sys.argv[2], Path(sys.argv[3]))))

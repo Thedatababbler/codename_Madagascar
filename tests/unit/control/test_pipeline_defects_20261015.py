@@ -497,3 +497,33 @@ def test_confined_gate_writes_tmp_only_with_the_grant(tmp_path, real_sandbox):
         assert r.returncode == 0, r.stderr
         assert Path("/tmp/bplustree-testfile-probe.index").exists()
     assert not Path("/tmp/bplustree-testfile-probe.index").exists()                      # cleaned after
+
+
+# --------------------------------------------------------------------------- NL2Repo: behaviour inventory off, review on
+
+
+def test_inventory_off_gives_an_empty_saved_inventory(tmp_path):
+    from orchestra.control.author import assemble as A
+    from orchestra.control.fast_loop.evolution_config import AuthorConfig
+
+    assert AuthorConfig.from_mapping({"enabled": True, "inventory": True, "inventory_extract": False}).inventory_extract is False
+    assert AuthorConfig.from_mapping({"enabled": True, "inventory": True}).inventory_extract is True
+    m = SimpleNamespace(milestone_id="m1", objective="o", focus_paths=["a.py"], acceptance=SimpleNamespace(criteria=[]))
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "PRD.md").write_text("x")
+    env = {A.INVENTORY_DIR_ENV: str(tmp_path / "inv"), A.DOCS_DIR_ENV: str(docs), A.TASK_ENV: "t", A.INVENTORY_OFF_ENV: "1"}
+    inv = A.milestone_inventory(m, env=env)          # no model call: it would fail without credentials
+    assert inv.items == [] and (tmp_path / "inv" / "m1.inventory.json").is_file()
+
+
+def test_empty_inventory_keeps_every_case_hard_and_coverage_full():
+    from orchestra.codeprojecteval.behaviour_inventory import Inventory
+    from orchestra.control.author.review import coverage, soft_cases
+
+    inv = Inventory(task="t", milestone_id="m1")
+    audit = SimpleNamespace(citations={"spec_tests/test_a.py::test_x": ["q"], "spec_tests/test_a.py::test_y": []},
+                            soft_cases=["spec_tests/test_a.py::test_y"])
+    cov = coverage(audit, inv)
+    assert cov.hard_ratio == 1.0
+    assert soft_cases(audit, cov, inv) == ["spec_tests/test_a.py::test_y"]    # only the fixed rule's soft case

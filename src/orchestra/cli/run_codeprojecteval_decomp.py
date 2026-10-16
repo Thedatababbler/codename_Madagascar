@@ -1225,6 +1225,8 @@ def configure_author_layer(author, *, task, run_dir: Path, plan_file: str | None
     if not author.inventory:
         return
     os.environ[A.INVENTORY_DIR_ENV] = str(run_dir / "author_inventory")
+    if not author.inventory_extract:
+        os.environ[A.INVENTORY_OFF_ENV] = "1"     # the review runs on an empty inventory (deviation recorded per run)
     os.environ[A.DOCS_DIR_ENV] = str(task.repo_root / "docs")
     os.environ[A.PACKAGES_ENV] = str(task.source_dir or task.task_id).split("/")[0]
     os.environ[A.TASK_ENV] = task.task_id

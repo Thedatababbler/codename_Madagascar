@@ -32,6 +32,10 @@ class AuthorConfig:
 
     enabled: bool = False
     inventory: bool = False
+    #: False with ``inventory`` on: no behaviour inventory is extracted (an empty one stands in), while the author
+    #: review -- fixed rules, fake-object / interface audits, fixture check, soft split of unnamed error paths --
+    #: still runs. User decision 2026-10-16 for NL2Repo, whose documents give the extractor no symbol attribution.
+    inventory_extract: bool = True
     publish: bool = False
     require_human_approval: bool = True
     confirm_rerun: bool = True
@@ -68,6 +72,7 @@ class AuthorConfig:
             max_proposals=int(a.get("max_proposals", 2)),
             k=int(a.get("k", 2)),
             split_file=str(a.get("split_file") or cls.split_file),
+            inventory_extract=bool(a.get("inventory_extract", True)),
             coverage_hard_min=float(cov.get("hard_min", 1.0)),
             coverage_max_rounds=int(cov.get("max_rounds", 2)),
             rules_max_active=int(rules.get("max_active", 15)),

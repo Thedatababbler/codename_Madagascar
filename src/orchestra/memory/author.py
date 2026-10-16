@@ -59,12 +59,21 @@ def author_memory_block(milestone: Any, *, env: dict) -> str:
         run.record("author", {"categories": [], "recalled": [], "note": "no recallable author rule; inventory not needed"},
                    key=milestone.milestone_id)
         return ""
-    inv = _inventory(milestone, run, env)
-    items = list(getattr(inv, "items", None) or [])
-    if not items:
-        raise AuthorMemoryError(f"behaviour inventory for {milestone.milestone_id} is empty")
-    kinds = sorted({str(getattr(i, "kind", "")) for i in items})
-    cats = [KIND_CATEGORY[k] for k in kinds if k in KIND_CATEGORY]
+    import os as _os
+
+    from orchestra.control.author.assemble import INVENTORY_OFF_ENV
+
+    if (env.get(INVENTORY_OFF_ENV) or _os.environ.get(INVENTORY_OFF_ENV) or "").strip() not in ("", "0", "false"):
+        # inventory extraction off (NL2Repo, 2026-10-16): no behaviour kinds to pick categories by, so every
+        # recallable author rule's category is eligible
+        cats = sorted({str(r.get("category_id")) for r in rules if r.get("state") in RECALLABLE})
+    else:
+        inv = _inventory(milestone, run, env)
+        items = list(getattr(inv, "items", None) or [])
+        if not items:
+            raise AuthorMemoryError(f"behaviour inventory for {milestone.milestone_id} is empty")
+        kinds = sorted({str(getattr(i, "kind", "")) for i in items})
+        cats = [KIND_CATEGORY[k] for k in kinds if k in KIND_CATEGORY]
     limit = int((run.cfg.get("recall") or {}).get("max_rules", 5))
     got = recall(rules, categories=cats, features={}, domain_tags=[], limit=limit, id_field="rule_id")
     block = rules_block(got)
