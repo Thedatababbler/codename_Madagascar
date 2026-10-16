@@ -5403,3 +5403,27 @@ CLAUDE.md now requires the control before any run after a pipeline change.
 - The author layer needs a behaviour inventory. On NL2Repo documents `derive_public_symbols` attributes no symbols to the focus modules, so the inventory is empty and the run fails closed.
 - A fallback (stem matching plus unattributed symbols) makes it run, but the inventory is poor: cerberus M1 has 67 items, 2 hard, mostly schema rule names.
 - Waiting for the user: keep the degraded inventory, turn the author inventory off for NL2Repo, or improve symbol derivation first.
+
+## EXP-20261016-04 -- B-class headroom (documents state the behaviour, not the asserted detail) (branch `rsi`)
+
+**Status:** done. Report `docs/reports/b_class_headroom_20261016.md`; script `scripts/sealed/b_headroom.py`.
+
+**Scope and method**
+- 15 tasks: 8 NL2Repo Medium (voluptuous listed apart) plus 7 CPE sandbox runs. 1459 cases, all gpt-5.5 runs.
+- Sealed judge (luna): 40 cases per task, stratified by test file and by outcome; estimates reweighted by stratum.
+- Judge cost: 59 calls, 0.88M tokens; the luna window stayed at 0%.
+
+**Results**
+
+| class | share | pass rate |
+|---|---|---|
+| A | 39% | 0.84 |
+| B | 55% | 0.49 |
+| C | 5% | 0.35 |
+
+- Failing cases: about 90 in A (6% of all) and about 407 in B (28%).
+- B headroom on the multi-run NL2Repo tasks (656 cases):
+  - sometimes-pass B: 76;
+  - always-fail B that the judge says common practice would likely get right: about 33 (from 52 judged);
+  - together 16.6% of all held-out, against 6.4% failing A.
+- The room is in B. These numbers are rough: the convention judgement covers 52 cases, and run-to-run noise is included.
