@@ -176,16 +176,17 @@ def run_job(task: str, arm: str, spend, per_run_cap: float, total_cap: float, to
         if te:
             subs = json.loads(te.read_text()).get("subtasks") or {}
             rec["milestones"] = {k: v.get("status") for k, v in subs.items()}
-    # held-out scoring, confined, identical for every arm
-    ev = subprocess.run([py, "scripts/eval_codeprojecteval.py", str(batch), "--dataset-root", DATASET, "--env-root", ENVS],
-                        cwd=str(ROOT), capture_output=True, text=True, timeout=8 * 3600)
-    hv = batch / "hidden_eval.json"
-    if hv.is_file():
-        h = json.loads(hv.read_text())
-        r = (h.get("results") or [h])[0] if isinstance(h.get("results"), list) else h
-        rec["heldout"] = {k: r.get(k) for k in ("pass_rate", "passed", "failed", "error", "tests_total", "status", "pass_rate_observed")}
-        rec["pass_at_1"] = bool(r.get("tests_total") and r.get("passed") == r.get("tests_total"))
-    rec["heldout_rc"] = ev.returncode
+    # held-out scoring: the hang-robust sealed scorer (one confined pytest per test file, a hang is a failure, the
+    # pinned suite size as denominator), identical for every arm. The whole-suite scorer hung for an hour on the smoke
+    # run's deadlocking pool code and is not used here.
+    sc = subprocess.run([py, "scripts/sealed/nl2_hard_score.py", str(task_dir), "--file-timeout", "600"],
+                        cwd=str(ROOT), capture_output=True, text=True, timeout=12 * 3600)
+    try:
+        rec["heldout"] = json.loads(sc.stdout.strip().splitlines()[-1])
+        rec["pass_at_1"] = rec["heldout"].get("pass_at_1")
+    except (ValueError, IndexError):
+        rec["heldout"] = {"error": (sc.stderr or "")[-300:]}
+    rec["heldout_rc"] = sc.returncode
     au = subprocess.run([py, "scripts/sealed/nl2_hard_audit.py", str(task_dir)], cwd=str(ROOT), capture_output=True, text=True, timeout=1800)
     try:
         rec["audit"] = json.loads(au.stdout)[0]

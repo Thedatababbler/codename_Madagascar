@@ -98,11 +98,13 @@ async def run(task_id: str, run_id: str, output_root: Path, timeout: float, mode
     canon.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(workspace, canon, symlinks=True, ignore=shutil.ignore_patterns(".git", "__pycache__", ".pytest_cache"))
     breach = scan_run(run_dir, run_id=f"{run_id}/{task_id}")
+    # as the run entry does after every task: an install the session made of its own package leaves the env
+    purged_after = R.purge_task_packages(Path(manifest.env_python), list(manifest.top_level_packages))
     summary = {
         "arm": "single_session", "task_id": task_id, "run_id": run_id, "model": model, "started": started,
         "wall_seconds": round(wall, 1), "timeout_seconds": timeout, "status": str(getattr(result.status, "value", result.status)),
         "error": (result.error.model_dump() if getattr(result, "error", None) is not None and hasattr(result.error, "model_dump") else None),
-        "usage": usage, "backend_calls": 1, "purged_packages": purged, "prompt": PROMPT,
+        "usage": usage, "backend_calls": 1, "purged_packages": purged, "purged_after": purged_after, "prompt": PROMPT,
         "sandbox_breach": {k: v for k, v in breach.items() if k != "critical_events"},
         "sandbox_void": bool(breach.get("void")),
     }
