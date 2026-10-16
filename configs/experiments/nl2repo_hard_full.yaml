@@ -1,0 +1,130 @@
+# NL2Repo hard-level comparison, full AdaMAS arm (user decisions 2026-10-16): the formal configuration of
+# cpe_sandbox_baseline.yaml unchanged except the output root; model gpt-5.6-luna through the env (CODEX_MODEL and the
+# diagnosis model follow it); first-pass recall off; no reference filter (the hard tasks are not training tasks);
+# evolution root outputs/evolution_nl2hard. Driven by scripts/nl2_hard_pilot.py.
+# Sandboxed baseline batch (EXP-20261011-03, user approval 2026-10-11): the standard self-evolution procedure,
+# every run inside the sandbox, with
+#   - the author's layer on: inventory, audit (fake + interface rules), up to 2 fix rounds, fixture-preparation
+#     check, training-task reference filter (configs/sandbox.yaml author block);
+#   - the first pass empty (driver: ADAMAS_FIRST_PASS_TABLE=<empty table>, ADAMAS_FIRST_PASS_RECALL=0) and the
+#     repair / author memory banks on (ADAMAS_MEMORY_ENABLED=1);
+#   - a new evolution root (ADAMAS_EVOLUTION_ROOT=outputs/evolution_sandbox): new ledger and bank.
+# Driven by scripts/sandbox_baseline.py.
+experiment:
+  name: nl2repo_hard_full
+  benchmark: codeprojecteval
+  agent_backend: codex_sdk
+  dataset_root: /root/codex-benchmarks/nl2repo/cpe_format
+  contracts_dir: configs/contracts
+  output_root: outputs/nl2repo_hard
+  harness_timeout_seconds: 900
+  seed: 20260814
+
+  tuning:
+    playbook_search: false
+    design_search: false
+    persistence_search: true
+    persistence_probe_samples: 2
+    node_resample_n: 3
+    persistence_after_recovery: true
+    refuse_zero_commit_over_base: true
+    fast_loop_candidates: 3
+    diagnosis:
+      mode: llm
+      min_confidence: 0.5
+      # model: (unset) -- follows DIAGNOSIS_MODEL / CODEX_MODEL; a literal pin here outlived gpt-5.4 by four days
+    quality_trigger:
+      enabled: true
+      min_score: 0.9
+    pareto:
+      rule: quality_first
+      epsilon:
+        quality: 0.02
+        cost: 0.08
+        stability: 0.0
+      require_gate_pass: true
+    gate_weight: 1.0
+    harness_weight: 0.5
+    token_weight: 0.05
+    token_reference: 1000000
+    allow_cost_to_outrank_gate: false
+
+decomposition:
+  dynamic_planner: true
+  min_subtasks: 1
+  max_subtasks: 5
+  split_policy: feature
+  max_dependency_depth: 6
+  require_public_keystone_harness: true
+
+runtime:
+  max_parallel_nodes_per_task: 2
+
+pareto:
+  enabled: false
+
+slow_loop:
+  enabled: false
+
+fast_loop:
+  max_candidates: 0
+
+logging:
+  level: INFO
+
+# --- self-evolution (top-level blocks, §10) ---------------------------------
+evolution:
+  enabled: true
+  split_file: configs/datasets/evolution_split.yaml
+  repair_trigger: failures      # gate | failures
+  author:
+    enabled: true
+    inventory: true
+    coverage:
+      hard_min: 1.0
+      max_rounds: 2
+probes:
+  default: 2
+  adaptive: true
+  flaky_extra_threshold: 3
+budget:
+  mode: B                       # A: R0 + 1 active + 1 trial; B: R0 + 1 slot
+  probes_separate: true
+acceptance:
+  unified: true
+  prior_suite_check: true
+  flaky_reverify_runs: 2       # flaky-only searches: agent-free suite re-runs a probe must pass to be committed
+trial:
+  prob: 0.3
+  max_concurrent: 2
+  f_min_target_rate: 0.1       # an F entry enters trial only if its target classes occur this often on matching milestones
+ranking:
+  n0: 3
+promotion:
+  m: 5
+thr:
+  e1_files: 6
+  f2: 5
+  f3: 3
+  f5: 8
+  f5s: 20
+  f6: 4
+bank:
+  success_sample_rate: 0.2
+  min_per_class: 3
+rerun:
+  reps: 2
+  max_runs_per_cycle: 40
+  concurrency: 2
+  f_success_share: 0.3
+  cost_tolerance: 0.15
+  m_f: 5
+cycle:
+  batch_tasks: 6
+  buffer_failures: 12
+evolver:
+  max_proposals: 3
+tripwire:
+  tolerance: 2.0
+replay:
+  min_class_samples: 5

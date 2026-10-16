@@ -168,8 +168,11 @@ def collected_counts(
         return sorted(found)
 
     def _collect() -> dict[str, int]:
-        proc = subprocess.run(
-            [
+        # confined (sandbox-only rule): collection imports the task's code; scoring mode blocks the network
+        from orchestra.sandbox.guard import run_confined
+
+        proc = run_confined(
+            mode="scoring", role="suite_size_pin", cmd=[
                 str(python), "-m", "pytest", task.unit_tests, "--collect-only", "-q",
                 "--no-header", "-p", "no:cacheprovider", "-o", "addopts=",
                 "--continue-on-collection-errors",
@@ -181,6 +184,7 @@ def collected_counts(
                 ),
                 "PATH": f"{Path(python).parent}:/usr/bin:/bin:/usr/local/bin",
                 "HOME": str(task.repo_root),
+                "PYTHONDONTWRITEBYTECODE": "1",
             },
             capture_output=True,
             text=True,

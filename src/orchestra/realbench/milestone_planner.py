@@ -80,7 +80,10 @@ MAX_MILESTONES = 4
 MAX_AGENTS_PER_MILESTONE = 3
 MAX_TOKENS_RANGE = (1024, 16384)
 MAX_STEPS_RANGE = (1, 24)
-TIMEOUT_RANGE = (120.0, 2400.0)
+#: per-agent wall clock bounds. ``ADAMAS_AGENT_TIMEOUT_CEILING`` raises the ceiling for a run whose single agent does
+#: the whole project (the NL2Repo single-session arm, 2026-10-16): the 2400 s ceiling is sized for one milestone and
+#: would cut a one-agent run short -- manufacturing the early-stop failure the comparison measures.
+TIMEOUT_RANGE = (120.0, float(os.environ.get("ADAMAS_AGENT_TIMEOUT_CEILING") or 2400.0))
 
 
 @dataclass(frozen=True)
