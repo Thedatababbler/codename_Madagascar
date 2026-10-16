@@ -5358,3 +5358,24 @@ CLAUDE.md now requires the control before any run after a pipeline change.
 - `nl2repo_to_cpe.py`: test counts use src/ and continue past collection errors; `--source-dir` supports single-module sources.
 - dbutils is pinned to `Release-3_1_2`.
 - Held-out conftest fixes written blind by the sealed `nl2_hard_fix.py` (deepdiff: `tests`/`conftest` aliases; autopep8: ignore `suite/` sample inputs).
+
+## EXP-20261016-02 -- NL2Repo hard candidates: documents-only ceiling before any solving run (branch `rsi`)
+
+**Status:** done. Report `docs/reports/nl2repo_hard_ceiling_20261016.md`; script `scripts/sealed/nl2_hard_ceiling.py`.
+
+**Method**
+- All held-out cases labelled by the three-level script.
+- Sealed judge (gpt-5.6-luna): 40 cases per task, stratified by test file.
+- Judge cost: 16 calls, 544k tokens; the luna window stayed at 0%.
+
+| task | judge A | ceiling (B+C) | docs chars / reference line |
+|---|---|---|---|
+| cerberus | 30% | 70% | 9.5 |
+| deepdiff | 20% | 80% | 28.7 |
+| autopep8 | 17.5% | 72.5% | 26.1 |
+| pypinyin | 15% | 85% | 0.8 |
+
+- References: CPE judge about 23% A; NL2Repo Medium judge 19% A.
+- Only cerberus is above CPE. pypinyin's tests mostly check dictionary data.
+- Script-judge agreement: 0.20-0.73 three-level, 0.65-0.80 A-vs-not.
+- The model is luna, so these numbers are not directly comparable with the gpt-5.5 series.
