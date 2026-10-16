@@ -73,7 +73,8 @@ def score(run_dir: Path, file_timeout: int) -> dict:
                 c["failed"] += n - seen            # not run: a module that did not import, or a hang
             for k in c:
                 out[k] += c[k]
-            out["files"][rel] = {**c, "pinned": n, "hung": hung}
+            import hashlib
+            out["files"]["f" + hashlib.sha1(rel.encode()).hexdigest()[:8]] = {**c, "pinned": n, "hung": hung}   # names stay inside
     out["pass_rate"] = round(out["passed"] / total, 4) if total else None
     out["pass_at_1"] = bool(total and out["passed"] == total)
     out["hung_files"] = sum(1 for f in out["files"].values() if f["hung"])
