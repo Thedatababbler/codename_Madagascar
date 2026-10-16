@@ -5379,3 +5379,27 @@ CLAUDE.md now requires the control before any run after a pipeline change.
 - Only cerberus is above CPE. pypinyin's tests mostly check dictionary data.
 - Script-judge agreement: 0.20-0.73 three-level, 0.65-0.80 A-vs-not.
 - The model is luna, so these numbers are not directly comparable with the gpt-5.5 series.
+
+## EXP-20261016-03 -- NL2Repo hard pilot (stage 2), in progress: single-session arm done, full arm blocked (branch `rsi`)
+
+**Status:** paused for the user's decision. Model: gpt-5.6-luna for every arm. Not comparable with the gpt-5.5 series.
+
+**Done**
+- Frozen plans (luna, booked apart): cerberus 4 milestones, autopep8 4, deepdiff 5, pypinyin 4.
+
+| run | held-out (hang-robust sealed scorer, pinned denominator) | session | tokens |
+|---|---|---|---|
+| dbutils single (smoke) | 0.07 (10/140; 2 files hung) | 81 s, self-declared complete | 0.4M |
+| cerberus single | 0.036 (9/249) | 180 s, self-declared complete | 0.55M |
+| autopep8 single | 0.153 (87/567) | 180 s, self-declared complete | 1.03M |
+
+- Luna window still at 0%, so the points-per-token rate is not yet calibrated.
+
+**Scoring fixes**
+- The whole-suite scorer hung on a deadlock; replaced by the per-file sealed scorer.
+- cerberus' held-out imports `cerberus.tests`, which only the reference package contains. Every implementation scored 0 until a blind meta-path alias loaded those suites from the held-out copy. The reference still passes 246/248.
+
+**Full arm: two attempts died in the first minute** (no spend)
+- The author layer needs a behaviour inventory. On NL2Repo documents `derive_public_symbols` attributes no symbols to the focus modules, so the inventory is empty and the run fails closed.
+- A fallback (stem matching plus unattributed symbols) makes it run, but the inventory is poor: cerberus M1 has 67 items, 2 hard, mostly schema rule names.
+- Waiting for the user: keep the degraded inventory, turn the author inventory off for NL2Repo, or improve symbol derivation first.
