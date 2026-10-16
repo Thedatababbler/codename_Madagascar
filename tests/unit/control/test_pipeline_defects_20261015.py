@@ -527,3 +527,25 @@ def test_empty_inventory_keeps_every_case_hard_and_coverage_full():
     cov = coverage(audit, inv)
     assert cov.hard_ratio == 1.0
     assert soft_cases(audit, cov, inv) == ["spec_tests/test_a.py::test_y"]    # only the fixed rule's soft case
+
+
+def test_author_memory_recalls_without_an_inventory_when_it_is_off(monkeypatch):
+    from orchestra.control.author.assemble import INVENTORY_OFF_ENV
+    from orchestra.memory import author as AM
+
+    recorded = {}
+
+    class _Run:
+        cfg = {"recall": {"max_rules": 5}}
+
+        def view(self):
+            return SimpleNamespace(entries=lambda bank, kind: [
+                {"rule_id": "AU-R-101", "rule": "use the testkit", "category_id": "AU-TOOLS", "state": "active"}])
+
+        def record(self, bank, payload, key=None):
+            recorded.update(payload)
+
+    monkeypatch.setattr(AM.MemoryRun, "current", staticmethod(lambda: _Run()))
+    monkeypatch.setattr(AM, "_inventory", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no inventory may be read")))
+    block = AM.author_memory_block(SimpleNamespace(milestone_id="m1"), env={INVENTORY_OFF_ENV: "1"})
+    assert "AU-R-101" in block and recorded["inventory_items"] == 0 and recorded["inventory_off"] is True

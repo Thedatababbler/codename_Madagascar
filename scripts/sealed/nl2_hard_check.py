@@ -251,6 +251,9 @@ def failure_kinds(task: str, repo_src: Path, file_timeout: int = 600) -> dict:
                     else:
                         k = cat(bad.get("type") or "", bad.get("message") or "")
                         out["failed_by_kind"][k] = out["failed_by_kind"].get(k, 0) + 1
+                        tn = (bad.get("type") or "").split(".")[-1] or ("<message:" + ("assert" if (bad.get("message") or "").lstrip().startswith("assert") else re.split(r"[:\s(]", (bad.get("message") or "").strip() + " ", 1)[0][:40]) + ">")
+                        tn = tn if re.fullmatch(r"[\w<>:.]+", tn) else "<unparsed>"
+                        out.setdefault("type_names", {})[tn] = out.setdefault("type_names", {}).get(tn, 0) + 1
             if hung:
                 out["hung_files"] += 1
                 out["hung_cases"] += max(0, n - seen)

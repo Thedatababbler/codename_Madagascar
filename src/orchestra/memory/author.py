@@ -67,6 +67,7 @@ def author_memory_block(milestone: Any, *, env: dict) -> str:
         # inventory extraction off (NL2Repo, 2026-10-16): no behaviour kinds to pick categories by, so every
         # recallable author rule's category is eligible
         cats = sorted({str(r.get("category_id")) for r in rules if r.get("state") in RECALLABLE})
+        items = []
     else:
         inv = _inventory(milestone, run, env)
         items = list(getattr(inv, "items", None) or [])
@@ -77,7 +78,8 @@ def author_memory_block(milestone: Any, *, env: dict) -> str:
     limit = int((run.cfg.get("recall") or {}).get("max_rules", 5))
     got = recall(rules, categories=cats, features={}, domain_tags=[], limit=limit, id_field="rule_id")
     block = rules_block(got)
-    run.record("author", {"categories": cats, "inventory_items": len(items), "recalled": [r["rule_id"] for r in got],
+    run.record("author", {"categories": cats, "inventory_items": len(items), "inventory_off": not items and bool(cats),
+                          "recalled": [r["rule_id"] for r in got],
                           "tags": parse_tags(block)}, key=milestone.milestone_id)
     return block
 
