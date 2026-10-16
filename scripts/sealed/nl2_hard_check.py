@@ -97,7 +97,7 @@ def main() -> int:
     return 0
 
 
-if __name__ == "__main__":
+if __name__ == "__main__" and not (len(sys.argv) > 1 and sys.argv[1] == "--probe"):
     raise SystemExit(main())
 
 
@@ -132,3 +132,48 @@ def collection_errors(task: str) -> list[tuple[str, str]]:
         missing = re.findall(r"No module named '([\w.]+)'", m.group(2)) or re.findall(r"cannot import name '\w+' from '([\w.]+)'", m.group(2))
         out.append((m.group(1).split(sub + "/", 1)[-1], exc[-1] if exc else "?", missing[-1].split(".")[0] if missing else ""))
     return out
+
+
+def probe_repo(task: str, repo_src: Path) -> dict:
+    """Collection of the held-out suite on any repository: counts and missing module names only. Confined."""
+    import os
+    import re
+    import shutil
+
+    from orchestra.sandbox.guard import run_confined
+
+    py = G.task_python(task)
+    sub = G.heldout_subdir_name(task)
+    with tempfile.TemporaryDirectory() as tmp:
+        repo = Path(tmp) / task
+        shutil.copytree(repo_src, repo, ignore=shutil.ignore_patterns("__pycache__", sub, ".git"))
+        shutil.copytree(G.heldout_dir(task), repo / sub)
+        env = {"PYTHONPATH": os.pathsep.join(p for p in [str(repo), str(repo / "src") if (repo / "src").is_dir() else ""] if p),
+               "PATH": f"{py.parent}:/usr/bin:/bin", "HOME": str(repo)}
+        r = run_confined([str(py), "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider", "--continue-on-collection-errors", sub],
+                         cwd=repo, mode="scoring", role="nl2_hard_check", capture_output=True, text=True, timeout=900, check=False, env=env)
+    return {"collected": re.findall(r"(\d+) tests? collected", r.stdout),
+            "missing_modules": sorted(set(re.findall(r"No module named '([\w.]+)'", r.stdout))),
+            "cannot_import_from": sorted(set(re.findall(r"cannot import name '\w+' from '([\w.]+)'", r.stdout))),
+            "collection_errors": len(re.findall("ERROR collecting", r.stdout)),
+            "conftest_error": bool(re.search(r"ImportError while loading conftest|Error while loading conftest", r.stdout + r.stderr)),
+            "exception_types": sorted(set(re.findall(r"^E\s+([A-Za-z_][\w.]*(?:Error|Exception))", r.stdout + r.stderr, re.M))),
+            "modules_named": sorted(set(re.findall(r"(?:No module named|from) '([\w.]+)'", r.stdout + r.stderr))),
+            "exit_code": r.returncode,
+            "error_lines": sorted(set(re.sub(r"'[^']*'", lambda m: m.group(0) if re.fullmatch(r"'[\w.]+'", m.group(0)) else "'…'", ln.strip())[:160]
+                                      for ln in (r.stdout + r.stderr).splitlines()
+                                      if re.match(r"^\s*E?\s*\w*(Error|Exception)\b", ln) and "Traceback" not in ln))[:8]}
+
+
+def probe_task(task: str, run_repo: str | None = None) -> dict:
+    """probe_repo on the reference, on an empty repository and (optionally) on a run's repository."""
+    out = {"reference": probe_repo(task, G.reference_root(task))}
+    with tempfile.TemporaryDirectory() as tmp:
+        out["empty"] = probe_repo(task, empty_repo(task, Path(tmp) / task))
+    if run_repo:
+        out["run"] = probe_repo(task, Path(run_repo))
+    return out
+
+
+if __name__ == "__main__" and len(sys.argv) > 2 and sys.argv[1] == "--probe":
+    print(json.dumps(probe_task(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None)))
