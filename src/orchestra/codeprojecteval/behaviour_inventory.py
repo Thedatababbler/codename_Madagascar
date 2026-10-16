@@ -225,11 +225,16 @@ def extract_inventory(*, task: str, milestone_id: str, objective: str, criteria:
     focus = list(focus_paths)
     sym_inv = derive_public_symbols(docs)
     owned = sym_inv.owned_by(focus)
-    if not owned and focus and sym_inv.symbols and not any(s.module for s in sym_inv.symbols):
-        # documents that never say which module a symbol lives in (NL2Repo's converted start.md has no UML,
-        # 2026-10-16): every documented symbol may be cited, and the extractor picks by the milestone's objective.
-        # Without this the owned set is empty, the extractor answers [], and the author layer refuses to start.
-        owned = {s.name for s in sym_inv.symbols}
+    if not owned and focus:
+        # a module derived as `pkg/mod/__init__.py` is the focus path `pkg/mod.py` (documents without UML)
+        fl = [f.rstrip("/").removesuffix(".py") for f in focus]
+        owned = {s.name for s in sym_inv.symbols if s.module and s.module.removesuffix("/__init__.py").removesuffix(".py") in fl}
+    if focus and sym_inv.unattributed() and not sym_inv.owned_by(focus):
+        # documents that do not say which module a symbol lives in (NL2Repo's converted start.md has no UML,
+        # 2026-10-16): the symbols no module claims may be cited, and the extractor picks by the milestone's
+        # objective. Without this the owned set is empty, the extractor answers [], and the author layer refuses
+        # to start.
+        owned = set(owned) | set(sym_inv.unattributed())
     prompt = render_prompt(milestone_id=milestone_id, objective=objective, criteria=list(criteria),
                            focus=focus, owned=owned, docs=docs)
     digest = hashlib.sha1((EXTRACTOR_VERSION + prompt).encode()).hexdigest()[:12]
