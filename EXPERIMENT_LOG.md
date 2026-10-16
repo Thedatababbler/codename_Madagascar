@@ -5326,3 +5326,35 @@ CLAUDE.md now requires the control before any run after a pipeline change.
 **Cost and cleanup**
 - Judge: 30 calls, 565k tokens. The luna window read 0% before and after.
 - Failed judge calls (62, no spend) left their prompts, which contain held-out test source, in `~/.cli-proxy-api/logs/`. They were deleted. That directory is denied to agents.
+
+## EXP-20261016-01 -- NL2Repo hard-level framework comparison, stage 1 (preparation, no quota) (branch `rsi`)
+
+**Status:** stage 1 done, waiting for the user. Report `docs/reports/nl2repo_hard_stage1_20261016.md`.
+
+**Screening of the 32 hard tasks**
+- 11 have installed copies on the machine.
+- 2 overlap CPE (cookiecutter, pyjwt).
+- 10 need services, GPU or network (keyword screen).
+- 3 failed conversion: rich-click, pytest-cases, tsfresh.
+- 5 were converted and checked: deepdiff, cerberus, autopep8, pypinyin, dbutils.
+
+**Checks on the 5** (sealed `nl2_hard_check.py`, confined, network blocked)
+- Reference pass rate 0.97-1.00 and empty repository 0 on all five.
+- Task environments clean.
+- The machine-wide copy sweep (3.1M files) found no copies outside the sealed upstream clones and the datasets.
+- dbutils (2626 lines) fails the ≥4000-line rule.
+
+**Recommendation**
+- Candidates: deepdiff, cerberus, autopep8, pypinyin (pypinyin is mostly dictionary data).
+- Pilot: cerberus + autopep8.
+- Per-run cap 60M prompt tokens, about 15 points at gpt-5.5 rates; pilot cap 40 points.
+- Single-session arm: a one-node plan inside AdaMAS. The prompt template is in the report.
+
+**Not yet done (needs quota)**
+- Frozen plans: about 4 planner calls on gpt-5.6-luna.
+- The luna points-per-token rate is unknown; the first pilot run calibrates it.
+
+**Converter and dataset changes**
+- `nl2repo_to_cpe.py`: test counts use src/ and continue past collection errors; `--source-dir` supports single-module sources.
+- dbutils is pinned to `Release-3_1_2`.
+- Held-out conftest fixes written blind by the sealed `nl2_hard_fix.py` (deepdiff: `tests`/`conftest` aliases; autopep8: ignore `suite/` sample inputs).

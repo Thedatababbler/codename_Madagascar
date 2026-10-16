@@ -174,7 +174,13 @@ def run(cmd, **kw):
 
 
 def collect_count(python: Path, repo: Path, tests_rel: str) -> int:
-    r = run([str(python), "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider", tests_rel], cwd=repo)
+    # src-layout projects (rich-click, pytest-cases) import only with src/ on the path; a collection error in one module
+    # must not hide the count of the rest (2026-10-15: every tag of both read -1)
+    import os
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(str(x) for x in (repo / "src", repo) if x.is_dir())
+    r = subprocess.run([str(python), "-m", "pytest", "--collect-only", "-q", "-p", "no:cacheprovider",
+                        "--continue-on-collection-errors", tests_rel], cwd=repo, capture_output=True, text=True, env=env)
     m = re.search(r"(\d+) tests? collected", r.stdout + r.stderr)
     return int(m.group(1)) if m else -1
 
@@ -187,6 +193,7 @@ def main() -> int:
     ap.add_argument("--dataset-root", type=Path, default=DATASET_ROOT)
     ap.add_argument("--env-root", type=Path, default=ENV_ROOT)
     ap.add_argument("--max-tags", type=int, default=6)
+    ap.add_argument("--source-dir", default="", help="override the source dir the document tree implies (a package dir or a module .py)")
     a = ap.parse_args()
     task = a.task
     src_dir = BENCH / task
@@ -206,7 +213,7 @@ def main() -> int:
     tid = f"nl2_{task}"
     out = a.dataset_root / tid
     py = python_version(md); reqs = pins(md); tree = tree_block(md); paths = tree_paths(tree)
-    sdir = source_dir(paths)
+    sdir = a.source_dir or source_dir(paths)
     print(f"[{task}] python {py}; {len(reqs)} pins; source_dir={sdir!r}; tests={tests_rel}; want {want} cases; url {url}")
     if not sdir:
         print("could not infer source dir from the document tree", file=sys.stderr); return 3
@@ -282,10 +289,15 @@ def main() -> int:
     (out / "docs" / "directory_tree.txt").write_text(tree + "\n")
     (out / "requirements.txt").write_text("\n".join(reqs) + "\n")
     ref_src = up / sdir
-    if not ref_src.is_dir():
-        alt = [p for p in up.rglob("__init__.py") if p.parent.name == Path(sdir).name]
-        if alt: ref_src = alt[0].parent
-    shutil.copytree(ref_src, out / sdir, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    if sdir.endswith(".py") and ref_src.is_file():
+        # a single-module project (autopep8.py): the reference is the module file
+        (out / sdir).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(ref_src, out / sdir)
+    else:
+        if not ref_src.is_dir():
+            alt = [p for p in up.rglob("__init__.py") if p.parent.name == Path(sdir).name]
+            if alt: ref_src = alt[0].parent
+        shutil.copytree(ref_src, out / sdir, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     shutil.copytree(up / tests_rel, out / "unit_tests", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
     if not (out / "unit_tests" / "__init__.py").exists():
         (out / "unit_tests" / "__init__.py").write_text("")
