@@ -5461,3 +5461,15 @@ CLAUDE.md now requires the control before any run after a pipeline change.
 | mostly A | tinydb 85%, tenacity 67.5%, icecream 60% |
 
 - The run tasks with the largest B headroom are pathspec, emoji and tablib.
+
+## EXP-20261017-02 -- NL2Repo Easy: usability of all 26 tasks and A/B/C by sealed judge (branch `rsi`)
+
+**Status:** done. Report `docs/reports/nl2repo_easy_b_class_20261017.md`. No solving agent.
+
+**Usability:** 9 of 26 usable: ipytest, jsonlines, parse, markdownify, records, pytestify, pythonprojecttemplate, unittest-parametrize, decouple.
+
+**Judge** (luna, 31 calls, 0.31M tokens, window 1% before and after)
+- Easy tasks are mostly A: decouple 100% A, pythonprojecttemplate 87%, pytestify 77%. Their documents are long relative to the code (124-191 doc chars per line).
+- Only ipytest (61%) and parse (52.5%) have a B share above 50%.
+- Cases are few (15-102 per task).
+- The B-class arena for author evolution is the Medium level.
