@@ -5427,3 +5427,19 @@ CLAUDE.md now requires the control before any run after a pipeline change.
   - always-fail B that the judge says common practice would likely get right: about 33 (from 52 judged);
   - together 16.6% of all held-out, against 6.4% failing A.
 - The room is in B. These numbers are rough: the convention judgement covers 52 cases, and run-to-run noise is included.
+
+## EXP-20261016-03 (update 2026-10-17) -- NL2Repo hard pilot finished (branch `rsi`)
+
+**Status:** stage 2 done. Report `docs/reports/nl2repo_hard_pilot_20261017.md`. All runs on gpt-5.6-luna.
+
+| task | single session | full AdaMAS | prompt tokens (single / full) | wall clock (single / full) |
+|---|---|---|---|---|
+| cerberus | 0.036 | 0.040 | 0.55M / 21.8M | 3 min / 55 min |
+| autopep8 | 0.153 | 0.240 | 1.03M / 36.4M | 3 min / 83 min |
+
+- Full minus single: +0.004 and +0.087. Neither reaches +0.1.
+- Both single sessions self-declared done after 3 minutes; whether that counts as early termination is for the user.
+- Cost ratio about 35-40x.
+- Spend: about 1 point in total (luna).
+- No CRITICAL. Three runs reached 5+ WARNINGs and are flagged for manual review.
+- Full arm deviation: no behaviour inventory (NL2Repo).
