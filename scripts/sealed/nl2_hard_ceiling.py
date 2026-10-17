@@ -32,8 +32,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _guard as G  # noqa: E402
 import nl2_ceiling as NC  # noqa: E402
 
-OUT = ROOT / "outputs" / "nl2repo_hard" / "ceiling"
-SEALED_LOG = Path("/root/.adamas_sealed/nl2_hard_ceiling_judge")
+import os as _os
+
+OUT = Path(_os.environ.get("NL2_CEILING_OUT") or (ROOT / "outputs" / "nl2repo_hard" / "ceiling"))
+SEALED_LOG = Path(_os.environ.get("NL2_CEILING_LOG") or "/root/.adamas_sealed/nl2_hard_ceiling_judge")
 PLANS = ROOT / "configs" / "datasets" / "nl2repo_hard_plans"
 LETTER = {"detail_specified": "A", "behaviour_only": "B", "not_specified": "C", "unknown": "U"}
 

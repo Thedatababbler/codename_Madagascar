@@ -5443,3 +5443,21 @@ CLAUDE.md now requires the control before any run after a pipeline change.
 - Spend: about 1 point in total (luna).
 - No CRITICAL. Three runs reached 5+ WARNINGs and are flagged for manual review.
 - Full arm deviation: no behaviour inventory (NL2Repo).
+
+## EXP-20261017-01 -- NL2Repo Medium: usability of all 46 tasks and A/B/C by sealed judge (branch `rsi`)
+
+**Status:** done. Report `docs/reports/nl2repo_medium_b_class_20261017.md`. No solving agent.
+
+**Usability:** 14 of 46 usable.
+- The 9 run before, plus humanize, docopt-ng, tinydb, python-fsutil and icecream (newly converted).
+- 32 excluded: external needs 6, layout 2, no collectable tag 7, count mismatch 5, reference below 0.95 in the sandbox 12.
+- funcy, math-verify, pyquery and freezegun are likely recoverable with test dependencies.
+
+**Judge** (luna, 40 per task by test file, 55 calls, 0.95M tokens, window 1% before and after)
+
+| | tasks |
+|---|---|
+| highest B with low C | python-fsutil 82.5%, humanize 85% (agreement only 0.10), emoji 75%, aiofiles 67.5%, docopt-ng 67.5% |
+| mostly A | tinydb 85%, tenacity 67.5%, icecream 60% |
+
+- The run tasks with the largest B headroom are pathspec, emoji and tablib.
